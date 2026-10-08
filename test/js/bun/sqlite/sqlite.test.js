@@ -2629,21 +2629,27 @@ it("decodes non-UTF-8 column names leniently instead of dropping the column", ()
   db.close();
 });
 
-it("expands bound non-UTF-8 values in Statement#toString instead of returning an empty string", () => {
-  const db = new Database(":memory:");
-  const stmt = db.prepare("SELECT ? AS x");
+it("expands a bound lone surrogate in Statement#toString as one U+FFFD", () => {
+  using db = new Database(":memory:");
+  using stmt = db.prepare("SELECT ? AS x");
 
-  // A lone surrogate binds via sqlite3_bind_text16 and is stored by SQLite as
-  // invalid UTF-8. sqlite3_expanded_sql() then returns those bytes, which the
-  // strict decoder turned into a null string -> the whole toString() became "".
   stmt.get("\uD800");
-  expect(String(stmt)).toBe("SELECT '\uFFFD\uFFFD\uFFFD' AS x");
+  expect(String(stmt)).toBe("SELECT '\uFFFD' AS x");
 
   // Valid values still round-trip.
   stmt.get("ok");
   expect(String(stmt)).toBe("SELECT 'ok' AS x");
+});
 
-  db.close();
+it("decodes bytes that are not UTF-8 in Statement#toString leniently", () => {
+  using db = new Database(":memory:");
+  // The value is bound while the database encoding is UTF-16, so SQLite keeps it as the bytes E9 00.
+  // sqlite3_expanded_sql() then prints those bytes as if they were UTF-8.
+  db.run("PRAGMA encoding = 'UTF-16le'");
+  using stmt = db.prepare("SELECT ? AS x");
+  stmt.get("\u00E9");
+  db.run("PRAGMA encoding = 'UTF-8'");
+  expect(String(stmt)).toBe("SELECT '\uFFFD' AS x");
 });
 
 it("decodes declared types leniently and accepts single-character declared types", () => {
@@ -2675,6 +2681,86 @@ it("decodes declared types leniently and accepts single-character declared types
   s.all();
   expect(s.declaredTypes).toEqual(["INT\uFFFDGER"]);
   db.close();
+});
+
+describe("string parameters are encoded as well-formed UTF-8", () => {
+  // A lone surrogate must become U+FFFD, exactly like TextEncoder. SQLite's own
+  // UTF-16 decoder instead pairs a lone high surrogate with the following code
+  // unit (consuming it) and stores trailing ones as ill-formed 3-byte sequences.
+  const cases = [
+    ["lone high surrogate followed by a non-surrogate", "a\uD800b"],
+    ["trailing lone high surrogate", "a\uD800"],
+    ["lone low surrogate followed by a non-surrogate", "a\uDC00b"],
+    ["trailing lone low surrogate", "a\uDC00"],
+    ["only a lone high surrogate", "\uD800"],
+    ["well-formed surrogate pair", "a\uD83D\uDE00b"],
+    ["Latin-1 non-ASCII", "caf\u00E9"],
+    ["BMP non-Latin-1", "\u65E5\u672C\u8A9E"],
+    // SQLite reads these two as a byte-order mark when the bind is UTF-16.
+    ["leading U+FEFF", "\uFEFFab"],
+    ["leading U+FFFE", "\uFFFEab"],
+    ["only U+FEFF", "\uFEFF"],
+  ];
+  const expectedHex = s => Buffer.from(new TextEncoder().encode(s)).toString("hex").toUpperCase();
+
+  it.each(cases)("%s, positional parameter", (_desc, input) => {
+    using db = new Database(":memory:");
+    expect(db.query("SELECT hex(CAST(? AS BLOB)) AS h, ? AS v").get(input, input)).toEqual({
+      h: expectedHex(input),
+      v: input.toWellFormed(),
+    });
+  });
+
+  it.each(cases)("%s, named parameter", (_desc, input) => {
+    using db = new Database(":memory:");
+    expect(db.query("SELECT hex(CAST($x AS BLOB)) AS h, $x AS v").get({ $x: input })).toEqual({
+      h: expectedHex(input),
+      v: input.toWellFormed(),
+    });
+  });
+
+  it.each(cases)("%s, db.run() exec path", (_desc, input) => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE t (s TEXT)");
+    db.run("INSERT INTO t VALUES (?)", [input]);
+    expect(db.query("SELECT hex(CAST(s AS BLOB)) AS h, s AS v FROM t").get()).toEqual({
+      h: expectedHex(input),
+      v: input.toWellFormed(),
+    });
+  });
+
+  it("a string that starts with a byte-order mark does not match the string without it", () => {
+    using db = new Database(":memory:");
+    db.run("CREATE TABLE users (name TEXT PRIMARY KEY); INSERT INTO users VALUES ('admin')");
+    expect(db.query("SELECT name FROM users WHERE name = ?").get("\uFEFFadmin")).toBeNull();
+    expect(() => db.run("INSERT INTO users VALUES (?)", ["\uFEFFadmin"])).not.toThrow();
+    expect(db.query("SELECT count(*) AS n FROM users").get()).toEqual({ n: 2 });
+  });
+
+  it("in a UTF-16 database, SQLite decodes the bound UTF-8 and replaces U+FFFE and U+FFFF", () => {
+    using db = new Database(":memory:");
+    db.run("PRAGMA encoding = 'UTF-16le'");
+    db.run("CREATE TABLE t (s TEXT)");
+    const stored = input => db.query("SELECT ? AS v").get(input).v;
+    expect(["a\uD800b", "\uFEFFab", "caf\u00E9", "\u65E5\u672C", "a\u{1F600}b"].map(stored)).toEqual([
+      "a\uFFFDb",
+      "\uFEFFab",
+      "caf\u00E9",
+      "\u65E5\u672C",
+      "a\u{1F600}b",
+    ]);
+    expect(["a\uFFFEb", "a\uFFFFb", "\uFFFEab"].map(stored)).toEqual(["a\uFFFDb", "a\uFFFDb", "\uFFFDab"]);
+  });
+
+  it("never writes bytes the database cannot round-trip as UTF-8", () => {
+    using db = new Database(":memory:");
+    // A lone high surrogate followed by "b" must NOT become U+10062 (the
+    // surrogate paired with the "b"), and a trailing one must NOT become the
+    // ill-formed CESU-8 bytes ED A0 80.
+    const h = s => db.query("SELECT hex(CAST(? AS BLOB)) AS h").get(s).h;
+    expect(h("a\uD800b")).toBe("61EFBFBD62");
+    expect(h("a\uD800")).toBe("61EFBFBD");
+  });
 });
 
 // The process-global SQLite database registry is shared by every Worker

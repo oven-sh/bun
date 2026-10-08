@@ -13,6 +13,7 @@
 pub mod css;
 pub mod cursor;
 pub mod graphql;
+pub mod handlebars;
 mod ir;
 mod js;
 pub mod json;

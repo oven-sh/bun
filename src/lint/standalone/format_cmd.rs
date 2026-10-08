@@ -189,6 +189,14 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
         let mut out = Vec::new();
         return bun_format::markdown::format_mdx(code, options, &mut Default::default(), &mut out).map(|()| with_cursor(code, out));
     }
+    let is_handlebars = match &options.parser {
+        Some(parser) => &parser[..] == b"glimmer",
+        None => bun_format::handlebars::is_handlebars_path(name),
+    };
+    if is_handlebars {
+        let mut out = Vec::new();
+        return bun_format::handlebars::format(code, options, &mut Default::default(), &mut out).map(|()| with_cursor(code, out));
+    }
     let is_graphql = match &options.parser {
         Some(parser) => &parser[..] == b"graphql",
         None => bun_format::graphql::is_graphql_path(name),

@@ -136,7 +136,7 @@ impl Parser<'_> {
                 line.beg = off;
 
                 // Check for closing fence
-                if line.indent < self.code_indent_offset {
+                if line.indent < self.code_indent_offset && n_parents == self.n_containers {
                     if self.is_closing_code_fence(off, pivot_line.data) {
                         line.r#type = LineType::Blank; // ending fence treated as blank
                         self.last_line_has_list_loosening_effect = false;

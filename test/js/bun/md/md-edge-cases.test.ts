@@ -1807,3 +1807,17 @@ describe("empty list items and paragraphs", () => {
     expect(Markdown.html(`a\n${marker}\nb\n`)).not.toContain("<li>");
   });
 });
+
+describe("closing code fences and containers", () => {
+  test("a fence outside of the list item does not close the code in it", () => {
+    expect(Markdown.html("- ```\n  a\n```\n\n  - b\n")).toBe(
+      "<ul>\n<li>\n<pre><code>a\n</code></pre>\n</li>\n</ul>\n<pre><code>\n  - b\n</code></pre>\n",
+    );
+  });
+
+  test("a fence outside of the block quote does not close the code in it", () => {
+    expect(Markdown.html("> ```\n> a\n```\nb\n")).toBe(
+      "<blockquote>\n<pre><code>a\n</code></pre>\n</blockquote>\n<pre><code>b\n</code></pre>\n",
+    );
+  });
+});

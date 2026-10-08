@@ -143,12 +143,6 @@ impl Drop for Services<'_, '_, '_> {
 }
 
 impl<'c, 'p, 's> Services<'c, 'p, 's> {
-    /// The checker, for what is not here.
-    #[inline]
-    pub fn checker(&mut self) -> &mut Checker<'p, 's> {
-        self.c
-    }
-
     /// Whether the control flow analysis was disabled when the file had been checked, or a question
     /// has disabled it since: there are references in the file that have the error type.
     pub fn was_flow_analysis_ever_disabled(&self) -> bool {

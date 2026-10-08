@@ -640,14 +640,6 @@ pub trait Handle<'a>: Copy {
     #[doc(hidden)]
     fn from_raw(file: &'a File<'a>, id: u32) -> Self;
 
-    /// `None` if the file has no such node.
-    #[doc(hidden)]
-    fn try_from_raw(file: &'a File<'a>, id: u32) -> Option<Self>;
-
-    /// Whether the file has the node that it refers to.
-    #[doc(hidden)]
-    fn exists(self) -> bool;
-
     /// It is synthesized from a JSDoc comment: lists leave it out.
     #[doc(hidden)]
     #[inline]
@@ -679,12 +671,6 @@ macro_rules! handle {
                 $name { file, id: ($written)(file, id) }
             }
 
-            /// `None` if the HIR leaves `id` empty.
-            #[inline]
-            pub(crate) fn some(file: &'a $crate::ast::File<'a>, id: ::bun_sema::hir::$id) -> Option<Self> {
-                (id.idx() < file.hir.$field.len()).then(|| $name::new(file, id))
-            }
-
             /// The index of the node in the HIR, which is what the type checker takes.
             #[inline]
             pub fn id(self) -> ::bun_sema::hir::$id {
@@ -694,11 +680,6 @@ macro_rules! handle {
             #[inline]
             pub fn file(self) -> &'a $crate::ast::File<'a> {
                 self.file
-            }
-
-            #[inline]
-            pub(crate) fn try_raw(self) -> Option<&'a ::bun_sema::hir::$raw> {
-                self.file.hir.$field.get(self.id.idx())
             }
 
             /// The source text of the node.
@@ -737,14 +718,6 @@ macro_rules! handle {
                 $name::new(file, ::bun_sema::hir::$id(id))
             }
             #[inline]
-            fn try_from_raw(file: &'a $crate::ast::File<'a>, id: u32) -> Option<Self> {
-                $name::some(file, ::bun_sema::hir::$id(id))
-            }
-            #[inline]
-            fn exists(self) -> bool {
-                self.try_raw().is_some()
-            }
-            #[inline]
             fn is_synthetic(self) -> bool {
                 self.file.has_synthetic_nodes() && self.starts_in_jsdoc()
             }
@@ -758,3 +731,62 @@ macro_rules! handle {
     };
 }
 pub(crate) use handle;
+
+/// `$name::some(file, id)`: `None` if the HIR leaves `id` empty.
+macro_rules! optional_handles {
+    ($($name:ident $id:ident $field:ident,)*) => {
+        $(impl<'a> $name<'a> {
+            #[inline]
+            pub(crate) fn some(file: &'a File<'a>, id: hir::$id) -> Option<Self> {
+                (id.idx() < file.hir.$field.len()).then(|| $name::new(file, id))
+            }
+        })*
+    };
+}
+
+optional_handles! {
+    Case CaseId cases,
+    EnumMember EnumMemberId enum_members,
+    ExportSpec ExportSpecId export_specs,
+    Expr ExprId exprs,
+    Func FnId fns,
+    ImportSpec ImportSpecId import_specs,
+    Member MemberId members,
+    Modifier ModifierId modifiers,
+    Param ParamId params,
+    Pat PatId pats,
+    PatElem PatElemId pat_elems,
+    PatProp PatPropId pat_props,
+    Prop PropId props,
+    Stmt StmtId stmts,
+    TupleElem TupleElemId tuple_elems,
+    TypeNode TypeNodeId types,
+    TypeParam TypeParamId type_params,
+    VarDecl VarDeclId var_decls,
+}
+
+/// `handle.try_raw()`: what the HIR has for it, if it has anything.
+macro_rules! raw_handles {
+    ($($name:ident $field:ident,)*) => {
+        $(impl<'a> $name<'a> {
+            #[inline]
+            pub(crate) fn try_raw(self) -> Option<&'a hir::$name> {
+                self.file.hir.$field.get(self.id.idx())
+            }
+        })*
+    };
+}
+
+raw_handles! {
+    Class classes,
+    Expr exprs,
+    Func fns,
+    Member members,
+    Modifier modifiers,
+    Param params,
+    Pat pats,
+    Stmt stmts,
+    TupleElem tuple_elems,
+    TypeNode types,
+    TypeParam type_params,
+}

@@ -372,11 +372,6 @@ impl Response {
         self.init.get().headers.clone_list(global)
     }
 
-    /// Allocate the header list now if a body `Content-Type` is pending.
-    pub(crate) fn materialize_headers(&self, global: &JSGlobalObject) -> JsResult<()> {
-        self.init_mut().headers.materialize(global)
-    }
-
     #[inline]
     pub(crate) fn swap_init_headers(&self) -> Option<HeadersRef> {
         self.init.with_mut(|init| init.headers.take_list())
@@ -569,7 +564,7 @@ impl Response {
     }
 
     /// See [`LazyHeaders::pending_content_type`].
-    pub(crate) fn pending_content_type(&self) -> &[u8] {
+    pub(crate) fn pending_content_type(&self) -> Option<&[u8]> {
         self.init.get().headers.pending_content_type()
     }
 
@@ -1182,11 +1177,11 @@ impl LazyHeaders {
         }
     }
 
-    /// Empty once the list exists: the list holds the header from then on.
-    pub(crate) fn pending_content_type(&self) -> &[u8] {
+    /// `None` once the list exists: the list holds the header from then on.
+    pub(crate) fn pending_content_type(&self) -> Option<&[u8]> {
         match self {
-            LazyHeaders::ContentType(content_type) => content_type.as_slice(),
-            _ => b"",
+            LazyHeaders::ContentType(content_type) => Some(content_type.as_slice()),
+            _ => None,
         }
     }
 

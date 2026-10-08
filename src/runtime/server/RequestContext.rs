@@ -4809,7 +4809,7 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
 /// Precedence: the header, `Response::pending_content_type`, then `blob` (which may be re-derived from a stream).
 fn get_content_type(
     headers: Option<&mut FetchHeaders>,
-    pending_content_type: &[u8],
+    pending_content_type: Option<&[u8]>,
     blob: &AnyBlob,
 ) -> (MimeType, bool, bool) {
     let mut needs_content_type = true;
@@ -4833,7 +4833,7 @@ fn get_content_type(
             }
         }
 
-        if !pending_content_type.is_empty() {
+        if let Some(pending_content_type) = pending_content_type {
             bun_http_types::MimeType::by_name(pending_content_type)
         } else if !blob.content_type().is_empty() {
             bun_http_types::MimeType::by_name(blob.content_type())

@@ -269,6 +269,10 @@ await fetch("https://example.com", {
 
 This option is similar to the one in Node's `tls` module. Bun calls it after the certificate chain verifies. With `rejectUnauthorized: false` Bun still calls it and ignores what it returns.
 
+The function replaces Bun's own hostname check. Return `undefined` to approve the certificate. To reject it, return an `Error` or throw one: the `fetch()` promise rejects with that error. As in Node, any other truthy return value also fails the request. An object is the rejection reason as it is. A `Promise`, or a primitive such as `true`, gives an `ERR_INVALID_RETURN_VALUE` error, so an `async` function approves no certificate. Every falsy return value approves the certificate, as in Node, so `false` does not reject it. For that reason the TypeScript type allows only `undefined` and `Error`.
+
+`checkServerIdentity` must be a function. `null` and `undefined` mean no function. For any other value, `fetch()` rejects with an `ERR_INVALID_ARG_TYPE` error.
+
 A request that passes its own `checkServerIdentity` opens a connection of its own and closes it afterwards, so that another request's function never vouches for it. To verify once per connection and reuse the connection, put the function on a [`Bun.FetchSession`](#fetch-sessions).
 
 #### Disable TLS validation
@@ -492,6 +496,12 @@ session.close(); // closes the idle connections
 | `unix`      | A Unix socket path.                                                                                                                                                                                                       |
 
 An option given on the request takes precedence over the session's, `proxy: false` included. A request's `tls` replaces the session's `tls` as a whole.
+
+The constructor throws for a `proxy` or a `tls.checkServerIdentity` that it cannot use, such as `proxy: 8080`, a `proxy` object without a `url`, or a `checkServerIdentity` that is not a function. For `proxy`, only `undefined`, `null` and `""` mean no option. On a request, `fetch` ignores such a `proxy` (`true` throws), and the request keeps the proxy of its session or of the environment.
+
+Bun rounds `idleTimeout` up to its socket timer, which moves in 4 second steps up to four minutes and in whole minutes beyond that. A connection is never closed before `idleTimeout`, and it can stay open for up to two steps longer. The longest `idleTimeout` is 238 minutes. A larger value means 238 minutes.
+
+Without `maxIdleSockets` a session has no limit of its own. The idle connections of all sessions and of plain `fetch` share one bounded pool per kind. When that pool is full, Bun closes the longest-idle connection in it, whichever session it belongs to. A `maxIdleSockets` above the size of the pool has no effect.
 
 #### Connecting to a specific address
 

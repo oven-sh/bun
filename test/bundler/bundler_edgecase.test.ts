@@ -2518,6 +2518,40 @@ describe("bundler", () => {
     },
   });
 
+  // `--target=bun` does not lower `using`, and the declaration stays inside
+  // the `__esm` wrapper. A module whose other statements all hoist still
+  // needs that wrapper, even when the initializer could move out of it.
+  itBundled("edgecase/UsingWithHoistableInitializerKeepsWrapper", {
+    files: {
+      "/entry.ts": `
+        const { f } = await import("./async.ts");
+        console.log(f());
+        try {
+          await import("./sync.ts");
+        } catch (error) {
+          console.log(error instanceof TypeError);
+        }
+      `,
+      "/async.ts": `
+        await using a = null;
+        export function f() { return "f"; }
+      `,
+      "/sync.ts": `
+        using b = 1;
+        export function g() {}
+      `,
+    },
+    target: "bun",
+    run: {
+      stdout: "f\ntrue",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      expect(out).toContain("await init_async()");
+      expect(out).toContain("init_sync()");
+    },
+  });
+
   itBundled("edgecase/UsingDisposeThrowDoesntMask", {
     files: {
       "/entry.ts": `

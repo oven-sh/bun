@@ -544,6 +544,7 @@ impl<Id> ComptimeClap<Id> {
             state: streaming::State::Normal,
             positional: None,
             short_aliases: opt.short_aliases,
+            unknown_long_flags_are_positional: opt.unknown_long_flags_are_positional,
         };
 
         while let Some(arg) = stream.next()? {

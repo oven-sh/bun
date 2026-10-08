@@ -10,8 +10,19 @@
       "bindgen": ["../../codegen/bindgen-lib"]
     },
     "jsx": "react-jsx",
+    // This code is bundled into the binary and never emits declarations, so the base config's `composite`
+    // (every imported file listed, declaration-emit checks for every export) does not apply here.
+    "composite": false,
     "types": ["react/experimental"]
   },
-  "include": ["**/*.ts", "**/*.tsx", "../../runtime.js", "../../runtime.bun.js"],
-  "references": [{ "path": "../../../packages/bun-types" }]
+  // bun-types by path: `types` above is only the React entry, and a `types` entry for bun-types is looked up from
+  // each `node_modules/@types` going up, which from a git worktree nested in another checkout finds that
+  // checkout's copy.
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "../../runtime.js",
+    "../../runtime.bun.js",
+    "../../../packages/bun-types/index.d.ts"
+  ]
 }

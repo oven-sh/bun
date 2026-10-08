@@ -1,11 +1,12 @@
 //! JS code for bake
-/// <reference path="../../bake/bake.d.ts" />
+/// <reference path="../../runtime/bake/bake.d.ts" />
 import type { Bake } from "bun";
 
 type FrameworkPrerender = Bake.ServerEntryPoint["prerender"];
 type FrameworkGetParams = Bake.ServerEntryPoint["getParams"];
 type TypeAndFlags = number;
 type FileIndex = number;
+type RouteParams = Record<string, string | string[]>;
 
 /**
  * This layer is implemented in JavaScript to reduce Native <-> JS context switches,
@@ -25,7 +26,7 @@ export async function renderRoutesForProdStatic(
   sourceRouteFiles: string[],
   paramInformation: Array<null | string[]>,
   styles: string[][],
-): Promise<void> {
+): Promise<void[]> {
   $debug({
     outBase,
     allServerFiles,
@@ -105,7 +106,7 @@ export async function renderRoutesForProdStatic(
     return doGenerateRoute(type, noClient, i, layouts, pageModule, params);
   }
 
-  let modulesForFiles = [];
+  let modulesForFiles: any[][] = [];
   for (const fileList of files) {
     $assert(fileList.length > 0);
     if (fileList.length > 1) {
@@ -137,14 +138,14 @@ export async function renderRoutesForProdStatic(
         });
         let result;
         if (paramGetter[Symbol.asyncIterator] != undefined) {
-          for await (const params of paramGetter) {
+          for await (const params of paramGetter as AsyncIterable<RouteParams>) {
             result = callRouteGenerator(type, noClient, i, layouts, pageModule, params);
             if ($isPromise(result) && $isPromisePending(result)) {
               await result;
             }
           }
         } else if (paramGetter[Symbol.iterator] != undefined) {
-          for (const params of paramGetter) {
+          for (const params of paramGetter as Iterable<RouteParams>) {
             result = callRouteGenerator(type, noClient, i, layouts, pageModule, params);
             if ($isPromise(result) && $isPromisePending(result)) {
               await result;
@@ -152,7 +153,7 @@ export async function renderRoutesForProdStatic(
           }
         } else {
           await Promise.all(
-            paramGetter.pages.map(params => {
+            (paramGetter as { pages: RouteParams[] }).pages.map(params => {
               callRouteGenerator(type, noClient, i, layouts, pageModule, params);
             }),
           );

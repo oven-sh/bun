@@ -1705,3 +1705,15 @@ pub(crate) fn format_with<'a>(
     let formatted = out.get(start..).unwrap_or_default();
     Ok(Some(resolve(source, offset, locate(file, offset.bytes), formatted, first.zip(second)) as u32))
 }
+
+/// Where the cursor, which is at `options.cursor_offset` in `source`, is in `formatted`, which is what
+/// has become of all of `source`: what Prettier says if it does not learn where the part around the
+/// cursor ends up. For the languages whose trees are not looked at here.
+pub fn cursor_in_formatted_text(source: &[u8], options: &FormatOptions, formatted: &[u8]) -> Option<u32> {
+    let offset = offset_in(source, options).filter(|_| !source.trim_ascii().is_empty())?;
+    let everything = Region::Between {
+        before: None,
+        after: None,
+    };
+    Some(resolve(source, offset, everything, formatted, None) as u32)
+}

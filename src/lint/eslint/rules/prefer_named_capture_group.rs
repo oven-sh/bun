@@ -2,6 +2,7 @@ use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex::{self, ast::Kind as RegexKind};
 use bun_lint::utils::eslint_utils::{ReferenceTracker, TraceMap, get_string_if_constant};
+use std::cell::OnceCell;
 
 /// Enforce using named capture group in regular expression.
 pub struct PreferNamedCaptureGroup;
@@ -63,18 +64,58 @@ fn check_regex<'a>(
     let Ok(ast) = regex::parse_pattern(pattern, regex::Mode::of_flags(flags), regex::Options::default()) else {
         return;
     };
+    let as_is = OnceCell::new();
+    let group_name = OnceCell::new();
+    // Where the last group starts in `pattern`, in bytes and in UTF-16 units, and the offset in
+    // bytes that `regex_node` has after as many units. The groups come in the order of their `(`,
+    // so that all of them take time in proportion to the texts.
+    let (mut start, mut utf16_start) = (0, 0);
+    let mut written = Utf16Cursor::new(regex_node.text());
     for group in ast.capturing_groups() {
         if !matches!(group.kind(), RegexKind::CapturingGroup { name: None, .. }) {
             continue;
         }
         let report = cx.report(node, REQUIRED).data("group", group.raw().to_vec());
-        if is_written_as_is(pattern, regex_node) {
+        if *as_is.get_or_init(|| is_written_as_is(pattern, regex_node)) {
+            let since = pattern.get(start..group.start() as usize).unwrap_or_default();
+            utf16_start += regex::utf16_index(since, since.len()) as u32;
+            start += since.len();
             // After the delimiter and the `(`.
-            let after_paren = text::utf16_offset_to_byte(regex_node.text(), group.utf16_start() + 2);
-            let start = Span::empty(regex_node.span().start + after_paren as u32);
+            let after_paren = Span::empty(regex_node.span().start + written.byte_offset(utf16_start + 2) as u32);
             report
-                .suggest(ADD_GROUP_NAME, |fixer| fixer.insert_before(start, temporary_group_name(pattern)))
-                .suggest(ADD_NON_CAPTURE, |fixer| fixer.insert_before(start, "?:"));
+                .suggest(ADD_GROUP_NAME, |fixer| {
+                    fixer.insert_before(after_paren, &group_name.get_or_init(|| temporary_group_name(pattern))[..])
+                })
+                .suggest(ADD_NON_CAPTURE, |fixer| fixer.insert_before(after_paren, "?:"));
+        }
+    }
+}
+
+/// [`text::utf16_offset_to_byte`] for indices that do not decrease.
+struct Utf16Cursor<'t> {
+    text: &'t [u8],
+    at: usize,
+    /// How many UTF-16 units `text[..at]` has.
+    units: u32,
+}
+
+impl<'t> Utf16Cursor<'t> {
+    fn new(text: &'t [u8]) -> Self {
+        Utf16Cursor {
+            text,
+            at: 0,
+            units: 0,
+        }
+    }
+
+    fn byte_offset(&mut self, index: u32) -> usize {
+        loop {
+            let (c, size) = text::code_point_at(self.text, self.at);
+            let units = self.units + text::utf16_width(c);
+            if size == 0 || units > index {
+                return self.at;
+            }
+            (self.at, self.units) = (self.at + size, units);
         }
     }
 }

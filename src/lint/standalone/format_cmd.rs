@@ -85,15 +85,12 @@ fn format_text(path: &str, code: &[u8], options: &FormatOptions) -> Result<Vec<u
             return Err(FormatError::SyntaxError);
         }
         let (mut scratch, mut out) = (Scratch::default(), Vec::new());
-        // Where the cursor ends up is shown the way Prettier's snapshots show it.
-        if options.cursor_offset.is_some() && options.range_start.is_none() && options.range_end.is_none() {
-            let cursor = bun_format::cursor::format_with_cursor(file, options, &mut scratch, &mut out)?;
-            show_cursor(&mut out, cursor);
-            return Ok(out);
-        }
         let path = crate::text(file.path());
         let parse = |slice: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| with_file_as(is_script, &path, slice, |file| then(file));
-        bun_format::range::format(file, options, &mut scratch, &mut out, parse).map(|()| out)
+        let cursor = bun_format::range::format_with_cursor(file, options, &mut scratch, &mut out, parse)?;
+        // Where the cursor ends up is shown the way Prettier's snapshots show it.
+        show_cursor(&mut out, cursor);
+        Ok(out)
     }
     let name = options.filepath.as_deref().filter(|it| !it.is_empty()).unwrap_or(path.as_bytes());
     let json_parser = match &options.parser {

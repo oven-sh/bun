@@ -260,7 +260,9 @@ fn arguments_grouped_layout<'a>(
     f: &Formatter<'a>,
 ) -> Option<GroupedCallArgumentLayout> {
     // The only argument is a template that is written as the language in it.
-    if args.len() == 1 && args.first().is_some_and(|only| crate::css::embed::has_embed_label(only, f)) {
+    let has_embed_label =
+        |only| crate::css::embed::has_embed_label(only, f) || crate::graphql::embed::has_embed_label(only, f);
+    if args.len() == 1 && args.first().is_some_and(has_embed_label) {
         return Some(GroupedCallArgumentLayout::GroupedLastArgument);
     }
     if args.len() == 2 {

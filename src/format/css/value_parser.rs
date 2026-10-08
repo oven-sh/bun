@@ -502,6 +502,8 @@ struct ValuesParser<'t> {
     position: usize,
     current: ValueId,
     spaces: bool,
+    /// A line that `line_column_to_index` was asked about, and where it starts.
+    line: (u32, usize),
 }
 
 impl ValuesParser<'_> {
@@ -533,7 +535,7 @@ impl ValuesParser<'_> {
         // `calculateNodeLoc`
         let end = match source.end {
             (1, column) => column,
-            end => line_column_to_index(end, self.text()),
+            end => self.line_column_to_index(end),
         };
         let (start, end) = match kind {
             ValueKind::Word => {
@@ -1149,12 +1151,16 @@ impl Grouper<'_> {
 
 // ───────────────────────────── Prettier's `loc.js` ─────────────────────────────
 
-fn line_column_to_index((line, column): (u32, u32), text: &[u8]) -> u32 {
-    let mut index = 0usize;
-    for _ in 1..line {
-        index = text::index_of_char_from(text, b'\n', index).map_or(0, |at| at + 1);
+impl ValuesParser<'_> {
+    /// It goes on from the line that it was asked about before, if that is not a later one: a value of n lines has n nodes.
+    fn line_column_to_index(&mut self, (line, column): (u32, u32)) -> u32 {
+        let (from, mut index) = Some(self.line).filter(|it| it.0 <= line).unwrap_or((1, 0));
+        for _ in from..line {
+            index = text::index_of_char_from(self.text(), b'\n', index).map_or(0, |at| at + 1);
+        }
+        self.line = (line.max(1), index);
+        index as u32 + column
     }
-    index as u32 + column
 }
 
 fn fix_value_word_loc(value: &[u8], index: u32) -> u32 {
@@ -1292,6 +1298,7 @@ impl Values {
                 position: 0,
                 current: container,
                 spaces: false,
+                line: (1, 0),
             }
             .parse()
         });

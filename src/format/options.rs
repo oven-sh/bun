@@ -507,15 +507,15 @@ impl LineEnding {
         }
     }
 
-    /// Prettier's `guessEndOfLine`.
+    /// Prettier's `guessEndOfLine`: the first `\r` decides, also if lines before it end in `\n`.
     pub(crate) fn resolve(self, text: &[u8]) -> LineEnding {
         if self != LineEnding::Auto {
             return self;
         }
-        match bun_core::strings::index_of_any(text, b"\r\n") {
-            Some(at) if text[at] == b'\r' && text.get(at + 1) == Some(&b'\n') => LineEnding::Crlf,
-            Some(at) if text[at] == b'\r' => LineEnding::Cr,
-            _ => LineEnding::Lf,
+        match bun_core::strings::index_of_char_usize(text, b'\r') {
+            Some(at) if text.get(at + 1) == Some(&b'\n') => LineEnding::Crlf,
+            Some(_) => LineEnding::Cr,
+            None => LineEnding::Lf,
         }
     }
 }

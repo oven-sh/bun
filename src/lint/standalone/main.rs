@@ -9,6 +9,7 @@ mod ast_cmd;
 mod code_path_cmd;
 mod driver_cmd;
 mod format_cmd;
+mod js_plugin_cmd;
 mod linter_cmd;
 mod regex_cmd;
 mod selector_cmd;
@@ -68,8 +69,24 @@ struct Reported {
     line: u32,
     column: u32,
     end: Option<(u32, u32)>,
-    /// The code after each suggestion.
-    suggestions: Vec<(String, String)>,
+    fix: Option<Edit>,
+    suggestions: Vec<Suggested>,
+}
+
+/// ESLint's `fix`: a range in UTF-16 code units, and what replaces it.
+#[derive(PartialEq, Eq, Debug)]
+struct Edit {
+    range: (i64, i64),
+    text: String,
+}
+
+#[derive(PartialEq, Eq, Debug)]
+struct Suggested {
+    message_id: String,
+    desc: String,
+    fix: Option<Edit>,
+    /// The code after it.
+    output: String,
 }
 
 pub(crate) use linter_cmd::with_file;
@@ -95,6 +112,13 @@ pub(crate) fn reported(entry: &'static RuleEntry, code: &[u8], message: &bun_lin
     let apply = |fix: &bun_lint::fix::Fix| {
         bun_lint::fix::apply_fixes(code, &mut vec![fix]).unwrap_or_else(|| code.to_vec())
     };
+    let edit = |fix: &bun_lint::fix::Fix| {
+        let mut offsets = bun_lint::linter::Utf16Offsets::new(code);
+        Edit {
+            range: (offsets.convert(fix.span.start), offsets.convert(fix.span.end)),
+            text: text(&fix.text),
+        }
+    };
     Reported {
         rule_id: match &message.rule_id {
             Some(id) if *id == bun_lint::linter::RuleId::Known(entry.meta) => None,
@@ -106,8 +130,14 @@ pub(crate) fn reported(entry: &'static RuleEntry, code: &[u8], message: &bun_lin
         line: message.line,
         column: message.column,
         end: message.end,
+        fix: message.fix.as_ref().map(edit),
         suggestions: (message.suggestions.iter())
-            .map(|s| (s.message_id.to_owned(), text(&apply(&s.fix))))
+            .map(|s| Suggested {
+                message_id: s.message_id.to_owned(),
+                desc: text(&s.message),
+                fix: Some(edit(&s.fix)),
+                output: text(&apply(&s.fix)),
+            })
             .collect(),
     }
 }
@@ -123,6 +153,19 @@ fn number_of(json: &Json, key: &str) -> Option<u32> {
     }
 }
 
+fn expected_edit(of: &Json) -> Option<Edit> {
+    let fix = of.get(b"fix")?;
+    let range = fix.get(b"range")?.as_array()?;
+    let at = |i: usize| match range.get(i) {
+        Some(Json::Number(n)) => Some(*n as i64),
+        _ => None,
+    };
+    Some(Edit {
+        range: (at(0)?, at(1)?),
+        text: str_of(fix, "text")?.to_owned(),
+    })
+}
+
 fn expected_messages(case: &Json) -> Vec<Reported> {
     let messages = case.get(b"messages").and_then(Json::as_array).unwrap_or_default();
     let reported = messages.iter().map(|it| Reported {
@@ -132,12 +175,13 @@ fn expected_messages(case: &Json) -> Vec<Reported> {
         line: number_of(it, "line").unwrap_or(0),
         column: number_of(it, "column").unwrap_or(0),
         end: number_of(it, "endLine").zip(number_of(it, "endColumn")),
+        fix: expected_edit(it),
         suggestions: (it.get(b"suggestions").and_then(Json::as_array).unwrap_or_default().iter())
-            .map(|s| {
-                (
-                    str_of(s, "messageId").unwrap_or_default().to_owned(),
-                    str_of(s, "output").unwrap_or_default().to_owned(),
-                )
+            .map(|s| Suggested {
+                message_id: str_of(s, "messageId").unwrap_or_default().to_owned(),
+                desc: str_of(s, "desc").unwrap_or_default().to_owned(),
+                fix: expected_edit(s),
+                output: str_of(s, "output").unwrap_or_default().to_owned(),
             })
             .collect(),
     });
@@ -414,6 +458,7 @@ fn main() {
         Some("format") => format_cmd::run(&args[1..]),
         Some("cli") => driver_cmd::run(&args[1..]),
         Some("selector") => selector_cmd::run(&args[1..]),
+        Some("js_plugin") => js_plugin_cmd::run(&args[1..]),
         Some("utils-eslint") => utils_eslint_cmd::run(&args[1..]),
         Some("utils-tsscope") => utils_tsscope_cmd::run(&args[1..]),
         Some("utils-ts") => utils_ts_cmd::run(&args[1..]),

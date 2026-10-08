@@ -57,7 +57,7 @@ impl<'a> ExpressionStatement<'a> {
     pub(crate) fn span(self) -> Span {
         match self {
             ExpressionStatement::Stmt(statement) => statement.span(),
-            ExpressionStatement::ArrowBody(_) => self.expression().map_or(Span::default(), Expr::span),
+            ExpressionStatement::ArrowBody(_) => self.expression().map_or_else(Span::default, Expr::span),
         }
     }
 }

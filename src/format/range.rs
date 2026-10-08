@@ -4,9 +4,9 @@
 //! (`src/main/range.js`). The range is widened to whole statements, their text is parsed and
 //! formatted as a file of its own, indented like the line that it starts on, and put back.
 
+use crate::cursor::format_with;
 use crate::ir::element::{Align, FormatElement, Tag};
 use crate::ir::prelude::{Format, Formatter, hard_line_break};
-use crate::ir::run::format_with;
 use crate::js::ast_nodes::{AstNodes, ExpressionStatement, Program, node_as_ast_nodes, type_parameters_of};
 use crate::js::comments::{self, Comment, Comments};
 use crate::js::print::program::ends_before_semicolon;
@@ -31,15 +31,27 @@ pub fn format<'a>(
     out: &mut Vec<u8>,
     parse: impl FnOnce(&[u8], &mut dyn for<'b> FnMut(&'b File<'b>)),
 ) -> Result<(), FormatError> {
+    format_with_cursor(file, options, scratch, out, parse).map(|_| ())
+}
+
+/// The same. Returns where the cursor, which is at `options.cursor_offset` in the text of `file`,
+/// is in what is appended, in UTF-16 code units like the option. `None` if there is none.
+pub fn format_with_cursor<'a>(
+    file: &'a File<'a>,
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+    parse: impl FnOnce(&[u8], &mut dyn for<'b> FnMut(&'b File<'b>)),
+) -> Result<Option<u32>, FormatError> {
     let text = file.text();
     let first = if text.starts_with(BOM) { BOM.len() } else { 0 };
-    let (start, end) = offsets(text, first, options);
+    let Offsets { start, end, cursor } = Offsets::new(text, first, options);
     if start >= end && text.len() > first {
         out.extend_from_slice(text);
-        return Ok(());
+        return Ok(options.cursor_offset);
     }
     if start <= first && end >= text.len() {
-        return crate::format(file, options, scratch, out);
+        return crate::cursor::format_with_cursor(file, options, scratch, out);
     }
     if file.has_parse_errors() {
         return Err(FormatError::SyntaxError);
@@ -51,46 +63,90 @@ pub fn format<'a>(
         return Err(FormatError::InvalidDocument);
     };
 
-    // Everything is written with `\n`, which is replaced at the end.
     let mut formatted = Vec::new();
+    // Where the cursor is in `formatted`, if it is in the range.
+    let mut cursor_in_formatted = None;
     if !trim_start(slice).is_empty() {
         let alignment = alignment_size(before.get(first..).unwrap_or_default(), options.indent_width.value());
+        let cursor_in_slice = cursor.filter(|&cursor| start < cursor && cursor <= end).map(|cursor| cursor - start);
         let slice_options = FormatOptions {
             range_start: None,
             range_end: None,
+            cursor_offset: cursor_in_slice.map(|cursor| utf16_len(slice.get(..cursor).unwrap_or(slice)) as u32),
             line_ending: LineEnding::Lf,
             ..options.clone()
         };
         let mut result = Err(FormatError::SyntaxError);
         parse(slice, &mut |slice_file| {
-            result = format_with(slice_file, &slice_options, scratch, &mut formatted, |file, f| {
+            result = format_with(slice_file, &slice_options, scratch, &mut formatted, alignment > 0, |file, f| {
                 write_aligned(file, alignment, f);
             });
         });
-        result?;
+        cursor_in_formatted = result?.and_then(|cursor| offset_of_utf16_index(&formatted, cursor));
+        formatted.truncate(trim_end(&formatted).len());
     }
+
+    // Everything is put together with `\n`, which is replaced at the end.
+    let mut whole = Vec::with_capacity(text.len() + formatted.len());
+    let mut cursor_in_whole = None;
+    write_with_line_ending(before, b"\n", &mut whole);
+    if let Some(cursor) = cursor.filter(|&cursor| cursor <= start) {
+        cursor_in_whole = Some(whole.len() - normalized_len(before.get(cursor..).unwrap_or_default()));
+    }
+    if let Some(cursor) = cursor_in_formatted {
+        cursor_in_whole = Some(whole.len() + cursor);
+    }
+    whole.extend_from_slice(&formatted);
+    if let Some(cursor) = cursor.filter(|&cursor| cursor > end) {
+        cursor_in_whole = Some(whole.len() + normalized_len(text.get(end..cursor).unwrap_or_default()));
+    }
+    write_with_line_ending(after, b"\n", &mut whole);
 
     let line_ending = options.line_ending.resolve(&text[first..]).as_bytes();
-    out.reserve(text.len() + formatted.len());
-    for part in [before, trim_end(trim_start(&formatted)), after] {
-        write_with_line_ending(part, line_ending, out);
-    }
-    Ok(())
+    let out_start = out.len();
+    let cursor_in_whole = cursor_in_whole.map(|cursor| cursor.min(whole.len()));
+    let (up_to_cursor, rest) = whole.split_at(cursor_in_whole.unwrap_or(0));
+    write_with_line_ending(up_to_cursor, line_ending, out);
+    let cursor_in_out = cursor_in_whole.map(|_| utf16_len(&out[out_start..]) as u32);
+    write_with_line_ending(rest, line_ending, out);
+    Ok(cursor_in_out)
 }
 
-/// `rangeStart` and `rangeEnd`, which count UTF-16 code units, as offsets in `text`. `first`: where
-/// `text` starts after its byte order mark. Prettier's `normalizeInputAndOptions`.
-fn offsets(text: &[u8], first: usize, options: &FormatOptions) -> (usize, usize) {
-    // After `\r\n` has become `\n`, an offset between the two is behind it.
-    let after_line_break = |at: usize| match text.get(at.wrapping_sub(1)..=at) {
-        Some(b"\r\n") => at + 1,
-        _ => at,
-    };
-    let offset_of = |index: u32| offset_of_utf16_index(text, index).map(after_line_break);
-    let start = options.range_start.and_then(offset_of).unwrap_or(0).max(first);
-    // An offset before the byte order mark is out of the text, which is as good as none.
-    let end = options.range_end.and_then(offset_of).filter(|&end| end >= first).unwrap_or(text.len());
-    (start, end)
+/// How long `text` is after each `\r\n` in it has become `\n`.
+fn normalized_len(text: &[u8]) -> usize {
+    text.len() - bun_core::strings::count(text, b"\r\n")
+}
+
+/// How many UTF-16 code units `text` is.
+fn utf16_len(text: &[u8]) -> usize {
+    text.iter().map(|&byte| usize::from(byte & 0xC0 != 0x80) + usize::from(byte >= 0xF0)).sum()
+}
+
+/// `rangeStart`, `rangeEnd` and `cursorOffset`, which count UTF-16 code units, as offsets in the text.
+struct Offsets {
+    start: usize,
+    end: usize,
+    cursor: Option<usize>,
+}
+
+impl Offsets {
+    /// Prettier's `normalizeInputAndOptions`. `first`: where `text` starts after its byte order mark.
+    fn new(text: &[u8], first: usize, options: &FormatOptions) -> Offsets {
+        // After `\r\n` has become `\n`, an offset between the two is behind it.
+        let after_line_break = |at: usize| match text.get(at.wrapping_sub(1)..=at) {
+            Some(b"\r\n") => at + 1,
+            _ => at,
+        };
+        // An offset before the byte order mark or behind the end is as good as none.
+        let offset_of = |index: Option<u32>| {
+            offset_of_utf16_index(text, index?).map(after_line_break).filter(|&offset| offset >= first)
+        };
+        Offsets {
+            start: offset_of(options.range_start).unwrap_or(first),
+            end: offset_of(options.range_end).unwrap_or(text.len()),
+            cursor: offset_of(options.cursor_offset),
+        }
+    }
 }
 
 /// `None` if `text` is shorter.

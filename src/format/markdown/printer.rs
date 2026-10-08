@@ -711,7 +711,7 @@ impl<'a> Printer<'a, '_> {
     fn print_word(&self, sentence: &Node, tokens: &[Token], index: usize, emphasis: Option<NodeId>) -> Doc<'a> {
         let text = self.str(tokens[index].value);
         if self.is_mdx {
-            return self.print_word_legacy(sentence, text);
+            return self.print_word_legacy(sentence, text, index == 0);
         }
         let is_newline = |token: Option<&Token>| token.is_some_and(|it| it.kind == TokenKind::Newline);
         let previous = index.checked_sub(1).and_then(|it| tokens.get(it));
@@ -756,7 +756,7 @@ impl<'a> Printer<'a, '_> {
     }
 
     /// Prettier's `printWordLegacy`: every `*` is escaped, and `_` at the ends of a word and next to punctuation.
-    fn print_word_legacy(&self, sentence: &Node, text: &'a [u8]) -> Doc<'a> {
+    fn print_word_legacy(&self, sentence: &Node, text: &'a [u8], is_first: bool) -> Doc<'a> {
         if bun_core::strings::index_of_any(text, b"*_").is_none() {
             return Doc::from(text);
         }
@@ -802,26 +802,11 @@ impl<'a> Printer<'a, '_> {
         }
 
         // Behind an autolink, a backslash would become a part of it.
-        let index_of = |node: &Node| {
-            let mut index = 0usize;
-            let mut previous = node.previous;
-            while let Some(sibling) = self.node(previous) {
-                index += 1;
-                previous = sibling.previous;
-            }
-            index
-        };
-        let follows_autolink = |node: Option<&Node>| {
-            node.is_some_and(|node| {
-                let mut children = std::iter::successors(Some(node.first_child), |&child| self.node(child).map(|it| it.next));
-                index_of(node).checked_sub(1).and_then(|at| children.nth(at)).is_some_and(|child| self.is_autolink(child))
-            })
-        };
         let parent = self.node(sentence.parent);
-        if sentence.previous == NONE
-            && (follows_autolink(parent)
+        if is_first
+            && (self.is_autolink(sentence.previous)
                 || parent.is_some_and(|parent| {
-                    parent.kind == Kind::Emphasis && parent.previous == NONE && follows_autolink(self.node(parent.parent))
+                    parent.kind == Kind::Emphasis && sentence.previous == NONE && self.is_autolink(parent.previous)
                 }))
         {
             let bytes = escaped.as_bytes();
@@ -909,10 +894,16 @@ impl<'a> Printer<'a, '_> {
 
     /// Prettier's `printTitle`
     fn print_title(&self, title: Str, has_space: bool) -> Doc<'a> {
-        let title = self.str(title);
+        let mut title = Cow::Borrowed(self.str(title));
         if title.is_empty() {
             return Doc::EMPTY;
         }
+        // `title.replaceAll(/\\(?=["')])/g, "")`
+        if self.is_mdx && bun_core::strings::contains_char(&title, b'\\') {
+            let is_kept = |it: &(usize, &u8)| *it.1 != b'\\' || !matches!(title.get(it.0 + 1), Some(b'"' | b'\'' | b')'));
+            title = Cow::Owned(title.iter().enumerate().filter(is_kept).map(|it| *it.1).collect());
+        }
+        let title = &title[..];
         let has = |byte: u8| bun_core::strings::contains_char(title, byte);
         let mut printed = Vec::with_capacity(title.len() + 3);
         if has_space {
@@ -956,7 +947,7 @@ impl<'a> Printer<'a, '_> {
                 continue;
             }
             let len = first_char(rest).map_or(1, |it| it.1);
-            if matches!(rest[0], b'\\' | b'[' | b']') && !self.is_mdx {
+            if matches!(rest[0], b'\\' | b'[' | b']') {
                 printed.push(b'\\');
             }
             printed.extend_from_slice(&rest[..len]);
@@ -1412,6 +1403,7 @@ impl<'a> Printer<'a, '_> {
                     let number = match index {
                         0 => u64::from(list.number),
                         _ if is_git_diff_friendly => 1,
+                        _ if printer.is_mdx => u64::from(list.number) + index,
                         _ => (u64::from(list.number) + index).min(999_999_999),
                     };
                     let mut prefix = number.to_string().into_bytes();

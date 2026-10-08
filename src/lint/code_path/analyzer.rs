@@ -7,6 +7,7 @@
 //! entering or leaving the node that stands for it.
 
 use super::state::{ChoiceKind, Cx, LoopKind, State};
+use crate::ast::walk::{Visitor, walk};
 use super::{CodePath, Event, Origin, Segment, SegmentIds};
 use crate::ast::{
     BinOp, Chain, Expr, ExprKind, File, Flags, FnKind, Func, Key, KeyKind, Member, MemberKind, Node,
@@ -46,7 +47,7 @@ struct Frame<'a> {
 }
 
 /// ESLint's `CodePathAnalyzer`.
-pub(crate) struct Analyzer<'a> {
+struct Builder<'a> {
     file: &'a File<'a>,
     /// The states of the code paths that have started and not ended.
     states: Vec<State>,
@@ -192,15 +193,7 @@ fn starts_with_identifier_reference(node: Node) -> bool {
     }
 }
 
-impl<'a> Analyzer<'a> {
-    pub(crate) fn new(file: &'a File<'a>) -> Self {
-        Analyzer {
-            file,
-            states: Vec::new(),
-            spare_states: Vec::new(),
-            ancestors: Vec::new(),
-        }
-    }
+impl<'a> Builder<'a> {
 
     // ───────────────────────────── events ─────────────────────────────
 
@@ -426,6 +419,11 @@ impl<'a> Analyzer<'a> {
             Node::PatProp(prop) => {
                 if prop.default().is_some_and(is) {
                     fork_for_default(state);
+                } else if prop.default().is_some() && node == Node::Pat(prop.value()) {
+                    // The `AssignmentPattern` is entered here, after the key.
+                    cx.node = parent.node;
+                    self.forward_current_to_head(cx);
+                    cx.node = node;
                 }
             }
             _ => {}
@@ -561,7 +559,7 @@ impl<'a> Analyzer<'a> {
     }
 
     /// `enterNode`, up to where it calls the listeners of the node.
-    pub(crate) fn enter(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
+    fn enter(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
         let cx = &mut Cx {
             file: self.file,
             node,
@@ -777,7 +775,7 @@ impl<'a> Analyzer<'a> {
     }
 
     /// `leaveNode`, before it calls the listeners of the node.
-    pub(crate) fn before_exit(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
+    fn before_exit(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
         let cx = &mut Cx {
             file: self.file,
             node: Self::node_of_event(node),
@@ -830,7 +828,7 @@ impl<'a> Analyzer<'a> {
     }
 
     /// `leaveNode`, after it has called them: `postprocess`.
-    pub(crate) fn after_exit(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
+    fn after_exit(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
         let cx = &mut Cx {
             file: self.file,
             node: Self::node_of_event(node),
@@ -881,5 +879,98 @@ impl<'a> Analyzer<'a> {
             }
             _ => {}
         }
+    }
+}
+
+// ───────────────────────────── the two passes ─────────────────────────────
+
+/// The first pass: a walk that builds the graphs and keeps the events.
+struct Recorder<'a> {
+    builder: Builder<'a>,
+    /// Each with the number of the step that it belongs to.
+    events: Vec<(u32, Event<'a>)>,
+    /// A node is three steps: entering it, leaving it, having left it.
+    step: u32,
+}
+
+impl<'a> Recorder<'a> {
+    fn step(&mut self, node: Node<'a>, step: fn(&mut Builder<'a>, Node<'a>, &mut dyn FnMut(Event<'a>))) {
+        self.step += 1;
+        let (events, number) = (&mut self.events, self.step);
+        step(&mut self.builder, node, &mut |event| events.push((number, event)));
+    }
+}
+
+impl<'a> Visitor<'a> for Recorder<'a> {
+    fn enter(&mut self, node: Node<'a>) {
+        self.step(node, Builder::enter);
+    }
+
+    fn exit(&mut self, node: Node<'a>) {
+        self.step(node, Builder::before_exit);
+        self.step(node, Builder::after_exit);
+    }
+}
+
+/// Tells the rules about the code paths of a file during the walk that calls their listeners.
+///
+/// Like ESLint, it analyzes the whole file before the first listener is called: a rule sees the
+/// finished graph from the first event on, with the segments that follow the current one and
+/// those that lead back to it from the end of a loop.
+pub(crate) struct Analyzer<'a> {
+    file: &'a File<'a>,
+    events: std::vec::IntoIter<(u32, Event<'a>)>,
+    step: u32,
+}
+
+impl<'a> Analyzer<'a> {
+    pub(crate) fn new(file: &'a File<'a>) -> Self {
+        file.lazy.code_paths.clear();
+        let mut recorder = Recorder {
+            builder: Builder {
+                file,
+                states: Vec::new(),
+                spare_states: Vec::new(),
+                ancestors: Vec::new(),
+            },
+            events: Vec::new(),
+            step: 0,
+        };
+        walk(file, &mut recorder);
+        Analyzer {
+            file,
+            events: recorder.events.into_iter(),
+            step: 0,
+        }
+    }
+
+    /// Emits the events of the next step.
+    fn step(&mut self, emit: &mut dyn FnMut(Event<'a>)) {
+        self.step += 1;
+        while let Some(&(step, event)) = self.events.as_slice().first()
+            && step <= self.step
+        {
+            self.events.next();
+            self.file.lazy.code_paths.follow(event);
+            emit(event);
+        }
+    }
+
+    /// ESLint's `enterNode`, up to where it calls the listeners of the node.
+    #[inline]
+    pub(crate) fn enter(&mut self, _: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
+        self.step(emit);
+    }
+
+    /// `leaveNode`, before it calls the listeners of the node.
+    #[inline]
+    pub(crate) fn before_exit(&mut self, _: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
+        self.step(emit);
+    }
+
+    /// `leaveNode`, after it has called them.
+    #[inline]
+    pub(crate) fn after_exit(&mut self, _: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
+        self.step(emit);
     }
 }

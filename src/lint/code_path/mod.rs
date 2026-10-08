@@ -2,8 +2,14 @@
 //!
 //! A [`CodePath`] is made for the file, for each function, each class field initializer and each
 //! static block. It consists of [`Segment`]s, which fork at a branch and join after it. The
-//! analysis runs during the walk of the file, and only if a rule listens for it
+//! analysis runs only if a rule listens for it
 //! ([`Listeners::code_path_start`](crate::rule::Listeners::code_path_start) and the following).
+//!
+//! As in ESLint, the whole file is analyzed before the first listener is called, and the events
+//! are told during the walk. So a rule sees the finished graph from the first event on:
+//! `next_segments()` of a segment that starts is complete, its `prev_segments()` include those
+//! that lead back to it from the end of a loop and have not started yet, and
+//! `returned_segments()` is complete when the code path starts.
 //!
 //! | ESLint | Here |
 //! | --- | --- |
@@ -92,7 +98,7 @@ pub(crate) struct SegmentData {
     is_thrown: bool,
 }
 
-/// The code paths and the segments of a file. It grows during the walk.
+/// The code paths and the segments of a file.
 #[derive(Default)]
 pub(crate) struct Store {
     paths: RefCell<Vec<CodePathData>>,

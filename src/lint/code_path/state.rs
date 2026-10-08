@@ -26,6 +26,26 @@ impl<'a> Cx<'_, 'a> {
 // ───────────────────────────── segments ─────────────────────────────
 
 impl Store {
+    pub(super) fn clear(&self) {
+        self.paths.borrow_mut().clear();
+        self.segments.borrow_mut().clear();
+    }
+
+    /// Keeps `current_segments` up to date while the events are told to the rules.
+    pub(super) fn follow(&self, event: Event) {
+        let (segment, starts) = match event {
+            Event::SegmentStart(segment, _) | Event::UnreachableSegmentStart(segment, _) => (segment, true),
+            Event::SegmentEnd(segment, _) | Event::UnreachableSegmentEnd(segment, _) => (segment, false),
+            _ => return,
+        };
+        let path = self.segments.borrow()[segment.id() as usize].path;
+        let current = &mut self.paths.borrow_mut()[path as usize].current_segments;
+        match starts {
+            true => current.push(segment.id()),
+            false => current.retain(|id| *id != segment.id()),
+        }
+    }
+
     pub(super) fn new_code_path(&self, origin: Origin, upper: Option<u32>) -> u32 {
         let mut paths = self.paths.borrow_mut();
         let id = paths.len() as u32;

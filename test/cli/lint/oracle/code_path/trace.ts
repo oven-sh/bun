@@ -14,6 +14,8 @@
 //   useg+ s1_1 NODE, useg- s1_1 NODE  onUnreachableCodePathSegmentStart, onUnreachableCodePathSegmentEnd
 //   loop s1_1 s1_2 NODE               onCodePathSegmentLoop
 //   graph s1 ..                       before `path-`, followed by a line for each segment
+//     traverse ..                     the order of `traverseSegments`: of a code path that ends, plain and with options,
+//                                     and after `loop` from the second segment to the first, as rules do
 //
 // The two syntax trees differ. Only the nodes that both have are entered and left in a trace: `common` says which.
 // `standIn` says which node `bun lint` passes with an event where ESLint passes one that it does not have. If that
@@ -192,6 +194,17 @@ function standIn(node: any): any {
   }
 }
 
+/** The segments in the order in which `traverseSegments` visits them, if the callback skips at `skip` and breaks at `stop`. */
+function traverse(path: any, options = {}, skip?: any, stop?: any): any[] {
+  const order: any[] = [];
+  path.traverseSegments(options, (segment: any, controller: any) => {
+    order.push(segment);
+    if (segment === skip) controller.skip();
+    if (segment === stop) controller.break();
+  });
+  return order;
+}
+
 function makeTracer() {
   const { Linter } = require(join(eslintDirectory, "lib/api.js"));
   const typescriptParser = require(join(typescriptEslintDirectory, "packages/parser/dist/index.js"));
@@ -236,9 +249,18 @@ function makeTracer() {
         else incomplete.push(lines.length);
         lines.push(line);
       };
+      const left = new Set<any>();
       const visit = (prefix: string, node: any) => {
-        if (isTypeSyntax(node)) return void (typeDepth += prefix === ">" ? 1 : -1);
-        const it = typeDepth === 0 && common(node, sourceCode);
+        if (isTypeSyntax(node)) {
+          // The type annotation of a pattern is inside it here, and after it in `bun lint`.
+          const isOfPattern = prefix === ">" && typeDepth === 0 && /^(Identifier|ObjectPattern|ArrayPattern)$/.test(node.parent.type);
+          if (isOfPattern && node.parent.typeAnnotation === node) {
+            visit("<", node.parent);
+            left.add(node.parent);
+          }
+          return void (typeDepth += prefix === ">" ? 1 : -1);
+        }
+        const it = typeDepth === 0 && !left.has(node) && common(node, sourceCode);
         if (!it) return;
         for (const at of incomplete) lines[at] += written(it);
         incomplete = [];
@@ -274,6 +296,16 @@ function makeTracer() {
                 ` allNext=${list(it.allNextSegments)} allPrev=${list(it.allPrevSegments)}`,
             );
           }
+          // `traverseSegments`, plain and with some of what can be asked of it.
+          const order = traverse(path);
+          lines.push(`  traverse ${list(order)}`);
+          order.slice(0, 6).forEach((at, i) => {
+            lines.push(`  traverse skip=${at.id} ${list(traverse(path, {}, at))}`);
+            lines.push(`  traverse break=${at.id} ${list(traverse(path, {}, undefined, at))}`);
+            for (const last of order.slice(i, i + 3)) {
+              lines.push(`  traverse first=${at.id} last=${last.id} ${list(traverse(path, { first: at, last }))}`);
+            }
+          });
           paths.pop();
           event(`path- ${path.id}`, node);
         },
@@ -281,7 +313,10 @@ function makeTracer() {
         onCodePathSegmentEnd: segment("seg-"),
         onUnreachableCodePathSegmentStart: segment("useg+"),
         onUnreachableCodePathSegmentEnd: segment("useg-"),
-        onCodePathSegmentLoop: (from: any, to: any, node: any) => event(`loop ${from.id} ${to.id}`, node),
+        onCodePathSegmentLoop(from: any, to: any, node: any) {
+          event(`loop ${from.id} ${to.id}`, node);
+          lines.push(`  traverse ${list(traverse(paths.at(-1), { first: to, last: from }))}`);
+        },
       };
     },
   };

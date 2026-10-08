@@ -194,7 +194,11 @@ fn estree_of_expr(e: Expr) -> Estree {
         ExprKind::Ident(_) | ExprKind::This | ExprKind::Dot { .. } | ExprKind::String(_) if is_name(e) => {
             return None;
         }
-        ExprKind::String(_) if matches!(e.parent(), Node::Expr(parent) if matches!(parent.kind(), ExprKind::Jsx(_))) => {
+        // `JSXText`
+        ExprKind::String(_)
+            if e.jsx_container_span().is_none()
+                && matches!(e.parent(), Node::Expr(parent) if matches!(parent.kind(), ExprKind::Jsx(_))) =>
+        {
             return None;
         }
         ExprKind::String(_) if e.text().starts_with(b"`") => "TemplateLiteral",
@@ -510,7 +514,40 @@ impl<'a> Log<'a> {
                 list(&segment.all_prev_segments()),
             ));
         }
+        // `traverseSegments`, plain and with some of what can be asked of it.
+        let order = traverse(path, None, None, None, None);
+        self.lines.push(format!("  traverse {}", list(&order)));
+        for (i, &at) in order.iter().enumerate().take(6) {
+            self.lines.push(format!("  traverse skip={at} {}", list(&traverse(path, None, None, Some(at), None))));
+            self.lines.push(format!("  traverse break={at} {}", list(&traverse(path, None, None, None, Some(at)))));
+            for &last in order.iter().skip(i).take(3) {
+                let order = traverse(path, Some(at), Some(last), None, None);
+                self.lines.push(format!("  traverse first={at} last={last} {}", list(&order)));
+            }
+        }
     }
+}
+
+/// The segments in the order in which `traverse_segments_between` visits them, if the callback
+/// skips at `skip` and stops at `stop`.
+fn traverse<'a>(
+    path: CodePath<'a>,
+    first: Option<Segment<'a>>,
+    last: Option<Segment<'a>>,
+    skip: Option<Segment<'a>>,
+    stop: Option<Segment<'a>>,
+) -> Vec<Segment<'a>> {
+    let mut order = Vec::new();
+    path.traverse_segments_between(first, last, |segment, traversal| {
+        order.push(segment);
+        if skip == Some(segment) {
+            traversal.skip();
+        }
+        if stop == Some(segment) {
+            traversal.stop();
+        }
+    });
+    order
 }
 
 struct Trace;
@@ -535,7 +572,12 @@ impl Rule for Trace {
         on.segment_end(|_, segment, node, cx| cx.state.segment("seg-", segment, node));
         on.unreachable_segment_start(|_, segment, node, cx| cx.state.segment("useg+", segment, node));
         on.unreachable_segment_end(|_, segment, node, cx| cx.state.segment("useg-", segment, node));
-        on.segment_loop(|_, from, to, node, cx| cx.state.event(format!("loop {from} {to}"), node));
+        on.segment_loop(|_, from, to, node, cx| {
+            cx.state.event(format!("loop {from} {to}"), node);
+            let order = traverse(from.code_path(), Some(to), Some(from), None, None);
+            let names: Vec<String> = order.iter().map(Segment::to_string).collect();
+            cx.state.lines.push(format!("  traverse {}", names.join(",")));
+        });
         on.finish(|_, cx| OUTPUT.set(std::mem::take(&mut cx.state.lines)));
         Log::default()
     }

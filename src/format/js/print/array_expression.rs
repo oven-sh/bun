@@ -1,6 +1,6 @@
 use super::array_element_list::ArrayElementList;
 use crate::prelude::*;
-use crate::write;
+use crate::{format_args, write};
 
 /// `[a, b]`
 pub(crate) fn write_array_expression<'a>(e: Expr<'a>, elements: List<'a, Expr<'a>>, f: &mut Formatter<'a>) {
@@ -9,11 +9,16 @@ pub(crate) fn write_array_expression<'a>(e: Expr<'a>, elements: List<'a, Expr<'a
         write!(f, format_dangling_comments(e.span()).with_soft_block_indent());
     } else {
         let group_id = f.group_id("array");
+        // `[, , /* comment */]`: there is no element that the comment could belong to.
+        let has_line_comment = !f.is_quiet()
+            && elements.iter().all(Expr::is_missing)
+            && f.comments().comments_in_range(e.span().start, e.span().end).iter().any(|comment| comment.is_line());
+        let content = format_args!(ArrayElementList::new(e, elements, group_id), format_dangling_comments(e.span()));
         write!(
             f,
-            group(&soft_block_indent(&ArrayElementList::new(e, elements, group_id)))
+            group(&soft_block_indent(&content))
                 .with_group_id(Some(group_id))
-                .should_expand(should_break(elements))
+                .should_expand(has_line_comment || should_break(elements))
         );
     }
     write!(f, "]");

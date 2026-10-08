@@ -828,7 +828,7 @@ public:
 
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
-    WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
+    RefPtr<WebCore::SubtleCrypto> m_subtleCrypto;
 
     // Promises rejected while they had no handler, awaiting handleRejectedPromises()
     // after the microtask drain, each with whose rejection it is as decided when it

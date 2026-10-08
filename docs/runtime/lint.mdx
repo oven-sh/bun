@@ -74,6 +74,18 @@ export default [
 
 Rules in JavaScript are slower than the built-in ones. A file costs nothing extra if no rule in JavaScript is on for it.
 
+Plugins run inside `bun lint`, on the threads that lint, as they run inside `eslint`:
+
+- What a plugin prints goes to the terminal, and `process.exit()` ends the run.
+- A rule that throws ends the run with exit code `2`. With an `.oxlintrc.json` the error is reported for the file, and the run goes on.
+- Each thread loads the plugins for itself, so state at the top level of a module is per thread.
+
+Three things are not there for a rule in JavaScript:
+
+- Types. `parserServices.program` is `null`, also with `--type-aware`.
+- `languageOptions.parser`. A rule cannot parse text of its own.
+- Processors, and parsers other than those of ESLint and typescript-eslint.
+
 ### `.eslintrc.json`
 
 `bun lint` reads `.eslintrc.json` and `.eslintrc`, if they are JSON. It skips what they extend from a package, such as `"next/core-web-vitals"`. `.eslintrc.js` and `.eslintrc.yml` are not supported: [migrate to `eslint.config.js`](https://eslint.org/docs/latest/use/configure/migration-guide).

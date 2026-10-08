@@ -1,5 +1,5 @@
 // Plugin tests concern plugins in development mode.
-import { devTest, minimalFramework } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 // Note: more in depth testing of plugins is done in test/bundler/bundler_plugin.test.ts
 devTest("onResolve", {
@@ -147,3 +147,84 @@ devTest("onResolve + onLoad virtual file", {
 //     await dev.fetch("/").expect('value: 2');
 //   },
 // });
+
+devTest("a file a plugin resolves to is not sent again when its importer changes", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["item.ts"],
+    }),
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      import * as path from "node:path";
+      export default {
+        name: "shared",
+        setup(build) {
+          // Spelled with forward slashes, as a plugin building paths from a template does.
+          build.onResolve({ filter: /^shared$/ }, () => ({
+            path: path.join(import.meta.dir, "shared.ts").replaceAll("\\\\", "/"),
+          }));
+        },
+      };
+    `,
+    "shared.ts": `
+      console.log("shared");
+      export default "s";
+    `,
+    "item.ts": `
+      import s from "shared";
+      console.log("item " + s + " 1");
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("shared", "item s 1");
+    // Only item.ts changed: shared.ts must not run again (its state kept).
+    await dev.patch("item.ts", { find: " 1", replace: " 2" });
+    await c.expectMessage("item s 2");
+    await dev.patch("item.ts", { find: " 2", replace: " 3" });
+    await c.expectMessage("item s 3");
+  },
+});
+devTest("a file a plugin resolves to with forward slashes is watched", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["item.ts"],
+    }),
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      import * as path from "node:path";
+      export default {
+        name: "shared",
+        setup(build) {
+          // Spelled with forward slashes, as a plugin building paths from a template does.
+          build.onResolve({ filter: /^shared$/ }, () => ({
+            path: path.join(import.meta.dir, "shared.ts").replaceAll("\\\\", "/"),
+          }));
+        },
+      };
+    `,
+    "shared.ts": `
+      export default "s1";
+    `,
+    "item.ts": `
+      import s from "shared";
+      console.log("item " + s);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("item s1");
+    await dev.patch("shared.ts", { find: "s1", replace: "s2" });
+    await c.expectMessage("item s2");
+    await dev.patch("shared.ts", { find: "s2", replace: "s3" });
+    await c.expectMessage("item s3");
+  },
+});

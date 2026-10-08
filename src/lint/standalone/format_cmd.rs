@@ -113,6 +113,11 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
         Some(parser) => bun_format::json::Parser::from_name(parser),
         None => bun_format::json::parser_for_path(name),
     };
+    // Where there are no marks in the document, the cursor is found by comparing the texts.
+    let with_cursor = |code: &[u8], out: Vec<u8>| {
+        let cursor = bun_format::cursor::cursor_in_formatted_text(code, options, &out);
+        (out, cursor)
+    };
     if let Some(parser) = json_parser {
         let mut sorted = Vec::new();
         let is_package_json = name == b"package.json" || name.ends_with(b"/package.json");
@@ -121,7 +126,7 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
             _ => code,
         };
         let mut out = Vec::new();
-        return bun_format::json::format(code, parser, options, &mut Default::default(), &mut out).map(|()| (out, None));
+        return bun_format::json::format(code, parser, options, &mut Default::default(), &mut out).map(|()| with_cursor(code, out));
     }
     let css_parser = match &options.parser {
         Some(parser) => bun_format::css::Parser::from_name(parser),
@@ -129,7 +134,7 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
     };
     if let Some(parser) = css_parser {
         let mut out = Vec::new();
-        return bun_format::css::format(code, parser, options, &mut Default::default(), &mut out).map(|()| (out, None));
+        return bun_format::css::format(code, parser, options, &mut Default::default(), &mut out).map(|()| with_cursor(code, out));
     }
     let is_yaml = match &options.parser {
         Some(parser) => &parser[..] == b"yaml",
@@ -137,7 +142,7 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
     };
     if is_yaml {
         let mut out = Vec::new();
-        return bun_format::yaml::format(code, options, &mut Default::default(), &mut out).map(|()| (out, None));
+        return bun_format::yaml::format(code, options, &mut Default::default(), &mut out).map(|()| with_cursor(code, out));
     }
     let is_graphql = match &options.parser {
         Some(parser) => &parser[..] == b"graphql",
@@ -145,7 +150,7 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
     };
     if is_graphql {
         let mut out = Vec::new();
-        return bun_format::graphql::format(code, options, &mut Default::default(), &mut out).map(|()| (out, None));
+        return bun_format::graphql::format(code, options, &mut Default::default(), &mut out).map(|()| with_cursor(code, out));
     }
     let code = match bun_format::pragma::before_parsing(code, options) {
         bun_format::pragma::BeforeParsing::LeaveAsItIs => return Ok((code.to_vec(), options.cursor_offset)),

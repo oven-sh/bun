@@ -145,6 +145,12 @@ describe("a run that names only configuration files", () => {
     expect(outcome(refused)).toEqual(isConfig("tsconfig.build.json"));
   });
 
+  test("is not what a directory with such a name is", async () => {
+    using dir = project({ "tsconfig.old.json/a.ts": `export const wrong: number = "";\n` });
+    const checked = await check(dir, ["tsconfig.old.json"]);
+    expect(outcome(checked)).toEqual({ stdout: error.replace("src/", "tsconfig.old.json/"), exitCode: 1 });
+  });
+
   // Before something runs, it is the module to run.
   test("is not refused by `bun --check`", async () => {
     using dir = tempDir("bun-check", { "tsconfig.empty.json": `{}` });

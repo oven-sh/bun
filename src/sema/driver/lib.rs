@@ -1578,7 +1578,8 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
     // nearest project, and nothing is checked. Before something runs (`--check`) it is the module
     // to run, whatever its name.
     let is_config = |path: &Vec<u8>| {
-        explicit.as_ref().is_some_and(|it| is_same(it, path)) || is_named_like_config(path)
+        explicit.as_ref().is_some_and(|it| is_same(it, path))
+            || is_named_like_config(path) && !disk.is_dir(path)
     };
     if !request.are_entry_points && missing.is_empty() && paths.iter().all(is_config) {
         let refused = config_named_as_path(&cwd, &paths[0], is_case_sensitive);

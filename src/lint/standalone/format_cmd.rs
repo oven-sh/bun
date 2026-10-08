@@ -144,6 +144,23 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
         let mut out = Vec::new();
         return bun_format::yaml::format(code, options, &mut Default::default(), &mut out).map(|()| with_cursor(code, out));
     }
+    let is_markdown = match &options.parser {
+        Some(parser) => matches!(&parser[..], b"markdown" | b"remark" | b"markdown-ast"),
+        None => bun_format::markdown::is_markdown_path(name),
+    };
+    if is_markdown {
+        let mut out = Vec::new();
+        if options.parser.as_deref() == Some(b"markdown-ast") {
+            bun_format::markdown::dump_ast(code, &mut out);
+            return Ok((out, None));
+        }
+        let mut format_javascript = |path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>| {
+            let formatted = format_text_with_cursor(&crate::text(path), code, options);
+            formatted.map(|(formatted, _)| out.extend_from_slice(&formatted)).is_ok()
+        };
+        let scratch = &mut Default::default();
+        return bun_format::markdown::format(code, options, scratch, &mut out, &mut format_javascript).map(|()| with_cursor(code, out));
+    }
     let is_graphql = match &options.parser {
         Some(parser) => &parser[..] == b"graphql",
         None => bun_format::graphql::is_graphql_path(name),
@@ -227,6 +244,7 @@ fn is_other_language(path: &Path) -> bool {
         || bun_format::css::parser_for_path(path).is_some()
         || bun_format::graphql::is_graphql_path(path)
         || bun_format::yaml::is_yaml_path(path)
+        || bun_format::markdown::is_markdown_path(path)
 }
 
 /// The files at `paths` and in the directories at `paths` that can be formatted.

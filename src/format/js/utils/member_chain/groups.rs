@@ -1,5 +1,7 @@
-use super::chain_member::ChainMember;
+use super::chain_member::{CallExpressionPosition, ChainMember};
+use crate::js::utils::call_expression::is_next_line_empty;
 use crate::prelude::*;
+use crate::write;
 use smallvec::SmallVec;
 use std::cell::Cell;
 
@@ -106,25 +108,10 @@ impl<'a> MemberChainGroup<'a> {
 
     /// Formats the group, to be asked about and written later. The groups have to be inspected
     /// in order, for the sake of the comments.
-    ///
-    /// `index_in_tail`: `None` for the head.
-    pub(super) fn inspect(&self, index_in_tail: Option<usize>, f: &mut Formatter<'a>) {
-        if self.formatted.get().is_some() {
-            return;
+    pub(super) fn inspect(&self, f: &mut Formatter<'a>) {
+        if self.formatted.get().is_none() {
+            self.formatted.set(Some(f.intern(&FormatMemberChainGroup { group: self })));
         }
-        let interned = f.intern(&FormatMemberChainGroup { group: self });
-        if let Some(index) = index_in_tail {
-            self.needs_empty_line.set((index == 0 || self.follows_call()) && self.needs_empty_line_before(f));
-        }
-        self.formatted.set(Some(interned));
-    }
-
-    /// Whether the group starts with a member of what a call returns: `.b` of `a().b`.
-    pub(super) fn follows_call(&self) -> bool {
-        matches!(
-            self.members.first().map(|member| member.expr().kind()),
-            Some(ExprKind::Dot { obj, .. }) if matches!(obj.kind(), ExprKind::Call(_))
-        )
     }
 
     /// [`MemberChainGroup::inspect`] has to be called first.
@@ -133,50 +120,24 @@ impl<'a> MemberChainGroup<'a> {
         self.formatted.get().flatten().is_some_and(|formatted| formatted.will_break(f))
     }
 
+    /// Whether there is an empty line before the group if the chain breaks.
     pub(super) fn needs_empty_line(&self) -> bool {
         self.needs_empty_line.get()
     }
 
-    /// Whether there is an empty line before the `.` that the group starts with.
-    fn needs_empty_line_before(&self, f: &Formatter<'a>) -> bool {
-        let Some(ChainMember::StaticMember(expression)) = self.members.first() else {
-            return false;
-        };
-        let ExprKind::Dot { obj, name, .. } = expression.kind() else {
-            return false;
-        };
+    pub(super) fn set_needs_empty_line(&self, needs_empty_line: bool) {
+        self.needs_empty_line.set(needs_empty_line);
+    }
+}
 
-        // Not after a call that the chain starts with: `fn()\n\n.bar()` is `fn().bar()`.
-        if let AstNodes::CallExpression(call) = obj.as_ast_nodes()
-            && !call.callee().is_some_and(|callee| {
-                matches!(
-                    callee.as_ast_nodes(),
-                    AstNodes::StaticMemberExpression(_)
-                        | AstNodes::ComputedMemberExpression(_)
-                        | AstNodes::PrivateFieldExpression(_)
-                        | AstNodes::CallExpression(_)
-                )
-            })
-        {
-            return false;
-        }
-
-        let source = f.source_text();
-        let start = obj.span().end;
-        let mut end = name.start();
-
-        // Up to the first comment between the object and the `.`.
-        if let Some(printed_comment) = (f.comments().printed_comments().iter().rev())
-            .take_while(|c| start <= c.span.start && c.span.end < end)
-            .last()
-        {
-            end = printed_comment.span.start;
-        } else if let Some(first_comment) = f.comments().comments_before_character(start, b'.').first() {
-            end = first_comment.span.start;
-        }
-
-        (source.bytes_range(start, end).iter().enumerate())
-            .any(|(index, b)| matches!(b, b'\n' | b'\r') && source.lines_after(start + index as u32) > 1)
+/// Prettier's `shouldInsertEmptyLineAfter`: whether the line after `e`, or after the `)` behind it,
+/// is empty.
+pub(super) fn should_insert_empty_line_after<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let (source_text, end) = (f.source_text(), e.span().end);
+    let next = bun_lint::tokens::skip_trivia(source_text.as_bytes(), end);
+    match source_text.byte_at(next) {
+        Some(b')') => is_next_line_empty(source_text, next + 1),
+        _ => is_next_line_empty(source_text, end),
     }
 }
 
@@ -205,6 +166,20 @@ struct FormatMemberChainGroup<'a, 'b> {
 
 impl<'a> Format<'a> for FormatMemberChainGroup<'a, '_> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        f.join().entries(self.group.members.iter());
+        let mut members = self.group.members.iter().peekable();
+        while let Some(member) = members.next() {
+            write!(f, member);
+            // Prettier writes a line break after a call that an empty line follows, which makes an
+            // empty line at the end of a group. It is there in the middle of a group as well.
+            if let ChainMember::CallExpression {
+                expression,
+                position: CallExpressionPosition::Middle,
+            } = *member
+                && members.peek().is_some()
+                && should_insert_empty_line_after(expression, f)
+            {
+                write!(f, hard_line_break());
+            }
+        }
     }
 }

@@ -8,7 +8,7 @@ pub(crate) mod groups;
 pub(crate) mod simple_argument;
 
 use self::chain_member::{CallExpressionPosition, ChainMember, call_of_callee, comments_lead_a_later_link};
-use self::groups::{MemberChainGroup, MemberChainGroupsBuilder, TailChainGroups};
+use self::groups::{MemberChainGroup, MemberChainGroupsBuilder, TailChainGroups, should_insert_empty_line_after};
 use self::simple_argument::SimpleArgument;
 use super::call_expression::{callee_trailing_comments, is_call_expression, is_member_expression};
 use super::is_long_curried_call;
@@ -91,10 +91,34 @@ impl<'a> MemberChain<'a> {
     }
 
     fn inspect_member_chain_groups(&self, f: &mut Formatter<'a>) {
-        self.head.inspect(None, f);
-        for (index, group) in self.tail.iter().enumerate() {
-            group.inspect(Some(index), f);
+        self.head.inspect(f);
+        for group in self.tail.iter() {
+            group.inspect(f);
         }
+    }
+
+    /// Tells the groups before which an empty line is kept. Returns whether one of them is after a
+    /// call, which takes breaking the chain. One after the head, if that does not end with a call,
+    /// is only kept if the chain breaks.
+    fn find_empty_lines(&self, f: &Formatter<'a>) -> bool {
+        let mut has_empty_line_after_call = false;
+        let mut previous = self.head.members().last();
+        for (index, group) in self.tail.iter().enumerate() {
+            let needs_empty_line = match previous {
+                Some(ChainMember::CallExpression { expression, .. }) => {
+                    let is_followed_by_empty_line = should_insert_empty_line_after(*expression, f);
+                    has_empty_line_after_call |= is_followed_by_empty_line;
+                    is_followed_by_empty_line
+                }
+                // Not after a call that the chain starts with: `fn()\n\n.bar()` is `fn().bar()`.
+                Some(ChainMember::Node(node)) if is_call_expression(*node, f) => false,
+                Some(member) => index == 0 && should_insert_empty_line_after(member.expr(), f),
+                None => false,
+            };
+            group.set_needs_empty_line(needs_empty_line);
+            previous = group.members().last();
+        }
+        has_empty_line_after_call
     }
 
     /// Prettier's `shouldMerge`'s counterpart `shouldNotWrap`, and the tests on complexity.
@@ -167,9 +191,7 @@ impl<'a> Format<'a> for MemberChain<'a> {
 
         self.inspect_member_chain_groups(f);
 
-        // An empty line after a call is kept, which takes breaking the chain. One after the head, if
-        // that does not end with a call, is only kept if the chain breaks.
-        let has_empty_line_after_call = self.tail.iter().any(|group| group.needs_empty_line() && group.follows_call());
+        let has_empty_line_after_call = self.find_empty_lines(f);
 
         if self.tail.len() <= 1 && !has_comment && !has_empty_line_after_call {
             return match is_long_curried_call(self.root) {

@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use std::cell::OnceCell;
 
 /// Require braces around arrow function bodies.
 pub struct ArrowBodyStyle {
@@ -44,43 +45,61 @@ fn has_asi_problem(token: Option<Token<'_>>) -> bool {
     })
 }
 
-/// ESLint's `isInsideForLoopInitializer`.
-fn is_inside_for_loop_initializer(e: Expr<'_>) -> bool {
-    let mut inner = Node::Expr(e);
-    for ancestor in inner.ancestors() {
-        if let Node::Stmt(statement) = ancestor
-            && let StmtKind::For {
-                init: Some(init), ..
-            } = statement.kind()
-        {
-            let init = match init.kind() {
-                StmtKind::Expr(head) => Node::Expr(head),
-                _ => Node::Stmt(init),
-            };
-            if init == inner {
-                return true;
-            }
-        }
-        inner = ancestor;
-    }
-    false
+/// Where things are that few fixes ask for.
+#[derive(Default)]
+pub struct State {
+    /// The start of the initializer of each `for`, in source order, with the greatest end of this
+    /// one and those before it.
+    for_loop_initializers: OnceCell<Vec<(u32, u32)>>,
+    /// The end of the left side of each `in` operator, in ascending order.
+    in_operators: OnceCell<Vec<u32>>,
 }
 
-/// Whether there is an `in` operator anywhere in `node`.
-fn has_in_operator(node: Node<'_>) -> bool {
-    if let Node::Expr(e) = node
-        && matches!(e.kind(), ExprKind::Binary { op: BinOp::In, .. })
-    {
-        return true;
+impl State {
+    /// ESLint's `isInsideForLoopInitializer`.
+    fn is_inside_for_loop_initializer(&self, e: Expr<'_>) -> bool {
+        let initializers = self.for_loop_initializers.get_or_init(|| {
+            let initializers = e.file().stmts_of_kind(StmtTag::For).filter_map(|statement| match statement.kind() {
+                StmtKind::For { init: Some(init), .. } => Some(match init.kind() {
+                    StmtKind::Expr(head) => head.span(),
+                    _ => init.span(),
+                }),
+                _ => None,
+            });
+            let mut initializers: Vec<_> = initializers.map(|it| (it.start, it.end)).collect();
+            initializers.sort_unstable();
+            let mut greatest_end = 0;
+            for (_, end) in &mut initializers {
+                greatest_end = greatest_end.max(*end);
+                *end = greatest_end;
+            }
+            initializers
+        });
+        let start = e.span().start;
+        let before = initializers.partition_point(|it| it.0 <= start);
+        before.checked_sub(1).and_then(|last| initializers.get(last)).is_some_and(|it| it.1 > start)
     }
-    let mut found = false;
-    node.for_each_child(|child| found = found || has_in_operator(child));
-    found
+
+    /// Whether there is an `in` operator anywhere in `e`.
+    fn has_in_operator(&self, e: Expr<'_>) -> bool {
+        let operators = self.in_operators.get_or_init(|| {
+            let operators = e.file().exprs_of_kind(ExprTag::Binary).filter_map(|it| match it.kind() {
+                ExprKind::Binary { op: BinOp::In, left, .. } => Some(left.span().end),
+                _ => None,
+            });
+            let mut operators: Vec<_> = operators.collect();
+            operators.sort_unstable();
+            operators
+        });
+        let span = e.span();
+        operators.get(operators.partition_point(|&it| it < span.start)).is_some_and(|&it| it < span.end)
+    }
 }
 
 /// Makes an expression of the body `{ return argument; }`, which is at `body`.
 fn remove_block<'a>(
     fixer: Fixer<'a>,
+    state: &State,
     arrow: Expr<'a>,
     body: Span,
     statement: Stmt<'a>,
@@ -123,7 +142,7 @@ fn remove_block<'a>(
     );
     if (starts_with_brace
         || is_sequence
-        || (is_inside_for_loop_initializer(arrow) && has_in_operator(Node::Expr(arrow))))
+        || (state.is_inside_for_loop_initializer(arrow) && state.has_in_operator(arrow)))
         && !argument.is_parenthesized()
     {
         fixes.push(fixer.insert_before(first_value, "("));
@@ -240,7 +259,7 @@ impl ArrowBodyStyle {
             Some(_) => UNEXPECTED_SINGLE_BLOCK,
         };
         cx.report(body, message).fix(|fixer| match returned {
-            Some((statement, Some(argument))) => remove_block(fixer, e, body, statement, argument),
+            Some((statement, Some(argument))) => remove_block(fixer, &cx.state, e, body, statement, argument),
             _ => None,
         });
     }
@@ -248,7 +267,7 @@ impl ArrowBodyStyle {
 
 impl Rule for ArrowBodyStyle {
     const META: Meta = Meta::eslint("arrow-body-style", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    type State<'a> = State;
 
     fn new(options: &Options) -> Self {
         ArrowBodyStyle {
@@ -263,7 +282,8 @@ impl Rule for ArrowBodyStyle {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State {
         on.exprs([ExprTag::Fn], Self::check);
+        State::default()
     }
 }

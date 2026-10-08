@@ -278,7 +278,6 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         let for_lint = |len: usize| if LINT { len } else { 0 };
         let mut b = BoundBuilder {
             expr_kinds: filled(old.expr_kinds, for_lint(f.exprs.len()), NOT_REACHED),
-            ident_scope: filled(old.ident_scope, for_lint(f.exprs.len()), ScopeId::NONE),
             expr_symbol: filled(old.expr_symbol, f.exprs.len(), SymbolId::NONE),
             expr_parent: filled(old.expr_parent, f.exprs.len(), Parent::None),
             expr_flow: filled(old.expr_flow, for_checker(f.exprs.len()), UNREACHABLE),
@@ -4583,7 +4582,6 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
     #[inline]
     fn note_identifier(&mut self, id: ExprId) {
         self.note_kind(id, ExprTag::Ident, false);
-        self.b.ident_scope[id.idx()] = self.scope;
         self.idents.push((id, self.scope));
     }
 
@@ -4764,9 +4762,6 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             | ExprKind::ImportMeta
             | ExprKind::NewTarget(_) => {}
             ExprKind::Ident(_) => {
-                if LINT {
-                    self.b.ident_scope[id.idx()] = self.scope;
-                }
                 self.idents.push((id, self.scope));
                 let (name, func) = self.associated_declaration;
                 if !LINT {

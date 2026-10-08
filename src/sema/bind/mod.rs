@@ -1045,9 +1045,6 @@ pub struct BoundIn<S: Storage> {
     pub expr_kinds: S::List<u8>,
     /// How many of `expr_kinds` are 0, 1, 2 and so on, up to `2 * ExprTag::COUNT`.
     pub expr_kind_counts: S::List<u32>,
-    /// For each expression that is an identifier the binder gets to, the scope that it is resolved
-    /// from. `NONE` for everything else.
-    pub ident_scope: S::List<ScopeId>,
     /// What is declared among the locals of a scope, the exports of a file, a namespace or an enum, or
     /// as a type parameter, in the order it is bound: the symbol that the declaration got, which for
     /// one that is refused is a symbol of its own, and the scope. Of the two symbols of what is
@@ -1873,7 +1870,6 @@ impl BoundBuilder {
             flow_places,
             expr_kinds,
             expr_kind_counts,
-            ident_scope,
             declared,
             scope_node,
         } = self;
@@ -1967,7 +1963,6 @@ impl BoundBuilder {
         *flow_places = Default::default();
         expr_kinds.clear();
         expr_kind_counts.clear();
-        ident_scope.clear();
         declared.clear();
         scope_node.clear();
     }
@@ -2077,7 +2072,6 @@ impl BoundBuilder {
             flow_places: self.flow_places,
             expr_kinds: copy_to_arena(&mut self.expr_kinds, arena),
             expr_kind_counts: copy_to_arena(&mut self.expr_kind_counts, arena),
-            ident_scope: copy_to_arena(&mut self.ident_scope, arena),
             declared: copy_to_arena(&mut self.declared, arena),
             scope_node: copy_to_arena(&mut self.scope_node, arena),
         }
@@ -2122,7 +2116,7 @@ pub fn bind<'s>(
 /// `FnInfo::end` and `FnInfo::exit`, this has [`REACHABLE`]. [`UNREACHABLE`] and `FlowId::NONE` are
 /// where `bind` has them.
 ///
-/// Only here: `expr_kinds`, `expr_kind_counts`, `ident_scope`, `declared`, `scope_node`.
+/// Only here: `expr_kinds`, `expr_kind_counts`, `declared`, `scope_node`.
 ///
 /// Empty: the tables of names, `expr_flow`, `stmt_scope`, `type_by_alias`, `expr_scope`,
 /// `free_idents`, `alias_idents`, `assignments`, and what is listed for the checker to skip, to

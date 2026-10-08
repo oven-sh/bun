@@ -791,8 +791,8 @@ fn problems_of_lint_tables(hir: &bun_sema::hir::File, full: &bun_sema::bind::Bou
     use bun_sema::hir::{Chain, ExprKind};
     let mut problems = Vec::new();
     let mut counts = vec![0u32; 2 * ExprTag::COUNT];
-    if lint.expr_kinds.len() != hir.exprs.len() || lint.ident_scope.len() != hir.exprs.len() {
-        return vec!["expr_kinds: or ident_scope: not as long as the expressions".to_owned()];
+    if lint.expr_kinds.len() != hir.exprs.len() {
+        return vec!["expr_kinds: not as long as the expressions".to_owned()];
     }
     for (i, e) in hir.exprs.iter().enumerate() {
         let is_reached = lint.expr_parent[i] != Parent::None && !matches!(e.kind, ExprKind::Missing);
@@ -811,18 +811,9 @@ fn problems_of_lint_tables(hir: &bun_sema::hir::File, full: &bun_sema::bind::Bou
         if lint.expr_kinds[i] != expected {
             problems.push(format!("expr_kinds: at {i}: {} and not {expected}, {:?}", lint.expr_kinds[i], e.kind));
         }
-        if lint.ident_scope[i].is_some() != (is_reached && matches!(e.kind, ExprKind::Ident(_))) {
-            problems.push(format!("ident_scope of what is no identifier, or none: at {i}: {:?}", e.kind));
-        }
     }
     if lint.expr_kind_counts[..] != counts[..] {
         problems.push("expr_kind_counts".to_owned());
-    }
-    // What `bind` says of the names that it leaves to the checker.
-    for &(e, scope) in full.free_idents.iter().chain(full.alias_idents.iter()) {
-        if lint.ident_scope[e.idx()] != scope {
-            problems.push(format!("ident_scope is another: of {e:?}: {:?} and not {scope:?}", lint.ident_scope[e.idx()]));
-        }
     }
     let mut times: HashMap<Decl, u32> = HashMap::new();
     for &(symbol, decl, scope) in lint.declared.iter() {
@@ -870,15 +861,15 @@ fn problems_of_lint_tables(hir: &bun_sema::hir::File, full: &bun_sema::bind::Bou
             problems.push(format!("scope_node: {node:?} of a {:?}", scope.kind));
         }
     }
-    if !full.expr_kinds.is_empty() || !full.ident_scope.is_empty() || !full.declared.is_empty() || !full.scope_node.is_empty() {
+    if !full.expr_kinds.is_empty() || !full.declared.is_empty() || !full.scope_node.is_empty() {
         problems.push("bind has what is for a linter".to_owned());
     }
     problems
 }
 
-/// The same for `ours`, from `bind_for_format`: of the nodes that `bind` reaches.
+/// The same for `ours`, from `bind_for_format`.
 fn differences_for_format(full: &bun_sema::bind::Bound, ours: &bun_sema::bind::Bound) -> Vec<String> {
-    use bun_sema::bind::{ClassOwner, FnOwner, MemberOwner, Parent, PatParent};
+    use bun_sema::bind::{ClassOwner, MemberOwner, Parent, PatParent};
     use bun_sema::hir::{ExprId, StmtId};
     let mut different = Vec::new();
     macro_rules! same {
@@ -895,21 +886,29 @@ fn differences_for_format(full: &bun_sema::bind::Bound, ours: &bun_sema::bind::B
     same! {
         // The parent of the `a.b` of `typeof a.b` is what the type is in.
         expr_parent unless |i: usize, it: &Parent| match it {
-            Parent::None => true,
-            Parent::Expr(_) => false,
+            Parent::None | Parent::Expr(_) => false,
             _ => is_operand(full, ExprId(i as u32)),
         };
-        stmt_parent unless |_, it: &Parent| *it == Parent::None;
-        pat_parent unless |_, it: &PatParent| *it == PatParent::None;
-        prop_owner unless |_, it: &ExprId| it.is_none();
-        member_owner unless |_, it: &MemberOwner| *it == MemberOwner::None;
-        param_fn unless |_, it: &bun_sema::hir::FnId| it.is_none();
-        var_stmt unless |_, it: &StmtId| it.is_none();
-        case_stmt unless |_, it: &StmtId| it.is_none();
-        enum_member_owner unless |_, it: &bun_sema::hir::EnumId| it.is_none();
-        class_owner unless |_, it: &ClassOwner| *it == ClassOwner::Stmt(StmtId::NONE);
+        stmt_parent unless |_, _: &Parent| false;
+        pat_parent unless |_, _: &PatParent| false;
+        prop_owner unless |_, _: &ExprId| false;
+        member_owner unless |_, _: &MemberOwner| false;
+        param_fn unless |_, _: &bun_sema::hir::FnId| false;
+        var_stmt unless |_, _: &StmtId| false;
+        case_stmt unless |_, _: &StmtId| false;
+        enum_member_owner unless |_, _: &bun_sema::hir::EnumId| false;
+        class_owner unless |_, _: &ClassOwner| false;
     }
-    let owners = full.fns.iter().zip(ours.fns.iter()).position(|(a, b)| a.owner != FnOwner::None && a.owner != b.owner);
+    macro_rules! reached {
+        ($($field:ident)*) => {$(
+            let at = full.$field.iter().zip(ours.$field.iter()).position(|(a, b)| a.is_some() != b.is_some());
+            if full.$field.len() != ours.$field.len() || at.is_some() {
+                different.push(format!("{}: {} and {} long, reached by one at {at:?}", stringify!($field), full.$field.len(), ours.$field.len()));
+            }
+        )*};
+    }
+    reached!(class_scope type_scope type_param_scope);
+    let owners = full.fns.iter().zip(ours.fns.iter()).position(|(a, b)| a.owner != b.owner);
     if full.fns.len() != ours.fns.len() || owners.is_some() {
         different.push(format!("fns.owner: {} and {} long, first at {owners:?}", full.fns.len(), ours.fns.len()));
     }
@@ -937,7 +936,7 @@ fn differences_of_recycled<A: bun_sema::hir::Storage, B: bun_sema::hir::Storage>
         ids expr_symbol expr_parent stmt_parent type_scope pat_parent pat_symbol prop_owner member_owner param_fn
         type_param_symbol type_param_scope fn_symbol class_symbol class_owner class_scope interface_symbol alias_symbol
         enum_symbol enum_member_symbol enum_member_owner module_symbol var_stmt case_stmt type_query_operands
-        requires_scope_change stmt_flow case_fallthrough expr_kinds expr_kind_counts ident_scope declared scope_node
+        requires_scope_change stmt_flow case_fallthrough expr_kinds expr_kind_counts declared scope_node
     }
     fn functions<S: bun_sema::hir::Storage>(of: &bun_sema::bind::BoundIn<S>) -> Vec<String> {
         let one = |it: &bun_sema::bind::FnInfo| {
@@ -977,7 +976,7 @@ fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool) {
     let inputs = read_inputs(path);
     let (mut same, mut by_kind) = (0, BTreeMap::<String, (usize, Vec<String>)>::new());
     // How many inputs have expressions, statements, functions or classes that `bind` does not get to.
-    let left_behind = std::cell::Cell::new([0usize; 4]);
+    let left_behind = std::cell::Cell::new([0usize; 6]);
     for input in &inputs {
         let language = LanguageOptions {
             parser: language.parser,
@@ -1014,8 +1013,10 @@ fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool) {
                 full.stmt_parent.iter().any(|it| *it == bun_sema::bind::Parent::None),
                 full.fns.iter().any(|it| it.owner == bun_sema::bind::FnOwner::None),
                 full.class_scope.iter().any(|it| it.is_none()),
+                full.type_scope.iter().any(|it| it.is_none()),
+                full.type_param_scope.iter().any(|it| it.is_none()),
             ];
-            (0..4).for_each(|i| counts[i] += usize::from(has[i]));
+            (0..6).for_each(|i| counts[i] += usize::from(has[i]));
             left_behind.set(counts);
             match is_for_format {
                 true => {
@@ -1050,8 +1051,10 @@ fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool) {
         println!("{count:6} {name}");
         examples.iter().for_each(|it| println!("         {it}"));
     }
-    let [exprs, stmts, fns, classes] = left_behind.get();
-    println!("not reached by bind: expressions in {exprs} inputs, statements in {stmts}, functions in {fns}, classes in {classes}");
+    let [exprs, stmts, fns, classes, types, type_params] = left_behind.get();
+    println!(
+        "not reached by bind: expressions in {exprs} inputs, statements in {stmts}, functions in {fns}, classes in {classes}, types in {types}, type parameters in {type_params}"
+    );
     println!("{} inputs, {same} the same, {} tables differ", inputs.len(), by_kind.len());
 }
 

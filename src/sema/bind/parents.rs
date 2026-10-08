@@ -39,7 +39,13 @@ struct Lists<'l> {
     enum_member_owner: &'l mut [EnumId],
     fns: &'l mut [FnInfo],
     type_query_operands: &'l mut Vec<ExprId>,
+    class_scope: &'l mut [ScopeId],
+    type_scope: &'l mut [ScopeId],
+    type_param_scope: &'l mut [ScopeId],
 }
+
+/// In place of the scope of what `bind` gets to.
+const REACHED: ScopeId = ScopeId(0);
 
 /// What comes from JSDoc comments is bound where the comment is.
 fn is_for_the_binder(f: &File) -> bool {
@@ -51,13 +57,15 @@ fn is_for_the_binder(f: &File) -> bool {
 ///
 /// For every node that `bind` reaches, these are as in its result: `expr_parent`, `stmt_parent`,
 /// `pat_parent`, `prop_owner`, `member_owner`, `param_fn`, `var_stmt`, `case_stmt`,
-/// `enum_member_owner`, `class_owner`, `FnInfo::owner`, and whether it is among
-/// `type_query_operands`. The exception is the parent of the `a.b` of the type `typeof a.b`, which
+/// `enum_member_owner`, `class_owner`, `FnInfo::owner`, whether it is among
+/// `type_query_operands`, and whether its entry in `class_scope`, `type_scope` or `type_param_scope`
+/// is `NONE`, which is all that these three tell here. The exception is the parent of the `a.b` of the type `typeof a.b`, which
 /// is the file here. All else is empty.
 ///
 /// A node says what its children are part of, so this goes through the lists of the file once and
-/// never calls itself. What the parser has left behind where it backtracked has entries too, and
-/// says the same of its children: see below for why it is not believed.
+/// never calls itself. A file in which the parser has left something behind where it backtracked is
+/// left to the binder, which does not get to it: so what has no entry in the result of `bind` has
+/// none here.
 pub fn bind_for_format<'s>(
     f: &File,
     options: BindOptions,
@@ -77,6 +85,9 @@ pub fn bind_for_format<'s>(
     let mut case_stmt = filled(arena, f.cases.len(), StmtId::NONE);
     let mut class_owner = filled(arena, f.classes.len(), ClassOwner::Stmt(StmtId::NONE));
     let mut fns = filled(arena, f.fns.len(), NO_FUNCTION);
+    let mut class_scope = filled(arena, f.classes.len(), ScopeId::NONE);
+    let mut type_scope = filled(arena, f.types.len(), ScopeId::NONE);
+    let mut type_param_scope = filled(arena, f.type_params.len(), ScopeId::NONE);
     let mut enum_member_owner = vec![EnumId::NONE; f.enum_members.len()];
     let mut type_query_operands = Vec::new();
     let is_done = fill(
@@ -94,6 +105,9 @@ pub fn bind_for_format<'s>(
             enum_member_owner: &mut enum_member_owner,
             fns: &mut fns,
             type_query_operands: &mut type_query_operands,
+            class_scope: &mut class_scope,
+            type_scope: &mut type_scope,
+            type_param_scope: &mut type_param_scope,
         },
     );
     if !is_done {
@@ -110,6 +124,9 @@ pub fn bind_for_format<'s>(
         case_stmt,
         class_owner,
         fns,
+        class_scope,
+        type_scope,
+        type_param_scope,
         enum_member_owner: few_to_arena(enum_member_owner, arena),
         type_query_operands: few_to_arena(type_query_operands, arena),
         ..Bound::empty_in(arena)
@@ -139,6 +156,9 @@ pub fn bind_for_format_in<'r>(
     refilled(&mut b.class_owner, f.classes.len(), ClassOwner::Stmt(StmtId::NONE));
     refilled(&mut b.enum_member_owner, f.enum_members.len(), EnumId::NONE);
     refilled(&mut b.fns, f.fns.len(), NO_FUNCTION);
+    refilled(&mut b.class_scope, f.classes.len(), ScopeId::NONE);
+    refilled(&mut b.type_scope, f.types.len(), ScopeId::NONE);
+    refilled(&mut b.type_param_scope, f.type_params.len(), ScopeId::NONE);
     let is_done = fill(
         f,
         Lists {
@@ -154,6 +174,9 @@ pub fn bind_for_format_in<'r>(
             enum_member_owner: &mut b.enum_member_owner,
             fns: &mut b.fns,
             type_query_operands: &mut b.type_query_operands,
+            class_scope: &mut b.class_scope,
+            type_scope: &mut b.type_scope,
+            type_param_scope: &mut b.type_param_scope,
         },
     );
     match is_done {
@@ -177,6 +200,9 @@ fn fill(f: &File, lists: Lists) -> bool {
         enum_member_owner,
         fns,
         type_query_operands,
+        class_scope,
+        type_scope,
+        type_param_scope,
     } = lists;
 
     // An id that is `NONE` is the index of nothing.
@@ -189,6 +215,27 @@ fn fill(f: &File, lists: Lists) -> bool {
         ($list:ident[$id:expr].owner = $value:expr) => {
             if let Some(slot) = $list.get_mut($id.idx()) {
                 slot.owner = $value;
+            }
+        };
+    }
+    // The types and the type parameters that `bind` gets to from a node.
+    macro_rules! ty {
+        ($($ty:expr),*) => {{ $(set!(type_scope[$ty] = REACHED);)* }};
+    }
+    macro_rules! tys {
+        ($list:expr) => {
+            for ty in f.ids($list) {
+                set!(type_scope[ty] = REACHED);
+            }
+        };
+    }
+    macro_rules! type_params {
+        ($params:expr) => {
+            for p in $params.iter() {
+                set!(type_param_scope[p] = REACHED);
+                if let Some(param) = f.type_params.get(p.idx()) {
+                    ty!(param.constraint, param.default);
+                }
             }
         };
     }
@@ -258,14 +305,23 @@ fn fill(f: &File, lists: Lists) -> bool {
                 if let Some(call) = f.calls.get(call.idx()) {
                     operands!(call.callee, call.template);
                     list!(call.args);
+                    tys!(call.type_args);
                 }
             }
             ExprKind::Template { exprs, .. } => list!(exprs),
             ExprKind::Array(items) => list!(items),
-            ExprKind::ImportCall { args } => list!(args),
+            ExprKind::ImportCall { args } => {
+                list!(args);
+                if !f.import_call_type_args.is_empty() {
+                    tys!(f.type_args_of_import_call(args));
+                }
+            }
             ExprKind::Object(props) => props!(props),
             ExprKind::Fn(func) => set!(fns[func].owner = FnOwner::Expr(id)),
-            ExprKind::Class(class) => set!(class_owner[class] = ClassOwner::Expr(id)),
+            ExprKind::Class(class) => {
+                set!(class_owner[class] = ClassOwner::Expr(id));
+                set!(class_scope[class] = REACHED);
+            }
             ExprKind::Binary { left, right, .. } => operands!(left, right),
             ExprKind::Assign { target, value, .. } => operands!(target, value),
             ExprKind::Cond { test, yes, no } => operands!(test, yes, no),
@@ -274,13 +330,19 @@ fn fill(f: &File, lists: Lists) -> bool {
             | ExprKind::Await(operand)
             | ExprKind::AsConst(operand)
             | ExprKind::NonNull(operand)
-            | ExprKind::Yield { value: operand, .. }
-            | ExprKind::As { expr: operand, .. }
-            | ExprKind::Satisfies { expr: operand, .. }
-            | ExprKind::Instantiation { expr: operand, .. } => operands!(operand),
+            | ExprKind::Yield { value: operand, .. } => operands!(operand),
+            ExprKind::As { expr, ty } | ExprKind::Satisfies { expr, ty } => {
+                operands!(expr);
+                ty!(ty);
+            }
+            ExprKind::Instantiation { expr, type_args } => {
+                operands!(expr);
+                tys!(type_args);
+            }
             ExprKind::Jsx(jsx) => {
                 if let Some(jsx) = f.jsx.get(jsx.idx()) {
                     operands!(jsx.tag, jsx.close_tag);
+                    tys!(jsx.type_args);
                     props!(jsx.attrs);
                     list!(jsx.children);
                 }
@@ -292,7 +354,8 @@ fn fill(f: &File, lists: Lists) -> bool {
         match ty.kind {
             // An error. Its expression is part of what the type is in.
             TypeNodeKind::Heritage { .. } => return false,
-            TypeNodeKind::Typeof { expr, .. } => {
+            TypeNodeKind::Typeof { expr, args, .. } => {
+                tys!(args);
                 set!(expr_parent[expr] = Parent::File);
                 let mut at = expr;
                 while let Some(operand) = f.exprs.get(at.idx()) {
@@ -310,14 +373,59 @@ fn fill(f: &File, lists: Lists) -> bool {
                 }
             }
             TypeNodeKind::Mapped(mapped) => {
-                for m in f.mapped.get(mapped.idx()).map_or(Span::new(0, 0), |it| it.members).iter() {
-                    set!(member_owner[m] = MemberOwner::TypeLiteral(id));
+                if let Some(mapped) = f.mapped.get(mapped.idx()) {
+                    type_params!(Span::<TypeParamId>::new(mapped.param.0, 1));
+                    ty!(mapped.name_ty, mapped.ty);
+                    for m in mapped.members.iter() {
+                        set!(member_owner[m] = MemberOwner::TypeLiteral(id));
+                    }
                 }
             }
-            _ => {}
+            TypeNodeKind::Ref { args, .. } | TypeNodeKind::Import { args, .. } => tys!(args),
+            TypeNodeKind::Template { types, .. } | TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types) => {
+                tys!(types)
+            }
+            TypeNodeKind::Array(operand)
+            | TypeNodeKind::Keyof(operand)
+            | TypeNodeKind::Readonly(operand)
+            | TypeNodeKind::Unique(operand)
+            | TypeNodeKind::JSDoc { ty: operand, .. }
+            | TypeNodeKind::Predicate { ty: operand, .. } => ty!(operand),
+            TypeNodeKind::Tuple(elements) => {
+                for e in elements.iter() {
+                    // Of `ty` and `written`, the one that contains the other.
+                    if let Some(element) = f.tuple_elems.get(e.idx()) {
+                        ty!(match element.member_type {
+                            TupleMemberType::Optional => element.ty,
+                            _ => element.written,
+                        });
+                    }
+                }
+            }
+            TypeNodeKind::Cond { check, extends, yes, no } => ty!(check, extends, yes, no),
+            TypeNodeKind::IndexedAccess { obj, index } => ty!(obj, index),
+            // Not its default.
+            TypeNodeKind::Infer(param) => {
+                set!(type_param_scope[param] = REACHED);
+                ty!(f.type_params.get(param.idx()).map_or(TypeNodeId::NONE, |it| it.constraint));
+            }
+            TypeNodeKind::Error
+            | TypeNodeKind::Keyword(_)
+            | TypeNodeKind::StringLit(_)
+            | TypeNodeKind::NumberLit(_)
+            | TypeNodeKind::BigIntLit { .. }
+            | TypeNodeKind::BoolLit(_)
+            | TypeNodeKind::UniqueSymbol => {}
         }
     }
+    for alias in f.aliases.iter() {
+        type_params!(alias.type_params);
+        ty!(alias.ty);
+    }
     for (i, interface) in f.interfaces.iter().enumerate() {
+        type_params!(interface.type_params);
+        tys!(interface.extends);
+        tys!(interface.other_heritage);
         for m in interface.members.iter() {
             set!(member_owner[m] = MemberOwner::Interface(InterfaceId(i as u32)));
         }
@@ -329,6 +437,10 @@ fn fill(f: &File, lists: Lists) -> bool {
         for other in f.ids(class.other_extends) {
             set!(expr_parent[other] = Parent::ClassExtends(id));
         }
+        type_params!(class.type_params);
+        tys!(class.extends_args);
+        tys!(class.implements);
+        tys!(class.other_implements);
         for m in class.members.iter() {
             set!(member_owner[m] = MemberOwner::Class(id));
         }
@@ -343,6 +455,7 @@ fn fill(f: &File, lists: Lists) -> bool {
         }
         set!(fns[member.func].owner = FnOwner::Member(id));
         set!(expr_parent[member.init] = Parent::MemberInit(id));
+        ty!(member.ty);
     }
     for (i, s) in f.stmts.iter().enumerate() {
         let id = StmtId(i as u32);
@@ -368,7 +481,10 @@ fn fill(f: &File, lists: Lists) -> bool {
                 }
             }
             StmtKind::Fn(func) => set!(fns[func].owner = FnOwner::Stmt(id)),
-            StmtKind::Class(class) => set!(class_owner[class] = ClassOwner::Stmt(id)),
+            StmtKind::Class(class) => {
+                set!(class_owner[class] = ClassOwner::Stmt(id));
+                set!(class_scope[class] = REACHED);
+            }
             StmtKind::If { test, yes, no } => {
                 exprs!(test);
                 stmts!(yes, no);
@@ -430,6 +546,8 @@ fn fill(f: &File, lists: Lists) -> bool {
     for (i, func) in f.fns.iter().enumerate() {
         let id = FnId(i as u32);
         set!(param_fn[func.this_param] = id);
+        type_params!(func.type_params);
+        ty!(func.ret, func.this_ty(f));
         // The decorators of a parameter of a member of a class are evaluated with the class.
         let class = match fns[i].owner {
             FnOwner::Member(m) => match member_owner.get(m.idx()) {
@@ -444,6 +562,7 @@ fn fill(f: &File, lists: Lists) -> bool {
             };
             set!(param_fn[p] = id);
             set!(pat_parent[param.pat] = PatParent::Param(p));
+            ty!(param.ty);
             set!(expr_parent[param.default] = Parent::ParamDefault(p));
             decorators!(
                 f.param_modifiers(p),
@@ -467,6 +586,7 @@ fn fill(f: &File, lists: Lists) -> bool {
         let id = VarDeclId(i as u32);
         set!(pat_parent[declaration.pat] = PatParent::Var(id));
         set!(expr_parent[declaration.init] = Parent::VarInit(id));
+        ty!(declaration.ty);
     }
     for (i, pat) in f.pats.iter().enumerate() {
         let id = PatId(i as u32);
@@ -520,5 +640,12 @@ fn fill(f: &File, lists: Lists) -> bool {
     }
     type_query_operands.sort_unstable();
     type_query_operands.dedup();
-    true
+    // What nothing says to be a part of anything is what the parser has left behind, and what is in it
+    // has entries that `bind` does not have. That is rare enough to leave it to the binder.
+    !expr_parent.contains(&Parent::None)
+        && !stmt_parent.contains(&Parent::None)
+        && fns.iter().all(|it| it.owner != FnOwner::None)
+        && !class_owner.contains(&ClassOwner::Stmt(StmtId::NONE))
+        && !type_scope.contains(&ScopeId::NONE)
+        && !type_param_scope.contains(&ScopeId::NONE)
 }

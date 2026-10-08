@@ -151,20 +151,37 @@ pub(crate) fn collect<'a>(file: &'a File<'a>, comments: &mut Vec<Comment>) {
     move_comments(file, comments.get_mut(first..).unwrap_or_default());
 }
 
-/// The innermost node that `offset` is in.
-fn innermost_node_at<'a>(file: &'a File<'a>, offset: u32) -> Node<'a> {
-    let mut node = Node::File(file);
-    loop {
-        let mut inner = None;
+/// Finds nodes by position.
+struct NodeFinder<'a> {
+    file: &'a File<'a>,
+    /// The statement of the file that the last position was in. The next one is likely to be in it
+    /// too, and a file can have many statements.
+    statement: Option<Node<'a>>,
+}
+
+impl<'a> NodeFinder<'a> {
+    fn child_at(node: Node<'a>, offset: u32) -> Option<Node<'a>> {
+        let mut found = None;
         node.for_each_child(|child| {
-            if inner.is_none() && child.span().contains_offset(offset) {
-                inner = Some(child);
+            if found.is_none() && child.span().contains_offset(offset) {
+                found = Some(child);
             }
         });
-        match inner {
-            Some(child) => node = child,
-            None => return node,
+        found
+    }
+
+    /// The innermost node that `offset` is in.
+    fn innermost_node_at(&mut self, offset: u32) -> Node<'a> {
+        if !self.statement.is_some_and(|it| it.span().contains_offset(offset)) {
+            self.statement = Self::child_at(Node::File(self.file), offset);
         }
+        let Some(mut node) = self.statement else {
+            return Node::File(self.file);
+        };
+        while let Some(child) = Self::child_at(node, offset) {
+            node = child;
+        }
+        node
     }
 }
 
@@ -173,8 +190,8 @@ fn innermost_node_at<'a>(file: &'a File<'a>, offset: u32) -> Node<'a> {
 ///
 /// In a chain of calls Prettier prints the comments of a member expression before its `.b`, which is
 /// where they are.
-fn moved_out_of_member_expression<'a>(file: &'a File<'a>, comment: Comment) -> Option<u32> {
-    let Node::Expr(member) = innermost_node_at(file, comment.span.start) else {
+fn moved_out_of_member_expression<'a>(nodes: &mut NodeFinder<'a>, comment: Comment) -> Option<u32> {
+    let Node::Expr(member) = nodes.innermost_node_at(comment.span.start) else {
         return None;
     };
     let (object, property_start) = match member.kind() {
@@ -201,8 +218,8 @@ fn moved_out_of_member_expression<'a>(file: &'a File<'a>, comment: Comment) -> O
 /// Prettier's `handlePropertyComments`: a comment at the end of a line that is in a property of an
 /// object and in nothing in it leads the property. This is for one after the value, which is in
 /// parentheses then.
-fn moved_out_of_property<'a>(file: &'a File<'a>, comment: Comment) -> Option<u32> {
-    let Node::Prop(property) = innermost_node_at(file, comment.span.start) else {
+fn moved_out_of_property(nodes: &mut NodeFinder<'_>, comment: Comment) -> Option<u32> {
+    let Node::Prop(property) = nodes.innermost_node_at(comment.span.start) else {
         return None;
     };
     let is_in_object = matches!(property.parent(), Node::Expr(object) if matches!(object.kind(), ExprKind::Object(_)));
@@ -217,8 +234,8 @@ fn moved_out_of_property<'a>(file: &'a File<'a>, comment: Comment) -> Option<u32
 /// anything else there is no rule, and no node for the parentheses. So the comment is between what
 /// is before the parameters and the first parameter, which it leads, the `(` counting for nothing.
 /// Without parameters it leads the return type, if nothing is before it that it can trail.
-fn moved_over_parenthesis<'a>(file: &'a File<'a>, comment: Comment, open_paren: u32) -> Option<u32> {
-    let (func, has_name): (Func<'a>, bool) = match innermost_node_at(file, comment.span.start) {
+fn moved_over_parenthesis<'a>(nodes: &mut NodeFinder<'a>, comment: Comment, open_paren: u32) -> Option<u32> {
+    let (func, has_name): (Func<'a>, bool) = match nodes.innermost_node_at(comment.span.start) {
         Node::Member(member) if member.is_signature() => (member.func()?, member.key().is_some()),
         Node::Type(ty) => match ty.kind() {
             TypeKind::Fn(func) => (func, false),
@@ -253,6 +270,10 @@ fn moved_over_parenthesis<'a>(file: &'a File<'a>, comment: Comment, open_paren: 
 fn move_comments<'a>(file: &'a File<'a>, comments: &mut [Comment]) {
     let text = file.text();
     let is_typescript = !file.is_javascript();
+    let mut nodes = NodeFinder {
+        file,
+        statement: None,
+    };
     let is_blank = |start: u32, end: u32| text.get(start as usize..end as usize).is_some_and(|it| it.trim_ascii().is_empty());
     let mut has_moved = false;
     // The comment before is on a line of its own, or follows one that is on the same line.
@@ -291,30 +312,30 @@ fn move_comments<'a>(file: &'a File<'a>, comments: &mut [Comment]) {
         let after = after.trim_ascii_start();
 
         let moved_to = match after {
-            [b'(', ..] if is_typescript => moved_over_parenthesis(file, comment, (text.len() - after.len()) as u32),
+            [b'(', ..] if is_typescript => moved_over_parenthesis(&mut nodes, comment, (text.len() - after.len()) as u32),
             // `a: (b // comment ⏎ ),`
             [b')', ..] if !is_own_line => {
                 let after_parentheses = after.iter().find(|b| **b != b')' && !b.is_ascii_whitespace());
                 match (comment.followed_by_newline(), after_parentheses) {
-                    (true, Some(b',' | b'}')) => moved_out_of_property(file, comment),
+                    (true, Some(b',' | b'}')) => moved_out_of_property(&mut nodes, comment),
                     _ => None,
                 }
             }
             _ if !is_own_line => None,
             [b'.', b'.', ..] => None,
-            [b'.', ..] | [b'?', b'.', ..] => moved_out_of_member_expression(file, comment),
+            [b'.', ..] | [b'?', b'.', ..] => moved_out_of_member_expression(&mut nodes, comment),
             // `(a + b // comment ⏎ ).c`
             [b')', ..] => {
                 let after_parentheses = after.iter().position(|b| *b != b')' && !b.is_ascii_whitespace());
                 match after_parentheses.and_then(|at| after.get(at..)) {
                     Some([b'.', b'.', ..]) => None,
-                    Some([b'.', ..] | [b'?', b'.', ..]) => moved_out_of_member_expression(file, comment),
+                    Some([b'.', ..] | [b'?', b'.', ..]) => moved_out_of_member_expression(&mut nodes, comment),
                     _ => None,
                 }
             }
             _ => match text.get(..run_start as usize).unwrap_or_default().trim_ascii_end() {
                 [.., b'.', b'.'] => None,
-                [.., b'.' | b'['] => moved_out_of_member_expression(file, comment),
+                [.., b'.' | b'['] => moved_out_of_member_expression(&mut nodes, comment),
                 _ => None,
             },
         };
@@ -626,7 +647,7 @@ impl<'a> Comments<'a> {
                 type_cast_comment = Some(comment);
                 break;
             } else if comment.preceded_by_newline() || comment.is_moved() {
-                // On a line of its own: it leads the next sibling.
+                // On a line of its own, or moved to where it is: it leads the next sibling.
                 break;
             } else if comment.followed_by_newline() {
                 return &comments[..=comment_index];

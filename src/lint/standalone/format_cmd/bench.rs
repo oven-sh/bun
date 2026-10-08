@@ -11,20 +11,26 @@ use bun_sema::session::Session;
 use std::hash::Hasher as _;
 
 /// Parses `code` the way Prettier's parsers do, as a module or as a script, and calls `then` with the file. The names in it are
-/// the file's own: nothing is interned. `atoms`: for a file with syntax errors.
-fn with_file_as<R>(is_script: bool, path: &str, code: &[u8], atoms: &dyn Intern, then: impl for<'a> FnOnce(&'a File<'a>) -> R) -> R {
+/// the file's own: nothing is interned. `atoms`: for a file with syntax errors. `session`: where the lists of the file are until it
+/// is done with.
+fn with_file_as<R>(
+    is_script: bool,
+    path: &str,
+    code: &[u8],
+    (atoms, session): (&dyn Intern, &Session),
+    then: impl for<'a> FnOnce(&'a File<'a>) -> R,
+) -> R {
     let is_typescript = [".ts", ".tsx", ".mts", ".cts"].iter().any(|it| path.ends_with(it));
     let language = LanguageOptions {
         parser: if is_typescript { Parser::TypeScript } else { Parser::Espree },
         source_type: if is_script { SourceType::Script } else { SourceType::Module },
         ..LanguageOptions::default()
     };
-    let session = Session::new();
     let arena = session.arena();
     let how = language.parse_options(path.as_bytes());
     bun_js_parser::sema::with_summary(
         Dialect::babel(is_script),
-        (arena, &session),
+        (arena, session),
         path.as_bytes(),
         how.script_kind,
         code,
@@ -79,6 +85,7 @@ pub(super) fn bench(args: &Args) {
     let hashes: Vec<AtomicU64> = paths.iter().map(|_| AtomicU64::new(0)).collect();
     let sessions: Vec<Session> = (0..threads.max(1)).map(|_| Session::new()).collect();
     let atoms = InternerPerThread::new_in(&sessions);
+    let memory = Session::new();
     let started = std::time::Instant::now();
     for _ in 0..iterations {
         bun_sema_standalone::for_each_parallel(threads, paths.len(), |i| {
@@ -108,7 +115,7 @@ pub(super) fn bench(args: &Args) {
             }
             // As `bun format` does: as a module, and if that is a syntax error, as a script.
             for is_script in [false, true] {
-                let is_done = with_file_as(is_script, &paths[i], code, atoms.of_this_thread(), |file| {
+                let is_done = with_file_as(is_script, &paths[i], code, (atoms.of_this_thread(), &memory), |file| {
                     if file.has_parse_errors() && !is_script {
                         return false;
                     }

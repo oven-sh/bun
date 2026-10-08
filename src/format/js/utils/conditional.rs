@@ -376,14 +376,14 @@ impl<'a> Format<'a> for FormatConditionalLike<'a> {
                         space(),
                         FormatJsxChainExpression {
                             expression: yes,
-                            alternate: false
+                            following: Some(no)
                         },
                         space(),
                         ":",
                         space(),
                         FormatJsxChainExpression {
                             expression: no,
-                            alternate: true
+                            following: None
                         }
                     ]
                 );
@@ -436,7 +436,8 @@ impl<'a> Format<'a> for FormatConditionalLike<'a> {
 /// ```
 struct FormatJsxChainExpression<'a> {
     expression: Expr<'a>,
-    alternate: bool,
+    /// What is after the `:`, if `expression` is what is before it.
+    following: Option<Expr<'a>>,
 }
 
 impl<'a> Format<'a> for FormatJsxChainExpression<'a> {
@@ -446,7 +447,7 @@ impl<'a> Format<'a> for FormatJsxChainExpression<'a> {
         let no_wrap = match expression.kind() {
             ExprKind::Ident(name) => name.bytes() == b"undefined",
             ExprKind::Null => true,
-            _ => is_conditional && self.alternate,
+            _ => is_conditional && self.following.is_none(),
         };
 
         let format_expression = format_with(|f| match is_conditional {
@@ -455,7 +456,13 @@ impl<'a> Format<'a> for FormatJsxChainExpression<'a> {
                 jsx_chain: true,
             }
             .fmt(f),
-            false => expression.fmt(f),
+            false => match self.following {
+                Some(following) => {
+                    write!(f, FormatNodeWithoutTrailingComments(&expression));
+                    format_operand_trailing_comments(expression.span().end, following.span().start, b':', f);
+                }
+                None => expression.fmt(f),
+            },
         });
 
         if no_wrap {

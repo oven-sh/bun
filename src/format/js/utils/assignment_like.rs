@@ -488,15 +488,18 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
             AssignmentLikeLayout::BreakAfterOperator => {
                 write!(f, group(&soft_line_indent_or_space(&right)));
             }
-            AssignmentLikeLayout::NeverBreakAfterOperator | AssignmentLikeLayout::ChainTailArrowFunction => {
-                write!(f, [space(), right]);
-            }
+            AssignmentLikeLayout::NeverBreakAfterOperator => write!(f, [space(), right]),
+            // The chain starts with a line break.
+            AssignmentLikeLayout::ChainTailArrowFunction => write!(f, right),
             AssignmentLikeLayout::BreakLeftHandSide => write!(f, [space(), group(&right)]),
             AssignmentLikeLayout::Chain => write!(f, [soft_line_break_or_space(), right]),
             AssignmentLikeLayout::ChainTail => write!(f, soft_line_indent_or_space(&right)),
         }
 
-        if !matches!(layout, AssignmentLikeLayout::Chain | AssignmentLikeLayout::ChainTail) {
+        if !matches!(
+            layout,
+            AssignmentLikeLayout::Chain | AssignmentLikeLayout::ChainTail | AssignmentLikeLayout::ChainTailArrowFunction
+        ) {
             f.group_from(outer_group, false);
         }
     }

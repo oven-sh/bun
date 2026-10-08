@@ -84,6 +84,9 @@ pub struct HttpThread {
     /// `Option::take` is the once-guard (no atomics needed — `connect` is never
     /// reentrant).
     lazy_https_init: Option<InitOpts>,
+    /// The default HTTPS context holds the CA options of [`InitOpts`]. The h3
+    /// client verifies against the default roots only, so requests stay on TCP.
+    pub(crate) default_ctx_has_user_ca: bool,
 
     pub(crate) queued_tasks: Queue,
     /// Tasks popped from `queued_tasks` that couldn't start because
@@ -166,6 +169,7 @@ impl HttpThread {
                 session_cache: crate::session_cache::SessionCache::new(),
             },
             lazy_https_init: None,
+            default_ctx_has_user_ca: false,
             queued_tasks: Queue::new(),
             deferred_tasks: Vec::new(),
             has_pending_queued_abort: false,
@@ -1288,6 +1292,7 @@ mod _event_loop_draft {
             // bun-install-registry.test.ts "non-existent --cafile" /
             // "invalid cafile"), even if the registry is plain HTTP and no SSL
             // connect would ever happen.
+            thread.default_ctx_has_user_ca = true;
             if let Err(err) = thread.https_context.init_with_thread_opts(&opts) {
                 (opts.on_init_error)(err, &opts);
             }

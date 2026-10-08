@@ -2045,10 +2045,7 @@ impl<'a> HTTPClient<'a> {
         ) {
             return false;
         }
-        if self.has_tls_options_unsupported_by_h3() {
-            return false;
-        }
-        h3_alt_svc_enabled()
+        h3_alt_svc_enabled() && !self.has_tls_options_unsupported_by_h3()
     }
 
     fn has_tls_options_unsupported_by_h3(&self) -> bool {
@@ -2057,6 +2054,7 @@ impl<'a> HTTPClient<'a> {
                 .tls_props
                 .as_ref()
                 .is_some_and(|tls| tls.get().requires_custom_request_ctx)
+            || http_thread().default_ctx_has_user_ca
     }
 
     pub(crate) fn first_call<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {

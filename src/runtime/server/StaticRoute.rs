@@ -68,7 +68,9 @@ impl StaticRoute {
             ref_count: Cell::new(1),
             pending_ref: Cell::new(None),
             pending_responses: Cell::new(0),
-            cached_blob_size: blob.size(),
+            // GET sends no bytes for an S3 object (`blob.slice()` is empty),
+            // and its size is the unknown-size sentinel, not a length.
+            cached_blob_size: if blob.is_s3() { 0 } else { blob.size() },
             has_date: headers.get(b"date").is_some(),
             blob,
             headers,

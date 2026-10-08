@@ -45,6 +45,12 @@ impl SortImports {
     pub fn is_applied_by_format(&self) -> bool {
         matches!(self.how, How::Oxfmt(_))
     }
+
+    /// Whether [`sorted_text`] asks which imports are used: the file has to be bound with its
+    /// symbols and scopes. Without them, all imports count as used.
+    pub fn needs_symbols(&self) -> bool {
+        matches!(&self.how, How::Organize(options) if !options.skips_destructive_code_actions)
+    }
 }
 
 /// The text of `file` with its imports sorted. It has to be parsed and formatted in place of

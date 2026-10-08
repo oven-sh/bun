@@ -684,7 +684,13 @@ impl<'a> Organizer<'a, '_> {
                 if !breaks {
                     self.trailing_comments(full_start).into_iter().for_each(|it| self.write_comment(it, out));
                 }
-                self.leading_comments(full_start).into_iter().for_each(|it| self.write_comment(it, out));
+                let leading = self.leading_comments(full_start);
+                // `emitNewLineBeforeLeadingCommentOfPosition`
+                if !leading.is_empty() && out.last() == Some(&b' ') {
+                    out.pop();
+                    out.extend_from_slice(self.end_of_line);
+                }
+                leading.into_iter().for_each(|it| self.write_comment(it, out));
             }
             out.extend_from_slice(&element.code);
             self.write_trailing_comments(element.span.map(|it| it.end), out);

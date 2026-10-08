@@ -64,6 +64,38 @@ const IMPORTS = [
     : []),
 ];
 const EXPORTS = [`export { q2, q1 } from "q";`, `export * from "star";`, `export * as nn from "nn";`, `export type { Y } from "./y";`, `export { r } from "./y";`, `export { s } from "q";`, `export * from "./aa";`];
+if (named.inner) {
+  EXPORTS.push(
+    `export {
+
+  // Factory
+  q9,
+
+  // Basic
+  q7,
+  q8,
+  q5 // t
+} from "qq";`,
+    `export {
+  w2, // a
+  w1, // b
+} from "ww";`,
+    `export {
+  // one
+  l3,
+  // two
+  l1,
+  l2
+};`,
+    `export { /* x */ v2, v1 /* y */ } from "vv";`,
+    `export {
+  /** doc */
+  u2,
+  u1,
+  /* end */
+} from "qq";`,
+  );
+}
 const SETS = [{}, {}, { organizeImportsSkipDestructiveCodeActions: true }, { organizeImportsTypeOrder: "first" }, { organizeImportsTypeOrder: "inline" }, { organizeImportsTypeOrder: "last" }];
 const before = ["", "", "", "", "", "\n", "// c\n", "\n// c\n", "/* c */ ", "/**\n * doc\n */\n"];
 const after = ["", "", "", "", "", " // t", " /* t */", " /* t\n  u */"];

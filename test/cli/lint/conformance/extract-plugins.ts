@@ -398,7 +398,8 @@ function oxlintCases(path: string): Raw[] {
 // Linting
 // ---------------------------------------------------------------------------
 
-const linter = new Linter({ configType: "flat" });
+// From the root, so that a file is configured wherever it is.
+const linter = new Linter({ configType: "flat", cwd: "/" });
 
 interface Attempt {
   parser: "espree" | "typescript";

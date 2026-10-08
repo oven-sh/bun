@@ -30,9 +30,11 @@ const NOT_SUPPORTED_YET: Message = Message::new(
 );
 
 #[derive(Default)]
-pub struct State {
+pub struct State<'a> {
     /// If the file has another range of versions than [`EsSyntax::first`] is for.
     own: Option<Box<Active>>,
+    /// Those of [`Active::methods`] that the file may name.
+    methods: smallvec::SmallVec<[Name<'a>; 8]>,
 }
 
 type Context<'a> = Cx<'a, EsSyntax>;
@@ -133,7 +135,7 @@ fn question_dot(file: &File, before: Expr) -> Span {
 
 impl Rule for EsSyntax {
     const META: Meta = Meta::plugin(Plugin::Node, "no-unsupported-features/es-syntax", Kind::Problem).recommended();
-    type State<'a> = State;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         EsSyntax {
@@ -143,7 +145,7 @@ impl Rule for EsSyntax {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
         let version = || self.version.clone().unwrap_or_else(|| configured_node_version(file));
         let first = self.first.get_or_init(|| Active::new(version(), &self.ignores));
         let own = match &self.version {
@@ -234,8 +236,13 @@ impl Rule for EsSyntax {
         if any(&[TRAILING_FUNCTION_COMMAS, OPTIONAL_CHAINING]) {
             on.exprs([ExprTag::Call, ExprTag::New], Self::call);
         }
-        let has_methods = active.methods.iter().any(|it| file.has_expr_named(it.0));
-        if has_methods || any(&[OPTIONAL_CHAINING, KEYWORD_PROPERTIES, CLASS_FIELDS, LEGACY_OBJECT_PROTOTYPE_ACCESSOR_METHODS]) {
+        let mut methods = smallvec::SmallVec::new();
+        for (at, &(method, ..)) in active.methods.iter().enumerate() {
+            if active.methods.get(at.wrapping_sub(1)).is_none_or(|it| it.0 != method) && file.has_expr_named(method) {
+                methods.push(file.name_of(method));
+            }
+        }
+        if !methods.is_empty() || any(&[OPTIONAL_CHAINING, KEYWORD_PROPERTIES, CLASS_FIELDS, LEGACY_OBJECT_PROTOTYPE_ACCESSOR_METHODS]) {
             on.exprs([ExprTag::Dot, ExprTag::Index], Self::member_expression);
         }
         if any(&[CLASS_FIELDS, PRIVATE_IN]) {
@@ -293,7 +300,7 @@ impl Rule for EsSyntax {
             on.string_literals(Self::string);
         }
         on.finish(Self::finish);
-        State { own }
+        State { own, methods }
     }
 }
 
@@ -330,7 +337,7 @@ impl Handler for Pattern {
 }
 
 impl EsSyntax {
-    fn active<'s>(&'s self, state: &'s State) -> Option<&'s Active> {
+    fn active<'s>(&'s self, state: &'s State<'_>) -> Option<&'s Active> {
         state.own.as_deref().or_else(|| self.first.get())
     }
 
@@ -554,7 +561,7 @@ impl EsSyntax {
                 self.report(cx, KEYWORD_PROPERTIES, e.span());
             }
             // Most are none of the methods.
-            if !active.methods.iter().any(|it| name.name().is(it.0)) && !active.has(LEGACY_OBJECT_PROTOTYPE_ACCESSOR_METHODS) {
+            if !cx.state.methods.contains(&name.name()) && !active.has(LEGACY_OBJECT_PROTOTYPE_ACCESSOR_METHODS) {
                 return;
             }
         }
@@ -569,7 +576,7 @@ impl EsSyntax {
             };
             self.report(cx, LEGACY_OBJECT_PROTOTYPE_ACCESSOR_METHODS, property);
         }
-        if active.methods.is_empty() {
+        if cx.state.methods.is_empty() {
             return;
         }
         let Some(name) = get_property_name(e, Some(Node::Expr(e).scope())) else {
@@ -605,7 +612,7 @@ impl EsSyntax {
         match parent.tag() {
             StmtTag::Block => self.report_in(cx, BLOCK_SCOPED_FUNCTIONS, span, Node::Func(func)),
             StmtTag::If => self.report(cx, FUNCTION_DECLARATIONS_IN_IF_STATEMENT_CLAUSES_WITHOUT_BLOCK, span),
-            StmtTag::Labeled => self.report(cx, LABELLED_FUNCTION_DECLARATIONS, span),
+            StmtTag::Labeled => self.report(cx, LABELLED_FUNCTION_DECLARATIONS, parent.span()),
             _ => {}
         }
     }
@@ -717,7 +724,9 @@ impl EsSyntax {
                 self.report(cx, feature, at);
             }
         }
-        if !active.has_regexp_pattern() {
+        // What all that is looked for starts with.
+        let pattern = pattern.unwrap_or_default();
+        if !active.has_regexp_pattern() || ![&b"(?<"[..], b"\\k", b"\\p", b"\\P"].iter().any(|it| strings::contains(pattern, it)) {
             return;
         }
         let mode = RegexMode {
@@ -725,7 +734,7 @@ impl EsSyntax {
             unicode_sets: false,
         };
         let mut found = Pattern::default();
-        if regex::validate_pattern(pattern.unwrap_or_default(), mode, regex::Options::default(), &mut found).is_err() {
+        if regex::validate_pattern(pattern, mode, regex::Options::default(), &mut found).is_err() {
             return;
         }
         let years = [
@@ -756,7 +765,10 @@ impl EsSyntax {
         let tracker = ReferenceTracker::new(file);
         for feature in active.iter() {
             let map = &FEATURES[feature].globals;
-            if map.members.iter().any(|it| file.has_expr_named(it.0)) {
+            let is_named = |(name, properties): &(&str, TraceMap<'static, ()>)| {
+                file.has_expr_named(name) && (properties.members.is_empty() || properties.members.iter().any(|it| file.mentions(it.0)))
+            };
+            if map.members.iter().any(is_named) {
                 for reference in tracker.iterate_global_references(map) {
                     self.report(cx, feature, reference.span);
                 }
@@ -792,10 +804,10 @@ impl EsSyntax {
         if active.has(SUBCLASSING_BUILTINS) {
             self.subclassing_builtins(cx, &tracker);
         }
-        if active.has(ERROR_CAUSE) {
+        if active.has(ERROR_CAUSE) && file.mentions("cause") {
             self.error_cause(cx, &tracker);
         }
-        if active.has(RESIZABLE_AND_GROWABLE_ARRAYBUFFERS) {
+        if active.has(RESIZABLE_AND_GROWABLE_ARRAYBUFFERS) && file.has_expr_named_any(&["ArrayBuffer", "SharedArrayBuffer"]) {
             const BUFFERS: TraceMap<'static, ()> = TraceMap::new(&[
                 ("ArrayBuffer", TraceMap::EMPTY.construct(())),
                 ("SharedArrayBuffer", TraceMap::EMPTY.construct(())),

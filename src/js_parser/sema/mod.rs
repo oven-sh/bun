@@ -604,6 +604,7 @@ fn parse_directly(
         is_javascript: is_js,
         // `flow-parser` reads it as a name outside an async function, in a module too.
         await_is_a_name: is_ecmascript && (dialect.script || dialect.flow && !dialect.babel),
+        recovers: false,
         dialect,
     };
     let parse = |options, scratch: &mut bun_sema_parser::Scratch| match atoms {

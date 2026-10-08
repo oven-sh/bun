@@ -440,7 +440,7 @@ impl Parser<'_> {
     }
 
     /// `isStartOfParameter`
-    fn is_start_of_parameter(&mut self) -> bool {
+    pub(crate) fn is_start_of_parameter(&mut self) -> bool {
         self.token() == T::DotDotDot
             || self.is_binding_identifier()
             || matches!(self.token(), T::OpenBracket | T::OpenBrace)
@@ -727,7 +727,7 @@ impl Parser<'_> {
     }
 
     /// `isListElement(PCHeritageClauseElement)`
-    fn is_heritage_element(&mut self) -> bool {
+    pub(crate) fn is_heritage_element(&mut self) -> bool {
         match self.token() {
             // `isValidHeritageClauseObjectLiteral`: `{}` is the body unless something follows that
             // can follow an element.

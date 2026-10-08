@@ -173,6 +173,34 @@ pub(crate) enum T {
 }
 
 impl T {
+    /// `TokenToString`, of a keyword or a punctuator.
+    pub(crate) fn text(self) -> &'static [u8] {
+        match self {
+            T::OpenBrace => b"{",
+            T::CloseBrace => b"}",
+            T::OpenParen => b"(",
+            T::CloseParen => b")",
+            T::OpenBracket => b"[",
+            T::CloseBracket => b"]",
+            T::Dot => b".",
+            T::DotDotDot => b"...",
+            T::Semicolon => b";",
+            T::Comma => b",",
+            T::LessThan => b"<",
+            T::GreaterThan => b">",
+            T::EqualsGreaterThan => b"=>",
+            T::Bar => b"|",
+            T::Question => b"?",
+            T::Colon => b":",
+            T::At => b"@",
+            T::Equals => b"=",
+            _ => {
+                let is_it = |it: &&(&'static [u8], T)| it.1 == self;
+                KEYWORDS.iter().find(is_it).map_or(b"", |it| it.0)
+            }
+        }
+    }
+
     /// `isReservedWord`
     #[inline(always)]
     pub(crate) fn is_reserved_word(self) -> bool {

@@ -1,7 +1,7 @@
 //! `bun-hir`: the test harness of `bun_sema_parser`.
 //!
 //! - `compare <file or directory>.. [--jobs=n] [--show=n] [--decorators] [--list]
-//!   [--dialect=tsc|estree|espree|babel] [--script]`: parses every file with both parsers and
+//!   [--dialect=tsc|estree|espree|babel] [--script] [--recover]`: parses every file with both parsers and
 //!   compares the results node by node. A `.jsonl` file is a list of texts, one to a line:
 //!   `{"id", "filename", "code", "sourceType", "parser"}`. Without `--dialect` such a text is read as
 //!   its `parser` reads it, `"espree"` or `"typescript"`, and a file as `tsc` reads it.
@@ -48,6 +48,7 @@ fn options_for(path: &[u8], dialect: Dialect) -> Options {
         is_jsx: is_javascript || kind == Some(ScriptKind::Tsx),
         is_javascript,
         await_is_a_name: is_javascript && dialect.ecmascript && dialect.script,
+        recovers: false,
         dialect,
     }
 }
@@ -75,6 +76,10 @@ enum Outcome {
     /// The direct parser accepts what the reference reports an error about.
     Accepted(String),
     Different(String),
+    /// Both report errors, and go on in the same way.
+    Recovered,
+    /// Both report errors. With the first difference.
+    RecoveredDifferently(String),
 }
 
 fn compare_one(
@@ -82,6 +87,7 @@ fn compare_one(
     text: &[u8],
     decorators: bool,
     dialect: Dialect,
+    recovers: bool,
     scratch: &mut Scratch,
 ) -> Outcome {
     let session = Session::new();
@@ -106,6 +112,7 @@ fn compare_one(
         || (reference.diagnostics.iter()).any(|it| it.kind == DiagnosticKind::Parse)
         || reference.ran_out_of_stack;
     let mut options = options_for(path, dialect);
+    options.recovers = recovers;
     let mut parsed = bun_sema_parser::parse(text, options, &atoms, scratch);
     // `parseSourceFileWorker`: only a module has an await context at its top level.
     if let Ok(first) = &parsed
@@ -135,7 +142,14 @@ fn compare_one(
             )
         }
         Ok(parsed) => {
-            let outcome = if is_refused_by_reference {
+            let outcome = if is_refused_by_reference && parsed.file.has_parse_diagnostics {
+                let mut comparison = compare::Comparison::new(&reference, &parsed.file);
+                comparison.run();
+                match comparison.difference.take() {
+                    Some(difference) => Outcome::RecoveredDifferently(difference),
+                    None => Outcome::Recovered,
+                }
+            } else if is_refused_by_reference {
                 let first = reference.diagnostics.first();
                 Outcome::Accepted(format!(
                     "{:?}",
@@ -210,6 +224,8 @@ struct Totals {
     refused: BTreeMap<String, Vec<String>>,
     accepted: Vec<(String, String)>,
     different: Vec<(String, String)>,
+    recovered: usize,
+    recovered_differently: Vec<(String, String)>,
 }
 
 impl Totals {
@@ -244,6 +260,10 @@ impl Totals {
                 )),
             Outcome::Accepted(what) => self.accepted.push((name.to_owned(), what)),
             Outcome::Different(what) => self.different.push((name.to_owned(), what)),
+            Outcome::Recovered => self.recovered += 1,
+            Outcome::RecoveredDifferently(what) => {
+                self.recovered_differently.push((name.to_owned(), what));
+            }
         }
     }
 
@@ -284,6 +304,19 @@ impl Totals {
             self.both_refuse.len(),
             self.accepted.len(),
         );
+        if self.recovered + self.recovered_differently.len() > 0 {
+            self.recovered_differently.sort();
+            if list {
+                for (name, what) in &self.recovered_differently {
+                    output_line!("RECOVERED DIFFERENTLY {name}\n    {what}");
+                }
+            }
+            output_line!(
+                "    with errors: {} recovered as the reference, {} differently",
+                self.recovered,
+                self.recovered_differently.len()
+            );
+        }
         for (why, names) in &self.refused {
             output_line!("    refused: {why} {}", names.len());
         }
@@ -392,6 +425,7 @@ fn inputs_of(args: &[String]) -> Vec<Input> {
 fn compare(args: &[String]) {
     let inputs = inputs_of(args);
     let decorators = args.iter().any(|arg| arg == "--decorators");
+    let recovers = args.iter().any(|arg| arg == "--recover");
     let mut totals = Guarded::new(Totals::default());
     bun_sema_standalone::for_each_parallel(flag(args, "jobs").unwrap_or(8), inputs.len(), |i| {
         thread_local! {
@@ -415,6 +449,7 @@ fn compare(args: &[String]) {
                 text,
                 decorators,
                 input.dialect,
+                recovers,
                 scratch,
             )
         });
@@ -470,12 +505,13 @@ fn fuzz(args: &[String]) {
                 static SCRATCH: std::cell::RefCell<Scratch> = Default::default();
             }
             match SCRATCH
-                .with_borrow_mut(|scratch| compare_one(path, text, false, dialect, scratch))
+                .with_borrow_mut(|scratch| compare_one(path, text, false, dialect, false, scratch))
             {
                 Outcome::Identical(_) => fuzz::Verdict::Identical,
                 Outcome::BothRefuse(..) | Outcome::Refused(..) => fuzz::Verdict::Refused,
                 Outcome::Accepted(what) => fuzz::Verdict::Wrong(format!("accepted: {what}")),
                 Outcome::Different(what) => fuzz::Verdict::Wrong(format!("different: {what}")),
+                Outcome::Recovered | Outcome::RecoveredDifferently(_) => fuzz::Verdict::Refused,
             }
         },
     );

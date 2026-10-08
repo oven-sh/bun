@@ -9,6 +9,7 @@ mod js_syntax;
 mod jsx;
 mod module;
 mod pattern;
+mod recover;
 mod stmt;
 mod ty;
 
@@ -17,6 +18,7 @@ use crate::token::T;
 use crate::{Options, Parsed, Refusal, Refused, Scratch};
 use bun_sema::atom::{Atom, Intern};
 use bun_sema::hir::*;
+pub(crate) use recover::{ListKind, ListStep};
 
 /// `ParserContext`, as bits.
 pub(crate) mod ctx {
@@ -130,7 +132,7 @@ file_lists! {
     modifiers, names, parens, non_null_ends, jsx_expressions, body_starts, specifier_uses,
     decorators, modifiers_of_params, modifiers_of_props, with_bodies, import_attributes,
     deferred_import_calls, import_call_type_args, keyword_identifier_positions, comments,
-    mentioned, fn_nodes, class_nodes, diagnostics,
+    mentioned, fn_nodes, class_nodes, diagnostics, after_skipped,
 }
 
 /// The range and the code of an error that the checker reports about the syntax.
@@ -156,6 +158,12 @@ pub(crate) struct Parser<'a> {
     /// How many classes enclose the node.
     pub(crate) classes_around: u32,
     pub(crate) options: Options,
+    /// `Options::recovers`
+    pub(crate) recovers: bool,
+    /// `parsingContexts`: a bit for each `ListKind` of which a list is open.
+    pub(crate) lists: u32,
+    /// The start of the token at which the last error was reported, and how many have been there.
+    pub(crate) errors_at: (u32, u32),
     /// `Dialect::ecmascript`, in a JavaScript file.
     pub(crate) is_ecmascript: bool,
     /// `Dialect::flow`, in a JavaScript file.
@@ -227,6 +235,9 @@ impl<'a> Parser<'a> {
             context,
             classes_around: 0,
             options,
+            recovers: options.recovers,
+            lists: 0,
+            errors_at: (u32::MAX, 0),
             is_ecmascript,
             is_flow,
             has_type_arguments_in_expressions: is_flow || !options.is_javascript,
@@ -300,7 +311,11 @@ impl<'a> Parser<'a> {
         self.f.is_flow = self.is_flow;
         self.next();
         let base = self.s.ids.len();
+        self.lists = 1 << ListKind::SourceElements as u32;
         while self.token() != T::Eof {
+            if self.recovers && self.list_step(ListKind::SourceElements) != ListStep::Element {
+                continue;
+            }
             let statement = self.statement();
             if self.is_an_external_module_indicator(statement) {
                 self.f.has_module_syntax = true;
@@ -314,6 +329,8 @@ impl<'a> Parser<'a> {
         if self.f.diagnostics.len() > 1 {
             self.f.diagnostics.sort_by_key(|it| (it.start, it.code));
         }
+        let is_of_parser = |it: &Diagnostic| it.kind == DiagnosticKind::Parse;
+        self.f.has_parse_diagnostics = self.recovers && self.f.diagnostics.iter().any(is_of_parser);
         if !self.f.body_starts.is_sorted_by_key(|body| body.0.0) {
             self.f.body_starts.sort_unstable_by_key(|body| body.0.0);
         }
@@ -503,7 +520,7 @@ impl<'a> Parser<'a> {
         if self.lx.token == token {
             self.lx.next();
         } else {
-            self.fail();
+            self.expected(token);
         }
     }
 
@@ -520,7 +537,7 @@ impl<'a> Parser<'a> {
         if self.lx.token == T::Semicolon {
             self.lx.next();
         } else if !(matches!(self.lx.token, T::CloseBrace | T::Eof) || self.lx.newline_before) {
-            self.fail();
+            self.expected(T::Semicolon);
         }
     }
 

@@ -1,7 +1,7 @@
 //! Expressions.
 
 use super::stmt::ModifiersOf;
-use super::{Parser, ctx, take_span};
+use super::{ListKind, ListStep, Parser, ctx, take_span};
 use crate::Refusal;
 use crate::token::T;
 use bun_sema::atom::Atom;
@@ -1054,16 +1054,29 @@ impl Parser<'_> {
         self.next();
         let saved = self.enter_context(0, ctx::DISALLOW_IN | ctx::DECORATOR);
         let base = self.s.ids.len();
+        let lists = self.enter_list(ListKind::ArgumentExpressions);
         while self.is_in_list(T::CloseParen) {
+            if self.recovers {
+                match self.list_step(ListKind::ArgumentExpressions) {
+                    ListStep::Element => {}
+                    ListStep::Skipped => continue,
+                    ListStep::Over => break,
+                }
+            }
+            let element = self.full_start();
             let argument = match self.token() {
                 T::DotDotDot => self.spread_element(),
                 _ => self.assignment_expression(),
             };
             self.s.ids.push(argument.0);
-            if !self.eat(T::Comma) {
+            if !self.eat(T::Comma)
+                && !(self.recovers
+                    && self.recover_missing_comma(ListKind::ArgumentExpressions, element))
+            {
                 break;
             }
         }
+        self.lists = lists;
         self.context = saved;
         let close = self.pos();
         self.expect(T::CloseParen);

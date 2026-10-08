@@ -1,6 +1,6 @@
 //! Statements and declarations.
 
-use super::{Parser, ctx, take_span};
+use super::{ListKind, ListStep, Parser, ctx, take_span};
 use crate::Refusal;
 use crate::token::T;
 use bun_sema::atom::Atom;
@@ -209,7 +209,7 @@ impl Parser<'_> {
     }
 
     /// `isStartOfDeclaration`
-    fn is_start_of_declaration(&mut self) -> bool {
+    pub(crate) fn is_start_of_declaration(&mut self) -> bool {
         self.look_ahead(Self::is_declaration)
     }
 
@@ -794,10 +794,19 @@ impl Parser<'_> {
         let base = self.s.ids.len();
         // Only a statement of the file makes it a module.
         let was_module = self.f.has_module_syntax;
+        let lists = self.enter_list(ListKind::BlockStatements);
         while self.is_in_list(T::CloseBrace) {
+            if self.recovers {
+                match self.list_step(ListKind::BlockStatements) {
+                    ListStep::Element => {}
+                    ListStep::Skipped => continue,
+                    ListStep::Over => break,
+                }
+            }
             let statement = self.statement();
             self.s.ids.push(statement.0);
         }
+        self.lists = lists;
         self.f.has_module_syntax = was_module;
         self.take_ids(base)
     }

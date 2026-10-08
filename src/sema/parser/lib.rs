@@ -109,6 +109,9 @@ pub struct Options {
     pub is_javascript: bool,
     /// The top level is not an await context.
     pub await_is_a_name: bool,
+    /// Goes on after a syntax error as TypeScript's parser does, and reports it. Not finished: what
+    /// is not written yet is refused as without it.
+    pub recovers: bool,
     pub dialect: bun_sema::resolve::Dialect,
 }
 

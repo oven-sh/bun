@@ -363,7 +363,7 @@ interface QueryNormalizationAdapter {
   placeholder(index: number): string;
   /** Pushes a plain bound value and returns its SQL fragment (always consumes one binding index). */
   bindParam(value: unknown, binding_values: unknown[], index: number): string;
-  /** Called for a nested `sql.unsafe` that has values and follows other parameters. Throws where "$N" would read those. */
+  /** Called when a nested `sql.unsafe` with values follows other parameters. Throws if placeholders are numbered ("$N"). */
   checkNestedUnsafeValues(): void;
   /** Detects the SQL command preceding a helper, throwing if helpers are not allowed there. */
   getHelperCommand(query: string): SQLCommand;

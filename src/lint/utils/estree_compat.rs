@@ -714,7 +714,8 @@ pub fn estree_span(node: Node<'_>) -> Span {
         Node::Func(func) => func.estree_span(),
         Node::Class(class) => class.estree_span(),
         Node::Pat(pat) => span_of_pat(pat),
-        Node::Param(param) if param.is_parameter_property() => param.span(),
+        // Only these have their decorators in their range.
+        Node::Param(param) if param.is_parameter_property() || param.is_rest() => param.span(),
         Node::Param(param) => param.span_without_modifiers(),
         _ => node.span(),
     }
@@ -805,7 +806,16 @@ pub fn get_node_by_range_index<'a>(file: &'a File<'a>, offset: u32) -> Node<'a> 
     loop {
         let mut inner = None;
         at.for_each_child(|child| {
-            if inner.is_none() && child.span().contains_offset(offset) {
+            // ESTree has these decorators outside of the range of what they are in, so that the
+            // search does not get to them.
+            let span = match child {
+                Node::Param(_) => estree_span(child),
+                Node::Stmt(statement) => {
+                    statement.export_span().unwrap_or_else(|| statement.span())
+                }
+                _ => child.span(),
+            };
+            if inner.is_none() && span.contains_offset(offset) {
                 inner = Some(child);
             }
         });

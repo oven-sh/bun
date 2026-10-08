@@ -438,7 +438,10 @@ pub(crate) fn run(args: &[String]) {
                         }
                         previous.1 += 1;
                     }
-                    println!("{{\"id\":{id},\"runs\":\"{runs}{} {}\"}}", previous.0, previous.1);
+                    println!(
+                        "{{\"id\":{id},\"runs\":\"{runs}{} {}\"}}",
+                        previous.0, previous.1
+                    );
                 });
             }
             "text" => {

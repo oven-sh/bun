@@ -5,6 +5,7 @@ use bun_lint::types::tsutils::{
 };
 use bun_lint::types::utils::{get_type_flags, is_nullable_type};
 use bun_lint::types::{Type, TypeFlags};
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::eslint_utils::{find_variable, is_parenthesized};
 use bun_lint::utils::is_sequence_root;
 use bun_lint::utils::ts_utils::{
@@ -44,8 +45,10 @@ const PREFER_NULLISH_OVER_TERNARY: Message = Message::new(
     "preferNullishOverTernary",
     "Prefer using nullish coalescing operator (`??{{ equals }}`) instead of a ternary expression, as it is simpler to read.",
 );
-const SUGGEST_NULLISH: Message =
-    Message::new("suggestNullish", "Fix to nullish coalescing operator (`??{{ equals }}`).");
+const SUGGEST_NULLISH: Message = Message::new(
+    "suggestNullish",
+    "Fix to nullish coalescing operator (`??{{ equals }}`).",
+);
 
 /// How a test checks for `null` and `undefined`.
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -65,7 +68,10 @@ type Nodes<'a> = SmallVec<[Expr<'a>; 4]>;
 /// A `ChainExpression`, an `Identifier` or a `MemberExpression`.
 fn is_member_access_like(node: Expr) -> bool {
     node.is_chain_root()
-        || matches!(node.kind(), ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. })
+        || matches!(
+            node.kind(),
+            ExprKind::Ident(_) | ExprKind::Dot { .. } | ExprKind::Index { .. }
+        )
 }
 
 fn is_null_literal_or_undefined_identifier(node: Expr) -> bool {
@@ -123,6 +129,69 @@ fn is_boolean_constructor_context(mut node: Expr) -> bool {
     }
 }
 
+/// Whether [`is_conditional_test`] and [`is_boolean_constructor_context`] say of `at` what they say of `parent`.
+fn is_passed_on<'a>(at: Node<'a>, parent: Node<'a>) -> bool {
+    let (Node::Expr(at), Node::Expr(parent)) = (at, parent) else {
+        return false;
+    };
+    match parent.kind() {
+        ExprKind::Binary {
+            op: BinOp::And | BinOp::Or | BinOp::Nullish,
+            ..
+        } => true,
+        ExprKind::Cond { test, .. } => test != at,
+        _ => false,
+    }
+}
+
+/// `ask(node)`, where `ask` is one of these two. It is asked about the outermost expression that `node` is passed on to: to
+/// walk up from each link of `a || a || ..` takes quadratic time.
+fn ask_outermost<'a>(
+    node: Expr<'a>,
+    known: &mut AncestorMemo<'a, bool>,
+    ask: fn(Expr<'a>) -> bool,
+) -> bool {
+    let decide = |at: Node<'a>, parent: Node<'a>| match at {
+        _ if is_passed_on(at, parent) => None,
+        Node::Expr(at) => Some(ask(at)),
+        _ => Some(false),
+    };
+    known.find(Node::Expr(node), decide).unwrap_or(false)
+}
+
+/// [`is_mixed_logical_expression`]. It is the same for all the `||` that are operands of each other, so it is found out for the
+/// outermost of them.
+fn is_in_mixed_logical_expression<'a>(
+    (node, left, right): (Expr<'a>, Expr<'a>, Expr<'a>),
+    known: &mut AncestorMemo<'a, bool>,
+) -> bool {
+    if !is_logical_or_operator(node) {
+        return is_mixed_logical_expression(node, left, right);
+    }
+    let decide = |at: Node<'a>, parent: Node<'a>| match (at, parent) {
+        (_, Node::Expr(parent)) if is_logical_or_operator(parent) => None,
+        (Node::Expr(at), _) => match at.kind() {
+            ExprKind::Binary { left, right, .. } => {
+                Some(is_mixed_logical_expression(at, left, right))
+            }
+            _ => Some(false),
+        },
+        _ => Some(false),
+    };
+    known.find(Node::Expr(node), decide).unwrap_or(false)
+}
+
+/// What is known from the walks up from other nodes.
+#[derive(Default)]
+pub struct Walks<'a> {
+    /// [`is_conditional_test`]
+    conditional_tests: AncestorMemo<'a, bool>,
+    /// [`is_boolean_constructor_context`]
+    boolean_contexts: AncestorMemo<'a, bool>,
+    /// [`is_in_mixed_logical_expression`]
+    mixed: AncestorMemo<'a, bool>,
+}
+
 /// `left`, `right`: the operands of `node`, which is an `a || b` or an `a ||= b`.
 fn is_mixed_logical_expression<'a>(node: Expr<'a>, left: Expr<'a>, right: Expr<'a>) -> bool {
     let mut seen = FxHashSet::default();
@@ -158,13 +227,27 @@ fn are_nodes_similar_member_access<'a>(mut a: Expr<'a>, mut b: Expr<'a>) -> bool
     let is_private = |name: Ident<'a>| name.bytes().starts_with(b"#");
     loop {
         (a, b) = match (a.kind(), b.kind()) {
-            (ExprKind::Dot { obj: a, name, .. }, ExprKind::Dot { obj: b, name: other, .. }) => {
+            (
+                ExprKind::Dot { obj: a, name, .. },
+                ExprKind::Dot {
+                    obj: b,
+                    name: other,
+                    ..
+                },
+            ) => {
                 if is_private(name) || is_private(other) || name.name() != other.name() {
                     return false;
                 }
                 (a, b)
             }
-            (ExprKind::Index { obj: a, index, .. }, ExprKind::Index { obj: b, index: other, .. }) => {
+            (
+                ExprKind::Index { obj: a, index, .. },
+                ExprKind::Index {
+                    obj: b,
+                    index: other,
+                    ..
+                },
+            ) => {
                 if !is_node_equal(index, other) {
                     return false;
                 }
@@ -200,7 +283,8 @@ fn get_operator_and_nodes_inside_test_expression(
             left,
             right,
         } => {
-            let (Some(left), Some(right)) = (as_binary_expression(left), as_binary_expression(right))
+            let (Some(left), Some(right)) =
+                (as_binary_expression(left), as_binary_expression(right))
             else {
                 return (Nodes::new(), None);
             };
@@ -213,12 +297,19 @@ fn get_operator_and_nodes_inside_test_expression(
             }
             let (strict, loose, strict_operator, loose_operator) = match logical {
                 BinOp::Or => (BinOp::EqEqEq, BinOp::EqEq, Operator::EqEqEq, Operator::EqEq),
-                _ => (BinOp::NotEqEq, BinOp::NotEq, Operator::NotEqEq, Operator::NotEq),
+                _ => (
+                    BinOp::NotEqEq,
+                    BinOp::NotEq,
+                    Operator::NotEqEq,
+                    Operator::NotEq,
+                ),
             };
             let is_either = |op: BinOp| left.0 == op || right.0 == op;
             let operator = if left.0 == strict && right.0 == strict {
                 Some(strict_operator)
-            } else if (is_either(strict) && is_either(loose)) || (left.0 == loose && right.0 == loose) {
+            } else if (is_either(strict) && is_either(loose))
+                || (left.0 == loose && right.0 == loose)
+            {
                 Some(loose_operator)
             } else {
                 None
@@ -281,16 +372,26 @@ impl PreferNullishCoalescing {
         &self,
         node: Option<Expr<'a>>,
         test_node: Expr<'a>,
+        walks: &mut Walks<'a>,
     ) -> bool {
         if let Some(node) = node {
-            if self.ignore_conditional_tests && is_conditional_test(node) {
+            if self.ignore_conditional_tests
+                && ask_outermost(node, &mut walks.conditional_tests, is_conditional_test)
+            {
                 return false;
             }
             let is_argument = || {
                 matches!(node.kind(), ExprKind::Cond { .. })
                     && matches!(node.parent(), Node::Expr(parent) if matches!(parent.kind(), ExprKind::Call(_)))
             };
-            if self.ignore_boolean_coercion && is_boolean_constructor_context(node) && !is_argument() {
+            if self.ignore_boolean_coercion
+                && ask_outermost(
+                    node,
+                    &mut walks.boolean_contexts,
+                    is_boolean_constructor_context,
+                )
+                && !is_argument()
+            {
                 return false;
             }
         }
@@ -300,15 +401,17 @@ impl PreferNullishCoalescing {
     /// `left`, `right`: the operands of `node`.
     fn check_and_fix_with_prefer_nullish_over_or<'a>(
         &self,
-        cx: &Cx<'a, Self>,
+        cx: &mut Cx<'a, Self>,
         (node, left, right): (Expr<'a>, Expr<'a>, Expr<'a>),
         description: &'static str,
         equals: &'static str,
     ) {
-        if self.ignore_mixed_logical_expressions && is_mixed_logical_expression(node, left, right) {
+        if self.ignore_mixed_logical_expressions
+            && is_in_mixed_logical_expression((node, left, right), &mut cx.state.mixed)
+        {
             return;
         }
-        if !self.is_truthiness_check_eligible_for_prefer_nullish(Some(node), left) {
+        if !self.is_truthiness_check_eligible_for_prefer_nullish(Some(node), left, &mut cx.state) {
             return;
         }
         let Some(bar_bar_operator) = node.operator_span() else {
@@ -349,14 +452,20 @@ impl PreferNullishCoalescing {
         non_nullish_node: Expr<'a>,
         nodes_inside_test_expression: &Nodes<'a>,
         operator: NullishCheckOperator,
+        walks: &mut Walks<'a>,
     ) -> Option<Expr<'a>> {
         if nodes_inside_test_expression.is_empty() {
             let nullish_coalescing_left_node = match (operator, test.kind()) {
                 (NullishCheckOperator::Not, ExprKind::Unary { operand, .. }) => operand,
                 _ => test,
             };
-            let is_fixable = are_nodes_similar_member_access(nullish_coalescing_left_node, non_nullish_node)
-                && self.is_truthiness_check_eligible_for_prefer_nullish(node, nullish_coalescing_left_node);
+            let is_fixable =
+                are_nodes_similar_member_access(nullish_coalescing_left_node, non_nullish_node)
+                    && self.is_truthiness_check_eligible_for_prefer_nullish(
+                        node,
+                        nullish_coalescing_left_node,
+                        walks,
+                    );
             return is_fixable.then_some(nullish_coalescing_left_node);
         }
 
@@ -381,7 +490,10 @@ impl PreferNullishCoalescing {
         let is_fixable = if has_undefined_check == has_null_check {
             // Both are checked for, or neither.
             has_undefined_check
-        } else if matches!(operator, NullishCheckOperator::EqEq | NullishCheckOperator::NotEq) {
+        } else if matches!(
+            operator,
+            NullishCheckOperator::EqEq | NullishCheckOperator::NotEq
+        ) {
             true
         } else {
             let flags = get_type_flags(nullish_coalescing_left_node.ty());
@@ -417,13 +529,13 @@ impl PreferNullishCoalescing {
             non_nullish_branch,
             &nodes_inside_test_expression,
             operator,
+            &mut cx.state,
         ) else {
             return;
         };
-        cx.report(node, PREFER_NULLISH_OVER_TERNARY).data("equals", "").suggest_with(
-            SUGGEST_NULLISH,
-            &[("equals", "".as_bytes())],
-            |fixer| {
+        cx.report(node, PREFER_NULLISH_OVER_TERNARY)
+            .data("equals", "")
+            .suggest_with(SUGGEST_NULLISH, &[("equals", "".as_bytes())], |fixer| {
                 let nullish_branch_text = get_text_with_parentheses(nullish_branch);
                 let right_operand_replacement = match is_parenthesized(nullish_branch) {
                     true => Cow::Borrowed(nullish_branch_text),
@@ -434,9 +546,11 @@ impl PreferNullishCoalescing {
                     ),
                 };
                 let left_operand = get_text_with_parentheses(nullish_coalescing_left_node);
-                fixer.replace(node, [left_operand, b" ?? ", &*right_operand_replacement].concat())
-            },
-        );
+                fixer.replace(
+                    node,
+                    [left_operand, b" ?? ", &*right_operand_replacement].concat(),
+                )
+            });
     }
 
     fn check_if_statement<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -487,18 +601,23 @@ impl PreferNullishCoalescing {
                 nullish_coalescing_left_node,
                 &nodes_inside_test_expression,
                 operator,
+                &mut cx.state,
             )
             .is_some();
         if !is_fixable {
             return;
         }
-        cx.report(node, PREFER_NULLISH_OVER_ASSIGNMENT).data("equals", "=").suggest_with(
-            SUGGEST_NULLISH,
-            &[("equals", "=".as_bytes())],
-            |fixer| {
+        cx.report(node, PREFER_NULLISH_OVER_ASSIGNMENT)
+            .data("equals", "=")
+            .suggest_with(SUGGEST_NULLISH, &[("equals", "=".as_bytes())], |fixer| {
                 let file = fixer.file();
-                let separator = if is_consequent_node_block_statement { b'\n' } else { b' ' };
-                let mut text = format_comments(file.comments_before(assignment_expression), separator);
+                let separator = if is_consequent_node_block_statement {
+                    b'\n'
+                } else {
+                    b' '
+                };
+                let mut text =
+                    format_comments(file.comments_before(assignment_expression), separator);
                 text.extend_from_slice(get_text_with_parentheses(nullish_coalescing_left_node));
                 text.extend_from_slice(b" ??= ");
                 text.extend_from_slice(get_text_with_parentheses(nullish_coalescing_right_node));
@@ -511,8 +630,7 @@ impl PreferNullishCoalescing {
                     }
                 }
                 fixer.replace(node, text)
-            },
-        );
+            });
     }
 }
 
@@ -521,7 +639,7 @@ impl Rule for PreferNullishCoalescing {
         .has_suggestions()
         .presets(Presets::STYLISTIC_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    type State<'a> = Walks<'a>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -539,25 +657,30 @@ impl Rule for PreferNullishCoalescing {
             }
         }
         PreferNullishCoalescing {
-            allow_rule_to_run_without_strict_null_checks_i_know_what_i_am_doing: options
-                .bool_or("allowRuleToRunWithoutStrictNullChecksIKnowWhatIAmDoing", false),
+            allow_rule_to_run_without_strict_null_checks_i_know_what_i_am_doing: options.bool_or(
+                "allowRuleToRunWithoutStrictNullChecksIKnowWhatIAmDoing",
+                false,
+            ),
             ignore_boolean_coercion: options.bool_or("ignoreBooleanCoercion", false),
             ignore_conditional_tests: options.bool_or("ignoreConditionalTests", true),
             ignore_if_statements: options.bool_or("ignoreIfStatements", false),
-            ignore_mixed_logical_expressions: options.bool_or("ignoreMixedLogicalExpressions", false),
+            ignore_mixed_logical_expressions: options
+                .bool_or("ignoreMixedLogicalExpressions", false),
             ignorable_flags,
             ignore_ternary_tests: options.bool_or("ignoreTernaryTests", false),
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Walks<'a> {
         let compiler_options = file.type_checker().compiler_options();
         if !is_strict_compiler_option_enabled(compiler_options, CompilerOption::StrictNullChecks)
             && !self.allow_rule_to_run_without_strict_null_checks_i_know_what_i_am_doing
         {
             on.finish(|_, cx| {
                 let line_zero = Position { line: 0, column: 0 };
-                cx.report(Span::empty(0), NO_STRICT_NULL_CHECK).start_at(line_zero).end_at(line_zero);
+                cx.report(Span::empty(0), NO_STRICT_NULL_CHECK)
+                    .start_at(line_zero)
+                    .end_at(line_zero);
             });
         }
         on.exprs([ExprTag::Assign], |rule, node, cx| {
@@ -567,7 +690,12 @@ impl Rule for PreferNullishCoalescing {
                 value,
             } = node.kind()
             {
-                rule.check_and_fix_with_prefer_nullish_over_or(cx, (node, target, value), "assignment", "=");
+                rule.check_and_fix_with_prefer_nullish_over_or(
+                    cx,
+                    (node, target, value),
+                    "assignment",
+                    "=",
+                );
             }
         });
         on.exprs([ExprTag::Binary], |rule, node, cx| {
@@ -586,5 +714,6 @@ impl Rule for PreferNullishCoalescing {
         if !self.ignore_if_statements {
             on.stmts([StmtTag::If], Self::check_if_statement);
         }
+        Walks::default()
     }
 }

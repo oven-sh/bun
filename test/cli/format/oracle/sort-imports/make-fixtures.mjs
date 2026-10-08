@@ -40,6 +40,10 @@ for (const file of positional) {
   for (const [index, it] of cases.entries()) {
     if (index % step !== 0 || UNSUPPORTED.some(pattern => pattern.test(it.name)) || /\bassert\s*\{/.test(it.input) || REFUSED.test(it.input)) continue;
     const { parser, flavor, ...options } = it.options;
+    // `bun format` refuses the syntax of TypeScript in a JavaScript file, as Prettier does, unless such a parser is asked for.
+    if (/\.[cm]?jsx?$/.test(it.filename) && ["typescript", "babel-ts", "flow", "babel-flow"].includes(parser) && /^tests\/(Angular|Typescript)/.test(it.name)) {
+      options.overrides = [{ files: "*.js", options: { parser } }];
+    }
     const name = isSampled ? `${path.basename(file, ".json")}/${it.name.slice(5)}` : it.name;
     (byPlugin[it.plugin] ??= []).push({ name, filename: it.filename, options, input: it.input, output: it.output });
   }

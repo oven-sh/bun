@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::FxHashSet;
 
 /// Disallow async functions which have no `await` expression.
@@ -12,12 +13,16 @@ pub struct State<'a> {
     /// The async functions that are neither generators nor empty.
     candidates: Vec<Func<'a>>,
     with_await: FxHashSet<Func<'a>>,
+    /// The function that a node is directly in.
+    functions: AncestorMemo<'a, Func<'a>>,
 }
 
 /// `node` awaits something: so does the function that it is directly in.
 fn mark_function_around<'a>(node: Node<'a>, cx: &mut Cx<'a, RequireAwait>) {
-    let mut functions = node.ancestors().filter_map(Node::as_func);
-    if let Some(func) = functions.find(|func| func.kind() != FnKind::StaticBlock)
+    let function = cx.state.functions.find(node, |_, parent| {
+        parent.as_func().filter(|func| func.kind() != FnKind::StaticBlock)
+    });
+    if let Some(func) = function
         && func.is_async()
     {
         cx.state.with_await.insert(func);

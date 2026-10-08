@@ -55,21 +55,17 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("typescript/definite/without-annotation.ts", BABEL_TS),
     ("js/embeded", EMBEDDED),
     ("js/multiparser-comments", EMBEDDED),
-    ("js/multiparser-css", EMBEDDED),
     ("js/multiparser-graphql", EMBEDDED),
     ("js/multiparser-html", EMBEDDED),
     ("js/multiparser-markdown", EMBEDDED),
     ("js/multiparser-text", EMBEDDED),
-    ("typescript/multiparser-css", EMBEDDED),
     ("typescript/angular-component-examples", EMBEDDED),
     ("typescript/decorators-ts/angular.ts", EMBEDDED),
     ("typescript/as/as-const-embedded.ts", EMBEDDED),
     ("js/template-literals/expression-break.js", EMBEDDED),
     ("misc/embedded-language-formatting", EMBEDDED),
-    ("styled-components", EMBEDDED),
-    ("styled-jsx", EMBEDDED),
-    ("css-prop", EMBEDDED),
-    ("/embed", EMBEDDED),
+    ("js/last-argument-expansion/embed.js", EMBEDDED),
+    ("misc/plugins/embed", EMBEDDED),
 ];
 
 /// Formatting their output again changes it, in Prettier too: `unstableTests` of

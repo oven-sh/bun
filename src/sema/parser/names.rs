@@ -682,7 +682,9 @@ impl Late {
         while number >= chunk.texts.len() {
             let room = chunk.texts.len();
             number -= room;
-            chunk = chunk.next.get_or_init(|| Box::new(Chunk::with_room(room * 2)));
+            chunk = chunk
+                .next
+                .get_or_init(|| Box::new(Chunk::with_room(room * 2)));
         }
         &chunk.texts[number]
     }

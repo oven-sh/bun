@@ -21,6 +21,7 @@
 use crate::js::utils::number::format_trimmed_number;
 use bun_lint::ast::walk::{Visitor, walk};
 use bun_lint::ast::{File, Node, StmtKind, TypeKind};
+use bun_lint::span::Span;
 use bun_lint::tokens::{Token, TokenKind};
 use std::borrow::Cow;
 
@@ -258,23 +259,45 @@ fn comments<'a>(file: &'a File<'a>) -> Vec<(Vec<u8>, u32)> {
     all
 }
 
+/// Puts the tokens of the imports at the top of the file in an order that does not depend on where
+/// they are written, in front of the others. The commas between them are left out.
+fn with_imports_in_order<'a>(file: &'a File<'a>, items: Vec<Item<'a>>) -> Vec<Item<'a>> {
+    let imports: Vec<Span> = file.body().iter().filter(|it| matches!(it.kind(), StmtKind::Import(_))).map(|it| it.span()).collect();
+    let is_in_import = |item: &Item<'a>| {
+        let after = imports.partition_point(|it| it.start <= item.1);
+        after > 0 && item.1 < imports[after - 1].end
+    };
+    let (mut of_imports, others): (Vec<_>, Vec<_>) = items.into_iter().partition(is_in_import);
+    of_imports.retain(|it| *it.0 != *b",");
+    of_imports.sort();
+    of_imports.extend(others);
+    of_imports
+}
+
 /// Whether `after` is the same program as `before`, as far as the tokens tell.
 pub fn compare<'a, 'b>(before: &'a File<'a>, after: &'b File<'b>) -> Result<(), Difference> {
-    fn first_difference<T: AsRef<[u8]>, U: AsRef<[u8]>>(before: &[(T, u32)], after: &[(U, u32)]) -> Result<(), Difference> {
-        let end = (&b"the end"[..], 0);
-        let count = before.len().max(after.len());
-        for i in 0..count {
-            let a = before.get(i).map_or(end, |it| (it.0.as_ref(), it.1));
-            let b = after.get(i).map_or(end, |it| (it.0.as_ref(), it.1));
-            if a.0 != b.0 || before.get(i).is_some() != after.get(i).is_some() {
-                return Err(Difference {
-                    before: (a.1, a.0.to_vec()),
-                    after: (b.1, b.0.to_vec()),
-                });
-            }
+    compare_tokens(&items(before), &items(after))?;
+    compare_tokens(&comments(before), &comments(after))
+}
+
+/// The same for a formatter that sorts imports: they, and the names in them, can be in any order.
+pub fn compare_with_sorted_imports<'a, 'b>(before: &'a File<'a>, after: &'b File<'b>) -> Result<(), Difference> {
+    compare_tokens(&with_imports_in_order(before, items(before)), &with_imports_in_order(after, items(after)))?;
+    compare_tokens(&comments(before), &comments(after))
+}
+
+fn compare_tokens<T: AsRef<[u8]>, U: AsRef<[u8]>>(before: &[(T, u32)], after: &[(U, u32)]) -> Result<(), Difference> {
+    let end = (&b"the end"[..], 0);
+    let count = before.len().max(after.len());
+    for i in 0..count {
+        let a = before.get(i).map_or(end, |it| (it.0.as_ref(), it.1));
+        let b = after.get(i).map_or(end, |it| (it.0.as_ref(), it.1));
+        if a.0 != b.0 || before.get(i).is_some() != after.get(i).is_some() {
+            return Err(Difference {
+                before: (a.1, a.0.to_vec()),
+                after: (b.1, b.0.to_vec()),
+            });
         }
-        Ok(())
     }
-    first_difference(&items(before), &items(after))?;
-    first_difference(&comments(before), &comments(after))
+    Ok(())
 }

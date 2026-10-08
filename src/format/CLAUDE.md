@@ -22,6 +22,8 @@ File (HIR + binder tables)                     bun_lint::ast
 
 What a caller does with a file, in this order, is `format_text` in `src/lint/standalone/format_cmd.rs`: JSON and CSS by `options.parser` or the name of the file (`json::format`, `css::format`: they take text), `pragma::before_parsing`, parse as a module and, if that fails, as a script, `sort_imports::sorted_text`, `range::format` (which is `format` if there is no range).
 
+**Import sorting** (`js/sort_imports/`, option `FormatOptions::sort_imports`, compiled once per run from `sort_imports::Settings`) has four flavours. `@trivago`/`@ianvs` `importOrder*` and prettier-plugin-organize-imports are text → text preprocessors in Prettier, so they are here too: `sort_imports::sorted_text(file, how)` gives the text that has to be parsed and formatted instead of the file, byte for byte the plugin's (`babel.rs`: @babel/parser's comment attachment over the HIR, `generator.rs`: @babel/generator's printer for imports, `trivago.rs`/`ianvs.rs`: the plugins, `organize.rs`: TypeScript's organizeImports and textChanges), or `None` if formatting the file as it is gives the same (`layout.rs`): only a file whose imports move is parsed twice. oxfmt's `sortImports` (`oxfmt/`) happens inside `format`: `FormatStatements` tells an `ImportRun` what it is about to write, a run of imports is captured and written as `Interned` sub-ranges, one per line, in sorted order. Tests: `bun-lint format sort-imports cases|bench|serve`, oracles in `test/cli/format/oracle/sort-imports/`.
+
 | directory | what | oxc |
 | --- | --- | --- |
 | `ir/` | the IR, `Formatter`, builders (`group`, `indent`, `soft_line_break`, ..), macros, the printer. Knows nothing about JavaScript except `Formatter::context` | `oxc_formatter_core` |

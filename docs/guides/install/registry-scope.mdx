@@ -28,7 +28,7 @@ To configure a registry for a particular npm scope:
 
 ---
 
-Your `bunfig.toml` can reference environment variables. `bun install` automatically loads environment variables from `.env.production.local`, `.env.local`, `.env.production`, and `.env`. When `NODE_ENV` is `development`, `bun install` reads `.env.development.local` and `.env.development` in place of the two production files. It does not read `.env.test`. To load a specific file, pass `--env-file`. To load no file, pass `--no-env-file`. See [Environment variables](/runtime/environment-variables).
+Your `bunfig.toml` can reference environment variables. `bun install` automatically loads environment variables from `.env.production.local`, `.env.local`, `.env.production`, and `.env`. When `BUN_ENV` (or, if it is not set, `NODE_ENV`) is `development`, `bun install` reads `.env.development.local` and `.env.development` in place of the two production files. It does not read `.env.test`. To load a specific file, pass `--env-file`. To load no file, pass `--no-env-file`. See [Environment variables](/runtime/environment-variables).
 
 ```toml bunfig.toml icon="settings"
 [install.scopes]

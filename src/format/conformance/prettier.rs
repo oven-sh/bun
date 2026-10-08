@@ -19,6 +19,7 @@ const PROPOSAL: &str = "syntax of a proposal at stage 2 or below, which only Bab
 const BABEL_TS: &str = "an input that Prettier's `typescript` parser rejects: the snapshot is made with `babel-ts`";
 const FLOW: &str = "Flow's type syntax";
 const EMBEDDED: &str = "embedded HTML or Markdown, which needs a formatter for that language";
+const PLUGIN: &str = "formatted by a plugin of Prettier";
 
 /// What is not run, and why. A case is left out if its path contains the text.
 const EXCLUDED: &[(&str, &str)] = &[
@@ -68,6 +69,7 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("markdown/code/angular/angular-ts.md", EMBEDDED),
     ("markdown/code/lwc/lwc.md", EMBEDDED),
     ("markdown/cursor/17227.md", EMBEDDED),
+    ("misc/front-matter/with-plugins", PLUGIN),
 ];
 
 /// Formatting their output again changes it, in Prettier too: `unstableTests` of

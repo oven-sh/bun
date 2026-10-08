@@ -1,0 +1,3 @@
+declare function isAnElementOfTheDocument(node: mixed): boolean %checks(node instanceof Element);
+declare function isShort(a: mixed): boolean %checks(a instanceof B);
+declare export function isAnotherElementOfTheDocument(node: mixed): boolean %checks(node instanceof Element);

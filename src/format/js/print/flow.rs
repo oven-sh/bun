@@ -411,6 +411,13 @@ pub(crate) fn write_function_type_keyword<'a>(
 ) -> bool {
     match keyword_of_function_type(ty, func) {
         Some("hook") => {
+            // Those between the word and the `(` lead the type.
+            if !f.is_quiet()
+                && let Some(open) = func.open_paren()
+            {
+                let comments = f.comments().comments_before(open);
+                write!(f, FormatLeadingComments::Comments(comments));
+            }
             write!(f, "hook ");
             false
         }
@@ -488,6 +495,19 @@ pub(crate) fn write_parameter_start<'a>(param: Param<'a>, f: &mut Formatter<'a>)
         return true;
     }
     false
+}
+
+/// Prettier has no node between the last parameter of a function type and the type behind the `=>`:
+/// a comment before the `=>` trails the parameter. Where the `=>` is, if `func` is such a type.
+pub(crate) fn arrow_behind_parameters(func: Func<'_>) -> Option<u32> {
+    let is_function_type = func.file().is_flow()
+        && func.kind() == FnKind::FunctionType
+        && !func.params().is_empty()
+        && matches!(func.owner(), Node::Type(ty) if keyword_of_function_type(ty, func) != Some("component"));
+    match is_function_type {
+        true => Some(func.return_type()?.annotation_span().start),
+        false => None,
+    }
 }
 
 /// Prettier's `isFlowShorthandWithOneArg`: `A => B`, where it is written without a place to break
@@ -737,7 +757,8 @@ pub(crate) fn write_object_type_member<'a>(member: Member<'a>, f: &mut Formatter
 /// `[K in T]?: V`. Prettier's `printFlowMappedTypeProperty`.
 fn write_mapped_type_property<'a>(mapped: Mapped<'a>, f: &mut Formatter<'a>) {
     let param = mapped.param();
-    let key = format_args!(source_text(param.name().span()), " in ", param.constraint());
+    let name = identifier(param.name(), AstNodes::TSTypeParameter(param));
+    let key = format_args!(name, " in ", param.constraint());
     let optional = match mapped.optional() {
         MappedModifier::None => "",
         MappedModifier::Add if mapped.is_optional_with_plus() => "+?",
@@ -871,6 +892,20 @@ fn write_declared_class_or_record<'a>(class: Class<'a>, is_record: bool, f: &mut
             (None, Some(first)) => is_qualified(first),
             (None, None) => false,
         };
+    // Where what is after `extends`, `mixins` and `implements` starts.
+    let starts = [
+        class.extends().map(|it| it.span().start),
+        mixins.first().map(|it| it.span().start),
+        implements.first().map(|it| it.span().start),
+    ];
+    // A comment trails the name or the type parameters.
+    let group_mode = group_mode
+        || (!f.is_quiet()
+            && starts
+                .iter()
+                .flatten()
+                .next()
+                .is_some_and(|&start| f.comments().has_comment_before(start)));
 
     let format_extends = format_with(|f| {
         let mut names: SmallVec<[Ident<'a>; 4]> = SmallVec::new();
@@ -890,12 +925,20 @@ fn write_declared_class_or_record<'a>(class: Class<'a>, is_record: bool, f: &mut
         FormatClassImplements(implements),
     );
     let clauses = format_with(|f| {
-        let clauses: [(&'static str, bool, &dyn Format<'a>); 3] = [
-            ("extends", class.extends().is_some(), &format_extends),
-            ("mixins", !mixins.is_empty(), &format_mixins),
-            ("implements", !implements.is_empty(), &format_implements),
+        let clauses: [(&'static str, &dyn Format<'a>); 3] = [
+            ("extends", &format_extends),
+            ("mixins", &format_mixins),
+            ("implements", &format_implements),
         ];
-        for (keyword, _, list) in clauses.into_iter().filter(|it| it.1) {
+        for ((keyword, list), start) in clauses.into_iter().zip(starts) {
+            let Some(start) = start else {
+                continue;
+            };
+            // The comments before a keyword trail what is before it.
+            if !f.is_quiet() {
+                let comments = f.comments().comments_before(start);
+                write!(f, FormatTrailingComments::Comments(comments));
+            }
             match (has_multiple_heritage, group_mode) {
                 (true, _) => write!(
                     f,

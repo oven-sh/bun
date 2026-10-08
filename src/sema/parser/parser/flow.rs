@@ -5,7 +5,8 @@
 //!
 //! | Flow | HIR |
 //! | --- | --- |
-//! | `mixed`, `empty`, `bool`, `*` | `Ref` with that name |
+//! | `mixed`, `empty`, `*` | `Ref` with that name |
+//! | `boolean`, `bool` | `Ref` with the name `boolean`: Prettier writes the one for the other |
 //! | `?T` | `JSDoc { Nullable, is_postfix: false }` |
 //! | `T?.[K]` | `IndexedAccess`. The token after `T` is the `?.` |
 //! | `renders T`, `renders? T`, `renders* T` | `Unique(T)`, which starts with the operator |
@@ -366,7 +367,6 @@ impl Parser<'_> {
             T::Unknown => Keyword::Unknown,
             T::Never => Keyword::Never,
             T::Undefined => Keyword::Undefined,
-            T::Boolean => Keyword::Boolean,
             T::NumberKeyword => Keyword::Number,
             T::StringKeyword => Keyword::String,
             T::Symbol => Keyword::Symbol,
@@ -388,28 +388,10 @@ impl Parser<'_> {
                 };
                 return self.token_type(kind);
             }
-            T::Minus => {
-                self.next();
-                let kind = match self.token() {
-                    T::Number => TypeNodeKind::NumberLit(self.f.number(-self.lx.number)),
-                    T::BigInt => TypeNodeKind::BigIntLit {
-                        text: self.lx.atom,
-                        negative: true,
-                    },
-                    _ => {
-                        self.fail();
-                        return TypeNodeId::NONE;
-                    }
-                };
-                self.next();
-                return self.finish_type(kind, start);
-            }
-            T::Asterisk => {
-                let name = self.atom(b"*");
-                let name = self.f.entity_name([(name, start)].into_iter());
-                let args = IdList::EMPTY;
-                return self.token_type(TypeNodeKind::Ref { name, args });
-            }
+            T::Minus => return self.negative_literal_type(),
+            T::Asterisk => return self.flow_type_called(b"*"),
+            T::Boolean => return self.flow_type_called(b"boolean"),
+            T::Identifier if self.is_word(b"bool") => return self.flow_type_called(b"boolean"),
             T::LessThan | T::LessThanLessThan => {
                 let type_params = self.flow_type_parameters();
                 let anchor = self.pos();
@@ -492,6 +474,14 @@ impl Parser<'_> {
             modifiers: Span::EMPTY,
         });
         self.finish_type(TypeNodeKind::Infer(param), start)
+    }
+
+    /// The token as a reference to the type `name`.
+    fn flow_type_called(&mut self, name: &[u8]) -> TypeNodeId {
+        let name = self.atom(name);
+        let name = self.f.entity_name([(name, self.pos())].into_iter());
+        let args = IdList::EMPTY;
+        self.token_type(TypeNodeKind::Ref { name, args })
     }
 
     /// `A.B<C>`

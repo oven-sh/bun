@@ -1303,6 +1303,10 @@ fn format_type_annotation<'a>(mark: Option<&'static str>, ty: TypeNode<'a>, f: &
             _ => write(f),
         };
     }
+    // Flow has no node that starts at the `=>`: the comments before it lead the type.
+    if mark == Some("=>") && f.file().is_flow() {
+        return write(f);
+    }
     let node = AstNodes::TSTypeAnnotation(ty);
     if f.comments().has_comment_before(node.span().start) {
         write!(f, space());

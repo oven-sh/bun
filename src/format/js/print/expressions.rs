@@ -4,7 +4,7 @@ use super::class::format_grouped_parameters_with_return_type_for_method;
 use super::function::FormatFunctionBody;
 use super::object_like::ObjectLike;
 use super::object_pattern_like::ObjectPatternLike;
-use crate::js::format::FormatExpr;
+use crate::js::format::{FormatExpr, format_node};
 use crate::js::parentheses::expression::left_edge_end;
 use crate::js::utils::array::write_array_node;
 use crate::js::utils::assignment_like::AssignmentLike;
@@ -45,6 +45,30 @@ pub(crate) fn write_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) {
         AstNodes::AssignmentTargetPropertyIdentifier(_) => write!(f, property.value()),
         AstNodes::AssignmentTargetPropertyProperty(_) => write!(f, AssignmentLike::ObjectProperty(property)),
         _ => write_object_property(property, f),
+    }
+}
+
+/// A property of an object literal that is not the target of a destructuring assignment.
+#[derive(Copy, Clone)]
+pub(crate) struct FormatObjectMember<'a>(pub(crate) Prop<'a>);
+
+impl<'a> Format<'a> for FormatObjectMember<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        let property = self.0;
+        let write = |f: &mut Formatter<'a>| match property.kind() {
+            PropKind::Spread => write!(f, ["...", property.value()]),
+            _ => write_object_property(property, f),
+        };
+        match f.is_quiet() {
+            true => write(f),
+            false => format_node(property.span(), || property.as_ast_nodes().parent(), f, write),
+        }
+    }
+}
+
+impl Spanned for FormatObjectMember<'_> {
+    fn span(&self) -> Span {
+        self.0.span()
     }
 }
 

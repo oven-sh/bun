@@ -799,7 +799,10 @@ macro_rules! format_with_comments {
             #[inline]
             fn fmt(&self, f: &mut Formatter<'a>) {
                 let it = *self;
-                format_node(it.span(), || it.as_ast_nodes().parent(), f, |f| $write(it, f));
+                match f.is_quiet() {
+                    true => $write(it, f),
+                    false => format_node(it.span(), || it.as_ast_nodes().parent(), f, |f| $write(it, f)),
+                }
             }
         })*
     };
@@ -818,7 +821,10 @@ macro_rules! format_with_comments_in {
             #[inline]
             fn fmt(&self, f: &mut Formatter<'a>) {
                 let it = *self;
-                format_node(it.span(), || $node(it).parent(), f, |f| $write(it, f));
+                match f.is_quiet() {
+                    true => $write(it, f),
+                    false => format_node(it.span(), || $node(it).parent(), f, |f| $write(it, f)),
+                }
             }
         })*
     };
@@ -837,7 +843,10 @@ impl<'a> Format<'a> for Pat<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
         let pat = *self;
-        format_node(pat.span(), || pat.ast_parent(), f, |f| print::patterns::write_binding_pattern(pat, f));
+        match f.is_quiet() {
+            true => print::patterns::write_binding_pattern(pat, f),
+            false => format_node(pat.span(), || pat.ast_parent(), f, |f| print::patterns::write_binding_pattern(pat, f)),
+        }
     }
 }
 

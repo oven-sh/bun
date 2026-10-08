@@ -1,3 +1,4 @@
+use super::expressions::FormatObjectMember;
 use super::parameters::should_hug_function_parameters;
 use crate::prelude::*;
 use crate::write;
@@ -49,7 +50,8 @@ impl<'a> ObjectLike<'a> {
         match *self {
             Self::ObjectExpression(_, props) => {
                 let trailing_separator = FormatTrailingCommas::ES5.trailing_separator(f.options());
-                f.join_nodes_with_soft_line().entries_with_trailing_separator(props.iter(), ",", trailing_separator);
+                let members = props.iter().map(FormatObjectMember);
+                f.join_nodes_with_soft_line().entries_with_trailing_separator(members, ",", trailing_separator);
             }
             Self::TSTypeLiteral(_, members) => super::ts_types::write_ts_signatures(members, f),
         }

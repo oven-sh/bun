@@ -25,17 +25,26 @@ impl<'a> FormatKey<'a> {
         FormatKey { key, parent }
     }
 
-    /// Writes it. Returns the number of columns that it takes.
-    fn write(self, f: &mut Formatter<'a>) -> usize {
-        let FormatKey { key, parent } = self;
-        let span = key.inner_span(file_of(f));
-        let printed = printed_key(key, span, parent, f);
-        format_node(span, || parent, f, |f| match (key.kind(), &printed) {
-            (KeyKind::Ident(_) | KeyKind::Private(_), Cow::Borrowed(_)) => write!(f, source_text(span)),
-            _ => write!(f, text(&printed)),
-        });
-        string_width(&printed) as usize
+}
+
+/// Writes `key`, which is not an expression in brackets. `parent`: what it is the name of. Returns
+/// the number of columns that it takes.
+fn write_key<'a>(key: Key<'a>, parent: impl Fn() -> AstNodes<'a>, f: &mut Formatter<'a>) -> usize {
+    let span = key.inner_span(file_of(f));
+    let is_name = matches!(key.kind(), KeyKind::Ident(_) | KeyKind::Private(_));
+    if is_name && f.is_quiet() && !f.options().quote_properties.is_consistent() {
+        write!(f, source_text(span));
+        return match f.elements().last() {
+            Some(FormatElement::SourceText(text)) => text.width.value() as usize,
+            _ => 0,
+        };
     }
+    let printed = printed_key(key, span, parent(), f);
+    format_node(span, parent, f, |f| match &printed {
+        Cow::Borrowed(_) if is_name => write!(f, source_text(span)),
+        _ => write!(f, text(&printed)),
+    });
+    string_width(&printed) as usize
 }
 
 impl<'a> Format<'a> for FormatKey<'a> {
@@ -43,7 +52,7 @@ impl<'a> Format<'a> for FormatKey<'a> {
         match self.key.kind() {
             KeyKind::Computed(expression) => expression.fmt(f),
             _ => {
-                self.write(f);
+                write_key(self.key, || self.parent, f);
             }
         }
     }
@@ -191,7 +200,9 @@ pub(crate) fn format_computed_or_property_key<'a>(key: Key<'a>, parent: AstNodes
     }
 }
 
-/// Writes a key that is not computed. Returns the number of columns that it takes.
-pub(crate) fn write_member_name<'a>(key: Key<'a>, parent: AstNodes<'a>, f: &mut Formatter<'a>) -> usize {
-    FormatKey::new(key, parent).write(f)
+/// Writes a key that is not computed. `parent`: what it is the name of. Returns the number of columns
+/// that it takes.
+#[inline]
+pub(crate) fn write_member_name<'a>(key: Key<'a>, parent: impl Fn() -> AstNodes<'a>, f: &mut Formatter<'a>) -> usize {
+    write_key(key, parent, f)
 }

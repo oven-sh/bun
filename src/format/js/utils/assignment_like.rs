@@ -68,7 +68,7 @@ fn format_left_trailing_comments<'a>(start: u32, right: Expr<'a>, f: &mut Format
 }
 
 fn should_print_as_leading(e: Expr<'_>) -> bool {
-    matches!(e.kind(), ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Template(_) | ExprKind::TaggedTemplate(_))
+    matches!(e.tag(), ExprTag::Object | ExprTag::Array | ExprTag::Template | ExprTag::TaggedTemplate)
 }
 
 /// A name is short if it is less than this much wider than the indentation: breaking after the
@@ -155,28 +155,25 @@ impl<'a> AssignmentLike<'a> {
                 false
             }
             AssignmentLike::AssignmentExpression(assignment) => {
-                let ExprKind::Assign { target, value, .. } = assignment.kind() else {
+                let (Some(target), Some(value)) = (assignment.left(), assignment.right()) else {
                     return false;
                 };
                 write!(f, FormatNodeWithoutTrailingComments(&target));
                 format_left_trailing_comments(target.span().end, value, f);
                 false
             }
-            AssignmentLike::ObjectProperty(property) => {
-                let node = property.as_ast_nodes();
-                match property.key() {
-                    _ if property.kind() == PropKind::Shorthand => {
-                        write!(f, property.value());
-                        false
-                    }
-                    Some(key) if key.is_computed() => {
-                        write!(f, ["[", FormatKey::new(key, node), "]"]);
-                        is_plain_computed_key(key) && f.source_text().span_width(key.span(f.file())) < text_width_for_break
-                    }
-                    Some(key) => write_member_name(key, node, f) < text_width_for_break,
-                    None => false,
+            AssignmentLike::ObjectProperty(property) => match property.key() {
+                _ if property.kind() == PropKind::Shorthand => {
+                    write!(f, property.value());
+                    false
                 }
-            }
+                Some(key) if key.is_computed() => {
+                    write!(f, ["[", FormatKey::new(key, property.as_ast_nodes()), "]"]);
+                    is_plain_computed_key(key) && f.source_text().span_width(key.span(f.file())) < text_width_for_break
+                }
+                Some(key) => write_member_name(key, || property.as_ast_nodes(), f) < text_width_for_break,
+                None => false,
+            },
             AssignmentLike::BindingProperty(property) => {
                 let node = AstNodes::BindingProperty(property);
                 match property.key() {
@@ -188,7 +185,7 @@ impl<'a> AssignmentLike<'a> {
                         write!(f, ["[", FormatKey::new(key, node), "]"]);
                         is_plain_computed_key(key) && f.source_text().span_width(key.span(f.file())) < text_width_for_break
                     }
-                    Some(key) => write_member_name(key, node, f) < text_width_for_break,
+                    Some(key) => write_member_name(key, || node, f) < text_width_for_break,
                     None => false,
                 }
             }
@@ -202,7 +199,7 @@ impl<'a> AssignmentLike<'a> {
     fn write_operator(&self, f: &mut Formatter<'a>) {
         match *self {
             Self::AssignmentExpression(assignment) => {
-                let ExprKind::Assign { op, .. } = assignment.kind() else {
+                let Some(op) = assignment.assign_op() else {
                     return;
                 };
                 write!(f, [space(), assign_op_text(op)]);
@@ -214,14 +211,16 @@ impl<'a> AssignmentLike<'a> {
         }
     }
 
-    fn write_right(&self, f: &mut Formatter<'a>, layout: AssignmentLikeLayout) {
+    /// `right`: [`AssignmentLike::get_right_expression`].
+    fn write_right(&self, right: Option<Expr<'a>>, f: &mut Formatter<'a>, layout: AssignmentLikeLayout) {
         match *self {
             Self::BindingProperty(property) => write!(f, FormatBindingPropertyValue(property)),
             _ => {
-                match self.get_right_expression().map(|right| (right, right.kind())) {
+                match right {
                     // Prettier's `isOnSameLineAsAssignment`.
-                    Some((right, ExprKind::Cond { .. }))
+                    Some(right)
                         if f.options().experimental_ternaries
+                            && right.tag() == ExprTag::Cond
                             && layout != AssignmentLikeLayout::BreakAfterOperator
                             && !matches!(self, Self::AccessorProperty(_))
                             && !f.comments().is_type_cast_node(&right) =>
@@ -231,7 +230,8 @@ impl<'a> AssignmentLike<'a> {
                             false => write!(f, group(&indent(&format_args!(soft_line_break(), right)))),
                         }
                     }
-                    Some((right, _)) => write!(f, with_assignment_layout(right, Some(layout))),
+                    Some(right) if right.tag() == ExprTag::Fn => write!(f, with_assignment_layout(right, Some(layout))),
+                    Some(right) => write!(f, right),
                     None => {}
                 }
                 if let Self::AssignmentExpression(assignment) = *self {
@@ -242,16 +242,24 @@ impl<'a> AssignmentLike<'a> {
     }
 
     /// Prettier's `chooseLayout`.
-    fn layout(&self, is_left_short: bool, left_may_break: bool, f: &mut Formatter<'a>) -> AssignmentLikeLayout {
-        let right_expression = self.get_right_expression();
+    ///
+    /// `right_expression`: [`AssignmentLike::get_right_expression`].
+    fn layout(
+        &self,
+        right_expression: Option<Expr<'a>>,
+        is_left_short: bool,
+        left_may_break: bool,
+        f: &mut Formatter<'a>,
+    ) -> AssignmentLikeLayout {
         let (mut is_type_cast, mut starts_with_type_cast) = (false, false);
         if let Some(e) = right_expression {
             if let Some(layout) = self.chain_formatting_layout(e) {
                 return layout;
             }
             // `a = b = c = d`
-            if matches!(e.as_ast_nodes(), AstNodes::AssignmentExpression(_))
-                && e.right().is_some_and(|value| matches!(value.kind(), ExprKind::Assign { .. }))
+            if e.tag() == ExprTag::Assign
+                && matches!(e.as_ast_nodes(), AstNodes::AssignmentExpression(_))
+                && e.right().is_some_and(|value| value.tag() == ExprTag::Assign)
             {
                 return AssignmentLikeLayout::BreakAfterOperator;
             }
@@ -261,8 +269,9 @@ impl<'a> AssignmentLike<'a> {
                 LeadingComments::TypeCast => is_type_cast = true,
                 LeadingComments::TypeCastOfLeftEdge => starts_with_type_cast = true,
             }
-            if let AstNodes::CallExpression(call) = e.as_ast_nodes()
-                && call.callee().is_some_and(|callee| matches!(callee.kind(), ExprKind::Ident(_)) && callee.text() == b"require")
+            if e.tag() == ExprTag::Call
+                && let AstNodes::CallExpression(call) = e.as_ast_nodes()
+                && call.callee().is_some_and(|callee| callee.tag() == ExprTag::Ident && callee.text() == b"require")
             {
                 return AssignmentLikeLayout::NeverBreakAfterOperator;
             }
@@ -279,13 +288,13 @@ impl<'a> AssignmentLike<'a> {
             && (is_left_short
                 || right_expression.is_some_and(|e| {
                     matches!(
-                        e.kind(),
-                        ExprKind::Class(_)
-                            | ExprKind::Template(_)
-                            | ExprKind::TaggedTemplate(_)
-                            | ExprKind::True
-                            | ExprKind::False
-                            | ExprKind::Number(_)
+                        e.tag(),
+                        ExprTag::Class
+                            | ExprTag::Template
+                            | ExprTag::TaggedTemplate
+                            | ExprTag::True
+                            | ExprTag::False
+                            | ExprTag::Number
                     )
                 }))
         {
@@ -321,7 +330,13 @@ impl<'a> AssignmentLike<'a> {
         let Self::AssignmentExpression(assignment) = *self else {
             return None;
         };
-        let right_is_tail = !matches!(right_expression.kind(), ExprKind::Assign { .. });
+        // Anything else is in neither a declarator nor an assignment.
+        match assignment.parent() {
+            Node::VarDecl(_) => {}
+            Node::Expr(parent) if parent.tag() == ExprTag::Assign => {}
+            _ => return None,
+        }
+        let right_is_tail = right_expression.tag() != ExprTag::Assign;
         let parent = assignment.ast_parent();
         let upper_chain_is_eligible = match parent {
             AstNodes::VariableDeclarator(_) => !right_is_tail,
@@ -361,6 +376,7 @@ impl<'a> AssignmentLike<'a> {
     /// one of which has a value or a default.
     fn is_complex_destructuring(&self) -> bool {
         match *self {
+            AssignmentLike::VariableDeclarator(declarator) if declarator.pat().tag() != PatTag::Object => false,
             AssignmentLike::VariableDeclarator(declarator) => match declarator.pat().kind() {
                 PatKind::Object(props) => {
                     props.len() > 2
@@ -370,13 +386,16 @@ impl<'a> AssignmentLike<'a> {
                 }
                 _ => false,
             },
-            AssignmentLike::AssignmentExpression(assignment) => match assignment.left().map(Expr::kind) {
+            AssignmentLike::AssignmentExpression(assignment) => match (assignment.left())
+                .filter(|left| left.tag() == ExprTag::Object)
+                .map(Expr::kind)
+            {
                 Some(ExprKind::Object(props)) => {
                     props.len() > 2
                         && props.iter().any(|property| match property.kind() {
                             PropKind::Spread => false,
                             PropKind::Shorthand => {
-                                property.value().is_some_and(|value| matches!(value.kind(), ExprKind::Assign { .. }))
+                                property.value().is_some_and(|value| value.tag() == ExprTag::Assign)
                             }
                             _ => true,
                         })
@@ -420,7 +439,7 @@ fn leading_comments_of_right_side<'a>(right: Expr<'a>, f: &Formatter<'a>) -> Lea
         return LeadingComments::None;
     }
     let start = right.span().start;
-    if matches!(right.kind(), ExprKind::Jsx(_)) {
+    if right.tag() == ExprTag::Jsx {
         return match f.comments().is_suppressed(start) {
             true => LeadingComments::Break,
             false => LeadingComments::None,
@@ -447,51 +466,47 @@ fn should_break_after_operator<'a>(
     starts_with_type_cast: bool,
     f: &mut Formatter<'a>,
 ) -> bool {
-    let can_inline = |e: Expr<'a>| BinaryLikeExpression::new(e).is_some_and(|it| it.should_inline_logical_expression());
-    match right.as_ast_nodes() {
-        AstNodes::BinaryExpression(_) | AstNodes::PrivateInExpression(_) | AstNodes::SequenceExpression(_) => true,
-        AstNodes::LogicalExpression(logical) => !can_inline(logical),
-        AstNodes::ConditionalExpression(conditional) if f.options().experimental_ternaries => {
-            matches!(conditional.kind(), ExprKind::Cond { yes, no, .. }
-                if matches!(yes.kind(), ExprKind::Cond { .. }) || matches!(no.kind(), ExprKind::Cond { .. }))
+    // `None`: it is neither a binary nor a logical expression.
+    let breaks_as_binary_expression = |e: Expr<'a>| match e.binary_op()? {
+        BinOp::Comma => None,
+        BinOp::And | BinOp::Or | BinOp::Nullish => {
+            Some(!BinaryLikeExpression::new(e).is_some_and(|it| it.should_inline_logical_expression()))
+        }
+        _ => Some(true),
+    };
+    match right.tag() {
+        ExprTag::Binary => breaks_as_binary_expression(right).unwrap_or(true),
+        ExprTag::Cond if f.options().experimental_ternaries => {
+            matches!(right.kind(), ExprKind::Cond { yes, no, .. } if yes.tag() == ExprTag::Cond || no.tag() == ExprTag::Cond)
         }
         // `/** @type {T} */ (a || b) ? c : d`: the test is in parentheses.
-        AstNodes::ConditionalExpression(conditional)
-            if starts_with_type_cast && conditional.test().is_some_and(Expr::is_parenthesized) =>
-        {
-            false
-        }
-        AstNodes::ConditionalExpression(conditional) => match conditional.test().map(|test| test.as_ast_nodes()) {
-            Some(AstNodes::BinaryExpression(_) | AstNodes::PrivateInExpression(_)) => true,
-            Some(AstNodes::LogicalExpression(logical)) => !can_inline(logical),
-            _ => false,
-        },
-        AstNodes::Class(class) => class.decorators().next().is_some(),
+        ExprTag::Cond if starts_with_type_cast && right.test().is_some_and(Expr::is_parenthesized) => false,
+        ExprTag::Cond => right.test().and_then(breaks_as_binary_expression).unwrap_or(false),
+        ExprTag::Class => right.as_class().is_some_and(|class| class.decorators().next().is_some()),
         _ if is_left_short => false,
         _ => {
             let inner_expression = get_innermost_expression(right);
-            matches!(inner_expression.kind(), ExprKind::String(_))
+            inner_expression.tag() == ExprTag::String
                 || (!starts_with_type_cast && is_poorly_breakable_member_or_call_chain(inner_expression, f))
         }
     }
 }
 
 /// The `a()` of `void !!(await a())`.
+#[inline]
 fn get_innermost_expression(mut current: Expr<'_>) -> Expr<'_> {
     loop {
-        current = match current.as_ast_nodes() {
-            AstNodes::UnaryExpression(_) | AstNodes::AwaitExpression(_) | AstNodes::YieldExpression(_) => {
-                match current.argument() {
-                    Some(argument) => argument,
-                    None => return current,
-                }
-            }
-            AstNodes::TSNonNullExpression(_) => match current.expression() {
-                Some(expression) => expression,
-                None => return current,
-            },
-            _ => return current,
+        let inner = match current.tag() {
+            ExprTag::Unary if current.unary_op().is_some_and(|op| op.is_update()) => None,
+            ExprTag::Unary | ExprTag::Await | ExprTag::Yield => current.argument(),
+            // All of `a?.b!` is a `ChainExpression`.
+            ExprTag::NonNull if !is_chain_root(current) => current.expression(),
+            _ => None,
         };
+        match inner {
+            Some(inner) => current = inner,
+            None => return current,
+        }
     }
 }
 
@@ -507,15 +522,19 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
         let outer_group = f.reserve_tag();
         let left_group = f.reserve_tag();
         let is_left_short = self.write_left(f);
-        let left_may_break = f.elements_from(left_group + 1).may_directly_break();
-        let layout = self.layout(is_left_short, left_may_break, f);
+        let left_may_break = match f.elements().get(left_group + 1..) {
+            Some([FormatElement::SourceText(_)]) => false,
+            _ => f.elements_from(left_group + 1).may_directly_break(),
+        };
+        let right_expression = self.get_right_expression();
+        let layout = self.layout(right_expression, is_left_short, left_may_break, f);
         if layout != AssignmentLikeLayout::BreakLeftHandSide {
             f.group_from(left_group, false);
         }
 
         self.write_operator(f);
 
-        let right = format_with(|f| self.write_right(f, layout));
+        let right = format_with(|f| self.write_right(right_expression, f, layout));
         match layout {
             AssignmentLikeLayout::Fluid => {
                 let group_id = f.group_id("assignment_like");
@@ -563,6 +582,9 @@ pub(crate) fn with_assignment_layout(expression: Expr<'_>, layout: Option<Assign
 /// Prettier's `isPoorlyBreakableMemberOrCallChain`: a chain that starts with a name or `this`, and
 /// has no calls, or only calls with no argument or one short argument.
 fn is_poorly_breakable_member_or_call_chain<'a>(expression: Expr<'a>, f: &mut Formatter<'a>) -> bool {
+    if !matches!(expression.tag(), ExprTag::Call | ExprTag::Dot | ExprTag::Index | ExprTag::NonNull) {
+        return false;
+    }
     let threshold = f.options().line_width.value() / 4;
     let mut is_chain = false;
     let mut call_expressions: SmallVec<[Expr<'a>; 4]> = SmallVec::new();

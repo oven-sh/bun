@@ -18,6 +18,7 @@ mod value_parser;
 
 use self::doc::Doc;
 use crate::options::{QuoteStyle, TrailingCommas};
+use crate::pragma::BeforeParsing;
 use crate::{FormatError, FormatOptions};
 use std::borrow::Cow;
 
@@ -71,6 +72,81 @@ fn front_matter_len(text: &[u8]) -> Option<usize> {
     Some(end + 1 + 3)
 }
 
+/// Prettier's `replaceQuotesInInlineComments`: the inline comments in which quotes and asterisks are to
+/// be replaced by blanks, for `postcss-less` not to stumble over them.
+fn inline_comments_with_quotes(text: &[u8]) -> Vec<(usize, usize)> {
+    #[derive(Copy, Clone, PartialEq)]
+    enum State {
+        Initial,
+        Quotes(u8),
+        Url,
+        CommentBlock,
+        CommentInline,
+    }
+    let mut state = State::Initial;
+    let mut state_to_return_from_quotes = State::Initial;
+    let mut inline_comment_start = 0;
+    let mut inline_comment_contains_quotes = false;
+    let mut comments = Vec::new();
+    let mut i = 0;
+    while let Some(&c) = text.get(i) {
+        match state {
+            State::Initial => match c {
+                b'\'' | b'"' => state = State::Quotes(c),
+                b'u' | b'U' if text.get(i..i + 4).is_some_and(|it| it.eq_ignore_ascii_case(b"url(")) => {
+                    state = State::Url;
+                    i += 3;
+                }
+                b'/' if text.get(i + 1) == Some(&b'*') => {
+                    state = State::CommentBlock;
+                    i += 1;
+                }
+                b'/' if text.get(i + 1) == Some(&b'/') => {
+                    state = State::CommentInline;
+                    inline_comment_start = i;
+                    i += 1;
+                }
+                _ => {}
+            },
+            State::Quotes(quote) => {
+                if c == quote && text[i - 1] != b'\\' {
+                    state = std::mem::replace(&mut state_to_return_from_quotes, State::Initial);
+                }
+                if matches!(c, b'\n' | b'\r') {
+                    return Vec::new();
+                }
+            }
+            State::Url => match c {
+                b')' => state = State::Initial,
+                b'\n' | b'\r' => return Vec::new(),
+                b'\'' | b'"' => {
+                    state = State::Quotes(c);
+                    state_to_return_from_quotes = State::Url;
+                }
+                _ => {}
+            },
+            State::CommentBlock => {
+                if c == b'/' && text[i - 1] == b'*' {
+                    state = State::Initial;
+                }
+            }
+            State::CommentInline => match c {
+                b'"' | b'\'' | b'*' => inline_comment_contains_quotes = true,
+                b'\n' | b'\r' => {
+                    if inline_comment_contains_quotes {
+                        comments.push((inline_comment_start, i));
+                    }
+                    state = State::Initial;
+                    inline_comment_contains_quotes = false;
+                }
+                _ => {}
+            },
+        }
+        i += 1;
+    }
+    comments
+}
+
 /// Appends the formatted `text` to `out`.
 pub fn format(
     text: &[u8],
@@ -101,11 +177,24 @@ pub fn format(
             Cow::Owned(normalized)
         }
     };
+    let text = match crate::pragma::before_parsing_css(&text, front_matter_len(&text).unwrap_or(0), options) {
+        BeforeParsing::LeaveAsItIs => {
+            out.extend_from_slice(original);
+            return Ok(());
+        }
+        BeforeParsing::Format(text) => text,
+    };
     let text = &text[..];
+    if text::trim(text).is_empty() {
+        if has_bom {
+            out.extend_from_slice(BOM);
+        }
+        return Ok(());
+    }
 
     // What is parsed has blanks in the place of the front matter, so that all positions stay.
     let front_matter = front_matter_len(text).map(|len| &text[..len]);
-    let blanked: Cow<'_, [u8]> = match front_matter {
+    let mut blanked: Cow<'_, [u8]> = match front_matter {
         None => Cow::Borrowed(text),
         Some(front_matter) => {
             let mut blanked = text.to_vec();
@@ -118,7 +207,17 @@ pub fn format(
         }
     };
 
-    let root = parse::parse(&blanked, parser).map_err(|_| FormatError::SyntaxError)?;
+    if parser == Parser::Less {
+        for (start, end) in inline_comments_with_quotes(&blanked) {
+            for byte in &mut blanked.to_mut()[start..end] {
+                if matches!(byte, b'"' | b'\'' | b'*') {
+                    *byte = b' ';
+                }
+            }
+        }
+    }
+
+    let root = parse::parse(&blanked, text, parser).map_err(|_| FormatError::SyntaxError)?;
     let mut printer = printer::Printer {
         text,
         syntax: parser,
@@ -131,7 +230,10 @@ pub fn format(
     let is_range = options.range_start.is_some_and(|start| start > 0)
         || options.range_end.is_some_and(|end| (end as usize) < text.len());
     if is_range {
-        out.extend_from_slice(original);
+        if has_bom {
+            out.extend_from_slice(BOM);
+        }
+        doc::print(doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(text)), options, original, out);
         return Ok(());
     }
     let mut document = printer.print_root(&root);

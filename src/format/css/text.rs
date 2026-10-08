@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 
 /// If `text` starts with a character that `\s` matches, its length in bytes.
-fn white_space_len_at_start(text: &[u8]) -> Option<usize> {
+pub(crate) fn white_space_len_at_start(text: &[u8]) -> Option<usize> {
     match *text {
         [b'\t' | b'\n' | 0x0B | 0x0C | b'\r' | b' ', ..] => Some(1),
         [0xC2, 0xA0, ..] => Some(2),

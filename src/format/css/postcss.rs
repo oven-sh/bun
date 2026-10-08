@@ -1,8 +1,10 @@
-//! `postcss` 8.5: `lib/tokenize.js` and `lib/parser.js`.
+//! `postcss` 8.5 (`lib/tokenize.js`, `lib/parser.js`), `postcss-scss` 4.0 (`lib/scss-tokenize.js`,
+//! `lib/scss-parser.js`) and `postcss-less` 6.0 (`lib/LessParser.js`, `lib/nodes/*.js`).
 //!
 //! Everything that `postcss` keeps as a string is made of tokens that follow each other, so here it
 //! is a range of the text.
 
+use super::Parser as Syntax;
 use super::text;
 
 /// A range of the text.
@@ -52,7 +54,15 @@ enum TokenKind {
 #[derive(Debug, Copy, Clone)]
 struct Token {
     kind: TokenKind,
+    /// `token[1]`
     range: Range,
+    /// `token[2]`: where it starts. It is not `range.start` after `postcss-less` has started anew
+    /// with the rest of the text.
+    start: u32,
+    /// `token[3]`: where its last character is, more or less.
+    last: Option<u32>,
+    /// `token[4] === "inline"`
+    inline: bool,
 }
 
 impl Token {
@@ -64,12 +74,11 @@ impl Token {
         matches!(self.kind, TokenKind::Space | TokenKind::Comment)
     }
 
-    /// `token[3] || token[2]`: where its last character is. A space has no position.
+    /// `token[3] || token[2]`. A space has no position.
     fn last_position(self) -> Option<u32> {
         match self.kind {
             TokenKind::Space => None,
-            TokenKind::Control(_) => Some(self.range.start),
-            _ => Some(self.range.end.saturating_sub(1)),
+            _ => Some(self.last.unwrap_or(self.start)),
         }
     }
 }
@@ -79,10 +88,14 @@ pub(crate) struct SyntaxError;
 
 struct Tokenizer<'a> {
     css: &'a [u8],
+    syntax: Syntax,
     pos: usize,
+    /// What is subtracted from a position to get what `postcss` takes for it.
+    shift: usize,
     /// The words that no `(` has taken yet.
     buffer: Vec<Range>,
-    returned: Vec<Token>,
+    /// `None` is an `undefined` that has been given back.
+    returned: Vec<Option<Token>>,
     last_bad_paren: Option<usize>,
 }
 
@@ -95,7 +108,7 @@ impl<'a> Tokenizer<'a> {
         self.returned.is_empty() && self.pos >= self.css.len()
     }
 
-    fn back(&mut self, token: Token) {
+    fn back(&mut self, token: Option<Token>) {
         self.returned.push(token);
     }
 
@@ -111,17 +124,46 @@ impl<'a> Tokenizer<'a> {
         }
     }
 
-    fn next_token(&mut self) -> Result<Option<Token>, SyntaxError> {
+    /// `interpolation` of `postcss-scss`. `next`: where the `#` is. Returns where the `}` is.
+    fn interpolation(&self, mut next: usize) -> Result<usize, SyntaxError> {
+        let mut deep = 1;
+        let mut string_quote = None;
+        let mut string_escaped = false;
+        while deep > 0 {
+            next += 1;
+            let &code = self.css.get(next).ok_or(SyntaxError)?;
+            if let Some(quote) = string_quote {
+                if !string_escaped && code == quote {
+                    string_quote = None;
+                } else if code == b'\\' {
+                    string_escaped = !string_escaped;
+                } else {
+                    string_escaped = false;
+                }
+            } else if matches!(code, b'\'' | b'"') {
+                string_quote = Some(code);
+            } else if code == b'}' {
+                deep -= 1;
+            } else if code == b'#' && self.css.get(next + 1) == Some(&b'{') {
+                deep += 1;
+            }
+        }
+        Ok(next)
+    }
+
+    fn next_token(&mut self, ignore_unclosed: bool) -> Result<Option<Token>, SyntaxError> {
         if let Some(token) = self.returned.pop() {
-            return Ok(Some(token));
+            return Ok(token);
         }
         let (css, pos) = (self.css, self.pos);
         let Some(&code) = css.get(pos) else {
             return Ok(None);
         };
+        let is_scss = self.syntax == Syntax::Scss;
         // The position of the last character of the token.
         let next;
         let kind;
+        let mut inline = false;
         match code {
             b'\n' | b' ' | b'\t' | b'\r' | 0x0C => {
                 let mut end = pos + 1;
@@ -131,11 +173,31 @@ impl<'a> Tokenizer<'a> {
                 (kind, next) = (TokenKind::Space, end - 1);
             }
             b'[' | b']' | b'{' | b'}' | b':' | b';' | b')' => (kind, next) = (TokenKind::Control(code), pos),
+            b',' if is_scss => (kind, next) = (TokenKind::Word, pos),
             b'(' => {
                 let prev = self.buffer.pop().map_or(&b""[..], |range| range.of(css));
                 let n = css.get(pos + 1);
-                if prev == b"url" && !matches!(n, Some(b'\'' | b'"')) && !is_space(n) {
-                    (kind, next) = (TokenKind::Brackets, self.find_unescaped(b')', pos).ok_or(SyntaxError)?);
+                if prev == b"url" && !matches!(n, Some(b'\'' | b'"')) && is_scss {
+                    let mut brackets = 1;
+                    let mut at = pos + 1;
+                    while let Some(&n) = css.get(at) {
+                        if n == b'(' {
+                            brackets += 1;
+                        } else if n == b')' {
+                            brackets -= 1;
+                            if brackets == 0 {
+                                break;
+                            }
+                        }
+                        at += 1;
+                    }
+                    (kind, next) = (TokenKind::Brackets, at);
+                } else if prev == b"url" && !matches!(n, Some(b'\'' | b'"')) && !is_space(n) {
+                    let close = match self.find_unescaped(b')', pos) {
+                        None if ignore_unclosed => pos,
+                        close => close.ok_or(SyntaxError)?,
+                    };
+                    (kind, next) = (TokenKind::Brackets, close);
                 } else if self.last_bad_paren.is_some_and(|last| pos <= last) {
                     (kind, next) = (TokenKind::Control(b'('), pos);
                 } else {
@@ -156,7 +218,31 @@ impl<'a> Tokenizer<'a> {
                     }
                 }
             }
-            b'\'' | b'"' => (kind, next) = (TokenKind::String, self.find_unescaped(code, pos).ok_or(SyntaxError)?),
+            b'\'' | b'"' if is_scss => {
+                let mut at = pos;
+                let mut escaped = false;
+                loop {
+                    at += 1;
+                    let &byte = css.get(at).ok_or(SyntaxError)?;
+                    if !escaped && byte == code {
+                        break;
+                    } else if byte == b'\\' {
+                        escaped = !escaped;
+                    } else if escaped {
+                        escaped = false;
+                    } else if byte == b'#' && css.get(at + 1) == Some(&b'{') {
+                        at = self.interpolation(at)?;
+                    }
+                }
+                (kind, next) = (TokenKind::String, at);
+            }
+            b'\'' | b'"' => {
+                let close = match self.find_unescaped(code, pos) {
+                    None if ignore_unclosed => pos + 1,
+                    close => close.ok_or(SyntaxError)?,
+                };
+                (kind, next) = (TokenKind::String, close);
+            }
             b'@' => {
                 let end = bun_core::strings::index_of_any(&css[pos + 1..], b"\t\n\x0C\r \"#'()/;[\\]{}")
                     .map_or(css.len(), |at| pos + 1 + at);
@@ -183,14 +269,27 @@ impl<'a> Tokenizer<'a> {
                 }
                 (kind, next) = (TokenKind::Word, last);
             }
+            b'#' if is_scss && css.get(pos + 1) == Some(&b'{') => (kind, next) = (TokenKind::Word, self.interpolation(pos)?),
             b'/' if css.get(pos + 1) == Some(&b'*') => {
-                let close = text::index_of_from(css, b"*/", pos + 2).ok_or(SyntaxError)?;
-                (kind, next) = (TokenKind::Comment, close + 1);
+                let close = match text::index_of_from(css, b"*/", pos + 2) {
+                    None if ignore_unclosed => css.len(),
+                    close => close.ok_or(SyntaxError)? + 1,
+                };
+                (kind, next) = (TokenKind::Comment, close);
+            }
+            b'/' if is_scss && css.get(pos + 1) == Some(&b'/') => {
+                let end = bun_core::strings::index_of_any(&css[pos + 1..], b"\n\x0C\r").map_or(css.len(), |at| pos + 1 + at);
+                (kind, next) = (TokenKind::Comment, end - 1);
+                inline = true;
             }
             _ => {
+                let set: &[u8] = match is_scss {
+                    true => b",\t\n\x0C\r !\"#'():;@[\\]{}/",
+                    false => b"\t\n\x0C\r !\"#'():;@[\\]{}/",
+                };
                 let mut end = pos + 1;
                 loop {
-                    match bun_core::strings::index_of_any(&css[end..], b"\t\n\x0C\r !\"#'():;@[\\]{}/") {
+                    match bun_core::strings::index_of_any(&css[end..], set) {
                         None => end = css.len(),
                         Some(at) => {
                             end += at;
@@ -207,17 +306,28 @@ impl<'a> Tokenizer<'a> {
             }
         }
         self.pos = next + 1;
+        let start = (pos - self.shift) as u32;
+        let last = match kind {
+            TokenKind::Space | TokenKind::Control(_) => None,
+            // What `postcss-scss` says of a comma.
+            TokenKind::Word if is_scss && code == b',' => Some(start + 1),
+            _ => Some((next - self.shift) as u32),
+        };
         Ok(Some(Token {
             kind,
-            range: Range::new(pos as u32, next as u32 + 1),
+            range: Range::new(pos as u32, (next + 1).min(css.len()) as u32),
+            start,
+            last,
+            inline,
         }))
     }
 }
 
 pub(crate) type NodeId = u32;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
 pub(crate) enum Kind {
+    #[default]
     Root,
     Comment,
     Rule,
@@ -226,7 +336,7 @@ pub(crate) enum Kind {
 }
 
 /// A node, with the properties of all kinds of nodes. `raws.x` is `x`.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct Node {
     pub(crate) kind: Kind,
     pub(crate) parent: NodeId,
@@ -242,8 +352,14 @@ pub(crate) struct Node {
     pub(crate) semicolon: bool,
     /// Of a comment: what is between the delimiters, trimmed.
     pub(crate) text: Range,
+    /// Of a comment: `inline` (Less).
+    pub(crate) inline: bool,
+    /// Of a comment: `raws.inline` (SCSS).
+    pub(crate) raw_inline: bool,
     /// Of a rule: `raws.selector.raw`, or `selector` if there is no such thing.
     pub(crate) selector: Range,
+    /// `selector`, if it is not the same as `raws.selector.raw`.
+    pub(crate) clean_selector: Option<Box<[u8]>>,
     pub(crate) prop: Range,
     /// Of a declaration: `raws.value.raw`, or `value`.
     pub(crate) value: Range,
@@ -251,6 +367,8 @@ pub(crate) struct Node {
     pub(crate) clean_value: Option<Box<[u8]>>,
     pub(crate) important: bool,
     pub(crate) raw_important: Option<Range>,
+    /// Of a declaration of SCSS with a block.
+    pub(crate) is_nested: bool,
     /// Of an at-rule, without the `@`.
     pub(crate) name: Range,
     pub(crate) after_name: Range,
@@ -258,6 +376,15 @@ pub(crate) struct Node {
     pub(crate) params: Range,
     /// `params`, if it is not the same as `raws.params.raw`.
     pub(crate) clean_params: Option<Box<[u8]>>,
+    /// What `postcss-less` adds.
+    pub(crate) extend: bool,
+    pub(crate) mixin: bool,
+    pub(crate) function: bool,
+    pub(crate) variable: bool,
+    /// Of a variable whose parameters start with a colon: how much of them is not part of `value`.
+    pub(crate) value_skips: u32,
+    /// `raws.identifier`
+    pub(crate) identifier: Range,
     /// Whether there is a `raws.ownSemicolon`.
     own_semicolon: bool,
 }
@@ -269,9 +396,12 @@ pub(crate) struct Tree {
 
 struct Parser<'a> {
     css: &'a [u8],
+    syntax: Syntax,
     tokenizer: Tokenizer<'a>,
     nodes: Vec<Node>,
     current: NodeId,
+    /// `lastNode` of `postcss-less`
+    last_node: NodeId,
     spaces: Range,
     semicolon: bool,
     depth: u32,
@@ -319,6 +449,21 @@ fn spaces_and_comments_from_end(tokens: &mut Vec<Token>) -> Range {
     range
 }
 
+/// `/extend\(.+\)/i.test(text)`
+fn has_extend(text: &[u8], prefix: &[u8]) -> bool {
+    let lower = text.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(at) = text::index_of_from(&lower, prefix, from) {
+        let rest = &lower[at + prefix.len()..];
+        let line = &rest[..bun_core::strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len())];
+        if bun_core::strings::last_index_of_char(line, b')').is_some_and(|close| close > 0) {
+            return true;
+        }
+        from = at + 1;
+    }
+    false
+}
+
 impl<'a> Parser<'a> {
     fn node(&mut self, id: NodeId) -> &mut Node {
         &mut self.nodes[id as usize]
@@ -336,29 +481,14 @@ impl<'a> Parser<'a> {
         self.nodes.push(Node {
             kind,
             parent: current,
-            nodes: None,
             start: offset,
-            end: None,
             before: std::mem::take(&mut self.spaces),
-            after: Range::default(),
-            between: Range::default(),
-            semicolon: false,
-            text: Range::default(),
-            selector: Range::default(),
-            prop: Range::default(),
-            value: Range::default(),
-            clean_value: None,
-            important: false,
-            raw_important: None,
-            name: Range::default(),
-            after_name: Range::default(),
-            params: Range::default(),
-            clean_params: None,
-            own_semicolon: false,
+            ..Node::default()
         });
         if kind != Kind::Comment {
             self.semicolon = false;
         }
+        self.last_node = id;
         id
     }
 
@@ -370,7 +500,8 @@ impl<'a> Parser<'a> {
     }
 
     fn parse(&mut self) -> Result<(), SyntaxError> {
-        while let Some(token) = self.tokenizer.next_token()? {
+        while !self.tokenizer.end_of_file() {
+            let token = self.tokenizer.next_token(false)?.ok_or(SyntaxError)?;
             match token.kind {
                 TokenKind::Space => self.spaces = self.spaces.join(token.range),
                 TokenKind::Control(b';') => self.free_semicolon(token),
@@ -378,10 +509,14 @@ impl<'a> Parser<'a> {
                 TokenKind::Comment => self.comment(token),
                 TokenKind::AtWord => self.atrule(token)?,
                 TokenKind::Control(b'{') => {
-                    let id = self.new_node(Kind::Rule, token.range.start);
+                    let id = self.new_node(Kind::Rule, token.start);
                     self.open(id)?;
                 }
-                _ => self.other(token)?,
+                _ => {
+                    if self.syntax != Syntax::Less || !self.less_inline_comment(token)? {
+                        self.other(token)?;
+                    }
+                }
             }
         }
         // `endFile`
@@ -410,7 +545,7 @@ impl<'a> Parser<'a> {
         }
         let current = self.current;
         let node = self.node(current);
-        node.end = Some(token.range.start + 1);
+        node.end = Some(token.start + 1);
         self.current = node.parent;
         self.depth -= 1;
         Ok(())
@@ -425,29 +560,63 @@ impl<'a> Parser<'a> {
         let spaces = self.spaces;
         let prev = self.node(prev);
         if prev.kind == Kind::Rule && !prev.own_semicolon {
-            prev.end = Some(token.range.start + (spaces.end - spaces.start));
+            prev.end = Some(token.start + (spaces.end - spaces.start));
             prev.own_semicolon = true;
             self.spaces = Range::default();
         }
     }
 
-    fn comment(&mut self, token: Token) {
-        let id = self.new_node(Kind::Comment, token.range.start);
-        let inner = Range::new(token.range.start + 2, token.range.end.saturating_sub(2).max(token.range.start + 2));
+    /// The part of `inner` that is left when it is trimmed.
+    fn trimmed(&self, inner: Range) -> Range {
         let content = inner.of(self.css);
         let trimmed = text::trim(content);
         let left = text::leading_white_space_len(content).min(content.len() - trimmed.len()) as u32;
+        Range::new(inner.start + left, inner.start + left + trimmed.len() as u32)
+    }
+
+    fn comment(&mut self, token: Token) {
+        let id = self.new_node(Kind::Comment, token.start);
+        let start = token.range.start + 2;
+        let text = self.trimmed(match token.inline {
+            true => Range::new(start, token.range.end),
+            false => Range::new(start, token.range.end.saturating_sub(2).max(start)),
+        });
         let node = self.node(id);
-        node.end = Some(token.range.end);
-        node.text = Range::new(inner.start + left, inner.start + left + trimmed.len() as u32);
+        node.end = token.last_position().map(|at| at + 1);
+        node.text = text;
+        node.raw_inline = token.inline;
     }
 
     fn atrule(&mut self, token: Token) -> Result<(), SyntaxError> {
-        if token.range.end - token.range.start == 1 {
+        let name = Range::new(token.range.start + 1, token.range.end);
+        match self.syntax {
+            Syntax::Css => self.base_atrule(token.start, name),
+            Syntax::Scss => {
+                let mut name = name;
+                let mut prev = token;
+                while !self.tokenizer.end_of_file() {
+                    let next = self.tokenizer.next_token(false)?.ok_or(SyntaxError)?;
+                    if next.kind == TokenKind::Word && prev.last.is_some_and(|last| next.start == last + 1) {
+                        name.end = next.range.end;
+                        prev = next;
+                    } else {
+                        self.tokenizer.back(Some(next));
+                        break;
+                    }
+                }
+                self.base_atrule(token.start, name)
+            }
+            Syntax::Less => self.less_atrule(token, name),
+        }
+    }
+
+    /// `atrule` of `postcss`. `start`: `token[2]`. `name`: `token[1].slice(1)`.
+    fn base_atrule(&mut self, start: u32, name: Range) -> Result<(), SyntaxError> {
+        if name.is_empty() {
             return Err(SyntaxError);
         }
-        let id = self.new_node(Kind::AtRule, token.range.start);
-        self.node(id).name = Range::new(token.range.start + 1, token.range.end);
+        let id = self.new_node(Kind::AtRule, start);
+        self.node(id).name = name;
 
         let mut last = false;
         let mut open = false;
@@ -455,9 +624,7 @@ impl<'a> Parser<'a> {
         let mut brackets: Vec<u8> = Vec::new();
 
         while !self.tokenizer.end_of_file() {
-            let Some(token) = self.tokenizer.next_token()? else {
-                break;
-            };
+            let token = self.tokenizer.next_token(false)?.ok_or(SyntaxError)?;
             match token.kind {
                 TokenKind::Control(b'(') => brackets.push(b')'),
                 TokenKind::Control(b'[') => brackets.push(b']'),
@@ -469,7 +636,7 @@ impl<'a> Parser<'a> {
             }
             if brackets.is_empty() {
                 if token.is(b';') {
-                    self.node(id).end = Some(token.range.start + 1);
+                    self.node(id).end = Some(token.start + 1);
                     self.semicolon = true;
                     break;
                 } else if token.is(b'{') {
@@ -533,7 +700,7 @@ impl<'a> Parser<'a> {
                     b'{' => return self.rule(tokens),
                     b'}' => {
                         tokens.pop();
-                        self.tokenizer.back(token);
+                        self.tokenizer.back(Some(token));
                         end = true;
                         break;
                     }
@@ -545,32 +712,45 @@ impl<'a> Parser<'a> {
                 }
                 _ => {}
             }
-            next = self.tokenizer.next_token()?;
+            next = self.tokenizer.next_token(false)?;
         }
 
         if self.tokenizer.end_of_file() {
             end = true;
         }
-        if !brackets.is_empty() || !(end && colon) {
+        if !brackets.is_empty() {
             return Err(SyntaxError);
+        }
+        if !(end && colon) {
+            return self.unknown_word(tokens);
         }
         if !custom_property {
             while let Some(&token) = tokens.last().filter(|token| token.is_space_or_comment()) {
                 tokens.pop();
-                self.tokenizer.back(token);
+                self.tokenizer.back(Some(token));
             }
         }
         self.decl(tokens, custom_property)
     }
 
-    fn rule(&mut self, mut tokens: Vec<Token>) -> Result<(), SyntaxError> {
+    fn rule(&mut self, tokens: Vec<Token>) -> Result<(), SyntaxError> {
+        match self.syntax {
+            Syntax::Css => self.base_rule(tokens),
+            Syntax::Scss => self.scss_rule(tokens),
+            Syntax::Less => self.less_rule(tokens),
+        }
+    }
+
+    fn base_rule(&mut self, mut tokens: Vec<Token>) -> Result<(), SyntaxError> {
         tokens.pop();
-        let start = tokens.first().map_or(0, |token| token.range.start);
+        let start = tokens.first().map_or(0, |token| token.start);
         let id = self.new_node(Kind::Rule, start);
         let between = spaces_and_comments_from_end(&mut tokens);
+        let clean_selector = clean(self.css, &tokens, false);
         let node = self.node(id);
         node.between = between;
         node.selector = range_of(&tokens);
+        node.clean_selector = clean_selector;
         self.open(id)
     }
 
@@ -597,11 +777,58 @@ impl<'a> Parser<'a> {
         Ok(None)
     }
 
+    /// Takes `!important` from the end of `tokens`. `lowest`: the index of the first token that is
+    /// looked at. `any_case`: whether it can be written in upper case.
+    fn take_important(&mut self, id: NodeId, tokens: &mut Vec<Token>, lowest: usize, any_case: bool) {
+        let is = |text: &[u8], word: &[u8]| if any_case { text.eq_ignore_ascii_case(word) } else { text == word };
+        let mut index = tokens.len();
+        while index > lowest {
+            index -= 1;
+            let token = tokens[index];
+            let text = self.text_of(token);
+            if is(text, b"!important") {
+                let string = range_of(&tokens[index..]);
+                tokens.truncate(index);
+                let keep = tokens.iter().rposition(|it| it.kind != TokenKind::Space).map_or(0, |at| at + 1);
+                let string = range_of(&tokens[keep..]).join(string);
+                tokens.truncate(keep);
+                let is_plain = string.of(self.css) == b" !important";
+                let node = self.node(id);
+                node.important = true;
+                node.raw_important = (!is_plain).then_some(string);
+                break;
+            } else if is(text, b"important") {
+                let mut cache = tokens.clone();
+                let mut string = Range::default();
+                let mut j = index;
+                while j > 0 {
+                    let starts_with_bang = text::trim(string.of(self.css)).starts_with(b"!");
+                    if starts_with_bang && cache.get(j).is_some_and(|it| it.kind != TokenKind::Space) {
+                        break;
+                    }
+                    if let Some(token) = cache.pop() {
+                        string = token.range.join(string);
+                    }
+                    j -= 1;
+                }
+                if text::trim(string.of(self.css)).starts_with(b"!") {
+                    let node = self.node(id);
+                    node.important = true;
+                    node.raw_important = Some(string);
+                    *tokens = cache;
+                }
+            }
+            if !token.is_space_or_comment() {
+                break;
+            }
+        }
+    }
+
     fn decl(&mut self, mut tokens: Vec<Token>, custom_property: bool) -> Result<(), SyntaxError> {
         let Some((&first, &last)) = tokens.first().zip(tokens.last()) else {
             return Err(SyntaxError);
         };
-        let id = self.new_node(Kind::Decl, first.range.start);
+        let id = self.new_node(Kind::Decl, first.start);
         if last.is(b';') {
             self.semicolon = true;
             tokens.pop();
@@ -613,7 +840,7 @@ impl<'a> Parser<'a> {
         let before = range_of(&tokens[..start]);
         let node = self.node(id);
         node.before = node.before.join(before);
-        node.start = tokens[start].range.start;
+        node.start = tokens[start].start;
 
         let prop_len = tokens[start..]
             .iter()
@@ -646,48 +873,7 @@ impl<'a> Parser<'a> {
         }
         let first_spaces = tokens[first_spaces_start..at].to_vec();
         let mut tokens = tokens.split_off(at);
-
-        let mut index = tokens.len();
-        while index > 0 {
-            index -= 1;
-            let token = tokens[index];
-            let lower = self.text_of(token).to_ascii_lowercase();
-            if lower == b"!important" {
-                let string = range_of(&tokens[index..]);
-                tokens.truncate(index);
-                let keep = tokens.iter().rposition(|it| it.kind != TokenKind::Space).map_or(0, |at| at + 1);
-                let string = range_of(&tokens[keep..]).join(string);
-                tokens.truncate(keep);
-                let is_plain = string.of(self.css) == b" !important";
-                let node = self.node(id);
-                node.important = true;
-                node.raw_important = (!is_plain).then_some(string);
-                break;
-            } else if lower == b"important" {
-                let mut cache = tokens.clone();
-                let mut string = Range::default();
-                let mut j = index;
-                while j > 0 {
-                    let starts_with_bang = text::trim(string.of(self.css)).starts_with(b"!");
-                    if starts_with_bang && cache[j].kind != TokenKind::Space {
-                        break;
-                    }
-                    if let Some(token) = cache.pop() {
-                        string = token.range.join(string);
-                    }
-                    j -= 1;
-                }
-                if text::trim(string.of(self.css)).starts_with(b"!") {
-                    let node = self.node(id);
-                    node.important = true;
-                    node.raw_important = Some(string);
-                    tokens = cache;
-                }
-            }
-            if !token.is_space_or_comment() {
-                break;
-            }
-        }
+        self.take_important(id, &mut tokens, 0, true);
 
         let has_word = tokens.iter().any(|token| !token.is_space_or_comment());
         let mut value = range_of(&tokens);
@@ -699,72 +885,371 @@ impl<'a> Parser<'a> {
             value = range_of(&first_spaces).join(value);
             clean_value = clean(self.css, &[&first_spaces[..], &tokens[..]].concat(), custom_property);
         }
+        let extend = self.syntax == Syntax::Less && has_extend(clean_value.as_deref().unwrap_or(value.of(self.css)), b"extend(");
         let node = self.node(id);
         node.prop = prop;
         node.between = between;
         node.value = value;
         node.clean_value = clean_value;
+        node.extend = extend;
 
         if !custom_property && self.colon(&tokens)?.is_some() {
             return Err(SyntaxError);
         }
         Ok(())
     }
+
+    fn unknown_word(&mut self, tokens: Vec<Token>) -> Result<(), SyntaxError> {
+        let (Syntax::Less, Some(&first)) = (self.syntax, tokens.first()) else {
+            return Err(SyntaxError);
+        };
+        let symbol = self.text_of(first);
+        if symbol == b"each" && tokens.get(1).ok_or(SyntaxError)?.is(b'(') {
+            return self.less_each(tokens);
+        }
+        // `isMixinToken`
+        let is_hash_color = symbol.starts_with(b"#")
+            && matches!(symbol.len(), 4 | 7)
+            && symbol[1..].iter().all(u8::is_ascii_hexdigit);
+        let has_fraction = (1..symbol.len()).any(|at| symbol[at - 1] == b'.' && symbol[at].is_ascii_digit());
+        if matches!(symbol.first(), Some(b'.' | b'#')) && !is_hash_color && !has_fraction {
+            return self.less_mixin(tokens);
+        }
+        Err(SyntaxError)
+    }
+
+    // ───────────────────────────── postcss-scss ─────────────────────────────
+
+    fn scss_rule(&mut self, mut tokens: Vec<Token>) -> Result<(), SyntaxError> {
+        let mut with_colon = false;
+        let mut brackets = 0;
+        // Of what is behind the colon, comments aside: the first character, and whether there is
+        // more to it than white space.
+        let mut first_byte = None;
+        let mut is_blank = true;
+        for &token in &tokens {
+            let text = self.text_of(token);
+            if with_colon {
+                if token.kind != TokenKind::Comment && !token.is(b'{') {
+                    first_byte = first_byte.or(text.first().copied());
+                    is_blank = is_blank && text::trim(text).is_empty();
+                }
+            } else if token.kind == TokenKind::Space && bun_core::strings::contains_char(text, b'\n') {
+                break;
+            } else if token.is(b'(') {
+                brackets += 1;
+            } else if token.is(b')') {
+                brackets -= 1;
+            } else if brackets == 0 && token.is(b':') {
+                with_colon = true;
+            }
+        }
+        if !with_colon || is_blank || first_byte.is_some_and(|b| matches!(b, b'#' | b':' | b'-') || b.is_ascii_alphabetic()) {
+            return self.base_rule(tokens);
+        }
+
+        tokens.pop();
+        let id = self.new_node(Kind::Decl, tokens.first().ok_or(SyntaxError)?.start);
+        self.node(id).is_nested = true;
+        let last = tokens.iter().rev().find(|token| token.kind != TokenKind::Space).ok_or(SyntaxError)?;
+        self.node(id).end = last.last_position().map(|at| at + 1);
+
+        let start = tokens.iter().position(|token| token.kind == TokenKind::Word).ok_or(SyntaxError)?;
+        let before = range_of(&tokens[..start]);
+        let node = self.node(id);
+        node.before = node.before.join(before);
+        node.start = tokens[start].start;
+
+        let prop_len = tokens[start..]
+            .iter()
+            .position(|token| token.is(b':') || token.is_space_or_comment())
+            .unwrap_or(tokens.len() - start);
+        let mut prop = range_of(&tokens[start..start + prop_len]);
+        let mut at = start + prop_len;
+        let between_start = at;
+        while let Some(&token) = tokens.get(at) {
+            at += 1;
+            if token.is(b':') {
+                break;
+            }
+        }
+        if matches!(prop.of(self.css).first(), Some(b'_' | b'*')) {
+            let node = self.node(id);
+            node.before = node.before.join(Range::new(prop.start, prop.start + 1));
+            prop.start += 1;
+        }
+        while tokens.get(at).is_some_and(|token| token.is_space_or_comment()) {
+            at += 1;
+        }
+        let between = range_of(&tokens[between_start..at]);
+        let mut tokens = tokens.split_off(at);
+        self.take_important(id, &mut tokens, 1, false);
+
+        let clean_value = clean(self.css, &tokens, false);
+        let node = self.node(id);
+        node.prop = prop;
+        node.between = between;
+        node.value = range_of(&tokens);
+        node.clean_value = clean_value;
+        if self.colon(&tokens)?.is_some() {
+            return Err(SyntaxError);
+        }
+        self.open(id)
+    }
+
+    // ───────────────────────────── postcss-less ─────────────────────────────
+
+    /// `interpolation`: makes one word of `@{a}` and what is attached to it.
+    fn less_interpolation(&mut self, token: Token) -> Result<bool, SyntaxError> {
+        let next = self.tokenizer.next_token(false)?;
+        if token.range.end - token.range.start > 1 || !next.ok_or(SyntaxError)?.is(b'{') {
+            self.tokenizer.back(next);
+            return Ok(false);
+        }
+        let mut last = next.ok_or(SyntaxError)?;
+        let mut following = self.tokenizer.next_token(false)?;
+        while let Some(token) = following.filter(|it| it.kind == TokenKind::Word || it.is(b'}')) {
+            last = token;
+            following = self.tokenizer.next_token(false)?;
+        }
+        self.tokenizer.back(following);
+        self.tokenizer.back(Some(Token {
+            kind: TokenKind::Word,
+            range: Range::new(token.range.start, last.range.end),
+            start: token.start,
+            last: Some(last.start),
+            inline: false,
+        }));
+        Ok(true)
+    }
+
+    fn less_atrule(&mut self, token: Token, name: Range) -> Result<(), SyntaxError> {
+        if self.less_interpolation(token)? {
+            return Ok(());
+        }
+        self.base_atrule(token.start, name)?;
+
+        // `nodes/variable.js`
+        let css = self.css;
+        let id = self.last_node;
+        let node = self.node(id);
+        if !node.name.of(css).ends_with(b":") {
+            return Ok(());
+        }
+        node.name.end -= 1;
+        node.after_name = Range::new(node.name.end, node.name.end + 1).join(node.after_name);
+        node.variable = true;
+        // `/^:(\s+)?/`
+        let params = node.clean_params.as_deref().unwrap_or(node.params.of(css));
+        if let Some(rest) = params.strip_prefix(b":") {
+            node.value_skips = 1 + text::leading_white_space_len(rest) as u32;
+            node.after_name.end = node.params.start + node.value_skips;
+        }
+        Ok(())
+    }
+
+    fn less_each(&mut self, mut tokens: Vec<Token>) -> Result<(), SyntaxError> {
+        let first_paren = tokens.iter().position(|token| token.is(b'(')).ok_or(SyntaxError)?;
+        let last_paren = tokens.iter().rposition(|token| token.is(b')')).ok_or(SyntaxError)?;
+        let params = range_of(&tokens[first_paren..(first_paren + last_paren).min(tokens.len())]);
+        tokens.drain(first_paren..(first_paren + last_paren).min(tokens.len()));
+        for &token in tokens.iter().rev() {
+            self.tokenizer.back(Some(token));
+        }
+        let first = self.tokenizer.next_token(false)?.ok_or(SyntaxError)?;
+        // A space has been put before the name, which the `@` is taken for.
+        self.less_atrule(first, first.range)?;
+        let id = self.last_node;
+        let node = self.node(id);
+        node.function = true;
+        node.params = params;
+        node.clean_params = None;
+        Ok(())
+    }
+
+    fn less_mixin(&mut self, mut tokens: Vec<Token>) -> Result<(), SyntaxError> {
+        let first = *tokens.first().ok_or(SyntaxError)?;
+        let identifier = Range::new(first.range.start, first.range.start + 1);
+        let brackets_index = tokens.iter().position(|token| token.kind == TokenKind::Brackets);
+        let first_paren = tokens.iter().position(|token| token.is(b'('));
+
+        // Rule sets as arguments: everything in the parentheses becomes one token.
+        if brackets_index.is_none_or(|index| index > 3)
+            && let Some(first_paren) = first_paren.filter(|&index| index > 0)
+        {
+            let last_paren = tokens.iter().rposition(|token| token.is(b')')).ok_or(SyntaxError)?;
+            // The end is what `postcss-less` takes, which is too far if there is more than the name
+            // before the parenthesis.
+            let contents = tokens.get(first_paren..(last_paren + first_paren).min(tokens.len())).unwrap_or_default();
+            let brackets = Token {
+                kind: TokenKind::Brackets,
+                range: range_of(contents),
+                start: tokens[first_paren].start,
+                last: None,
+                inline: false,
+            };
+            tokens.splice(first_paren..=last_paren.max(first_paren), [brackets]);
+        }
+
+        let mut important_start = None;
+        let mut important_end = 0;
+        for (index, &token) in tokens.iter().enumerate() {
+            let text = self.text_of(token);
+            if text == b"!" || important_start.is_some() {
+                important_start = important_start.or(Some(index));
+                important_end = index + 1;
+            }
+            if text == b"important" {
+                break;
+            }
+        }
+        if let Some(start) = important_start {
+            let combined = Token {
+                kind: TokenKind::Word,
+                range: range_of(&tokens[start..important_end]),
+                start: tokens[start].start,
+                last: tokens[start].last,
+                inline: false,
+            };
+            tokens.splice(start..important_end, [combined]);
+        }
+
+        // `/(!\s*important)$/i`
+        let important_index = tokens.iter().position(|&token| {
+            let text = self.text_of(token);
+            text.len() >= 9
+                && text[text.len() - 9..].eq_ignore_ascii_case(b"important")
+                && text::trim_end(&text[..text.len() - 9]).ends_with(b"!")
+        });
+        let important = important_index.filter(|&index| index > 0).map(|index| tokens.remove(index).range);
+
+        for &token in tokens.iter().rev() {
+            self.tokenizer.back(Some(token));
+        }
+        let first = self.tokenizer.next_token(false)?.ok_or(SyntaxError)?;
+        self.less_atrule(first, Range::new(first.range.start + 1, first.range.end))?;
+        let id = self.last_node;
+        let node = self.node(id);
+        node.mixin = true;
+        node.identifier = identifier;
+        if let Some(important) = important {
+            node.important = true;
+            node.raw_important = Some(important);
+        }
+        Ok(())
+    }
+
+    fn less_rule(&mut self, tokens: Vec<Token>) -> Result<(), SyntaxError> {
+        if let [.., prev, last] = tokens[..]
+            && prev.kind == TokenKind::AtWord
+            && last.is(b'{')
+        {
+            self.tokenizer.back(Some(last));
+            if self.less_interpolation(prev)? {
+                for &token in tokens[..tokens.len() - 2].iter().rev() {
+                    self.tokenizer.back(Some(token));
+                }
+                return Ok(());
+            }
+        }
+        self.base_rule(tokens)?;
+        let css = self.css;
+        let id = self.last_node;
+        let node = self.node(id);
+        node.extend = has_extend(node.clean_selector.as_deref().unwrap_or(node.selector.of(css)), b":extend(");
+        Ok(())
+    }
+
+    /// `isInlineComment`
+    fn less_inline_comment(&mut self, mut token: Token) -> Result<bool, SyntaxError> {
+        let text = self.text_of(token);
+        if token.kind == TokenKind::Word && text.starts_with(b"//") {
+            let mut end = token.range.start;
+            let mut remaining_input = None;
+            let mut current = Some(token);
+            while let Some(part) = current {
+                let text = self.text_of(part);
+                if let Some(line_break) = bun_core::strings::index_of_char_usize(text, b'\n') {
+                    // `/['"].*\r?\n/`: a string that goes on in the next line.
+                    let last_line_break = bun_core::strings::last_index_of_char(text, b'\n').unwrap_or(line_break);
+                    if bun_core::strings::index_of_any(&text[..last_line_break], b"'\"").is_some() {
+                        end = part.range.start + line_break as u32;
+                        remaining_input = Some(end as usize);
+                    } else {
+                        self.tokenizer.back(Some(part));
+                    }
+                    break;
+                }
+                end = part.range.end;
+                current = self.tokenizer.next_token(true)?;
+            }
+            let id = self.new_node(Kind::Comment, token.start);
+            let text = self.trimmed(Range::new(token.range.start + 2, end));
+            let node = self.node(id);
+            node.inline = true;
+            node.text = text;
+            // From here on, `postcss-less` counts from the start of the rest of the text.
+            if let Some(pos) = remaining_input {
+                self.tokenizer.pos = pos;
+                self.tokenizer.shift = pos;
+                self.tokenizer.buffer.clear();
+                self.tokenizer.returned.clear();
+                self.tokenizer.last_bad_paren = None;
+            }
+            return Ok(true);
+        }
+        if text == b"/" {
+            let mut next = self.tokenizer.next_token(true)?.ok_or(SyntaxError)?;
+            if next.kind == TokenKind::Comment && self.text_of(next).starts_with(b"/*") {
+                next.kind = TokenKind::Word;
+                next.range.start += 1;
+                token.range.end += 1;
+                self.tokenizer.back(Some(next));
+                return self.less_inline_comment(token);
+            }
+            // Otherwise the token is lost.
+        }
+        Ok(false)
+    }
 }
 
-pub(crate) fn parse(css: &[u8]) -> Result<Tree, SyntaxError> {
-    parse_from(css, 0, false)
+pub(crate) fn parse(css: &[u8], syntax: Syntax) -> Result<Tree, SyntaxError> {
+    parse_from(css, syntax, 0, false)
 }
 
 /// Parses `--a: { .. }`, which starts at `start` and goes to the end of `css`, as if it were the rule
 /// `a: { .. }`. Prettier does it by replacing the name, and everything before it by blanks.
-pub(crate) fn parse_custom_property_set(css: &[u8], start: u32) -> Result<Tree, SyntaxError> {
-    parse_from(css, start as usize, true)
+pub(crate) fn parse_custom_property_set(css: &[u8], syntax: Syntax, start: u32) -> Result<Tree, SyntaxError> {
+    parse_from(css, syntax, start as usize, true)
 }
 
-fn parse_from(css: &[u8], pos: usize, is_custom_property_set: bool) -> Result<Tree, SyntaxError> {
+fn parse_from(css: &[u8], syntax: Syntax, pos: usize, is_custom_property_set: bool) -> Result<Tree, SyntaxError> {
     if css.len() >= u32::MAX as usize {
         return Err(SyntaxError);
     }
     let mut parser = Parser {
         css,
+        syntax,
         tokenizer: Tokenizer {
             css,
+            syntax,
             pos,
+            shift: 0,
             buffer: Vec::new(),
             returned: Vec::new(),
             last_bad_paren: None,
         },
-        nodes: Vec::new(),
+        nodes: vec![Node {
+            nodes: Some(Vec::new()),
+            ..Node::default()
+        }],
         current: 0,
+        last_node: 0,
         spaces: Range::default(),
         semicolon: false,
         depth: 0,
         is_custom_property_set,
     };
-    parser.nodes.push(Node {
-        kind: Kind::Root,
-        parent: 0,
-        nodes: Some(Vec::new()),
-        start: 0,
-        end: None,
-        before: Range::default(),
-        after: Range::default(),
-        between: Range::default(),
-        semicolon: false,
-        text: Range::default(),
-        selector: Range::default(),
-        prop: Range::default(),
-        value: Range::default(),
-        clean_value: None,
-        important: false,
-        raw_important: None,
-        name: Range::default(),
-        after_name: Range::default(),
-        params: Range::default(),
-        clean_params: None,
-        own_semicolon: false,
-    });
     parser.parse()?;
     Ok(Tree { nodes: parser.nodes })
 }

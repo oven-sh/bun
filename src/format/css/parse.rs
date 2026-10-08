@@ -39,16 +39,18 @@ pub(crate) struct CssNode<'a> {
     pub(crate) nodes: Option<Vec<CssNode<'a>>>,
     /// `raws.before`, `raws.between`, `raws.after`, `raws.afterName`
     pub(crate) before: &'a [u8],
-    pub(crate) between: &'a [u8],
+    pub(crate) between: Cow<'a, [u8]>,
     pub(crate) after: &'a [u8],
     pub(crate) after_name: &'a [u8],
     /// Of a comment.
     pub(crate) text: &'a [u8],
+    /// `inline || raws.inline`
     pub(crate) inline: bool,
     pub(crate) selector: Option<SelectorNode<'a>>,
     /// `raws.selector`
     pub(crate) raw_selector: &'a [u8],
-    pub(crate) prop: &'a [u8],
+    pub(crate) is_scss_nested_property: bool,
+    pub(crate) prop: Cow<'a, [u8]>,
     pub(crate) value: Value<'a>,
     pub(crate) important: bool,
     pub(crate) raw_important: Option<&'a [u8]>,
@@ -61,6 +63,11 @@ pub(crate) struct CssNode<'a> {
     /// `raws.params`
     pub(crate) raw_params: &'a [u8],
     pub(crate) custom_selector: Option<&'a [u8]>,
+    /// What `postcss-less` and Prettier say of a node of Less.
+    pub(crate) extend: bool,
+    pub(crate) mixin: bool,
+    pub(crate) function: bool,
+    pub(crate) variable: bool,
 }
 
 pub(crate) struct SyntaxError;
@@ -72,7 +79,10 @@ impl From<postcss::SyntaxError> for SyntaxError {
 }
 
 struct Context<'a> {
+    /// What is parsed.
     text: &'a [u8],
+    /// `options.originalText`
+    original_text: &'a [u8],
     syntax: Syntax,
 }
 
@@ -144,9 +154,121 @@ fn move_space_behind_dots(params: &[u8]) -> Option<Vec<u8>> {
     None
 }
 
+/// `getValueRootOffset` and `getAtRuleParamsRootOffset` for an at-rule.
+fn value_root_offset(node: &CssNode<'_>) -> u32 {
+    (node.start + 1 + node.name.len() + after_name_prefix_len(node.after_name)) as u32
+}
+
+/// `isScssNestedPropertyNode`. `selector`: as `postcss` has cleaned it.
+fn is_scss_nested_property(selector: &[u8]) -> bool {
+    let mut selector = Cow::Borrowed(selector);
+    // `.replace(/\/\*.*?\*\//, "")`
+    let mut from = 0;
+    while let Some(start) = text::index_of_from(&selector, b"/*", from) {
+        let line_end = bun_core::strings::index_of_any(&selector[start..], b"\n\r").map_or(selector.len(), |at| start + at);
+        if let Some(end) = text::index_of_from(&selector[..line_end], b"*/", start + 2) {
+            selector.to_mut().drain(start..end + 2);
+            break;
+        }
+        from = start + 1;
+    }
+    // `.replace(/\/\/.*\n/, "")`
+    let mut from = 0;
+    while let Some(start) = text::index_of_from(&selector, b"//", from) {
+        match bun_core::strings::index_of_any(&selector[start..], b"\n\r") {
+            Some(at) if selector[start + at] == b'\n' => {
+                selector.to_mut().drain(start..=start + at);
+                break;
+            }
+            Some(at) => from = start + at,
+            None => break,
+        }
+    }
+    text::trim_end(&selector).ends_with(b":")
+}
+
 impl<'a> Context<'a> {
     fn of(&self, range: Range) -> &'a [u8] {
         range.of(self.text)
+    }
+
+    /// What `parseNestedCSS` does with an at-rule of Less only. Returns whether that is all.
+    fn convert_less_at_rule(&self, raw: &postcss::Node, node: &mut CssNode<'a>) -> Result<bool, SyntaxError> {
+        let parse = |text: Cow<'a, [u8]>, node: &CssNode<'a>| {
+            parse_value(text, self.syntax, value_root_offset(node)).map(Value::Parsed).map_err(|_| SyntaxError)
+        };
+        // `node.params`
+        let clean_params: Cow<'a, [u8]> = match &raw.clean_params {
+            Some(clean) => Cow::Owned(clean.to_vec()),
+            None => Cow::Borrowed(self.of(raw.params)),
+        };
+        let skip = |text: &Cow<'a, [u8]>, len: usize| -> Cow<'a, [u8]> {
+            match text {
+                Cow::Borrowed(text) => Cow::Borrowed(text.get(len..).unwrap_or_default()),
+                Cow::Owned(text) => Cow::Owned(text.get(len..).unwrap_or_default().to_vec()),
+            }
+        };
+
+        // For `postcss-less` it is a variable, and `node.value` is a string.
+        if raw.variable {
+            let mut value = skip(&clean_params, raw.value_skips as usize);
+            if !text::trim(&value).is_empty() {
+                for directive in [&b"!default"[..], b"!global"] {
+                    if let Some(at) = find_directive(&value, directive) {
+                        match &mut value {
+                            Cow::Borrowed(value) => *value = &value[..at],
+                            Cow::Owned(value) => value.truncate(at),
+                        }
+                    }
+                }
+                node.value = parse(value, node)?;
+            }
+        }
+
+        if raw.mixin {
+            // `raws.identifier + name + raws.afterName + raws.params`
+            let source = match text::trim(node.after_name).is_empty() {
+                true => {
+                    let start = raw.identifier.start as usize;
+                    let len = 1 + node.name.len() + node.after_name.len() + node.raw_params.len();
+                    Cow::Borrowed(self.text.get(start..start + len).unwrap_or_default())
+                }
+                false => Cow::Owned([self.of(raw.identifier), node.name, node.after_name, node.raw_params].concat()),
+            };
+            node.selector = Some(parse_selector(source));
+            return Ok(true);
+        }
+        if raw.function {
+            node.params = Params::Text(clean_params);
+            return Ok(true);
+        }
+
+        // `@color:blue;`
+        if let Some(colon) = bun_core::strings::index_of_char_usize(node.name, b':') {
+            node.variable = true;
+            let rest = &node.name[colon + 1..];
+            node.name = &node.name[..colon];
+            let value = if clean_params.is_empty() {
+                Cow::Borrowed(rest)
+            } else if node.after_name.is_empty() && raw.clean_params.is_none() {
+                Cow::Borrowed(self.of(Range::new(raw.name.start + colon as u32 + 1, raw.params.end)))
+            } else {
+                Cow::Owned([rest, &clean_params].concat())
+            };
+            node.value = parse(value, node)?;
+        }
+        // `@color :blue;`
+        if !matches!(node.name, b"page" | b"nest" | b"keyframes") && clean_params.starts_with(b":") {
+            node.variable = true;
+            node.after_name = match raw.after_name.is_empty() {
+                true => self.of(Range::new(raw.params.start, raw.params.start + 1)),
+                false => self.of(Range::new(raw.after_name.start, raw.after_name.end + 1)),
+            };
+            if clean_params.len() > 1 {
+                node.value = parse(skip(&clean_params, 1), node)?;
+            }
+        }
+        Ok(node.variable)
     }
 
     fn convert_children(&self, tree: &Tree, ids: &[NodeId]) -> Result<Vec<CssNode<'a>>, SyntaxError> {
@@ -166,14 +288,15 @@ impl<'a> Context<'a> {
             end: 0,
             nodes,
             before: self.of(raw.before),
-            between: self.of(raw.between),
+            between: Cow::Borrowed(self.of(raw.between)),
             after: self.of(raw.after),
             after_name: self.of(raw.after_name),
             text: self.of(raw.text),
-            inline: false,
+            inline: raw.inline || raw.raw_inline,
             selector: None,
             raw_selector: b"",
-            prop: self.of(raw.prop),
+            is_scss_nested_property: false,
+            prop: Cow::Borrowed(self.of(raw.prop)),
             value: Value::None,
             important: raw.important,
             raw_important: raw.raw_important.map(|it| self.of(it)),
@@ -185,17 +308,23 @@ impl<'a> Context<'a> {
             params: Params::None,
             raw_params: b"",
             custom_selector: None,
+            extend: raw.extend,
+            mixin: raw.mixin,
+            function: raw.function,
+            variable: raw.variable,
         };
 
         match raw.kind {
             Kind::Root | Kind::Comment => {}
             Kind::Rule => {
                 let mut selector = raw.selector;
-                if !text::trim(node.between).is_empty() {
+                if !text::trim(&node.between).is_empty() {
                     selector = Range::new(selector.start, raw.between.end);
                 }
                 node.raw_selector = self.of(selector);
                 if !text::trim(node.raw_selector).is_empty() {
+                    let clean = raw.clean_selector.as_deref().unwrap_or(self.of(raw.selector));
+                    node.is_scss_nested_property = self.syntax == Syntax::Scss && is_scss_nested_property(clean);
                     node.selector = Some(parse_selector(Cow::Borrowed(node.raw_selector)));
                 }
             }
@@ -204,15 +333,22 @@ impl<'a> Context<'a> {
         }
 
         // `calculateLocEnd`
+        let text_len = self.original_text.len();
+        node.start = node.start.min(text_len);
         node.end = match raw.end {
+            // `skipEverythingButNewLine`
+            _ if raw.inline => {
+                let rest = &self.original_text[node.start..];
+                node.start + bun_core::strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len())
+            }
             Some(end) => end as usize,
             None => match (raw.kind, node.nodes.as_ref().and_then(|nodes| nodes.last())) {
                 (_, Some(last)) => last.end,
                 (Kind::AtRule, None) => node.start + 1 + node.name.len() + node.after_name.len() + node.raw_params.len(),
-                _ => self.text.len(),
+                _ => text_len,
             },
         }
-        .min(self.text.len());
+        .min(text_len);
         Ok(node)
     }
 
@@ -226,7 +362,11 @@ impl<'a> Context<'a> {
             let mut rules = None;
             if text::trim_end(raw.clean_value.as_deref().unwrap_or(value)).ends_with(b"}")
                 && let Some(end) = raw.end
-                && let Ok(tree) = postcss::parse_custom_property_set(&self.text[..end as usize], raw.start)
+                && let Ok(tree) = postcss::parse_custom_property_set(
+                    self.text.get(..end as usize).unwrap_or(self.text),
+                    self.syntax,
+                    raw.start,
+                )
                 && let [only] = *tree.nodes[0].nodes.as_deref().unwrap_or_default()
                 && tree.nodes[only as usize].kind == Kind::Rule
             {
@@ -241,33 +381,54 @@ impl<'a> Context<'a> {
             return Ok(());
         }
 
+        let mut value = value;
         if text::trim(value).is_empty() {
             node.value = Value::Text(match &raw.clean_value {
                 Some(clean) => Cow::Owned(clean.to_vec()),
                 None => Cow::Borrowed(value),
             });
-            return Ok(());
+        } else {
+            if let Some(at) = find_directive(value, b"!default") {
+                node.scss_default = true;
+                node.raw_scss_default = Some(&value[at..]).filter(|it| text::trim(it) != b"!default");
+                value = &value[..at];
+            }
+            if let Some(at) = find_directive(value, b"!global") {
+                node.scss_global = true;
+                node.raw_scss_global = Some(&value[at..]).filter(|it| text::trim(it) != b"!global");
+                value = &value[..at];
+            }
+            if value.starts_with(b"progid:") {
+                // It stays the string that `postcss` has made of it.
+                node.value = Value::Text(match &raw.clean_value {
+                    Some(clean) => Cow::Owned(clean.to_vec()),
+                    None => Cow::Borrowed(self.of(raw.value)),
+                });
+                return Ok(());
+            }
+            let parsed = parse_value(Cow::Borrowed(value), self.syntax, root_offset).map_err(|_| SyntaxError)?;
+            node.value = Value::Parsed(parsed);
         }
-        let mut value = value;
-        if let Some(at) = find_directive(value, b"!default") {
-            node.scss_default = true;
-            node.raw_scss_default = Some(&value[at..]).filter(|it| text::trim(it) != b"!default");
-            value = &value[..at];
+
+        if self.syntax == Syntax::Less {
+            // `a +: b`, which merges: `/^\s*\+\s*:/`
+            let spaces = text::leading_white_space_len(&node.between);
+            if let Some(rest) = node.between[spaces..].strip_prefix(b"+")
+                && text::trim_start(rest).starts_with(b":")
+            {
+                node.prop.to_mut().push(b'+');
+                node.between.to_mut().remove(spaces);
+            }
+            // `&:extend(.a)`
+            if value.starts_with(b"extend(") {
+                node.extend = node.extend || *node.between == *b":";
+                if node.extend {
+                    node.value = Value::None;
+                    let selector = value.get(b"extend(".len()..value.len() - 1).unwrap_or_default();
+                    node.selector = Some(parse_selector(Cow::Borrowed(selector)));
+                }
+            }
         }
-        if let Some(at) = find_directive(value, b"!global") {
-            node.scss_global = true;
-            node.raw_scss_global = Some(&value[at..]).filter(|it| text::trim(it) != b"!global");
-            value = &value[..at];
-        }
-        if value.starts_with(b"progid:") {
-            // It stays the string that `postcss` has made of it.
-            node.value = Value::Text(match &raw.clean_value {
-                Some(clean) => Cow::Owned(clean.to_vec()),
-                None => Cow::Borrowed(self.of(raw.value)),
-            });
-            return Ok(());
-        }
-        node.value = Value::Parsed(parse_value(Cow::Borrowed(value), self.syntax, root_offset).map_err(|_| SyntaxError)?);
         Ok(())
     }
 
@@ -276,14 +437,16 @@ impl<'a> Context<'a> {
         if !text::trim(node.after_name).is_empty() {
             range = Range::new(raw.after_name.start, range.end.max(raw.after_name.end));
         }
-        if !text::trim(node.between).is_empty() {
+        if !text::trim(&node.between).is_empty() {
             range = Range::new(if range.is_empty() { raw.between.start } else { range.start }, raw.between.end);
         }
         let params = text::trim(self.of(range));
         node.raw_params = params;
+        if self.syntax == Syntax::Less && self.convert_less_at_rule(raw, node)? {
+            return Ok(());
+        }
         let name = node.name;
-        // `getValueRootOffset` and `getAtRuleParamsRootOffset`
-        let root_offset = raw.start + 1 + name.len() as u32 + after_name_prefix_len(node.after_name) as u32;
+        let root_offset = value_root_offset(node);
         let value = |text: Cow<'a, [u8]>| parse_value(text, self.syntax, root_offset).map_err(|_| SyntaxError);
 
         if self.syntax == Syntax::Css && name == b"custom-selector" {
@@ -365,8 +528,13 @@ impl<'a> Context<'a> {
     }
 }
 
-/// Prettier's `parseCss`. `text` has no front matter.
-pub(crate) fn parse(text: &[u8], syntax: Syntax) -> Result<CssNode<'_>, SyntaxError> {
-    let tree = postcss::parse(text)?;
-    Context { text, syntax }.convert(&tree, 0)
+/// Prettier's `parseCss`, `parseLess` and `parseScss`. `text`: what `postcss` gets of `original_text`.
+pub(crate) fn parse<'a>(text: &'a [u8], original_text: &'a [u8], syntax: Syntax) -> Result<CssNode<'a>, SyntaxError> {
+    let tree = postcss::parse(text, syntax)?;
+    let context = Context {
+        text,
+        original_text,
+        syntax,
+    };
+    context.convert(&tree, 0)
 }

@@ -36,10 +36,6 @@ fn leaf(kind: MediaKind, value: &[u8]) -> MediaNode<'_> {
     }
 }
 
-fn is_white_space(byte: u8) -> bool {
-    matches!(byte, b'\t' | b'\n' | 0x0B | 0x0C | b'\r' | b' ')
-}
-
 fn parse_media_feature(string: &[u8]) -> Result<Vec<MediaNode<'_>>, ParseError> {
     #[derive(Copy, Clone, PartialEq)]
     enum Mode {
@@ -89,10 +85,17 @@ fn parse_media_query(string: &[u8]) -> Result<Vec<MediaNode<'_>>, ParseError> {
     // Where the element starts that is being read, and whether it is an expression.
     let mut element: Option<(usize, bool)> = None;
 
+    // The bytes of a character of white space that are still to be skipped.
+    let mut skip = 0;
     for (i, &character) in string.iter().enumerate() {
+        if skip > 0 {
+            skip -= 1;
+            continue;
+        }
         match element {
             None => {
-                if is_white_space(character) {
+                if let Some(len) = text::white_space_len_at_start(&string[i..]) {
+                    skip = len - 1;
                     continue;
                 }
                 if character == b'(' {
@@ -111,7 +114,7 @@ fn parse_media_query(string: &[u8]) -> Result<Vec<MediaNode<'_>>, ParseError> {
         }
         if let Some((start, is_expression)) = element
             && local_level == 0
-            && (character == b')' || string.get(i + 1).is_none_or(|&next| is_white_space(next)))
+            && (character == b')' || i + 1 == string.len() || text::starts_with_white_space(&string[i + 1..]))
         {
             let value = &string[start..=i];
             let mut kind = is_expression.then_some(MediaKind::FeatureExpression);

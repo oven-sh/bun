@@ -65,7 +65,7 @@ fn is_comment(node: &ValueNode<'_>) -> bool {
 }
 
 fn is_inline_comment(node: &ValueNode<'_>) -> bool {
-    matches!(node.kind, ValueKind::Comment { inline: true })
+    matches!(node.kind, ValueKind::Comment { inline: true, .. })
 }
 
 fn has_empty_raw_before(node: &ValueNode<'_>) -> bool {
@@ -146,7 +146,7 @@ fn separate<'t>(parts: &mut Vec<Doc<'t>>, separator: Doc<'t>) {
 impl<'t, 'a: 't> Printer<'t, 'a> {
     /// `getPropOfDeclNode`
     fn prop_of_declaration(&self) -> Option<Vec<u8>> {
-        self.css_ancestor(Kind::Decl).map(|node| text::to_lower_case(node.prop).into_owned())
+        self.css_ancestor(Kind::Decl).map(|node| text::to_lower_case(&node.prop).into_owned())
     }
 
     pub(crate) fn print_comma_separated_value_group(&mut self, node: &'t ValueNode<'a>) -> Doc<'t> {
@@ -433,7 +433,13 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 parts = vec![docs![fill(std::mem::take(&mut parts)), " "]];
                 continue;
             }
-            // (`iNextNode.group` is never a group in parentheses if `iNextNode.value` is `{`.)
+            // `--a#{(1) + 2}`
+            if i_node.value().is_some_and(|it| it.ends_with(b"#"))
+                && matches!(&next_node.kind, ValueKind::Func { value, group }
+                    if **value == *b"{" && paren_group_open(group).is_some())
+            {
+                continue;
+            }
 
             // It is printed at the end of the line, with the space before it.
             if is_inline_comment(next_node) && next_next_node.is_none() {
@@ -441,7 +447,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             }
             // The value is in line with the block comments before it.
             if at_rule.is_none()
-                && matches!(i_node.kind, ValueKind::Comment { inline: false })
+                && matches!(i_node.kind, ValueKind::Comment { inline: false, .. })
                 && groups[..i].iter().all(is_comment)
             {
                 separate(&mut parts, dedent(Doc::LINE));
@@ -507,7 +513,11 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     fn should_break_list(&self, node: &ValueNode<'a>) -> bool {
         is_list_with_comma_group(node)
             && self.is_top_level_of_value()
-            && self.css_stack.last().is_some_and(|it| it.kind == Kind::Decl && !it.prop.starts_with(b"--"))
+            && self.css_stack.last().is_some_and(|it| match it.kind {
+                Kind::Decl => !it.prop.starts_with(b"--"),
+                Kind::AtRule => it.variable,
+                _ => false,
+            })
     }
 
     /// Whether what is being printed is the `group` of the `group` of the root of a value.

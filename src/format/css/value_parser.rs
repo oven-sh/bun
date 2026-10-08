@@ -240,6 +240,7 @@ pub(crate) enum ValueKind<'a> {
     Colon,
     Comma,
     Comment {
+        value: Cow<'a, [u8]>,
         inline: bool,
     },
     Func {
@@ -286,6 +287,7 @@ impl<'a> ValueNode<'a> {
     pub(crate) fn value(&self) -> Option<&[u8]> {
         match &self.kind {
             ValueKind::Word { value, .. }
+            | ValueKind::Comment { value, .. }
             | ValueKind::Number { value, .. }
             | ValueKind::String { value, .. }
             | ValueKind::Operator(value)
@@ -420,8 +422,37 @@ impl<'t, 'a> ValuesParser<'t, 'a> {
                 TokenKind::Colon => self.simple(ValueKind::Colon, token),
                 TokenKind::Comma => self.simple(ValueKind::Comma, token),
                 TokenKind::Comment => {
-                    let inline = self.text_of(token).starts_with(b"//");
-                    self.simple(ValueKind::Comment { inline }, token);
+                    // `.replace(/\/\*|\*\//g, "")`
+                    let text = self.text_of(token);
+                    let (start, end) = (token.pos as usize, token.end as usize);
+                    let mut value = match text.strip_prefix(b"/*").and_then(|it| it.strip_suffix(b"*/")) {
+                        Some(inner) if !text::includes(inner, b"/*") && !text::includes(inner, b"*/") => {
+                            self.cow(start + 2, end - 2)
+                        }
+                        _ if !text::includes(text, b"/*") && !text::includes(text, b"*/") => self.cow(start, end),
+                        _ => {
+                            let mut value = Vec::with_capacity(text.len());
+                            let mut rest = text;
+                            while let Some(&byte) = rest.first() {
+                                match rest.starts_with(b"/*") || rest.starts_with(b"*/") {
+                                    true => rest = &rest[2..],
+                                    false => {
+                                        value.push(byte);
+                                        rest = &rest[1..];
+                                    }
+                                }
+                            }
+                            Cow::Owned(value)
+                        }
+                    };
+                    let inline = value.starts_with(b"//");
+                    if inline {
+                        match &mut value {
+                            Cow::Borrowed(value) => *value = &value[2..],
+                            Cow::Owned(value) => drop(value.drain(..2)),
+                        }
+                    }
+                    self.simple(ValueKind::Comment { value, inline }, token);
                 }
                 TokenKind::OpenParen => self.paren_open(token)?,
                 TokenKind::CloseParen => self.paren_close(token)?,

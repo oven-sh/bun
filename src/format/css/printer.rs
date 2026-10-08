@@ -77,7 +77,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
 
     pub(crate) fn print_root(&mut self, root: &'t CssNode<'a>) -> Doc<'t> {
         self.css_stack.push(root);
-        let nodes = self.print_sequence(root);
+        let nodes = self.print_sequence(root.nodes.as_deref().unwrap_or_default());
         self.css_stack.pop();
         let mut after = text::trim(root.after);
         if let Some(rest) = after.strip_prefix(b";") {
@@ -92,15 +92,14 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     }
 
     /// `printSequence`
-    fn print_sequence(&mut self, parent: &'t CssNode<'a>) -> Doc<'t> {
-        let nodes = parent.nodes.as_deref().unwrap_or_default();
+    fn print_sequence(&mut self, nodes: &'t [CssNode<'a>]) -> Doc<'t> {
         let mut parts = Vec::with_capacity(nodes.len() * 2);
         for (index, node) in nodes.iter().enumerate() {
             let previous = index.checked_sub(1).and_then(|at| nodes.get(at));
             if previous.is_some_and(|it| it.kind == Kind::Comment && text::trim(it.text) == b"prettier-ignore") {
                 parts.push(Doc::from(self.text.get(node.start..node.end).unwrap_or_default()));
             } else {
-                parts.push(self.print_css(node, index + 1 == nodes.len()));
+                parts.push(self.print_css(node));
             }
             let Some(next) = nodes.get(index + 1) else {
                 break;
@@ -119,7 +118,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
         Doc::Array(parts)
     }
 
-    fn print_css(&mut self, node: &'t CssNode<'a>, _is_last: bool) -> Doc<'t> {
+    fn print_css(&mut self, node: &'t CssNode<'a>) -> Doc<'t> {
         self.css_stack.push(node);
         let doc = match node.kind {
             Kind::Root => self.print_root(node),
@@ -137,10 +136,10 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
 
     /// `{`, what is in it, each on a line of its own, and `}`.
     fn print_block(&mut self, node: &'t CssNode<'a>, line: fn() -> Doc<'t>) -> Doc<'t> {
-        let is_empty = node.nodes.as_ref().is_none_or(|nodes| nodes.is_empty());
+        let nodes = node.nodes.as_deref().unwrap_or_default();
         docs![
             "{",
-            if is_empty { Doc::EMPTY } else { indent(docs![line(), self.print_sequence(node)]) },
+            if nodes.is_empty() { Doc::EMPTY } else { indent(docs![line(), self.print_sequence(nodes)]) },
             line(),
             "}",
         ]
@@ -176,18 +175,23 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     }
 
     fn print_declaration(&mut self, node: &'t CssNode<'a>) -> Doc<'t> {
-        let trimmed_between = text::trim(node.between);
+        let trimmed_between = text::trim(&node.between);
         let is_colon = trimmed_between == b":";
         let is_value_all_space = matches!(&node.value, Value::Text(value) if value.iter().all(|&b| b == b' '));
         let mut value = match &node.value {
             Value::None => Doc::EMPTY,
             Value::Text(value) => Doc::from(&**value),
             Value::Parsed(value) => self.print_value(value, None),
-            Value::Rule(_) => docs!["{", self.print_rule_value(node), hardline(), "}"],
+            Value::Rule(nodes) => docs![
+                "{",
+                if nodes.is_empty() { Doc::EMPTY } else { indent(docs![hardline(), self.print_sequence(nodes)]) },
+                hardline(),
+                "}",
+            ],
         };
         // `hasComposesNode`
         if matches!(&node.value, Value::Parsed(value) if matches!(value.kind, ValueKind::Root { .. }))
-            && text::eq_lower_case(node.prop, b"composes")
+            && text::eq_lower_case(&node.prop, b"composes")
         {
             value = remove_lines(value);
         }
@@ -197,9 +201,22 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
 
         let before: Vec<u8> =
             node.before.iter().copied().filter(|&b| b != b';' && !text::starts_with_white_space(&[b])).collect();
-        let prop = match self.inside_icss_rule() {
-            true => Doc::from(node.prop),
-            false => owned(maybe_to_lower_case(node.prop), node.prop),
+        // The parent, which is before the declaration itself.
+        let is_in_less_variable =
+            matches!(self.css_stack[..], [.., parent, _] if parent.kind == Kind::AtRule && parent.variable);
+        let prop = match is_in_less_variable || self.inside_icss_rule() {
+            true => Doc::from(&*node.prop),
+            false => owned(maybe_to_lower_case(&node.prop), &node.prop),
+        };
+        let extend = match &node.selector {
+            Some(selector) if self.syntax == Syntax::Less && node.extend => {
+                let printed = self.print_selector(selector, None, None, true);
+                match selector.nodes.len() > 1 {
+                    true => group(docs!["extend(", indent(docs![Doc::SOFTLINE, printed]), Doc::SOFTLINE, ")"]),
+                    false => docs!["extend(", printed, ")"],
+                }
+            }
+            _ => Doc::EMPTY,
         };
         let bang = |raw: Option<&[u8]>, is_set: bool, word: &'static str, allows_space: bool| match raw {
             Some(raw) => Doc::from(normalize_bang(raw, word.as_bytes(), allows_space)),
@@ -211,7 +228,8 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             prop,
             if trimmed_between.starts_with(b"//") { " " } else { "" },
             trimmed_between,
-            if is_value_all_space { "" } else { " " },
+            if node.extend || is_value_all_space { "" } else { " " },
+            extend,
             value,
             bang(node.raw_important, node.important, "important", true),
             bang(node.raw_scss_default, node.scss_default, "default", false),
@@ -221,37 +239,6 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
                 None => Doc::from(";"),
             },
         ]
-    }
-
-    /// What is between the braces of `--a: { .. }`.
-    fn print_rule_value(&mut self, node: &'t CssNode<'a>) -> Doc<'t> {
-        let Value::Rule(nodes) = &node.value else {
-            return Doc::EMPTY;
-        };
-        if nodes.is_empty() {
-            return Doc::EMPTY;
-        }
-        let mut parts = Vec::with_capacity(nodes.len() * 2);
-        for (index, child) in nodes.iter().enumerate() {
-            let previous = index.checked_sub(1).and_then(|at| nodes.get(at));
-            if previous.is_some_and(|it| it.kind == Kind::Comment && text::trim(it.text) == b"prettier-ignore") {
-                parts.push(Doc::from(self.text.get(child.start..child.end).unwrap_or_default()));
-            } else {
-                parts.push(self.print_css(child, index + 1 == nodes.len()));
-            }
-            let Some(next) = nodes.get(index + 1) else {
-                break;
-            };
-            if next.kind == Kind::Comment && !has_newline_backwards(self.text, next.start) {
-                parts.push(Doc::from(" "));
-            } else {
-                parts.push(hardline());
-                if is_next_line_empty(self.text, child.end) {
-                    parts.push(hardline());
-                }
-            }
-        }
-        indent(docs![hardline(), parts])
     }
 
     /// `path.call(() => shouldBreakList(path), "value", "group", "group")`
@@ -275,6 +262,40 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             .strip_prefix(b"(")
             .and_then(|it| it.strip_suffix(b")"))
             .is_some_and(|inner| text::trim(inner).is_empty());
+        if self.syntax == Syntax::Less {
+            if node.mixin {
+                let selector = match &node.selector {
+                    Some(selector) => self.print_selector(selector, None, None, true),
+                    None => Doc::EMPTY,
+                };
+                return docs![selector, if node.important { " !important" } else { "" }, ";"];
+            }
+            if node.function {
+                let params = match &node.params {
+                    Params::Text(params) => &**params,
+                    _ => b"",
+                };
+                return docs![node.name, params, ";"];
+            }
+            if node.variable {
+                let between = text::trim(&node.between);
+                return docs![
+                    "@",
+                    node.name,
+                    ": ",
+                    match &node.value {
+                        Value::Parsed(value) => docs![self.print_value(value, None), Doc::LineSuffixBoundary],
+                        _ => Doc::EMPTY,
+                    },
+                    if between.is_empty() { Doc::EMPTY } else { docs![between, " "] },
+                    match &node.nodes {
+                        Some(_) => self.print_block(node, || Doc::SOFTLINE),
+                        None => Doc::EMPTY,
+                    },
+                    ";",
+                ];
+            }
+        }
         let is_control_directive = self.is_scss_control_directive(node);
         let name = match is_detached_ruleset_call || node.name.ends_with(b":") {
             true => Doc::from(node.name),
@@ -542,6 +563,10 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     }
 
     fn print_unknown_selector(&mut self, node: &'t SelectorNode<'a>) -> Doc<'t> {
+        if self.css_ancestor(Kind::Rule).is_some_and(|rule| rule.is_scss_nested_property) {
+            let value = maybe_to_lower_case(&node.value);
+            return Doc::from(adjust_numbers(&adjust_strings(&value, self.single_quote)).into_owned());
+        }
         // In the parentheses of `selector()`.
         if let [.., func, paren_group] = self.value_stack[..]
             && let ValueKind::ParenGroup {
@@ -584,7 +609,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     pub(crate) fn print_value(&mut self, node: &'t ValueNode<'a>, previous: Option<&'t ValueNode<'a>>) -> Doc<'t> {
         match &node.kind {
             ValueKind::Root { group } | ValueKind::Value { group } => self.print_child_value(node, group),
-            ValueKind::Comment { inline } => {
+            ValueKind::Comment { inline, .. } => {
                 let (start, end) = (node.loc.start_offset.unwrap_or(0) as usize, node.loc.end_offset.unwrap_or(0) as usize);
                 let text = self.text.get(start..end).unwrap_or_default();
                 match inline {

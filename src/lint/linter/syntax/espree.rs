@@ -86,6 +86,23 @@ const REFUSED_BY_BABEL: [&str; 44] = [
     "super() call outside constructor of a subclass",
 ];
 
+/// Where the parser of oxlint, which takes a JavaScript file for JavaScript, stumbles over TypeScript. It has other words for it.
+pub(super) fn typescript_in_javascript<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    let mut checks = Checks {
+        file,
+        first: None,
+        noticed: 0,
+        is_all_strict: true,
+        is_whole: true,
+        is_babel: false,
+    };
+    checks.typescript_syntax(true);
+    checks.first.map(|it| SyntaxError {
+        at: it.1.at,
+        message: b"Unexpected token".to_vec(),
+    })
+}
+
 /// Whether Prettier's `babel` parser throws on a JavaScript file that the parser here, in that dialect, has nothing to say about.
 ///
 /// Prettier lets Babel go on after an error, and lets pass what is only wrong in strict mode, names that are declared twice or
@@ -123,7 +140,7 @@ pub(super) fn first_error<'a>(
         checks.error_of_parser(diagnostic, at);
         checks.at_sign_before(at);
     }
-    checks.typescript_syntax();
+    checks.typescript_syntax(false);
     checks.jsx();
     checks.returns();
     checks.module_syntax();
@@ -452,7 +469,8 @@ impl<'a> Checks<'a> {
     // ───────────────────────────── TypeScript in JavaScript ─────────────────────────────
 
     /// What acorn stumbles over where TypeScript's parser says that something "can only be used in TypeScript files".
-    fn typescript_syntax(&mut self) {
+    /// `allows_modifiers`: `private a` and the like in a class pass, as in oxlint.
+    fn typescript_syntax(&mut self, allows_modifiers: bool) {
         for it in self
             .file
             .hir
@@ -471,6 +489,7 @@ impl<'a> Checks<'a> {
                 // A type annotation, a list of type parameters, `as T`, `satisfies T`, `<T>a`: the token before.
                 8010 | 8004 | 8016 | 8037 => self.unexpected(self.before_token(at)),
                 8009 | 8012 if argument == b"?" => self.unexpected(at),
+                8009 | 8012 if allows_modifiers => {}
                 // A modifier is a name for acorn, and nothing can follow it.
                 8009 | 8012 if is_after_export(self, at) => self.unexpected(at),
                 8009 | 8012 => self.unexpected(self.after_token(at)),

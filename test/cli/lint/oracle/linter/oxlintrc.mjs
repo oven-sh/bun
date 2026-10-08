@@ -20,7 +20,17 @@ const code = `${Object.values(probes).join("\n")}\n`;
 // After them, what oxlint parses and ESLint's default parser refuses: a file is not refused because of it.
 const typescript = "declare const i: any;\ninterface I { a: 1 }\nabstract class A { abstract m(): void; private b?: number }\nenum E { a }\nlet c = i as I;\n";
 const tails = { ".ts": typescript, ".tsx": `${typescript}<a b={1} />;\n`, ".jsx": "<a b={1} />;\n", ".js": "<a b={1} />;\n@d class B {}\n", ".mjs": "@d class B {}\n" };
-const codeOf = name => code + tails[name.slice(name.lastIndexOf("."))];
+// TypeScript in a JavaScript file, which oxlint refuses, apart from the last one. It says nothing about such a file with `@flow`.
+const inJavaScript = [
+  "let t: number = 1;", "function g(a?: string) {}", "let u = b as c;", "enum F { a }", "interface J {}", "type T = 1;", 'import type { K } from "k";', "let v = b!;",
+  "class P { m(): void {} }", "class P { private a = 1 }",
+];
+const other = random(17);
+const codeOf = name => {
+  const extension = name.slice(name.lastIndexOf("."));
+  const isMixed = !extension.startsWith(".ts") && other.int(6) === 0;
+  return (isMixed && other.int(3) === 0 ? "// @flow\n" : "") + code + tails[extension] + (isMixed ? `${other.pick(inJavaScript)}\n` : "");
+};
 const ids = Object.keys(probes);
 
 const rng = random(11);

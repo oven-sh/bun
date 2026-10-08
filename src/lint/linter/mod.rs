@@ -265,6 +265,9 @@ impl Linter {
     ) -> LintResult {
         let locator = Locator::new(file);
         if let Some(fatal) = parse_error(file) {
+            if file.language().is_oxlint && syntax::is_flow(file) {
+                return LintResult::default();
+            }
             return LintResult {
                 messages: vec![fatal],
                 ..LintResult::default()

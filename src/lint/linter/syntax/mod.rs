@@ -78,7 +78,9 @@ pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
         )
     });
     let error = match (parser, of_parser) {
-        (_, of_parser) if !file.language().refuses_what_parser_refuses => of_parser.map(|it| it.1),
+        (_, of_parser) if !file.language().refuses_what_parser_refuses => (of_parser
+            .map(|it| it.1))
+        .or_else(|| espree::typescript_in_javascript(file).filter(|_| file.is_javascript())),
         // It converts a tree only if the parser has nothing to say.
         (Parser::TypeScript, None) => typescript_estree::first_error(file),
         (Parser::Espree, of_parser) => {
@@ -102,6 +104,14 @@ pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
         suppressions: Vec::new(),
         comments_apply_at: None,
     })
+}
+
+/// Whether oxlint says nothing about the file, which it cannot parse: it is JavaScript, and its first comment has `@flow`.
+pub(super) fn is_flow<'a>(file: &'a File<'a>) -> bool {
+    file.is_javascript()
+        && (file.comments().map(|it| file.slice(it.span())))
+            .find(|it| !it.starts_with(b"#!"))
+            .is_some_and(|it| bun_core::strings::contains(it, b"@flow"))
 }
 
 /// Whether Prettier refuses to format the file, which was parsed in the dialect of Babel

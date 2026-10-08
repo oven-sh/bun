@@ -187,7 +187,7 @@ impl<'a> Writer<'a, '_> {
                             open.last_child = Some((child, self.tree.types.len() as u32));
                             word(Tag::Node, self.start_node(child, id) as usize)
                         }
-                        _ => self.value(value, node.span(), id),
+                        _ => self.value(&value, node.span(), id),
                     };
                     if let Some(field) = self.tree.fields.get_mut(to) {
                         *field = word;
@@ -212,8 +212,8 @@ impl<'a> Writer<'a, '_> {
     }
 
     /// The word for `value`, which is not a node, in a field of the node `id` at `span`.
-    fn value(&mut self, value: Value<'a>, span: Span, id: u32) -> u32 {
-        match value {
+    fn value(&mut self, value: &Value<'a>, span: Span, id: u32) -> u32 {
+        match *value {
             Value::Undefined | Value::Node(_) => UNDEFINED,
             Value::Null => NULL,
             Value::Bool(false) => FALSE,

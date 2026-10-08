@@ -66,6 +66,38 @@ pub struct Configured {
     pub(super) json: Box<[u8]>,
 }
 
+/// [`write_json`] that keeps an infinite number, which default options have: as a number too large for a double.
+fn write_option(out: &mut Vec<u8>, value: &Json) {
+    match value {
+        Json::Number(value) if value.is_infinite() => {
+            out.extend_from_slice(if *value > 0.0 { b"1e999" } else { b"-1e999" });
+        }
+        Json::Array(items) => {
+            out.push(b'[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(b',');
+                }
+                write_option(out, item);
+            }
+            out.push(b']');
+        }
+        Json::Object(entries) => {
+            out.push(b'{');
+            for (i, (key, value)) in entries.iter().enumerate() {
+                if i > 0 {
+                    out.push(b',');
+                }
+                write_json(out, &Json::String(key.clone()));
+                out.push(b':');
+                write_option(out, value);
+            }
+            out.push(b'}');
+        }
+        _ => write_json(out, value),
+    }
+}
+
 impl Configured {
     /// `options`: ESLint's `context.options`, with the default options of the rule merged in.
     pub fn new(rule: Arc<Rule>, options: &[Json]) -> Arc<Configured> {
@@ -75,7 +107,7 @@ impl Configured {
             if i > 0 {
                 json.push(b',');
             }
-            write_json(&mut json, option);
+            write_option(&mut json, option);
         }
         json.extend_from_slice(b"]]");
         Arc::new(Configured {

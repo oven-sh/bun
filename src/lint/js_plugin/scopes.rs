@@ -133,11 +133,11 @@ pub(super) fn write<'a>(file: &'a File<'a>, offsets: &Offsets, ids: &NodeIds<'a>
             if let Some(index) = index_of.get_mut(symbol.key()) {
                 *index = (variables.len() / 2) as u32;
             }
-            let flags = u32::from(symbol.is_type_variable()) * IS_TYPE
-                | u32::from(symbol.is_value_variable()) * IS_VALUE
-                | u32::from(symbol.is_marked_used()) * IS_USED
-                | u32::from(symbol.is_marked_exported()) * IS_EXPORTED
-                | u32::from(symbol.is_implicit_arguments()) * IS_ARGUMENTS;
+            let flags = (u32::from(symbol.is_type_variable()) * IS_TYPE)
+                | (u32::from(symbol.is_value_variable()) * IS_VALUE)
+                | (u32::from(symbol.is_marked_used()) * IS_USED)
+                | (u32::from(symbol.is_marked_exported()) * IS_EXPORTED)
+                | (u32::from(symbol.is_implicit_arguments()) * IS_ARGUMENTS);
             variables.extend_from_slice(&[(definitions.len() / 2) as u32, flags]);
             for declaration in symbol.declarations() {
                 if let Some(kind) = declaration.kind() {
@@ -167,19 +167,19 @@ pub(super) fn write<'a>(file: &'a File<'a>, offsets: &Offsets, ids: &NodeIds<'a>
         if let Some(global) = global
             && seen.insert(reference.name().atom())
         {
-            let flags = u32::from(global.is_type) * IS_TYPE
-                | u32::from(global.is_value) * IS_VALUE
-                | u32::from(global.is_exported) * (IS_USED | IS_EXPORTED)
-                | u32::from(global.is_writable) * IS_WRITABLE
-                | u32::from(global.is_in_lib) * IS_IN_LIB
-                | u32::from(!global.is_only_in_lib) * IS_CONFIGURED;
+            let flags = (u32::from(global.is_type) * IS_TYPE)
+                | (u32::from(global.is_value) * IS_VALUE)
+                | (u32::from(global.is_exported) * (IS_USED | IS_EXPORTED))
+                | (u32::from(global.is_writable) * IS_WRITABLE)
+                | (u32::from(global.is_in_lib) * IS_IN_LIB)
+                | (u32::from(!global.is_only_in_lib) * IS_CONFIGURED);
             globals.extend_from_slice(&[index, flags]);
         }
         wire::words(
             out,
             &[
                 identifier,
-                u32::from(reference.flags().bits()) | u32::from(global.is_some()) * TO_GLOBAL,
+                u32::from(reference.flags().bits()) | (u32::from(global.is_some()) * TO_GLOBAL),
                 id(reference.write_expr().and_then(expression)),
                 symbol.and_then(|it| index_of.get(it.key())).copied().unwrap_or(NONE),
                 reference.scope().id().0,

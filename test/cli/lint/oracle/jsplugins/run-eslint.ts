@@ -59,7 +59,14 @@ for (const line of readFileSync(casesPath, "utf8").split("\n")) {
       { filename: join(process.cwd(), it.filename ?? "file.js"), allowInlineConfig: it.allowInlineConfig ?? true },
     );
     const fatal = messages.find((message: any) => message.fatal);
-    result = fatal ? { failure: fatal.message } : { messages: messages.map(({ severity, nodeType, ...message }: any) => message) };
+    // The `data` of a suggestion is text on the other side, and one without entries is none.
+    const suggestion = ({ data, ...rest }: any) =>
+      data && Object.keys(data).length > 0
+        ? { ...rest, data: Object.fromEntries(Object.entries(data).map(([key, value]) => [key, String(value)])) }
+        : rest;
+    const cleaned = ({ severity, nodeType, suggestions, ...message }: any) =>
+      suggestions ? { ...message, suggestions: suggestions.map(suggestion) } : message;
+    result = fatal ? { failure: fatal.message } : { messages: messages.map(cleaned) };
   } catch (error) {
     result = { failure: String((error as Error).message).split("\n")[0] };
   }

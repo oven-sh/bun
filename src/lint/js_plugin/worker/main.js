@@ -79,10 +79,21 @@ function normalizePluginName(name) {
 // JSON, or `undefined` for what is not.
 function asJson(value) {
   try {
-    return JSON.parse(JSON.stringify(value));
+    return JSON.parse(stringify(value));
   } catch {
     return undefined;
   }
+}
+
+// `JSON.stringify` that keeps an infinite number, which default options have: as a number too large for a double.
+function stringify(value) {
+  let hasInfinity = false;
+  const json = JSON.stringify(value, (_, it) => {
+    if (it !== Infinity && it !== -Infinity) return it;
+    hasInfinity = true;
+    return it > 0 ? "\0+Infinity" : "\0-Infinity";
+  });
+  return hasInfinity ? json.replace(/"\\u0000([+-])Infinity"/g, (_, sign) => (sign === "+" ? "1e999" : "-1e999")) : json;
 }
 
 // What the configuration files that were needed to find a plugin export, by their paths.
@@ -169,7 +180,7 @@ let filename = "";
 // `{ settings, languageOptions }` of the file.
 let fileSettings = null;
 const allSettings = new Map();
-// By id: a rule with its options, `{ rule, meta, context, position }`.
+// By id: a rule with its options. `own`: what its contexts have of their own.
 const configured = new Map();
 
 function deepFreeze(value) {
@@ -180,8 +191,7 @@ function deepFreeze(value) {
   return value;
 }
 
-// What all rules see of a file. The contexts of the rules inherit from it, and are the same objects
-// for every file.
+// What all rules see of a file. The contexts of the rules inherit from it.
 const fileContext = Object.freeze({
   get cwd() {
     return cwd;
@@ -244,15 +254,15 @@ function configure(id, position) {
   const [index, options] = askForJson(CONFIGURED, String(position));
   const { rule, id: ruleId } = rules[index];
   // `once`: what oxlint's `createOnce` has returned, which is called the first time the rule runs.
-  const entry = { rule, ruleId, context: null, position: 0, once: null };
+  const entry = { rule, ruleId, own: null, position: 0, once: null };
   const meta = rule.meta;
-  entry.context = fileContext.extend({
+  entry.own = {
     id: ruleId,
     options: deepFreeze(options),
     report(...args) {
       report(entry.position, meta, args);
     },
-  });
+  };
   configured.set(id, entry);
   return entry;
 }
@@ -498,6 +508,7 @@ function traverse() {
 function reset() {
   text = "";
   lineStarts = lines = inlineConfigNodes = disableDirectives = null;
+  sourceCode = new SourceCode();
   tree = null;
   nodes = [];
   descendants = matches = null;
@@ -532,7 +543,10 @@ function lint() {
     const entry = configured.get(ids[position]) ?? configure(ids[position], position);
     entry.position = position;
     currentRule = entry;
-    const listeners = typeof entry.rule.createOnce === "function" ? listenersOfOnce(entry) : entry.rule.create(entry.context);
+    // A new context for each file, and a new `sourceCode`, as in ESLint: plugins keep what they know about a file in a `WeakMap`
+    // under one of them.
+    const listeners =
+      typeof entry.rule.createOnce === "function" ? listenersOfOnce(entry) : entry.rule.create(fileContext.extend(entry.own));
     if (listeners === undefined || listeners === null) {
       throw new Error(`The create() function for rule '${entry.ruleId}' did not return an object.`);
     }
@@ -553,7 +567,7 @@ let afterHooks = [];
 // when the file is done.
 function listenersOfOnce(entry) {
   if (entry.once === null) {
-    const { before, after, ...listeners } = entry.rule.createOnce(entry.context);
+    const { before, after, ...listeners } = entry.rule.createOnce(fileContext.extend(entry.own));
     entry.once = { before, after, listeners };
   }
   const { before, after, listeners } = entry.once;
@@ -592,7 +606,7 @@ function handle(kind) {
   if (!hasStarted) start();
   if (kind === LOAD) {
     return loadPlugin(askForJson(MESSAGE)).then(
-      described => DONE + JSON.stringify(described),
+      described => DONE + stringify(described),
       error => FAILED + String(error?.stack ?? error),
     );
   }

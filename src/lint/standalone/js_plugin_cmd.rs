@@ -102,6 +102,10 @@ fn report_as_json(report: &Report, enabled: &[Arc<Configured>], code: &[u8]) -> 
             if let Some(id) = &it.message_id {
                 fields.push((b"messageId".to_vec(), string(id.as_bytes())));
             }
+            if !it.data.is_empty() {
+                let data = it.data.iter().map(|(key, value)| (key.as_bytes().to_vec(), string(value)));
+                fields.push((b"data".to_vec(), Json::Object(data.collect())));
+            }
             fields.push((b"desc".to_vec(), string(&it.message)));
             fields.push((b"fix".to_vec(), fix(&it.fix)));
             Json::Object(fields)

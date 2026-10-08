@@ -57,7 +57,7 @@ function assertValidFix(fix) {
 function mergeFixes(fixes) {
   fixes.forEach(assertValidFix);
   if (fixes.length === 0) return null;
-  if (fixes.length === 1) return [fixes[0].range[0], fixes[0].range[1], fixes[0].text];
+  if (fixes.length === 1) return fixes[0] ? [fixes[0].range[0], fixes[0].range[1], fixes[0].text] : null;
   fixes.sort((a, b) => a.range[0] - b.range[0] || a.range[1] - b.range[1]);
   const start = fixes[0].range[0];
   const end = fixes.at(-1).range[1];

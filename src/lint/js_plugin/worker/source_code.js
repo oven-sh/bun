@@ -248,5 +248,6 @@ class SourceCode extends TokenStore {
   }
 }
 
-const sourceCode = new SourceCode();
+// Of the file that is being linted.
+let sourceCode = new SourceCode();
 const parserServices = Object.freeze({});

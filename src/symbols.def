@@ -583,6 +583,18 @@ EXPORTS
   ?GetCurrentContext@Isolate@v8@@QEAA?AV?$Local@VContext@v8@@@2@XZ
   ?AddEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z
   ?RemoveEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z
+  ?MakeCallback@node@@YA?AV?$MaybeLocal@VValue@v8@@@v8@@PEAVIsolate@3@V?$Local@VObject@v8@@@3@PEBDHPEAV?$Local@VValue@v8@@@3@Uasync_context@1@@Z
+  ?MakeCallback@node@@YA?AV?$MaybeLocal@VValue@v8@@@v8@@PEAVIsolate@3@V?$Local@VObject@v8@@@3@V?$Local@VString@v8@@@3@HPEAV?$Local@VValue@v8@@@3@Uasync_context@1@@Z
+  ?HasInstance@Buffer@node@@YA_NV?$Local@VValue@v8@@@v8@@@Z
+  ?HasInstance@Buffer@node@@YA_NV?$Local@VObject@v8@@@v8@@@Z
+  ?Data@Buffer@node@@YAPEADV?$Local@VValue@v8@@@v8@@@Z
+  ?Data@Buffer@node@@YAPEADV?$Local@VObject@v8@@@v8@@@Z
+  ?Length@Buffer@node@@YA_KV?$Local@VValue@v8@@@v8@@@Z
+  ?Length@Buffer@node@@YA_KV?$Local@VObject@v8@@@v8@@@Z
+  ?Copy@Buffer@node@@YA?AV?$MaybeLocal@VObject@v8@@@v8@@PEAVIsolate@4@PEBD_K@Z
+  ?New@Buffer@node@@YA?AV?$MaybeLocal@VObject@v8@@@v8@@PEAVIsolate@4@_K@Z
+  ?New@Buffer@node@@YA?AV?$MaybeLocal@VObject@v8@@@v8@@PEAVIsolate@4@PEAD_KP6AX1PEAX@Z3@Z
+  ?New@Buffer@node@@YA?AV?$MaybeLocal@VObject@v8@@@v8@@PEAVIsolate@4@PEAD_K@Z
   ?New@Number@v8@@SA?AV?$Local@VNumber@v8@@@2@PEAVIsolate@2@N@Z
   ?Value@Number@v8@@QEBANXZ
   ?NewFromInt32@Number@v8@@CA?AV?$Local@VNumber@v8@@@2@PEAVIsolate@2@H@Z
@@ -671,6 +683,7 @@ EXPORTS
   ?GetScriptLineNumber@Function@v8@@QEBAHXZ
   ?GetScriptColumnNumber@Function@v8@@QEBAHXZ
   ?ToInt32@Value@v8@@QEBA?AV?$MaybeLocal@VInt32@v8@@@2@V?$Local@VContext@v8@@@2@@Z
+  ?Int32Value@Value@v8@@QEBA?AV?$Maybe@H@2@V?$Local@VContext@v8@@@2@@Z
   ?Value@Int32@v8@@QEBAHXZ
   ?VerifyHostDefinedOptions@ScriptOrigin@v8@@AEBAXXZ
   ?ResourceName@ScriptOrigin@v8@@QEBA?AV?$Local@VValue@v8@@@2@XZ

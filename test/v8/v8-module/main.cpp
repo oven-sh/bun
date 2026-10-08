@@ -1,4 +1,5 @@
 #include <node.h>
+#include <node_buffer.h>
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -8,6 +9,8 @@
 
 #include <cinttypes>
 #include <cstdarg>
+#include <cstdlib>
+#include <cstring>
 #include <iomanip>
 #include <iostream>
 
@@ -1478,6 +1481,109 @@ void perform_to_int32(const FunctionCallbackInfo<Value> &info) {
 // Returns { file, line, column } for the function passed as the first argument,
 // as @newrelic/fn-inspect does. file is undefined when the resource name is an
 // empty handle.
+// Returns Int32Value of the first argument, like perform_to_int32.
+void perform_int32_value(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Maybe<int32_t> maybe = info[0]->Int32Value(context);
+  LOG_EXPR(maybe.IsNothing());
+  if (maybe.IsNothing()) {
+    return;
+  }
+  info.GetReturnValue().Set(Integer::New(isolate, maybe.FromJust()));
+}
+
+static int node_buffer_free_calls = 0;
+
+static void count_node_buffer_free(char *data, void *hint) {
+  free(data);
+  (*static_cast<int *>(hint))++;
+}
+
+// Returns a Buffer from each node::Buffer constructor, indexed 0 to 3.
+void create_node_buffers(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<Object> sized = node::Buffer::New(isolate, 5).ToLocalChecked();
+  memcpy(node::Buffer::Data(sized), "sized", 5);
+  char *owned = static_cast<char *>(malloc(5));
+  memcpy(owned, "owned", 5);
+  char *with_callback = static_cast<char *>(malloc(8));
+  memcpy(with_callback, "callback", 8);
+
+  Local<Object> buffers[] = {
+      node::Buffer::Copy(isolate, "copy", 4).ToLocalChecked(),
+      sized,
+      node::Buffer::New(isolate, owned, 5).ToLocalChecked(),
+      node::Buffer::New(isolate, with_callback, 8, count_node_buffer_free,
+                        &node_buffer_free_calls)
+          .ToLocalChecked(),
+  };
+  Local<Object> result = Object::New(isolate);
+  for (uint32_t i = 0; i < 4; i++) {
+    result->Set(context, i, buffers[i]).FromJust();
+  }
+  info.GetReturnValue().Set(result);
+}
+
+// Bun only: Buffers whose free callback counts the calls, and the count so far.
+void create_node_buffers_with_free_callback(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  for (int i = 0; i < 1000; i++) {
+    char *data = static_cast<char *>(malloc(1024));
+    node::Buffer::New(isolate, data, 1024, count_node_buffer_free,
+                      &node_buffer_free_calls)
+        .ToLocalChecked();
+  }
+}
+
+void get_node_buffer_free_calls(const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(
+      Integer::New(info.GetIsolate(), node_buffer_free_calls));
+}
+
+// Logs what node::Buffer reads from the first argument.
+void inspect_node_buffer(const FunctionCallbackInfo<Value> &info) {
+  Local<Value> value = info[0];
+  LOG_EXPR(node::Buffer::HasInstance(value));
+  if (!node::Buffer::HasInstance(value)) {
+    return;
+  }
+  Local<Object> object = value.As<Object>();
+  LOG_EXPR(node::Buffer::HasInstance(object));
+  LOG_EXPR(node::Buffer::Length(value));
+  LOG_EXPR(node::Buffer::Length(object));
+  LOG_EXPR(node::Buffer::Data(value) == node::Buffer::Data(object));
+  log_buffer(node::Buffer::Data(value),
+             static_cast<int>(node::Buffer::Length(value)));
+}
+
+// Calls the method named by the second argument on the first, through
+// node::MakeCallback with a Local<String> or, when the third argument is true,
+// a const char*. Leaves an exception pending for the JS caller.
+void make_callback_by_name(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Object> recv = info[0].As<Object>();
+  Local<String> name = info[1].As<String>();
+  Local<Value> argv[] = {Integer::New(isolate, 21)};
+
+  MaybeLocal<Value> result;
+  if (info[2]->IsTrue()) {
+    char method[64] = {0};
+    name->WriteUtf8V2(isolate, method, sizeof(method) - 1);
+    result = node::MakeCallback(isolate, recv, method, 1, argv, {0, 0});
+  } else {
+    result = node::MakeCallback(isolate, recv, name, 1, argv, {0, 0});
+  }
+  LOG_EXPR(result.IsEmpty());
+  if (!result.IsEmpty()) {
+    info.GetReturnValue().Set(result.ToLocalChecked());
+  }
+}
+
 void get_function_script_origin(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   Local<Context> context = isolate->GetCurrentContext();
@@ -2208,6 +2314,14 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_value_type_checks);
   NODE_SET_METHOD(exports, "test_v8_integer", test_v8_integer);
   NODE_SET_METHOD(exports, "perform_to_int32", perform_to_int32);
+  NODE_SET_METHOD(exports, "perform_int32_value", perform_int32_value);
+  NODE_SET_METHOD(exports, "create_node_buffers", create_node_buffers);
+  NODE_SET_METHOD(exports, "create_node_buffers_with_free_callback",
+                  create_node_buffers_with_free_callback);
+  NODE_SET_METHOD(exports, "get_node_buffer_free_calls",
+                  get_node_buffer_free_calls);
+  NODE_SET_METHOD(exports, "inspect_node_buffer", inspect_node_buffer);
+  NODE_SET_METHOD(exports, "make_callback_by_name", make_callback_by_name);
   NODE_SET_METHOD(exports, "get_function_script_origin",
                   get_function_script_origin);
   NODE_SET_METHOD(exports, "test_v8_define_own_property",

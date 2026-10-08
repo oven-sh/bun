@@ -383,9 +383,25 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     });
   });
 
-  describe("Value::ToInt32", () => {
+  describe("Value::ToInt32 and Value::Int32Value", () => {
     it("converts values like the JS ToInt32 operation", async () => {
       await checkSameOutput("test_v8_value_to_int32");
+    });
+  });
+
+  describe("node::Buffer", () => {
+    it("creates Buffers and reads any ArrayBufferView", async () => {
+      await checkSameOutput("test_node_buffer");
+    });
+    it("calls the free callback when the Buffer is collected", async () => {
+      const out = await runOn(Runtime.bun, BuildMode.release, "test_node_buffer_free_callback");
+      expect(out).toContain("freed: true");
+    });
+  });
+
+  describe("node::MakeCallback", () => {
+    it("calls a method by name", async () => {
+      await checkSameOutput("test_node_make_callback_by_name");
     });
   });
 

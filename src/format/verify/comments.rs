@@ -47,10 +47,13 @@ fn compare_in_any_order(before: Comments<'_>, after: Comments<'_>) -> Result<(),
 
 /// The `#!` line of `text`.
 fn hashbang(text: &[u8]) -> &[u8] {
-    match text.starts_with(b"#!") {
-        true => text.get(..strings::index_of_char_usize(text, b'\n').unwrap_or(text.len())).unwrap_or(text).trim_ascii_end(),
-        false => &[],
+    if !text.starts_with(b"#!") {
+        return &[];
     }
+    let line = text.get(..strings::index_of_any(text, b"\n\r").unwrap_or(text.len())).unwrap_or(text);
+    // U+2028 and U+2029 end the line too.
+    let ends = [&b"\xE2\x80\xA8"[..], b"\xE2\x80\xA9"].into_iter().filter_map(|it| strings::index_of(line, it));
+    line.get(..ends.min().unwrap_or(line.len())).unwrap_or(line).trim_ascii_end()
 }
 
 /// The tree does not list the comments of HTML, `<!-- a` and `--> a`. Those of `file` have to be

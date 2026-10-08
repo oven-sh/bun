@@ -158,13 +158,14 @@ impl<'a> Checks<'a> {
                         PropKind::Getter | PropKind::Setter => {
                             let key = prop
                                 .key()
-                                .map_or(prop.span().start, |it| it.span(self.file).start);
+                                .map_or_else(|| prop.span().start, |it| it.span(self.file).start);
                             self.fail(key, "Object pattern can't contain getter or setter");
                         }
                         PropKind::Method => {
-                            let function = prop
-                                .func()
-                                .map_or(value.span().start, |it| it.span_from_params().start);
+                            let function = prop.func().map_or_else(
+                                || value.span().start,
+                                |it| it.span_from_params().start,
+                            );
                             self.fail(function, "Assigning to rvalue");
                         }
                         PropKind::Spread => {

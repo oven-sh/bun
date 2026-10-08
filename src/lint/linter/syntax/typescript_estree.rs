@@ -805,7 +805,7 @@ impl<'a> Checks<'a> {
             let name = || {
                 member
                     .key()
-                    .map_or(Span::empty(raw.name_pos), |it| it.span(file))
+                    .map_or_else(|| Span::empty(raw.name_pos), |it| it.span(file))
             };
             match kind {
                 Kind::PropertyDeclaration => {
@@ -1169,9 +1169,10 @@ impl<'a> Checks<'a> {
                 .iter()
                 .any(|call| Some(&call.0.0) == args.first());
             if (has_none || args.len() > 2) && !is_deferred {
-                let at = args
-                    .get(2)
-                    .map_or(it.span().start, |&third| self.start_of(hir::ExprId(third)));
+                let at = args.get(2).map_or_else(
+                    || it.span().start,
+                    |&third| self.start_of(hir::ExprId(third)),
+                );
                 self.fail(
                     it.span(),
                     at,
@@ -1213,7 +1214,7 @@ impl<'a> Checks<'a> {
                 .types
                 .iter()
                 .find(is_this)
-                .map_or(Span::empty(member.start), |it| Span::new(it.pos, it.end));
+                .map_or_else(|| Span::empty(member.start), |it| Span::new(it.pos, it.end));
             self.fail(
                 node,
                 member.start,

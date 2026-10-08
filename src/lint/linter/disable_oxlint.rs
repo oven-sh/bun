@@ -313,7 +313,7 @@ pub(crate) fn apply<'a>(
         };
         let shown = (problem.line, problem.column);
         let (start, end) =
-            (problem.comments_apply_at).unwrap_or((shown, problem.end.unwrap_or(shown)));
+            (problem.comments_apply_at).unwrap_or_else(|| (shown, problem.end.unwrap_or(shown)));
         for (range, &(from, to)) in ranges.iter_mut().zip(&places) {
             let overlaps = from < end && to > start;
             if overlaps

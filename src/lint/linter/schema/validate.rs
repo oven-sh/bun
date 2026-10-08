@@ -424,13 +424,11 @@ impl<'s> Validator<'s> {
             if !types.iter().any(|name| has_type(&items[i], name)) {
                 continue;
             }
-            let later = (i + 1..items.len())
-                .rev()
+            let mut later = (i + 1..items.len())
                 .filter(|j| types.iter().any(|name| has_type(&items[*j], name)));
             // The entry for a key is overwritten by each item that has it, so the nearest counts.
-            if let Some(j) = later
-                .filter(|j| Self::has_same_key(&items[i], &items[*j], types.len() > 1))
-                .last()
+            if let Some(j) =
+                later.find(|j| Self::has_same_key(&items[i], &items[*j], types.len() > 1))
             {
                 return Some((j, i));
             }

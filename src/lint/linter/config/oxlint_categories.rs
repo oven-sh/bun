@@ -38,9 +38,7 @@ pub(super) static CATEGORIES: &[(&str, &[(&str, &str)])] = &[
         "no-will-update-set-state preserve-manual-memoization purity refs set-state-in-effect ",
         "set-state-in-render static-components use-memo void-dom-elements-no-children void-use-memo",
         )),
-        ("import", concat!(
-        "default namespace",
-        )),
+        ("import", "default namespace"),
         ("oxc", concat!(
         "bad-array-method-on-arguments bad-char-at-comparison bad-comparison-sequence bad-match-all-arg ",
         "bad-min-max-func bad-object-literal-comparison bad-replace-all-arg const-comparisons ",
@@ -73,9 +71,7 @@ pub(super) static CATEGORIES: &[(&str, &[(&str, &str)])] = &[
         "no-absolute-path no-empty-named-blocks no-named-as-default no-named-as-default-member no-self-import ",
         "no-unassigned-import",
         )),
-        ("oxc", concat!(
-        "approx-constant misrefactored-assign-op no-async-endpoint-handlers no-this-in-exported-function",
-        )),
+        ("oxc", "approx-constant misrefactored-assign-op no-async-endpoint-handlers no-this-in-exported-function"),
         ],
     ),
     (
@@ -102,27 +98,19 @@ pub(super) static CATEGORIES: &[(&str, &[(&str, &str)])] = &[
         "checked-requires-onchange-or-readonly display-name jsx-no-target-blank jsx-no-useless-fragment ",
         "no-unescaped-entities rules-of-hooks",
         )),
-        ("import", concat!(
-        "max-dependencies",
-        )),
-        ("oxc", concat!(
-        "branches-sharing-code",
-        )),
+        ("import", "max-dependencies"),
+        ("oxc", "branches-sharing-code"),
         ],
     ),
     (
         "perf",
         &[
-        ("eslint", concat!(
-        "no-await-in-loop no-useless-call",
-        )),
+        ("eslint", "no-await-in-loop no-useless-call"),
         ("react", concat!(
         "jsx-no-constructed-context-values no-array-index-key no-deriving-state-in-effects ",
         "no-object-type-as-default-prop",
         )),
-        ("oxc", concat!(
-        "no-accumulating-spread no-map-spread",
-        )),
+        ("oxc", "no-accumulating-spread no-map-spread"),
         ],
     ),
     (
@@ -160,9 +148,7 @@ pub(super) static CATEGORIES: &[(&str, &[(&str, &str)])] = &[
         "no-anonymous-default-export no-duplicates no-mutable-exports no-named-default no-named-export ",
         "no-namespace no-nodejs-modules prefer-default-export",
         )),
-        ("node", concat!(
-        "callback-return exports-style global-require no-exports-assign no-mixed-requires no-sync",
-        )),
+        ("node", "callback-return exports-style global-require no-exports-assign no-mixed-requires no-sync"),
         ],
     ),
     (
@@ -191,9 +177,7 @@ pub(super) static CATEGORIES: &[(&str, &[(&str, &str)])] = &[
         "extensions no-amd no-commonjs no-cycle no-default-export no-dynamic-require ",
         "no-relative-parent-imports no-webpack-loader-syntax unambiguous",
         )),
-        ("node", concat!(
-        "handle-callback-err no-new-require no-path-concat no-process-env no-top-level-await",
-        )),
+        ("node", "handle-callback-err no-new-require no-path-concat no-process-env no-top-level-await"),
         ("oxc", concat!(
         "bad-bitwise-operator no-async-await no-barrel-file no-const-enum no-optional-chaining ",
         "no-rest-spread-properties",
@@ -203,18 +187,10 @@ pub(super) static CATEGORIES: &[(&str, &[(&str, &str)])] = &[
     (
         "nursery",
         &[
-        ("eslint", concat!(
-        "no-restricted-exports no-undef no-unreachable-loop no-useless-assignment",
-        )),
-        ("typescript", concat!(
-        "no-unnecessary-condition prefer-optional-chain",
-        )),
-        ("react", concat!(
-        "require-render-return",
-        )),
-        ("import", concat!(
-        "export named",
-        )),
+        ("eslint", "no-restricted-exports no-undef no-unreachable-loop no-useless-assignment"),
+        ("typescript", "no-unnecessary-condition prefer-optional-chain"),
+        ("react", "require-render-return"),
+        ("import", "export named"),
         ],
     ),
 ];
@@ -222,9 +198,7 @@ pub(super) static CATEGORIES: &[(&str, &[(&str, &str)])] = &[
 /// The rules that only run on TypeScript files: the plugins as oxlint calls them, each with the names of its rules, separated by spaces.
 #[rustfmt::skip]
 pub(super) static TYPESCRIPT_ONLY: &[(&str, &str)] = &[
-    ("eslint", concat!(
-        "no-use-before-define",
-    )),
+    ("eslint", "no-use-before-define"),
     ("typescript", concat!(
         "adjacent-overload-signatures array-type ban-ts-comment ban-types consistent-generic-constructors ",
         "consistent-indexed-object-style consistent-type-assertions consistent-type-definitions ",
@@ -243,17 +217,13 @@ pub(super) static TYPESCRIPT_ONLY: &[(&str, &str)] = &[
 /// The rules that do not run on TypeScript files: the plugins as oxlint calls them, each with the names of its rules, separated by spaces.
 #[rustfmt::skip]
 pub(super) static NOT_TYPESCRIPT: &[(&str, &str)] = &[
-    ("eslint", concat!(
-        "getter-return",
-    )),
+    ("eslint", "getter-return"),
 ];
 
 /// The rules that do not run on declaration files: the plugins as oxlint calls them, each with the names of its rules, separated by spaces.
 #[rustfmt::skip]
 pub(super) static NOT_DECLARATIONS: &[(&str, &str)] = &[
-    ("eslint", concat!(
-        "no-unused-vars",
-    )),
+    ("eslint", "no-unused-vars"),
 ];
 
 /// The names of all rules of oxlint, without their plugins, sorted and separated by spaces.

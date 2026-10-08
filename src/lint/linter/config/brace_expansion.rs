@@ -200,7 +200,7 @@ fn expand_sequence(parts: &[&[u8]], is_alpha: bool) -> Vec<Vec<u8>> {
             [b'0', b'0'..=b'9', ..]
         )
     };
-    let pad = parts.iter().any(|it| is_padded(it));
+    let pad = parts.iter().any(is_padded);
     let (mut out, mut length, mut i) = (Vec::new(), 0, x);
     while (if is_reversed { i >= y } else { i <= y }) && out.len() < MAX {
         let item = if is_alpha {

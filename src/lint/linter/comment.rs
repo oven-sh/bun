@@ -168,7 +168,7 @@ fn normalize_for_json(text: &[u8]) -> Vec<u8> {
                 end += space_len(&quoted[end..]);
             }
             if end > at + 1 && quoted.get(end) == Some(&b'"') {
-                quoted.splice(at + 1..end, [b',']);
+                quoted.splice(at + 1..end, *b",");
                 break;
             }
         }

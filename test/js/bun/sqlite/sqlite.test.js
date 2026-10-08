@@ -108,8 +108,46 @@ describe("safeIntegers", () => {
     const query = db.query("INSERT INTO test (value) VALUES ($value)");
 
     expect(() => query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n })).toThrow(RangeError);
+    // safeIntegers only controls how integers are returned. An out-of-range
+    // BigInt parameter is always rejected instead of being wrapped modulo 2^64.
     query.safeIntegers(false);
-    expect(() => query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n })).not.toThrow(RangeError);
+    expect(() => query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n })).toThrow(RangeError);
+  });
+
+  it("rejects BigInt parameters outside the signed 64-bit range in both modes", () => {
+    const outOfRange = [
+      2n ** 63n, // INT64_MAX + 1
+      -(2n ** 63n) - 1n, // INT64_MIN - 1
+      2n ** 64n + 5n, // previously wrapped to 5
+      -(2n ** 64n) - 5n, // previously wrapped to -5
+    ];
+    for (const safeIntegers of [false, true]) {
+      using db = new Database(":memory:", { safeIntegers });
+      db.run("CREATE TABLE t (v INTEGER)");
+      const q = db.query("SELECT ? AS v");
+      for (const value of outOfRange) {
+        expect(() => q.get(value)).toThrow(RangeError);
+        expect(() => q.get(value)).toThrow(`BigInt value '${value}' is out of range`);
+        expect(() => db.run("INSERT INTO t VALUES (?)", [value])).toThrow(`BigInt value '${value}' is out of range`);
+      }
+      expect(db.query("SELECT count(*) AS n FROM t").get().n == 0).toBe(true);
+    }
+  });
+
+  it("binds BigInt values at the signed 64-bit boundaries exactly in both modes", () => {
+    const inRange = [
+      [0n, "0"],
+      [2n ** 62n, "4611686018427387904"],
+      [2n ** 63n - 1n, "9223372036854775807"], // INT64_MAX
+      [-(2n ** 63n), "-9223372036854775808"], // INT64_MIN
+    ];
+    for (const safeIntegers of [false, true]) {
+      using db = new Database(":memory:", { safeIntegers });
+      for (const [value, text] of inRange) {
+        // CAST(... AS TEXT) reads the stored value back without Number precision loss.
+        expect(db.query("SELECT CAST(? AS TEXT) AS t").get(value)).toEqual({ t: text });
+      }
+    }
   });
 });
 

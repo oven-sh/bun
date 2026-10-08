@@ -227,9 +227,10 @@ pub fn get_name_from_member<'a>(member: impl Into<NodeWithKey<'a>>) -> MemberNam
 /// `requiresQuoting` of `@typescript-eslint/type-utils`: whether `name` is not an identifier name.
 /// As upstream, which looks at UTF-16 code units, a character outside the BMP requires quoting.
 pub fn requires_quoting(name: &[u8]) -> bool {
+    // U+30FB and U+FF65 are `ID_Continue` since Unicode 15.1.
+    let is_part = |c: u32| c <= 0xFFFF && (is_identifier_part(c) || matches!(c, 0x30FB | 0xFF65));
     let mut points = code_points(name).map(|it| it.1);
-    !points.next().is_some_and(|c| c <= 0xFFFF && is_identifier_start(c))
-        || !points.all(|c| c <= 0xFFFF && is_identifier_part(c))
+    !points.next().is_some_and(|c| c <= 0xFFFF && is_identifier_start(c)) || !points.all(is_part)
 }
 
 /// typescript-eslint's `formatWordList`: `a`, `a and b`, `a, b and c`.

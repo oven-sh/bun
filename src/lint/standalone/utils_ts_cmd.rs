@@ -3,6 +3,9 @@
 //! - `batch <cases.jsonl>`: for each line `{ id, filename, code, sourceType?, parserOptions? }`, what
 //!   `bun_lint::utils::ts_utils` says about every node of the code, as a line of JSON in the format
 //!   of `test/cli/lint/oracle/utils-ts/oracle.ts`. Positions are in bytes.
+//! - `text <text.tsv>`: runs the helpers that take text on the lines of the file, and prints a line
+//!   of JSON for each. A line is the name of a helper and its arguments in hexadecimal, separated by
+//!   tabs. `test/cli/lint/oracle/utils-ts/text.ts` writes the file and compares.
 
 use bun_lint::ast::walk::{Visitor, walk};
 use bun_lint::context::Severity;
@@ -10,7 +13,7 @@ use bun_lint::prelude::*;
 use bun_lint::runner::{Enabled, RuleEntry};
 use bun_lint::utils::estree_compat::{estree_parent, estree_span};
 use bun_lint::utils::text::json_stringify;
-use bun_lint::utils::ts_utils::{self, MemberAccessValue, WrappingFixerParams};
+use bun_lint::utils::ts_utils::{self, MemberAccessValue, OperatorPrecedence, WrappingFixerParams};
 use std::fmt::Write as _;
 
 fn string(text: &[u8]) -> String {
@@ -172,6 +175,12 @@ impl Rows {
         if let Some(body) = func.body_statements() {
             let starts = ts_utils::walk_statements(body).map(|it| it.span().start);
             self.row("walkStatements", at, list(starts));
+            let mut starts = Vec::new();
+            ts_utils::for_each_return_statement(func, |it| {
+                starts.push(it.span().start);
+                None::<()>
+            });
+            self.row("forEachReturnStatement", at, list(starts));
         }
     }
 }
@@ -322,6 +331,7 @@ fn dump(case: Object<'_>, rules: &[Enabled]) -> String {
             for declaration in symbol.declarations() {
                 if let Some(name) = declaration.name_span() {
                     rows.row("isTypeImport", name, ts_utils::is_type_import(declaration));
+                    rows.row("isRestParameterDeclaration", name, ts_utils::is_rest_parameter_declaration(declaration));
                 }
             }
         }
@@ -337,15 +347,55 @@ fn dump(case: Object<'_>, rules: &[Enabled]) -> String {
     })
 }
 
+fn unhex(text: &[u8]) -> Vec<u8> {
+    let digit = |c: u8| (c as char).to_digit(16).unwrap_or(0) as u8;
+    text.chunks_exact(2).map(|pair| digit(pair[0]) << 4 | digit(pair[1])).collect()
+}
+
+/// The precedence whose number upstream is `text`.
+fn precedence(text: &[u8]) -> OperatorPrecedence {
+    use OperatorPrecedence::*;
+    let all = [
+        Invalid, Comma, Spread, Yield, Assignment, Conditional, LogicalOR, LogicalAND, BitwiseOR, BitwiseXOR,
+        BitwiseAND, Equality, Relational, Shift, Additive, Multiplicative, Exponentiation, Unary, Update,
+        LeftHandSide, Member, Primary,
+    ];
+    let number = String::from_utf8_lossy(text).parse::<i8>().unwrap_or(-1);
+    all.into_iter().find(|&it| it as i8 == number).unwrap_or(Invalid)
+}
+
+fn call(line: &[u8]) -> String {
+    let mut fields = line.split(|&c| c == b'\t');
+    let name = fields.next().unwrap_or_default();
+    let args: Vec<Vec<u8>> = fields.map(unhex).collect();
+    let first = args.first().map_or(&b""[..], |it| it);
+    match name {
+        b"requiresQuoting" => ts_utils::requires_quoting(first).to_string(),
+        b"getStringLength" => ts_utils::get_string_length(first).to_string(),
+        b"upperCaseFirst" => string(&ts_utils::upper_case_first(first)),
+        b"isDefinitionFile" => ts_utils::is_definition_file(first).to_string(),
+        b"formatWordList" => string(&ts_utils::format_word_list(&args)),
+        b"escapeRegExp" => string(&ts_utils::escape_reg_exp(first)),
+        b"getWrappedCode" => string(&ts_utils::get_wrapped_code(first, precedence(&args[1]), precedence(&args[2]))),
+        _ => "null".to_owned(),
+    }
+}
+
 pub(crate) fn run(args: &[String]) {
-    let (Some("batch"), Some(path)) = (args.first().map(String::as_str), args.get(1)) else {
-        println!("usage: bun-lint utils-ts batch <cases.jsonl>");
+    let (Some(command @ ("batch" | "text")), Some(path)) = (args.first().map(String::as_str), args.get(1)) else {
+        println!("usage: bun-lint utils-ts batch <cases.jsonl> | text <text.tsv>");
         return;
     };
     let Ok(input) = std::fs::read(path) else {
         println!("cannot read {path}");
         return;
     };
+    if command == "text" {
+        for line in input.split(|&c| c == b'\n').filter(|line| !line.is_empty()) {
+            println!("{}", call(line));
+        }
+        return;
+    }
     let rule = (RuleEntry::of::<Probe>().build)(&Options::new(&[]));
     let rules = [Enabled {
         rule: &*rule,

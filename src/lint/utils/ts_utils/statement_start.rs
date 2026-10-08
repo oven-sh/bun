@@ -57,7 +57,7 @@ fn is_start_of_arrow_function_body(node: Node<'_>) -> bool {
 pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
     let node = node.into();
     let file = node.file();
-    let Some(previous) = file.tokens_before(estree_span(node)).next() else {
+    let Some(previous) = file.token_before(estree_span(node)) else {
         return false;
     };
     let is_punctuator = previous.kind() == TokenKind::Punctuator;

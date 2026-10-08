@@ -173,11 +173,21 @@ function analyze(it: { filename: string; code: string; sourceType: string; parse
       }
       if (node.body.type === "BlockStatement") {
         row("walkStatements", () => [...util.walkStatements(node.body.body)].map(it => it.range[0]));
+        row("forEachReturnStatement", () => {
+          const starts: number[] = [];
+          util.forEachReturnStatement(parsed.services.esTreeNodeToTSNodeMap.get(node.body), (it: any) => void starts.push(it.getStart()));
+          return starts;
+        });
       }
     }
     row("isClassOrTypeElement", () => util.isClassOrTypeElement(node) || undefined);
     row("isVariableDeclarator", () => util.isVariableDeclarator(node) || undefined);
     row("isLoop", () => util.isLoop(node) || undefined);
+    const declaration = parsed.services.esTreeNodeToTSNodeMap.get(node);
+    if (declaration && (ts.isParameter(declaration) || ts.isBindingElement(declaration)) && ts.isIdentifier(declaration.name)) {
+      const name = [declaration.name.getStart(), declaration.name.getEnd()];
+      rows.push(JSON.stringify(["isRestParameterDeclaration", ...name, util.isRestParameterDeclaration(declaration)]));
+    }
     if (util.isFunctionOrFunctionType(node)) {
       row("isFunctionType", () => [util.isFunction(node), util.isFunctionType(node), util.isTSFunctionType(node), util.isTSConstructorType(node)]);
     }

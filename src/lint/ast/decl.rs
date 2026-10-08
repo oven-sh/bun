@@ -583,8 +583,35 @@ impl<'a> Key<'a> {
         self.name().is_some_and(|it| it.is(name))
     }
 
+    /// Where it starts: at the name, the quote or the bracket.
+    #[inline]
+    pub fn start(self) -> u32 {
+        self.start
+    }
+
+    /// The span of a plain name in ASCII, which most keys are.
+    #[inline]
+    fn span_of_ascii_name(self, file: &File<'a>) -> Option<Span> {
+        match self.kind {
+            KeyKind::Ident(_) if !self.is_jsx => {
+                let len = ascii_name_len(file.text().get(self.start as usize..)?)?;
+                Some(Span::new(self.start, self.start + len as u32))
+            }
+            _ => None,
+        }
+    }
+
     /// Without the brackets: the range of ESLint's `key`.
+    #[inline]
     pub fn inner_span(self, file: &File<'a>) -> Span {
+        match self.span_of_ascii_name(file) {
+            Some(span) => span,
+            None => self.inner_span_in_general(file),
+        }
+    }
+
+    #[inline(never)]
+    fn inner_span_in_general(self, file: &File<'a>) -> Span {
         let text = file.text();
         match self.kind {
             KeyKind::Computed(e) => e.span(),
@@ -593,12 +620,21 @@ impl<'a> Key<'a> {
                 let rest = text.get(literal as usize..).unwrap_or_default();
                 Span::new(literal, literal + crate::tokens::token_len(rest) as u32)
             }
-            _ => self.span(file),
+            _ => self.span_in_general(file),
         }
     }
 
     /// With the brackets or the quotes.
+    #[inline]
     pub fn span(self, file: &File<'a>) -> Span {
+        match self.span_of_ascii_name(file) {
+            Some(span) => span,
+            None => self.span_in_general(file),
+        }
+    }
+
+    #[inline(never)]
+    fn span_in_general(self, file: &File<'a>) -> Span {
         let text = file.text();
         let end = match self.kind {
             KeyKind::Computed(e) => skip_trivia(text, e.outer_span().end) + 1,
@@ -621,6 +657,21 @@ impl<'a> Key<'a> {
             }
         };
         Span::new(self.start, end)
+    }
+}
+
+/// The length of the name that `text` starts with, if that and what follows it is ASCII without a
+/// `\\`: what `token_len` says, without looking for anything else that a token can be.
+#[inline]
+fn ascii_name_len(text: &[u8]) -> Option<usize> {
+    let is_part = |b: &u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$');
+    if !text.first().is_some_and(|b| is_part(b) && !b.is_ascii_digit()) {
+        return None;
+    }
+    let len = text.iter().take_while(|b| is_part(b)).count();
+    match text.get(len) {
+        Some(b'\\' | 0x80..) => None,
+        _ => Some(len),
     }
 }
 

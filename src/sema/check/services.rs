@@ -85,6 +85,9 @@ pub struct Services<'c, 'p, 's> {
     /// What `properties_of_type` and `signature_info` have answered.
     properties: FxHashMap<TypeId, &'c [SymbolRef]>,
     signatures: FxHashMap<SigId, SignatureInfo<'c>>,
+    /// What `node_children` has answered for the nodes that have many: a list of them for each member of a class that asks for
+    /// the heritage clauses takes memory in proportion to the square of their number.
+    children: FxHashMap<NodeRef, &'c [Node]>,
     /// For the nodes of `file` with many children that `name_at` has come through. `None`: they are not in order.
     many_children: FxHashMap<Node, Option<ManyChildren<'c>>>,
     /// `Checker::symbols_of_declarations` of `file`.
@@ -117,6 +120,7 @@ impl<'p, 's> Checker<'p, 's> {
             symbol_ids: FxHashMap::default(),
             properties: FxHashMap::default(),
             signatures: FxHashMap::default(),
+            children: FxHashMap::default(),
             many_children: FxHashMap::default(),
             symbols_of_declarations: OnceCell::new(),
         };
@@ -479,8 +483,11 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         }
     }
 
-    pub fn node_children(&mut self, node: NodeRef) -> &'c [Node] {
-        let Some((hir, node)) = self.valid(node) else {
+    pub fn node_children(&mut self, of: NodeRef) -> &'c [Node] {
+        if let Some(&known) = self.children.get(&of) {
+            return known;
+        }
+        let Some((hir, node)) = self.valid(of) else {
             return &[];
         };
         let mut children: SmallVec<[Node; 8]> = SmallVec::new();
@@ -488,7 +495,11 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             children.push(child);
             false
         });
-        self.list(&children)
+        let list = self.list(&children);
+        if children.spilled() {
+            self.children.insert(of, list);
+        }
+        list
     }
 
     pub fn node_span(&mut self, node: NodeRef) -> (u32, u32) {

@@ -16,6 +16,7 @@ pub mod graphql;
 mod ir;
 mod js;
 pub mod json;
+pub mod markdown;
 pub mod options;
 pub mod pragma;
 pub mod range;

@@ -781,8 +781,8 @@ describe("bundler", () => {
     });
 
     // main.js evaluates p, q, a and worker.js evaluates q, p, a, each in a realm of its own.
-    test.concurrent("a chunk that the main script and a worker share runs in the order of each", async () => {
-      using dir = tempDir("compile-splitting-two-programs", {
+    test.concurrent("shared chunk order conflict between the main script and a worker", async () => {
+      using dir = tempDir("compile-splitting-order-conflict", {
         "main.js": `import("./a.js").then(m => { console.log("ok", m.a); new Worker("./worker.js"); });`,
         "worker.js": `import { q } from "./q.js"; import { a } from "./a.js"; console.log("worker", q, a);`,
         "a.js": `import "./p.js"; import { q } from "./q.js"; export const a = "a" + q;`,

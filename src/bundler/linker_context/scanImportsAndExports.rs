@@ -1216,7 +1216,7 @@ pub(crate) fn scan_imports_and_exports(
                     let other_source_index = other_id as u32;
 
                     if other_flags.wrap != WrapKind::None {
-                        this.depend_on_wrapper_of_import(
+                        this.add_wrapper_dependency(
                             source_index,
                             part_index as u32,
                             import_record_index,

@@ -3641,7 +3641,7 @@ describe("bundler", () => {
   });
   // The import() wraps x.js and what it imports. An import of a wrapped file is a call, and the
   // calls are in the order of the import statements, whichever kind of wrapper each one calls.
-  itBundled("edgecase/WrappedFileRunsItsImportsInSourceOrder", {
+  itBundled("edgecase/EsmWrapperImportOrder", {
     files: {
       "/entry.js": `import("./x.js").then(ns => console.log("done", Object.keys(ns).length));`,
       "/x.js": /* js */ `
@@ -3660,7 +3660,7 @@ describe("bundler", () => {
   });
   // An import with a top-level await starts in its place, and the imports after it do not wait
   // for it. x.js itself waits for all of them.
-  itBundled("edgecase/WrappedFileStartsItsAsyncImportsInSourceOrder", {
+  itBundled("edgecase/EsmWrapperAsyncImportOrder", {
     files: {
       "/entry.js": `import("./x.js").then(ns => console.log("done", Object.keys(ns).length));`,
       "/x.js": /* js */ `

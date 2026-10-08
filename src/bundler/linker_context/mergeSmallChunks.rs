@@ -705,7 +705,7 @@ fn entries_loaded_mid_evaluation(
 }
 
 /// Which entry points can load before which. Reads `File.entry_bits`.
-pub(crate) struct LoadConditions {
+pub(crate) struct EntryLoadGraph {
     /// Which entries statically contain a live `import()` of each dynamic entry.
     importer_bits: Vec<AutoBitSet>,
     /// Dynamic entries some live split `require()` loads. The call
@@ -727,8 +727,8 @@ pub(crate) struct LoadConditions {
     worklist: Vec<usize>,
 }
 
-impl LoadConditions {
-    pub(crate) fn new(this: &LinkerContext) -> crate::Result<LoadConditions> {
+impl EntryLoadGraph {
+    pub(crate) fn new(this: &LinkerContext) -> crate::Result<EntryLoadGraph> {
         let entry_points_len = this.graph.entry_points.len();
         let entry_source_indices = this.graph.entry_points.items_source_index();
         let kinds = this.graph.files.items_entry_point_kind();
@@ -877,7 +877,7 @@ impl LoadConditions {
             },
         );
 
-        Ok(LoadConditions {
+        Ok(EntryLoadGraph {
             importer_bits,
             required_sync,
             sync_calls,
@@ -1024,7 +1024,7 @@ pub(crate) fn merge_small_chunks(
         this.graph.files_live.is_set(source_index as usize)
             && css_asts[source_index as usize].is_none()
     };
-    let mut conditions = LoadConditions::new(this)?;
+    let mut load_graph = EntryLoadGraph::new(this)?;
 
     // Group the live JS files by their chunk key, and the groups by their
     // load-condition class (the key with redundant dynamic entries removed).
@@ -1096,7 +1096,7 @@ pub(crate) fn merge_small_chunks(
         let group = match entry {
             MapEntry::Occupied(entry) => entry.into_mut(),
             MapEntry::Vacant(entry) => {
-                let class = conditions.load_class(bits)?;
+                let class = load_graph.load_class(bits)?;
                 match classes.entry(temp.alloc_slice_copy(class.bytes(entry_points_len))) {
                     MapEntry::Occupied(e) => e.into_mut().1.push(group_index),
                     MapEntry::Vacant(e) => {
@@ -1149,8 +1149,8 @@ pub(crate) fn merge_small_chunks(
 
     for (group, loads) in entries_loaded_mid_evaluation(
         this,
-        &conditions.sync_calls,
-        &conditions.required_sync,
+        &load_graph.sync_calls,
+        &load_graph.required_sync,
         file_entry_bits,
         group_of_file,
         groups.count(),
@@ -1264,10 +1264,10 @@ pub(crate) fn merge_small_chunks(
             dominated.push(AutoBitSet::init_empty(entry_points_len)?);
         }
         for entry_id in 0..entry_points_len {
-            let mut up = conditions.idom[entry_id];
+            let mut up = load_graph.idom[entry_id];
             while up != UNREACHED && up as usize != entry_points_len {
                 dominated[up as usize].set(entry_id);
-                up = conditions.idom[up as usize];
+                up = load_graph.idom[up as usize];
             }
         }
         for group in groups.values_mut() {

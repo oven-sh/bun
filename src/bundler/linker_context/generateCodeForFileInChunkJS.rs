@@ -522,7 +522,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // up being CommonJS modules.
     stmts
         .inside_wrapper_prefix
-        .await_async_dependencies(c.promise_all_runtime_ref);
+        .append_async_await(c.promise_all_runtime_ref);
     stmts
         .all_stmts
         .reserve(stmts.inside_wrapper_prefix.stmts.len() + stmts.inside_wrapper_suffix.len());

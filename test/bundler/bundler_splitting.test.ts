@@ -2315,8 +2315,8 @@ describe("bundler", () => {
   });
 
   // first.js runs ahead of the body of entry.js, so its import() is the first one.
-  // late2.js enters the A/B cycle at A, late1.js at B. The chunk that they share
-  // follows late2.js.
+  // late2.js enters the A/B cycle at A, late1.js at B. The one that evaluates first
+  // decides, as from source. Both load at once, and `env` keeps them in the order of the calls.
   itBundled("splitting/SharedChunkFollowsTheImportCallThatRunsFirst", {
     files: {
       "/a.js": /* js */ `
@@ -2344,13 +2344,13 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     format: "esm",
-    run: { file: "/out/entry.js", stdout: "late2 b late1 b" },
+    run: { file: "/out/entry.js", env, stdout: "late2 b late1 b" },
   });
 
   // index.js evaluates p, q, a (through its import()) and worker.js evaluates q, p, a. They are
   // two programs, and either can be the one that loads the chunk with the three files. No printed
   // order is right for both, so the files are wrappers and each importer calls what it imports.
-  const sharedByTwoPrograms = {
+  const orderConflictFiles = {
     "/index.js": `import("./a.js").then(m => console.log("ok", m.a));`,
     "/worker.js": `import { q } from "./q.js"; import { a } from "./a.js"; console.log("worker", q, a);`,
     "/a.js": `import "./p.js"; import { q } from "./q.js"; export const a = "a" + q;`,
@@ -2359,14 +2359,14 @@ describe("bundler", () => {
   };
   for (const [name, options] of [
     ["", {}],
-    ["/OtherEntryPointFirst", { entryPoints: ["/worker.js", "/index.js"] }],
+    ["/ReversedEntryPoints", { entryPoints: ["/worker.js", "/index.js"] }],
     ["/HashedEntry", { entryNaming: "[name].entry-[hash].[ext]" }],
     ["/Browser", { target: "browser" }],
     ["/Minify", { minifyIdentifiers: true, minifySyntax: true, minifyWhitespace: true }],
     ["/MinChunkSize", { minChunkSize: 1024 * 1024 }],
   ] as const) {
-    itBundled("splitting/SharedChunkRunsInTheOrderOfEachLoader" + name, {
-      files: sharedByTwoPrograms,
+    itBundled("splitting/SharedChunkOrderConflict" + name, {
+      files: orderConflictFiles,
       entryPoints: ["/index.js", "/worker.js"],
       splitting: true,
       target: "bun",
@@ -2385,9 +2385,9 @@ describe("bundler", () => {
   }
 
   // Both evaluate p, q, a: the chunk prints them in that order, with no wrapper.
-  itBundled("splitting/SharedChunkWithOneOrderHasNoWrappers", {
+  itBundled("splitting/SharedChunkNoOrderConflict", {
     files: {
-      ...sharedByTwoPrograms,
+      ...orderConflictFiles,
       "/worker.js": /* js */ `
         import "./p.js";
         import { q } from "./q.js";
@@ -2410,7 +2410,7 @@ describe("bundler", () => {
   });
 
   // The two orders differ only in files that declare. Nothing can tell, so there is no wrapper.
-  itBundled("splitting/SharedChunkOfDeclarationsHasNoWrappers", {
+  itBundled("splitting/SharedChunkOrderConflictDeclarationsOnly", {
     files: {
       "/e1.js": `import { f } from "./f.js"; import { g } from "./g.js"; console.log("e1", f(), g());`,
       "/e2.js": `import { g } from "./g.js"; import { f } from "./f.js"; console.log("e2", f(), g());`,
@@ -2431,7 +2431,7 @@ describe("bundler", () => {
   });
 
   // Whichever of x.js and y.js the program imports first loads the chunk of p.js and q.js.
-  itBundled("splitting/SharedChunkRunsInTheOrderOfTheImportCallThatComesFirst", {
+  itBundled("splitting/SharedChunkOrderConflictDynamicImports", {
     files: {
       "/entry.js": /* js */ `
         const load = { x: () => import("./x.js"), y: () => import("./y.js") };
@@ -2456,7 +2456,7 @@ describe("bundler", () => {
   // one.js and two.js are wrappers: e2.js evaluates them the other way around. They run from
   // the code of e0.js and e1.js, and an import of a chunk runs ahead of that code. So three.js,
   // which both evaluate after one.js, is a wrapper too, though it has one order.
-  itBundled("splitting/FileEvaluatedAfterAWrappedSharedFileIsWrappedToo", {
+  itBundled("splitting/SharedChunkOrderConflictLaterChunk", {
     files: {
       "/e0.js": `import "./one.js"; import "./three.js"; import "./two.js"; console.log("e0");`,
       "/e1.js": `import "./one.js"; import "./two.js"; import "./three.js"; console.log("e1");`,
@@ -2478,7 +2478,7 @@ describe("bundler", () => {
 
   // main.js loads base.js before either page can load, so base.js keeps its place in a chunk
   // that main.js imports. Only what the pages can be the first to load is wrapped.
-  itBundled("splitting/FileLoadedBeforeTheWrappedFilesStaysUnwrapped", {
+  itBundled("splitting/SharedChunkOrderConflictPreloadedChunk", {
     files: {
       "/main.js": /* js */ `
         import "./base.js";
@@ -2509,7 +2509,7 @@ describe("bundler", () => {
   // e3.js evaluates g, b and the others b, g, so both are wrappers, and so is f.js, which e1.js and
   // e2.js evaluate with them. e3.js uses nothing from f.js, and "sideEffects": false kept it from
   // loading f.js and d.js. Now b.js calls the wrapper of f.js, so e3.js loads them, after g.js.
-  itBundled("splitting/WrappedSideEffectsFalseFileLoadsWhatItImportsInOrder", {
+  itBundled("splitting/SharedChunkOrderConflictSideEffectsFalse", {
     files: {
       "/node_modules/pure/package.json": JSON.stringify({ name: "pure", sideEffects: false }),
       "/node_modules/pure/f.js": `import "../../d.js"; export const x = "x";`,
@@ -2536,7 +2536,7 @@ describe("bundler", () => {
 
   // An HTML file prints nothing for a <script src>, so nothing would call a wrapper of a.js or
   // b.js. They stay as they are, and so does first.js, which would otherwise run after them.
-  itBundled("splitting/ScriptsOfTwoPagesAreNotWrapped", {
+  itBundled("splitting/SharedChunkOrderConflictHtmlScripts", {
     files: {
       "/p1.html": `<script type="module" src="./a.js"></script><script type="module" src="./b.js"></script>`,
       "/p2.html": `<script type="module" src="./b.js"></script><script type="module" src="./a.js"></script>`,
@@ -2559,7 +2559,7 @@ describe("bundler", () => {
   // m2, m5 and m6 import each other. index.js enters the cycle at m5 and evaluates m2, m6, m5.
   // worker.js enters it at m6 and evaluates m5, m2, m6, which works because flag.js ran first.
   // What is left of m6.js has no side effects, and m5.js still has to find it initialized.
-  itBundled("splitting/ImportCycleRunsInTheOrderOfEachLoader", {
+  itBundled("splitting/SharedChunkOrderConflictImportCycle", {
     files: {
       "/index.js": `import("./m5.js").then(m => console.log("ok", m.w5));`,
       "/worker.js": `import "./flag.js"; import "./m6.js"; console.log("worker");`,

@@ -69,7 +69,7 @@ pub(crate) use crate::linker_context::post_process_css_chunk::post_process_css_c
 pub(crate) use crate::linker_context::post_process_html_chunk::post_process_html_chunk;
 pub(crate) use crate::linker_context::post_process_js_chunk::post_process_js_chunk;
 pub(crate) use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in_chunk;
-use crate::linker_context::wrap_order_conflicts::wrap_order_conflicts;
+use crate::linker_context::resolve_chunk_order_conflicts::resolve_chunk_order_conflicts;
 
 pub struct LinkerContext<'a> {
     pub(crate) parse_graph: *mut Graph<'a>,
@@ -952,7 +952,7 @@ impl<'a> LinkerContext<'a> {
         }
 
         self.tree_shaking_and_code_splitting()?;
-        wrap_order_conflicts(self)?;
+        resolve_chunk_order_conflicts(self)?;
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
             self.check_for_memory_corruption();
@@ -1067,14 +1067,14 @@ impl<'a> LinkerContext<'a> {
             }
         }
 
-        self.assign_entry_bits()
+        self.compute_entry_bits()
     }
 
     /// Code splitting: Determine which entry points can reach which files. This
     /// has to happen after tree shaking because there is an implicit dependency
     /// between live parts within the same file. All liveness has to be computed
     /// first before determining which entry points can reach which files.
-    pub(crate) fn assign_entry_bits(&mut self) -> Result<(), AllocError> {
+    pub(crate) fn compute_entry_bits(&mut self) -> Result<(), AllocError> {
         let _trace = bun::perf::trace("Bundler.markFileReachableForCodeSplitting");
 
         let entry_points: *const [crate::IndexInt] = self.graph.entry_points.items_source_index();
@@ -1099,8 +1099,8 @@ impl<'a> LinkerContext<'a> {
 
     /// Wraps files that tree shaking saw unwrapped: each becomes `var init_x = __esm(() => { ... })`,
     /// and every `import` of it a call. Does for them what `scan_imports_and_exports` does for a
-    /// file that is wrapped from the start. `assign_entry_bits` has to run again afterwards.
-    pub(crate) fn wrap_live_files_as_esm(&mut self, files: &AutoBitSet) -> Result<(), AllocError> {
+    /// file that is wrapped from the start. `compute_entry_bits` has to run again afterwards.
+    pub(crate) fn wrap_files_as_esm(&mut self, files: &AutoBitSet) -> Result<(), AllocError> {
         let mut worklist: Vec<TreeShakeWork> = Vec::new();
 
         let mut iter = files.iterator::<true, true>();
@@ -1161,17 +1161,17 @@ impl<'a> LinkerContext<'a> {
             // `InsideWrapperPrefix` joins the awaits of two async wrappers with `__promiseAll`.
             // `create_wrapper_for_file` depends on it for a wrapped importer.
             let flags = self.graph.meta.items_flags();
-            let is_async_wrapper = |record: &ImportRecord| {
+            let is_async_esm_import = |record: &ImportRecord| {
                 record.kind == ImportKind::Stmt
                     && record.source_index.is_valid()
                     && flags[record.source_index.get() as usize].wrap == WrapKind::Esm
                     && flags[record.source_index.get() as usize].is_async_or_has_async_dependency
             };
-            let joins_awaits = flags[id].wrap == WrapKind::None
+            let needs_promise_all = flags[id].wrap == WrapKind::None
                 && self.graph.ast.items_import_records()[id]
                     .as_slice()
                     .iter()
-                    .filter(|record| is_async_wrapper(record))
+                    .filter(|record| is_async_esm_import(record))
                     .count()
                     >= 2;
             for part_index in 0..self.graph.ast.items_parts()[id].len() {
@@ -1194,8 +1194,8 @@ impl<'a> LinkerContext<'a> {
                     }
                     if files.is_set(record.source_index.get() as usize) {
                         changed = true;
-                        promise_all_uses += joins_awaits as u32;
-                        self.depend_on_wrapper_of_import(
+                        promise_all_uses += needs_promise_all as u32;
+                        self.add_wrapper_dependency(
                             source_index,
                             part_index as u32,
                             import_record_index,
@@ -3790,7 +3790,7 @@ impl<'a> LinkerContext<'a> {
 
     /// The part holds an import of a wrapped file, which prints as a call of the wrapper.
     /// Counts the `__toESM` and `__toCommonJS` calls that go around it.
-    pub(crate) fn depend_on_wrapper_of_import(
+    pub(crate) fn add_wrapper_dependency(
         &mut self,
         source_index: crate::IndexInt,
         part_index: u32,
@@ -5456,7 +5456,7 @@ impl InsideWrapperPrefix {
     }
 
     /// Ends the prefix: the file itself waits for its async dependencies. A wrapper returns the same promise each time.
-    pub(crate) fn await_async_dependencies(&mut self, promise_all_ref: Ref) {
+    pub(crate) fn append_async_await(&mut self, promise_all_ref: Ref) {
         // The `await` makes the calls that nothing comes after.
         for &(index, _) in self.async_dependencies.iter().rev() {
             if index + 1 != self.stmts.len() {

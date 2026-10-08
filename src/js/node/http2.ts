@@ -2891,10 +2891,16 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
         // writable through markWritableDone, so the callback waits there across the call.
         this[bunHTTP2StreamFinal] = callback;
         const settled = native.writeStream(this.#id, "", "ascii", true);
-        if ((settled === false || (settled & kWriteFlushed) !== 0) && this[bunHTTP2StreamFinal] === callback) {
-          // Nothing is queued: the stream cannot send, or the frame is written.
+        if (this[bunHTTP2StreamFinal] === callback) {
           this[bunHTTP2StreamFinal] = null;
-          callback();
+          if (settled === false || (settled & kWriteFlushed) !== 0) {
+            // Nothing is queued: the stream cannot send, or the frame is written.
+            callback();
+          } else {
+            // The END_STREAM frame is queued: streamWriteDone completes the writable when the
+            // frame is written. close() completes bunHTTP2StreamFinal at once, so not there.
+            this[kQueuedFinal] = callback;
+          }
         }
         // Same as above: don't leave the END_STREAM frame in the cork on what may be the
         // program's last live turn.
@@ -2910,11 +2916,6 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
             if (!this.rstCode) this.rstCode = 0;
             markStreamClosed(this);
           }
-        } else if (this[bunHTTP2StreamFinal] === callback) {
-          // The END_STREAM frame is queued: streamWriteDone completes the writable when it is
-          // written. It does not stay in bunHTTP2StreamFinal, which close() completes at once.
-          this[bunHTTP2StreamFinal] = null;
-          this[kQueuedFinal] = callback;
         }
         return;
       }

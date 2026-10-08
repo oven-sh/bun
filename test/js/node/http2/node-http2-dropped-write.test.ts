@@ -434,9 +434,17 @@ describe("client: the stream ends with DATA frames still queued", () => {
 describe("server: the client leaves with DATA frames still queued", () => {
   /**
    * A raw h2c client: one request with no body. With `grant` it opens the window as the
-   * response arrives. Without it the response body stops after one window.
+   * response arrives. Without it the response body stops after one window. With
+   * `grantConnection` only the window of that one stream stays closed.
    */
-  async function rawRequest(port: number, { method = "GET", grant = false } = {}) {
+  const requestHeaders = (method: string, path: string) =>
+    headerBlock([
+      [":method", method],
+      [":scheme", "http"],
+      [":path", path],
+      [":authority", "localhost"],
+    ]);
+  async function rawRequest(port: number, { method = "GET", path = "/", grant = false, grantConnection = false } = {}) {
     const socket = net.connect(port, "127.0.0.1");
     socket.on("error", () => {});
     const { promise: windowFull, resolve: full } = Promise.withResolvers<void>();
@@ -448,18 +456,15 @@ describe("server: the client leaves with DATA frames still queued", () => {
       else if (type === FRAME.DATA) {
         received += payload.length;
         if (grant && payload.length > 0) socket.write(windowUpdates(streamId, payload.length));
+        if (grantConnection && payload.length > 0)
+          socket.write(frame(FRAME.WINDOW_UPDATE, 0, 0, uint32(payload.length)));
         if (!grant && received === WINDOW) full();
         if (flags & 1) ended(received);
       }
     });
     await once(socket, "connect");
-    const request = headerBlock([
-      [":method", method],
-      [":scheme", "http"],
-      [":path", "/"],
-      [":authority", "localhost"],
-    ]);
-    socket.write(Buffer.concat([PREFACE, frame(FRAME.SETTINGS, 0, 0), frame(FRAME.HEADERS, 0x5, 1, request)]));
+    const request = frame(FRAME.HEADERS, 0x5, 1, requestHeaders(method, path));
+    socket.write(Buffer.concat([PREFACE, frame(FRAME.SETTINGS, 0, 0), request]));
     return { socket, windowFull, bodyEnd };
   }
   const leaves: [string, (socket: net.Socket) => void][] = [
@@ -556,6 +561,35 @@ describe("server: the client leaves with DATA frames still queued", () => {
       }
     });
   }
+
+  // The END_STREAM frame of the second response has no payload, but it waits in the queue
+  // behind the body that the first response could not send.
+  test("a response with no body finishes behind the queued body of another stream", async () => {
+    const events: string[] = [];
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    const server = http2.createServer();
+    server.on("sessionError", () => {});
+    server.on("stream", (stream: http2.ServerHttp2Stream, headers) => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      if (headers[":path"] === "/stalled") return void stream.write(MB);
+      stream.on("finish", () => events.push("finish"));
+      stream.on("close", () => resolve());
+      stream.end();
+    });
+    const port = await listen(server);
+    const { socket, windowFull, bodyEnd } = await rawRequest(port, { path: "/stalled", grantConnection: true });
+    try {
+      await windowFull;
+      socket.write(frame(FRAME.HEADERS, 0x5, 3, requestHeaders("GET", "/")));
+      assert.strictEqual(await bodyEnd, WINDOW);
+      await closed;
+      assert.deepStrictEqual(events, ["finish"]);
+    } finally {
+      socket.destroy();
+      server.close();
+    }
+  });
 
   // A file response writes its chunks to the session without the stream's Writable.
   const file = path.join(import.meta.dirname, "node-http2.test.js");

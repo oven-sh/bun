@@ -391,8 +391,7 @@ static FAILURE_REASON_DATA: bun_core::RacyCell<[u8; 512]> = bun_core::RacyCell::
 static FAILURE_REASON_LEN: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(usize::MAX);
 
-/// Stores the text that the message of a [`FailReason`] with `{s}` prints. It
-/// keeps the printable ASCII of `text` and writes `?` for every other unit.
+/// Stores the text a failure message prints: printable ASCII, `?` for every other unit.
 #[cold]
 #[inline(never)]
 fn capture_failure_text(text: &[u16]) {
@@ -1286,9 +1285,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         }
     };
 
-    // cmd.exe reads the rest of the command line a second time: `%NAME%`
-    // becomes the value of an environment variable, and `&` starts another
-    // command. No quoting of the argument stops that, so refuse the launch.
+    // cmd.exe reads this line again and drops its outer quotes, so no quoting protects an argument.
     {
         // SAFETY: spawn_command_line is NUL-terminated (written above).
         let program = unsafe { program_of_command_line(spawn_command_line) };
@@ -1785,16 +1782,12 @@ const SPACE: u16 = ' ' as u16;
 const TAB: u16 = '\t' as u16;
 const BACKSLASH: u16 = '\\' as u16;
 
-/// True for `%` `&` `|` `<` `>` `^` and a line break: the set of
-/// `batch_arg_has_cmd_metachars` in `src/which/lib.rs` without `"`. The text
-/// here is a command line, where a `"` is the quoting around an argument.
+/// The set of `batch_arg_has_cmd_metachars` in `src/which/lib.rs` without `"`, which quotes here.
 fn is_cmd_special_character(unit: u16) -> bool {
     matches!(unit, 0x25 | 0x26 | 0x7C | 0x3C | 0x3E | 0x5E | 0x0D | 0x0A)
 }
 
-/// Returns the argument of `tail` (the command line after the file to run) that
-/// holds a character cmd.exe reads as syntax. Quotes only end an argument: a
-/// character counts inside them too.
+/// Returns the argument of `tail` that holds a cmd.exe special character, inside quotes or not.
 fn find_cmd_special_argument(tail: &[u16]) -> Option<&[u16]> {
     let mut start: usize = 0;
     let mut found = false;
@@ -1809,8 +1802,7 @@ fn find_cmd_special_argument(tail: &[u16]) -> Option<&[u16]> {
             continue;
         }
         if unit == QUOTE {
-            // A quote after an even number of backslashes is the quoting of the
-            // argument. After an odd number it is a character of it.
+            // After an odd number of backslashes a quote is a character of the argument.
             if backslashes.is_multiple_of(2) {
                 in_quote = !in_quote;
             }
@@ -1836,13 +1828,7 @@ fn unquote_argument(argument: &[u16]) -> &[u16] {
     argument
 }
 
-/// Returns the first part of `command_line`: the file `CreateProcessW` runs.
-///
-/// Not `ffi::wstr_units`: its walk to the NUL compiles to a `wcslen` call, and
-/// the standalone shim links no C runtime.
-///
-/// # Safety
-/// `command_line` must hold a NUL within `BUF2_U16_LEN` units.
+/// The file `CreateProcessW` runs. `command_line` must hold a NUL within `BUF2_U16_LEN` units.
 unsafe fn program_of_command_line<'a>(command_line: *const u16) -> &'a [u16] {
     // SAFETY: the caller guarantees one readable unit.
     let quoted = unsafe { *command_line } == QUOTE;
@@ -1854,6 +1840,7 @@ unsafe fn program_of_command_line<'a>(command_line: *const u16) -> &'a [u16] {
     };
     let end_at = if quoted { QUOTE } else { SPACE };
     let mut len: usize = 0;
+    // Not `ffi::wstr_units`: that walk compiles to `wcslen`, which the CRT-free shim cannot link.
     while len < BUF2_U16_LEN - 1 {
         // SAFETY: every unit up to the NUL is readable per the caller.
         let unit = unsafe { *start.add(len) };
@@ -1866,11 +1853,9 @@ unsafe fn program_of_command_line<'a>(command_line: *const u16) -> &'a [u16] {
     unsafe { bun_core::ffi::slice(start, len) }
 }
 
-/// True when Windows reads the command line of `program` a second time with
-/// cmd.exe: `program` is a `.cmd` or a `.bat` file, or it is cmd.exe itself.
+/// True when `program` is a `.cmd` or `.bat` file or cmd.exe, which reads the line again.
 fn program_runs_through_cmd(program: &[u16]) -> bool {
-    // Windows drops the trailing spaces and periods of a file name, so
-    // `tool.cmd.` and `tool.cmd ` both run `tool.cmd`.
+    // Windows drops trailing spaces and periods of a file name: `tool.cmd.` runs `tool.cmd`.
     let mut end = program.len();
     while end > 0 && (program[end - 1] == SPACE || program[end - 1] == '.' as u16) {
         end -= 1;

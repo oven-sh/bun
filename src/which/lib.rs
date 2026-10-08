@@ -284,9 +284,7 @@ pub fn is_batch_file(path: &[u8]) -> bool {
 /// even inside quotes, and the rest are command separators / redirection /
 /// escape characters in unquoted positions. None of these can be escaped for
 /// `cmd.exe`, so callers must reject the spawn instead.
-///
-/// `src/install/windows-shim/bun_shim_impl.rs` copies this set: the standalone
-/// shim exe does not link this crate.
+/// `src/install/windows-shim/bun_shim_impl.rs` keeps a copy of this set without `"`.
 pub fn batch_arg_has_cmd_metachars(arg: &[u8]) -> bool {
     strings::contains_any(arg, b"\"%&|<>^\r\n")
 }

@@ -41,42 +41,52 @@ struct Condition<'a> {
 }
 
 /// Where a variable is modified.
-#[derive(Default)]
-struct Modifiers {
-    /// The references that write to it, in the order of the source.
+struct Modifiers<'a> {
+    /// The references that write to it.
+    all: Vec<Reference<'a>>,
+    /// Where these are, in the order of the source.
     writes: Vec<Span>,
     /// The references to the function declarations that one of these is in, in the order of the
-    /// source.
-    calls: Vec<Span>,
+    /// source. They are looked for when a loop has none of `writes` in it.
+    calls: Option<Vec<Span>>,
 }
 
-impl Modifiers {
-    /// `declarations`: the function declaration around a node.
-    fn new<'a>(
-        references: impl Iterator<Item = Reference<'a>>,
-        declarations: &mut AncestorMemo<'a, Func<'a>>,
-    ) -> Modifiers {
-        let mut modifiers = Modifiers::default();
-        let mut functions: FxHashSet<Symbol<'a>> = FxHashSet::default();
-        for modifier in references.filter(|it| is_write_reference(*it)) {
-            modifiers.writes.push(modifier.span());
-            let declaration = declarations.find(modifier.node(), |_, it| {
-                it.as_func().filter(|it| it.kind() == FnKind::Decl && it.has_body())
-            });
-            if let Some(name) = declaration.and_then(Func::name)
-                && let Some(variable) = modifier.scope().parent().and_then(|it| it.resolve_name(name.name()))
-                && functions.insert(variable)
-            {
-                modifiers.calls.extend(variable.references().map(Reference::span));
-            }
+impl<'a> Modifiers<'a> {
+    fn new(references: impl Iterator<Item = Reference<'a>>) -> Self {
+        let all: Vec<Reference<'a>> = references.filter(|it| is_write_reference(*it)).collect();
+        let mut writes: Vec<Span> = all.iter().map(|it| it.span()).collect();
+        writes.sort_unstable_by_key(|it| it.start);
+        Modifiers {
+            all,
+            writes,
+            calls: None,
         }
-        modifiers.writes.sort_unstable_by_key(|it| it.start);
-        modifiers.calls.sort_unstable_by_key(|it| it.start);
-        modifiers
+    }
+
+    /// `declarations`: the function declaration around a node.
+    fn calls(&mut self, declarations: &mut AncestorMemo<'a, Func<'a>>) -> &[Span] {
+        let all = &self.all;
+        self.calls.get_or_insert_with(|| {
+            let mut calls: Vec<Span> = Vec::new();
+            let mut functions: FxHashSet<Symbol<'a>> = FxHashSet::default();
+            for modifier in all {
+                let declaration = declarations.find(modifier.node(), |_, it| {
+                    it.as_func().filter(|it| it.kind() == FnKind::Decl && it.has_body())
+                });
+                if let Some(name) = declaration.and_then(Func::name)
+                    && let Some(variable) = modifier.scope().parent().and_then(|it| it.resolve_name(name.name()))
+                    && functions.insert(variable)
+                {
+                    calls.extend(variable.references().map(Reference::span));
+                }
+            }
+            calls.sort_unstable_by_key(|it| it.start);
+            calls
+        })
     }
 }
 
-impl Condition<'_> {
+impl<'a> Condition<'a> {
     /// ESLint's `isInLoop`, for any of `references`, which are in the order of the source.
     fn is_any_in_loop(&self, references: &[Span]) -> bool {
         let within = |span: Span| {
@@ -88,8 +98,12 @@ impl Condition<'_> {
 
     /// ESLint's `hasModifierInLoop`, for any of the modifiers: it is in the loop, or in a function
     /// declaration that is referred to in the loop.
-    fn has_modifier_in_loop(&self, modifiers: &Modifiers) -> bool {
-        self.is_any_in_loop(&modifiers.writes) || self.is_any_in_loop(&modifiers.calls)
+    fn has_modifier_in_loop(
+        &self,
+        modifiers: &mut Modifiers<'a>,
+        declarations: &mut AncestorMemo<'a, Func<'a>>,
+    ) -> bool {
+        self.is_any_in_loop(&modifiers.writes) || self.is_any_in_loop(modifiers.calls(declarations))
     }
 }
 
@@ -243,21 +257,20 @@ impl NoUnmodifiedLoopCondition {
             }
         }
         let mut modified_groups: FxHashSet<Expr<'a>> = FxHashSet::default();
-        let mut of_symbols: FxHashMap<Symbol<'a>, Modifiers> = FxHashMap::default();
-        let mut of_globals: FxHashMap<Name<'a>, Modifiers> = FxHashMap::default();
+        let mut of_symbols: FxHashMap<Symbol<'a>, Modifiers<'a>> = FxHashMap::default();
+        let mut of_globals: FxHashMap<Name<'a>, Modifiers<'a>> = FxHashMap::default();
         let mut declarations = AncestorMemo::default();
         for condition in &mut conditions {
             let modifiers = match condition.reference.symbol() {
                 Some(symbol) if !symbol.has_writes() => continue,
-                Some(symbol) => (of_symbols.entry(symbol))
-                    .or_insert_with(|| Modifiers::new(symbol.references(), &mut declarations)),
+                Some(symbol) => of_symbols.entry(symbol).or_insert_with(|| Modifiers::new(symbol.references())),
                 None => {
                     let name = condition.reference.name();
                     let references = || cx.file().unresolved_references_to(name.bytes());
-                    of_globals.entry(name).or_insert_with(|| Modifiers::new(references(), &mut declarations))
+                    of_globals.entry(name).or_insert_with(|| Modifiers::new(references()))
                 }
             };
-            condition.is_modified = condition.has_modifier_in_loop(modifiers);
+            condition.is_modified = condition.has_modifier_in_loop(modifiers, &mut declarations);
             if condition.is_modified {
                 modified_groups.extend(condition.group);
             }

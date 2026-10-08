@@ -123,15 +123,20 @@ fn without_final_newline(out: &mut Vec<u8>) {
     out.truncate(end);
 }
 
+/// The formatted text, and where the cursor is in it, if `cursorOffset` says where it was.
+type Formatted = (Vec<u8>, Option<u32>);
+
 /// The formatted text of the file at `path`. `verifies`: it is parsed and compared with `text`.
-fn format(path: &[u8], text: &[u8], resolved: &Resolved, atoms: &dyn Intern, scratch: &mut Scratches, verifies: bool) -> Result<Vec<u8>, Failure> {
+fn format(path: &[u8], text: &[u8], resolved: &Resolved, atoms: &dyn Intern, scratch: &mut Scratches, verifies: bool) -> Result<Formatted, Failure> {
     let options = &resolved.options;
+    // The name says what kind of file it is. Whether it is TypeScript is up to `path`.
+    let name = options.filepath.as_deref().filter(|it| !it.is_empty()).unwrap_or(path);
     let finish = |done: Result<(), FormatError>, mut out: Vec<u8>, what: &str| match done {
         Ok(()) => {
             if resolved.omits_final_newline {
                 without_final_newline(&mut out);
             }
-            Ok(out)
+            Ok((out, None))
         }
         Err(FormatError::SyntaxError) => Err(Failure::Syntax(format!("SyntaxError: It is not {what}.").into_bytes())),
         Err(FormatError::NestedTooDeeply) => Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec())),
@@ -139,11 +144,11 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, atoms: &dyn Intern, scr
     };
     let json = match &options.parser {
         Some(parser) => bun_format::json::Parser::from_name(parser),
-        None => bun_format::json::parser_for_path(path),
+        None => bun_format::json::parser_for_path(name),
     };
     if let Some(parser) = json {
         let (mut sorted, mut out) = (Vec::new(), Vec::new());
-        let text = match options.sort_package_json.filter(|_| paths::basename(path) == b"package.json") {
+        let text = match options.sort_package_json.filter(|_| paths::basename(name) == b"package.json") {
             Some(sort) if bun_format::json::sort_package_json(text, sort, &mut sorted) => &sorted[..],
             _ => text,
         };
@@ -152,7 +157,7 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, atoms: &dyn Intern, scr
     }
     let css = match &options.parser {
         Some(parser) => bun_format::css::Parser::from_name(parser),
-        None => bun_format::css::parser_for_path(path),
+        None => bun_format::css::parser_for_path(name),
     };
     if let Some(parser) = css {
         let mut out = Vec::new();
@@ -160,11 +165,11 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, atoms: &dyn Intern, scr
         return finish(done, out, "a style sheet");
     }
     let text = match bun_format::pragma::before_parsing(text, options) {
-        BeforeParsing::LeaveAsItIs => return Ok(text.to_vec()),
+        BeforeParsing::LeaveAsItIs => return Ok((text.to_vec(), options.cursor_offset)),
         BeforeParsing::Format(text) => text,
     };
     let mut first_failure = None;
-    for &is_script in kinds(path) {
+    for &is_script in kinds(name) {
         let how = How {
             path,
             is_script,
@@ -180,7 +185,7 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, atoms: &dyn Intern, scr
     Err(first_failure.unwrap_or(Failure::Bug("the formatter failed")))
 }
 
-fn print<'a>(file: &'a File<'a>, first_error: Option<&Diagnostic>, how: &How, scratch: &mut Scratch) -> Result<Vec<u8>, Failure> {
+fn print<'a>(file: &'a File<'a>, first_error: Option<&Diagnostic>, how: &How, scratch: &mut Scratch) -> Result<Formatted, Failure> {
     let options = &how.resolved.options;
     // What typescript-estree refuses while it converts the tree, Prettier refuses too.
     if file.language().parser == Parser::TypeScript
@@ -191,12 +196,12 @@ fn print<'a>(file: &'a File<'a>, first_error: Option<&Diagnostic>, how: &How, sc
     }
     let mut out = Vec::new();
     let parse = |part: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| with_file(how, part, |file, _| then(file));
-    match bun_format::range::format(file, options, scratch, &mut out, parse) {
-        Ok(()) => {}
+    let cursor = match bun_format::range::format_with_cursor(file, options, scratch, &mut out, parse) {
+        Ok(cursor) => cursor,
         Err(FormatError::SyntaxError) => return Err(Failure::Syntax(syntax_error(file, first_error))),
         Err(FormatError::NestedTooDeeply) => return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec())),
         Err(FormatError::InvalidDocument) => return Err(Failure::Bug("the formatter failed")),
-    }
+    };
     if how.resolved.omits_final_newline {
         without_final_newline(&mut out);
     }
@@ -208,10 +213,10 @@ fn print<'a>(file: &'a File<'a>, first_error: Option<&Diagnostic>, how: &How, sc
             return Err(Failure::Bug("formatting would change what the code means"));
         }
     }
-    Ok(out)
+    Ok((out, cursor))
 }
 
-fn format_as(how: &How, text: &[u8], scratch: &mut Scratch) -> Result<Vec<u8>, Failure> {
+fn format_as(how: &How, text: &[u8], scratch: &mut Scratch) -> Result<Formatted, Failure> {
     with_file(how, text, |file, first_error| {
         // A file whose imports move is parsed again.
         let how_to_sort = how.resolved.options.sort_imports.as_deref();
@@ -220,6 +225,17 @@ fn format_as(how: &How, text: &[u8], scratch: &mut Scratch) -> Result<Vec<u8>, F
             None => print(file, first_error, how, scratch),
         }
     })
+}
+
+/// The text of the file at `path` formatted with `options`, the way `bun format` does it, and where
+/// the cursor ends up. For the tests of the formatter. `Err(true)`: a syntax error.
+pub fn format_for_tests(path: &[u8], text: &[u8], options: &bun_format::FormatOptions) -> Result<(Vec<u8>, Option<u32>), bool> {
+    let resolved = Resolved {
+        options: options.clone(),
+        omits_final_newline: false,
+    };
+    let names = Session::new();
+    format(path, text, &resolved, &Interner::new_in(&names), &mut Scratches::default(), false).map_err(|failure| matches!(failure, Failure::Syntax(_)))
 }
 
 /// What has become of a file.
@@ -306,13 +322,19 @@ impl Run<'_> {
         let names = Session::new();
         match format(&path, &text, &options, &Interner::new_in(&names), &mut Scratches::default(), self.options.verify) {
             Err(failure) => self.error(&Self::describe(name, failure)),
-            Ok(formatted) if self.options.check || self.options.list_different => {
+            Ok((formatted, _)) if self.options.check || self.options.list_different => {
                 if formatted != text {
                     self.log(b"(stdin)");
                     self.out.exit_code = 1;
                 }
             }
-            Ok(formatted) => self.out.stdout = formatted,
+            Ok((formatted, cursor)) => {
+                self.out.stdout = formatted;
+                // As Prettier: where the cursor is now.
+                if let Some(cursor) = cursor {
+                    let _ = writeln!(self.out.stderr, "{cursor}");
+                }
+            }
         }
         self.out
     }
@@ -391,7 +413,7 @@ impl Run<'_> {
                 let options = configs.options_for(&target.scope, &target.path).map_err(|error| error.0)?;
                 let text = fs::read_sized(&target.path, target.size)
                     .map_err(|error| [b"Unable to read file \"", &shown[..], b"\":\n", &fs::describe(&error)].concat())?;
-                let formatted = format(&target.path, &text, &options, &atoms, &mut scratch, self.options.verify && !only_looks)
+                let (formatted, _) = format(&target.path, &text, &options, &atoms, &mut scratch, self.options.verify && !only_looks)
                     .map_err(|failure| Self::describe(&shown, failure))?;
                 if formatted == text {
                     return Ok(Done::Unchanged);

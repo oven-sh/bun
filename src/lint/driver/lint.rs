@@ -277,6 +277,7 @@ fn too_deep() -> LintMessage {
         fix: None,
         suggestions: Vec::new(),
         suppressions: Vec::new(),
+        ..LintMessage::default()
     }
 }
 

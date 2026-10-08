@@ -60,7 +60,8 @@ pub(crate) enum Flavor {
 }
 
 /// The options that the formatter has.
-const OPTIONS: [&[u8]; 24] = [
+const OPTIONS: [&[u8]; 25] = [
+    b"cursorOffset",
     b"parser",
     b"jsxBracketSameLine",
     b"rangeStart",

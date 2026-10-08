@@ -4,9 +4,6 @@ import { copyFileSync, rmSync } from "node:fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
-// `bun build --compile` copies + rewrites the whole bun binary (~1GB under
-// debug+ASAN), which blows the 5s default.
-const TIMEOUT = 60_000;
 const exe = process.platform === "win32" ? ".exe" : "";
 
 async function compile(dir: string, entries: string[], extraArgs: string[] = []) {
@@ -78,7 +75,6 @@ describe.concurrent("compile: new URL(relative, import.meta.url)", () => {
       });
       expect(code).toBe(0);
     },
-    TIMEOUT,
   );
 
   test(
@@ -102,8 +98,28 @@ describe.concurrent("compile: new URL(relative, import.meta.url)", () => {
       expect(JSON.parse(stdout)).toEqual({ message: "from worker", embedded: 0 });
       expect(code).toBe(0);
     },
-    TIMEOUT,
   );
+
+  test("a nested new URL inside a Worker's URL argument is not embedded either", async () => {
+    using build = tempDir("new-url-asset-worker-nested", {
+      "index.ts": /* ts */ `
+        const worker = new Worker(new URL("./worker.ts", new URL("./existing-asset.txt", import.meta.url)));
+        const message = await new Promise(resolve => {
+          worker.onmessage = event => resolve(event.data);
+        });
+        worker.terminate();
+        console.log(JSON.stringify({ message, embedded: Bun.embeddedFiles.length }));
+      `,
+      "worker.ts": /* ts */ `postMessage("from worker");`,
+      "existing-asset.txt": "asset",
+    });
+    await compile(String(build), ["./index.ts", "./worker.ts"]);
+
+    const { stdout, stderr, code } = await run(join(String(build), "app" + exe));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ message: "from worker", embedded: 0 });
+    expect(code).toBe(0);
+  });
 
   test(
     "a file that does not exist at build time is left as written",
@@ -126,6 +142,5 @@ describe.concurrent("compile: new URL(relative, import.meta.url)", () => {
       expect(JSON.parse(stdout)).toEqual({ sibling: true, exists: false, embedded: 0 });
       expect(code).toBe(0);
     },
-    TIMEOUT,
   );
 });

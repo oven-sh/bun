@@ -2484,7 +2484,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
         for (i, arg) in e_.args.slice_mut().iter_mut().enumerate() {
             let saved = p.in_worker_url_arg;
-            p.in_worker_url_arg = is_worker && i == 0;
+            p.in_worker_url_arg = if is_worker { i == 0 } else { saved };
             p.visit_expr(arg);
             p.in_worker_url_arg = saved;
         }

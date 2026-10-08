@@ -166,10 +166,21 @@ fn format_operand_trailing_comments<'a>(mut start: u32, end: u32, operator: u8, 
 }
 
 fn is_jsx_conditional_chain(e: Expr<'_>) -> bool {
-    let ExprKind::Cond { test, yes, no } = e.kind() else {
-        return false;
-    };
-    [test, yes, no].into_iter().any(|operand| matches!(operand.kind(), ExprKind::Jsx(_)) || is_jsx_conditional_chain(operand))
+    let mut pending = smallvec::SmallVec::<[Expr<'_>; 8]>::new();
+    pending.push(e);
+    while let Some(e) = pending.pop() {
+        let ExprKind::Cond { test, yes, no } = e.kind() else {
+            continue;
+        };
+        for operand in [test, yes, no] {
+            match operand.tag() {
+                ExprTag::Jsx => return true,
+                ExprTag::Cond => pending.push(operand),
+                _ => {}
+            }
+        }
+    }
+    false
 }
 
 impl<'a> FormatConditionalLike<'a> {
@@ -450,6 +461,10 @@ struct FormatJsxChainExpression<'a> {
 
 impl<'a> Format<'a> for FormatJsxChainExpression<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
+        // A conditional expression in here is not written by way of `Expr`.
+        if !f.context_mut().has_stack_left() {
+            return;
+        }
         let expression = self.expression;
         let is_conditional = matches!(expression.kind(), ExprKind::Cond { .. });
         let no_wrap = match expression.kind() {

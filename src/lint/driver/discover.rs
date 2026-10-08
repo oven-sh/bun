@@ -4,7 +4,8 @@
 //! for everything in it that the configuration has `files` for. Directories are listed on all
 //! threads, one level of the tree at a time, and one that the configuration ignores is not entered.
 
-use crate::configs::{Loaded, Loader};
+use crate::configs::{Flavor, Loaded, Loader};
+use crate::gitignore::{self, Chain};
 use crate::run::{Fatal, Pool};
 use crate::{fs, paths};
 use bun_lint::linter::{FileConfig, Glob, ResolvedConfig};
@@ -86,6 +87,9 @@ struct Directory {
     relative: Vec<u8>,
     /// The configuration of the directory that it is in or, for the one that is searched, its own.
     inherited: Arc<Loaded>,
+    /// The ignore files above it or, for the one that is searched, also those in it. They are only
+    /// read where they count.
+    ignores: Chain,
 }
 
 fn no_files_found(pattern: &[u8]) -> Fatal {
@@ -151,6 +155,7 @@ fn search(loader: &Loader, pool: &Pool, search: &Search, found: &mut Vec<Target>
             level.push(Directory {
                 path: search.base_path.clone(),
                 relative: Vec::new(),
+                ignores: loader.ignore_files_at(&search.base_path, &inherited),
                 inherited,
             });
         }
@@ -176,9 +181,27 @@ fn search(loader: &Loader, pool: &Pool, search: &Search, found: &mut Vec<Target>
                     return;
                 }
             };
+            let reads_ignore_files = loader.reads_ignore_files(&own);
+            let mut ignores = directory.ignores.clone();
+            if reads_ignore_files && !directory.relative.is_empty() {
+                for name in gitignore::NAMES.iter().filter(|name| entries.iter().any(|it| it.name == **name)) {
+                    ignores = gitignore::with_file(ignores, &directory.path, &paths::join(&directory.path, name));
+                }
+            }
             let (mut files, mut directories) = (Vec::new(), Vec::new());
-            for entry in entries {
+            for mut entry in entries {
                 let path = paths::join(&directory.path, &entry.name);
+                // oxlint follows links.
+                if entry.is_link && own.flavor == Flavor::Oxlint && fs::kind(&path) == Some(fs::Kind::Directory) {
+                    let is_loop = fs::real_path(&path).is_none_or(|real| directory.path.starts_with(&real));
+                    if is_loop {
+                        continue;
+                    }
+                    entry.is_directory = true;
+                }
+                if reads_ignore_files && gitignore::is_ignored(&ignores, &path, entry.is_directory) {
+                    continue;
+                }
                 let relative = match directory.relative.is_empty() {
                     true => entry.name,
                     false => paths::join(&directory.relative, &entry.name),
@@ -189,6 +212,7 @@ fn search(loader: &Loader, pool: &Pool, search: &Search, found: &mut Vec<Target>
                             path,
                             relative,
                             inherited: Arc::clone(&own),
+                            ignores: ignores.clone(),
                         });
                     }
                     continue;

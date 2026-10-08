@@ -12,6 +12,7 @@ mod discover;
 mod evaluate;
 mod format;
 mod fs;
+mod gitignore;
 mod lint;
 mod paths;
 mod results;

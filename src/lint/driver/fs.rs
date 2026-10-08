@@ -48,6 +48,7 @@ pub(crate) struct Entry {
     pub(crate) name: Vec<u8>,
     /// Not a link to one: like `fs.Dirent.isDirectory()`.
     pub(crate) is_directory: bool,
+    pub(crate) is_link: bool,
 }
 
 /// The entries of the directory at `path`, in no particular order. `None` if it cannot be listed.
@@ -57,21 +58,27 @@ pub(crate) fn list(path: &[u8]) -> Option<Vec<Entry>> {
     let mut entries = bun_sys::iterate_dir(directory.fd());
     while let Ok(Some(entry)) = entries.next() {
         let name = entry.name.slice_u8();
-        let is_directory = match entry.kind {
-            EntryKind::Directory => true,
+        let kind = match entry.kind {
             // The file system does not tell with the name.
             EntryKind::Unknown => match bun_sys::lstatat(directory.fd(), z(name, &mut path_buffer_pool::get())) {
-                Ok(found) => bun_sys::kind_from_mode(found.st_mode as _) == EntryKind::Directory,
+                Ok(found) => bun_sys::kind_from_mode(found.st_mode as _),
                 Err(_) => continue,
             },
-            _ => false,
+            kind => kind,
         };
         found.push(Entry {
             name: name.to_vec(),
-            is_directory,
+            is_directory: kind == EntryKind::Directory,
+            is_link: kind == EntryKind::SymLink,
         });
     }
     Some(found)
+}
+
+/// `path` without links.
+pub(crate) fn real_path(path: &[u8]) -> Option<Vec<u8>> {
+    let mut buffer = path_buffer_pool::get();
+    Some(bun_sys::realpath(z(path, &mut path_buffer_pool::get()), &mut buffer).ok()?.to_vec())
 }
 
 /// Replaces the file at `path`, which exists, so that nobody ever reads a part of `text`: writes

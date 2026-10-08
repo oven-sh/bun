@@ -5,6 +5,7 @@
 //! counts. Configurations are not merged.
 
 use crate::cli::Options;
+use crate::gitignore::{self, Chain};
 use crate::run::{Environment, Fatal};
 use crate::{fs, paths};
 use bun_core::strings;
@@ -152,6 +153,41 @@ fn without_global_ignores(json: Json, depth: usize) -> Json {
     }
 }
 
+/// The categories of oxlint's rules, but `nursery`.
+const CATEGORIES: [&[u8]; 6] = [b"correctness", b"suspicious", b"pedantic", b"perf", b"style", b"restriction"];
+
+/// oxlint's `-A`, `-W` and `-D`, which come after the `rules` of the file and before its
+/// `overrides`. A category only counts for the rules that `rules` does not name.
+fn apply_filters(entries: &mut Vec<(Vec<u8>, Json)>, filters: &[(Severity, Vec<u8>)]) {
+    fn put(entries: &mut Vec<(Vec<u8>, Json)>, section: &[u8], key: &[u8], severity: Severity) {
+        if !entries.iter().any(|it| it.0 == section && matches!(it.1, Json::Object(_))) {
+            entries.retain(|it| it.0 != section);
+            entries.push((section.to_vec(), Json::Object(Vec::new())));
+        }
+        let Some((_, Json::Object(section))) = entries.iter_mut().find(|it| it.0 == section) else {
+            return;
+        };
+        match section.iter_mut().find(|it| it.0 == key) {
+            // The options stay.
+            Some((_, Json::Array(items))) if !items.is_empty() => items[0] = severity_name(severity),
+            Some((_, value)) => *value = severity_name(severity),
+            None => section.push((key.to_vec(), severity_name(severity))),
+        }
+    }
+    for (severity, name) in filters {
+        if name == b"all" {
+            if *severity == Severity::Off {
+                entries.retain(|it| it.0 != b"rules");
+            }
+            CATEGORIES.iter().for_each(|category| put(entries, b"categories", category, *severity));
+        } else if CATEGORIES.contains(&&name[..]) || name == b"nursery" {
+            put(entries, b"categories", name, *severity);
+        } else {
+            put(entries, b"rules", name, *severity);
+        }
+    }
+}
+
 impl<'l> Loader<'l> {
     pub(crate) fn new(linter: &'l Linter, options: &'l Options, environment: &'l Environment<'l>) -> Loader<'l> {
         Loader {
@@ -274,6 +310,7 @@ impl<'l> Loader<'l> {
             if !options.ignore {
                 entries.retain(|it| it.0 != b"ignorePatterns");
             }
+            apply_filters(entries, &options.filters);
             let unused = match options.report_unused_disable_directives {
                 true => Some(Severity::Error),
                 false => options.report_unused_disable_directives_severity,
@@ -451,6 +488,23 @@ impl<'l> Loader<'l> {
         match Self::pick(names) {
             Some(name) => self.load(&paths::join(directory, name), directory),
             None => Ok(Arc::clone(inherited)),
+        }
+    }
+
+    /// Whether `.gitignore` counts for what has the configuration `loaded`.
+    pub(crate) fn reads_ignore_files(&self, loaded: &Loaded) -> bool {
+        loaded.flavor == Flavor::Oxlint && self.options.ignore
+    }
+
+    /// The ignore files that count in `directory`, where a search starts.
+    pub(crate) fn ignore_files_at(&self, directory: &[u8], loaded: &Loaded) -> Chain {
+        if !self.reads_ignore_files(loaded) {
+            return None;
+        }
+        let chain = gitignore::above_and_in(directory);
+        match &self.options.ignore_path {
+            Some(path) => gitignore::with_file(chain, self.cwd(), &paths::resolve(self.cwd(), &paths::from_native(path))),
+            None => chain,
         }
     }
 

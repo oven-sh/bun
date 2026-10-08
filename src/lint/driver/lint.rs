@@ -2,6 +2,7 @@
 //! Everything but the messages is freed before the next file.
 
 use crate::cli::{FixType, Options};
+use crate::configs::Flavor;
 use crate::discover::{Status, Target};
 use crate::results::{Counts, FileResult};
 use crate::run::{Fatal, Timing};
@@ -182,7 +183,9 @@ impl Context<'_> {
         on_circular_fixes: &dyn Fn(&[u8]),
     ) -> Result<Option<FileResult>, Fatal> {
         let Status::Matched(config) = &target.status else {
-            return Ok(self.options.warn_ignored.then(|| self.ignored(&target.path, &target.status)));
+            // oxlint says nothing about such a file.
+            let warns = self.options.warn_ignored && target.loaded.flavor != Flavor::Oxlint;
+            return Ok(warns.then(|| self.ignored(&target.path, &target.status)));
         };
         let started = self.timing.now();
         let text = fs::read(&target.path)

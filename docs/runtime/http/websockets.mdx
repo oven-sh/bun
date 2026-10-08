@@ -263,7 +263,18 @@ To compress an individual message, pass a `boolean` as the second argument to `.
 ws.send("Hello world", true);
 ```
 
-For fine-grained control over compression characteristics, refer to the [Reference](#reference).
+For fine-grained control over compression characteristics, refer to the [Reference](#reference). Each direction can be configured on its own. With `compress: "disable"` and `decompress` on, the server still inflates compressed messages from clients but never compresses its own. With `decompress: "disable"` the extension is not negotiated at all. `permessage-deflate` cannot be enabled for one direction only, so `Bun.serve()` throws when `compress` is on and `decompress` is off.
+
+```ts
+Bun.serve({
+  websocket: {
+    perMessageDeflate: {
+      compress: "disable", // never compress outbound messages
+      decompress: "shared", // inflate compressed inbound messages
+    },
+  },
+});
+```
 
 ### Backpressure
 

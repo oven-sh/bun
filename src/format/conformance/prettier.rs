@@ -348,6 +348,34 @@ fn parser_of(name: &[u8], language: &[u8]) -> &'static [u8] {
     }
 }
 
+/// The directory with the tests of a parser whose language is being written. Nothing is run with such a parser unless
+/// `--languages` has the directory.
+fn directory_of_new_parser(parser: &[u8]) -> Option<&'static [u8]> {
+    match parser {
+        b"html" => Some(b"html"),
+        b"vue" => Some(b"vue"),
+        b"angular" => Some(b"angular"),
+        b"lwc" => Some(b"lwc"),
+        b"mjml" => Some(b"mjml"),
+        b"glimmer" => Some(b"handlebars"),
+        _ => None,
+    }
+}
+
+/// The parser that all of a directory is read by, whatever the names of the files.
+fn parser_of_directory(language: &[u8]) -> Option<&'static [u8]> {
+    match language {
+        b"html" => Some(b"html"),
+        b"vue" => Some(b"vue"),
+        b"angular" => Some(b"angular"),
+        b"lwc" => Some(b"lwc"),
+        b"mjml" => Some(b"mjml"),
+        b"handlebars" => Some(b"glimmer"),
+        b"flow" => Some(b"flow"),
+        _ => None,
+    }
+}
+
 fn is_javascript_parser(name: &[u8]) -> bool {
     matches!(
         name,
@@ -376,10 +404,19 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 if !flags.wants(&id) {
                     continue;
                 }
-                let ours = parser_of(&case.name, language);
                 // JSON or a style sheet: the parser is not left to the name of the file.
+                let is_named = |it: &&[u8]| match directory_of_new_parser(it) {
+                    Some(directory) => strings::split(languages, b",").any(|asked| asked == directory),
+                    None => it.starts_with(b"json") || matches!(*it, b"css" | b"less" | b"scss" | b"graphql" | b"yaml" | b"markdown" | b"mdx"),
+                };
                 let first_parser = case.parsers.first().map(Vec::as_slice);
-                let named_parser = first_parser.filter(|it| it.starts_with(b"json") || matches!(*it, b"css" | b"less" | b"scss" | b"graphql" | b"yaml" | b"markdown" | b"mdx"));
+                // What is rejected says by which parser in its title, or not at all.
+                let rejecting_parser = match &case.expected {
+                    Expected::Error(parsers) => parsers.iter().map(Vec::as_slice).find(is_named).or(parser_of_directory(language)),
+                    Expected::Output(_) => None,
+                };
+                let named_parser = first_parser.filter(is_named).or(rejecting_parser);
+                let ours = named_parser.unwrap_or_else(|| parser_of(&case.name, language));
                 if !case.parsers.is_empty() && named_parser.is_none() && !case.parsers.iter().any(|it| is_javascript_parser(it)) {
                     *excluded.entry(OTHER_LANGUAGE).or_default() += 1;
                     continue;
@@ -424,6 +461,10 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                         let _ = options.set(b"filepath", name.unwrap_or_default());
                         let extension: &[u8] = match (named_parser, language) {
                             (Some(parser), _) if parser.starts_with(b"json") => b"json",
+                            (Some(b"glimmer"), _) => b"hbs",
+                            (Some(b"angular"), _) => b"component.html",
+                            (Some(b"lwc"), _) => b"html",
+                            (Some(b"flow"), _) => b"js",
                             (Some(parser), _) => parser,
                             (None, b"typescript") => b"ts",
                             (None, b"jsx") => b"jsx",
@@ -447,7 +488,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                     })
                 };
 
-                let expected = match case.expected {
+                let expected = match &case.expected {
                     Expected::Output(expected) => expected,
                     Expected::Error(parsers) => {
                         // The text of a snippet that is rejected is not in the snapshot: `sync.ts` writes it to `rejected-snippets`.
@@ -470,11 +511,11 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                     Err(Failure::SyntaxError) => b"<SyntaxError>".to_vec(),
                     Err(Failure::Other) => b"<the formatter failed>".to_vec(),
                 };
-                tally.format.add(actual == expected);
-                let Some(output) = output.ok().filter(|_| actual == expected) else {
+                tally.format.add(actual == *expected);
+                let Some(output) = output.ok().filter(|_| actual == *expected) else {
                     tally.syntax_errors += usize::from(actual == b"<SyntaxError>");
                     fail("format", &id, &described);
-                    flags.write_report(&[&id[..], &described].concat(), &expected, &actual, &input);
+                    flags.write_report(&[&id[..], &described].concat(), expected, &actual, &input);
                     continue;
                 };
 

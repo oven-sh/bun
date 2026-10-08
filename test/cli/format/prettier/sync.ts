@@ -9,11 +9,18 @@ import { pathToFileURL } from "node:url";
 import { collect, extract, writeBundle } from "../bundle.ts";
 
 const languages = ["js", "jsx", "typescript", "json", "css", "less", "scss", "graphql", "yaml", "markdown", "mdx", "misc"];
+// Being written. The runner leaves them out unless `--languages` names them.
+const newLanguages = ["html", "vue", "angular", "lwc", "mjml", "handlebars", "flow"];
 
 const ours = ["babel", "typescript", "json", "json5", "jsonc", "json-stringify", "css", "less", "scss", "graphql", "yaml", "markdown", "mdx"];
+const newParsers = ["html", "vue", "angular", "lwc", "mjml", "glimmer"];
+/** The parsers that count in the tests of a directory. `flow` only where it is the first: elsewhere `babel` stands for it. */
+const parsersIn = (directory: string) => [...ours, ...newParsers, ...(directory.startsWith("flow/") ? ["flow", "babel-flow"] : [])];
 /** The name of a file that is parsed with the parser. */
 const fileFor = (parser: string, name: string) =>
-  parser === "json-stringify" ? `${name}/package.json` : `${name}.${{ babel: "js", typescript: "ts", markdown: "md" }[parser] ?? parser}`;
+  parser === "json-stringify"
+    ? `${name}/package.json`
+    : `${name}.${{ babel: "js", typescript: "ts", markdown: "md", glimmer: "hbs", angular: "component.html", lwc: "html", flow: "js", "babel-flow": "js" }[parser] ?? parser}`;
 
 type Snippet = string | { name?: string; code: string; output?: string; filename?: string };
 type Options = { errors?: true | Record<string, true | string[]> } & Record<string, unknown>;
@@ -24,11 +31,11 @@ type Options = { errors?: true | Record<string, true | string[]> } & Record<stri
  * `inline-outputs` next to the test a snapshot file, in `rejected-snippets` the inputs and a snapshot file.
  */
 async function addFromTests(root: string, files: Map<string, Uint8Array>) {
-  const prettier = { getSupportInfo: async () => ({ options: [{ name: "parser", choices: ours.map(value => ({ value })) }] }) };
+  const prettier = { getSupportInfo: async () => ({ options: [{ name: "parser", choices: [...ours, ...newParsers].map(value => ({ value })) }] }) };
   const separator = (title: string) => "=".repeat(Math.floor((80 - title.length) / 2)) + title + "=".repeat(Math.ceil((80 - title.length) / 2));
   const escape = (text: string) => text.replace(/[\\`]|\$\{/g, "\\$&");
 
-  for (const test of [...new Bun.Glob(`{${languages.join(",")}}/**/format.test.js`).scanSync(root)].sort()) {
+  for (const test of [...new Bun.Glob(`{${[...languages, ...newLanguages].join(",")}}/**/format.test.js`).scanSync(root)].sort()) {
     const code = readFileSync(join(root, test), "utf8");
     if (!/\bsnippets\b/.test(code)) continue;
     const directory = dirname(test);
@@ -39,18 +46,20 @@ async function addFromTests(root: string, files: Map<string, Uint8Array>) {
       const { errors = {}, ...options }: Options = `/${directory}/`.includes("/_errors_/") ? { errors: true, ...rawOptions } : rawOptions;
       (fixtures.snippets ?? []).forEach((snippet, index) => {
         const { name = `#${index}`, code, output, filename } = typeof snippet === "string" ? { code: snippet } : snippet;
-        for (const parser of parsers.filter(it => ours.includes(it))) {
+        for (const parser of parsers.filter(it => parsersIn(directory).includes(it))) {
           const list = errors === true || errors[parser];
           if (list === true || (Array.isArray(list) && filename !== undefined && list.includes(filename))) {
             const file = fileFor(parser, String(counts.size));
             counts.set(file, 1);
             files.set(`${directory}/rejected-snippets/${file}`, Buffer.from(code));
-            rejected += `\nexports[\`${file} format 1\`] = \`\n"snippet: ${escape(name)}, ${parser}"\n\`;\n`;
+            // The parser of a language that is being written is in the title, so that it is run only if that language is.
+            const kind = newParsers.includes(parser) ? `format[${parser}]` : "format";
+            rejected += `\nexports[\`${file} ${kind} 1\`] = \`\n"snippet: ${escape(name)}, ${parser}"\n\`;\n`;
           }
         }
         if (output === undefined) return;
         // The output is the same for all of them. The first of each language stands for the others.
-        const families = new Map(parsers.filter(it => ours.includes(it)).map(it => [/^babel$|^typescript$/.test(it) ? "js" : it, it]).reverse());
+        const families = new Map(parsers.filter(it => parsersIn(directory).includes(it)).map(it => [/^babel$|^typescript$/.test(it) ? "js" : it, it]).reverse());
         for (const parser of [...families.values()].reverse()) {
           const title = `snippet: ${name}${Object.keys(options).length ? ` - ${JSON.stringify(options)}` : ""} format`;
           counts.set(title, (counts.get(title) ?? 0) + 1);
@@ -83,7 +92,7 @@ if (source === "--extract" && rest.length === 2) {
 } else if (source && source !== "--extract") {
   const files = new Map<string, Uint8Array>();
   // The snapshots say with which options an input is formatted.
-  for (const language of languages) {
+  for (const language of [...languages, ...newLanguages]) {
     collect(join(source, "tests/format"), language, files, name => name === "format.test.js");
   }
   await addFromTests(join(source, "tests/format"), files);

@@ -14,7 +14,7 @@ format: 7293/7293 (100.00%)
 all checks: 34661/34661 (100.00%)
 not run: 17: Flow's type syntax
 not run: 2: `babel` rejects HTML-like comments, but the snapshots of js/comments/html-like and of jsx/jsx-test-suite, made with `acorn`, have them formatted
-not run: 41: a language that is not there: HTML, Vue, Angular, Handlebars
+not run: 173: a language that is not there: HTML, Vue, Angular, Handlebars
 not run: 2: an input that Prettier's `typescript` parser rejects: the snapshot is made with `babel-ts`
 not run: 4: an input that only `babel-ts` rejects: Prettier's `typescript` parser accepts it, and the output is the same
 not run: 35: embedded HTML, which needs a formatter for that language

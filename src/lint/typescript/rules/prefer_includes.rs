@@ -6,6 +6,7 @@ use bun_lint::types::utils::get_constrained_type_at_location;
 use bun_lint::types::{NameOf, SyntaxKind, TsNode};
 use bun_lint::utils::eslint_utils::get_static_value;
 use bun_lint::utils::ts_utils::is_static_member_access_of_value;
+use std::borrow::Cow;
 
 /// Enforce `includes` method over `indexOf` method.
 pub struct PreferIncludes;
@@ -24,25 +25,36 @@ fn parameters(node: TsNode<'_>) -> impl Iterator<Item = TsNode<'_>> {
     node.children().filter(|child| child.kind() == SyntaxKind::Parameter)
 }
 
-/// `paramA.getText() === paramB.getText()`: the name, the type and the question token at once.
-fn has_same_text<'a>(param_a: TsNode<'a>, param_b: TsNode<'a>) -> bool {
-    let (text_a, text_b) = (param_a.get_source_text(), param_b.get_source_text());
-    if !text_a.is_empty() || !text_b.is_empty() {
-        return text_a == text_b;
+/// `param.getText()`: the name, the type and the question token at once.
+fn get_text(param: TsNode<'_>) -> Cow<'_, [u8]> {
+    let text = param.get_source_text();
+    if !text.is_empty() {
+        return Cow::Borrowed(text);
     }
     // TODO(api): replace by types::TsNode::get_source_text, which is empty in the default library.
-    let written_type = |param: TsNode| param.type_node().map(|ty| ty.get_type_from_type_node().to_text());
-    param_a.name().map(|it| it.text()) == param_b.name().map(|it| it.text())
-        && param_a.has_question_token() == param_b.has_question_token()
-        && param_a.has_dot_dot_dot_token() == param_b.has_dot_dot_dot_token()
-        && written_type(param_a) == written_type(param_b)
+    // All of its `indexOf` and `includes` are written `name?: T`.
+    let mut text = Vec::new();
+    if param.has_dot_dot_dot_token() {
+        text.extend_from_slice(b"...");
+    }
+    if let Some(name) = param.name() {
+        text.extend_from_slice(name.text());
+    }
+    if param.has_question_token() {
+        text.push(b'?');
+    }
+    if let Some(ty) = param.type_node() {
+        text.extend_from_slice(b": ");
+        text.extend_from_slice(&ty.get_type_from_type_node().to_text());
+    }
+    Cow::Owned(text)
 }
 
 fn has_same_parameters<'a>(node_a: TsNode<'a>, node_b: TsNode<'a>) -> bool {
     node_a.kind().is_function_like()
         && node_b.kind().is_function_like()
         && parameters(node_a).count() == parameters(node_b).count()
-        && parameters(node_a).zip(parameters(node_b)).all(|(a, b)| has_same_text(a, b))
+        && parameters(node_a).zip(parameters(node_b)).all(|(a, b)| get_text(a) == get_text(b))
 }
 
 /// Whether the type that declares the `indexOf` method has an `includes` method with the same

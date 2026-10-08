@@ -96,6 +96,8 @@ fn property_of(func: Func<'_>) -> Option<Prop<'_>> {
 /// `None` for what ESLint does not have as a function.
 fn get_kind(func: Func) -> Option<u16> {
     let is_method = match func.kind() {
+        // An accessor of an interface that has a body, which is an error.
+        _ if matches!(func.owner(), Node::Member(member) if member.is_signature()) => return None,
         FnKind::Arrow => return Some(ARROW_FUNCTIONS),
         FnKind::Decl => false,
         FnKind::Expr | FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor => {

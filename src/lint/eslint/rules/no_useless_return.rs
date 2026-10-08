@@ -200,8 +200,8 @@ impl Rule for NoUselessReturn {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        // TODO(api): replace by integrator::File::stmts_of_kind, to ask for a `return` without a value.
-        if !file.has_stmts([StmtTag::Return]) {
+        let mut returns = file.stmts_of_kind(StmtTag::Return);
+        if !returns.any(|it| matches!(it.kind(), StmtKind::Return(None))) {
             return State::default();
         }
         on.code_path_start(|_, code_path, node, cx| {

@@ -235,6 +235,13 @@ impl ConsistentIndexedObjectStyle {
                     _ => is_deeply_referencing_type(parent.into(), super_var, visited),
                 },
                 parent @ Node::Stmt(_) => is_deeply_referencing_type(parent, super_var, visited),
+                // ESLint has no node between a mapped type and its constraint.
+                Node::TypeParam(param) => match param.parent() {
+                    outer @ Node::Type(mapped) if mapped.tag() == TypeTag::Mapped => {
+                        is_deeply_referencing_type(outer, super_var, visited)
+                    }
+                    _ => false,
+                },
                 _ => false,
             };
             if is_circular {

@@ -120,34 +120,32 @@ fn may_have_useless_escape(pattern: &[u8]) -> bool {
     false
 }
 
-/// `literal`: what can be a string in quotes.
-fn check_literal(literal: Span, cx: &Cx<'_, NoUselessEscape>) {
-    if matches!(cx.slice(literal).first(), Some(b'"' | b'\'')) {
-        validate_string(literal, Quoted::String, cx);
-    }
-}
-
-fn check_key<'a>(key: Option<Key<'a>>, cx: &Cx<'a, NoUselessEscape>) {
+/// `` [`a`] ``, which is a `TemplateLiteral` for ESLint and not an expression here.
+fn check_template_key<'a>(key: Option<Key<'a>>, cx: &Cx<'a, NoUselessEscape>) {
     if let Some(key) = key
-        && matches!(key.kind(), KeyKind::String(_) | KeyKind::ComputedString(_))
+        && matches!(key.kind(), KeyKind::ComputedString(_))
     {
         let span = key.inner_span(cx.file());
-        let is_template = cx.slice(span).starts_with(b"`");
-        validate_string(span, if is_template { Quoted::Template } else { Quoted::String }, cx);
+        if cx.slice(span).starts_with(b"`") {
+            validate_string(span, Quoted::Template, cx);
+        }
     }
 }
 
 impl NoUselessEscape {
-    fn check_string<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !strings::contains_char(e.text(), b'\\') || e.is_jsx_text() {
+    fn check_literal<'a>(&self, literal: Literal<'a>, cx: &mut Cx<'a, Self>) {
+        if !strings::contains_char(literal.text(), b'\\') {
             return;
         }
-        let quoted = match e.parent() {
-            Node::Prop(prop) if prop.is_jsx_attribute() && e.jsx_container_span().is_none() => return,
-            Node::Stmt(statement) if ast_utils::is_directive(statement) => Quoted::Directive,
+        let quoted = match literal.owner() {
+            Node::Expr(e) => match e.parent() {
+                Node::Prop(prop) if prop.is_jsx_attribute() && e.jsx_container_span().is_none() => return,
+                Node::Stmt(statement) if ast_utils::is_directive(statement) => Quoted::Directive,
+                _ => Quoted::String,
+            },
             _ => Quoted::String,
         };
-        validate_string(e.span(), quoted, cx);
+        validate_string(literal.span(), quoted, cx);
     }
 
     fn check_template<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -187,9 +185,11 @@ impl NoUselessEscape {
                 continue;
             };
             let start = character.start() as usize;
+            let text = pattern.get(start + 1..start + 1 + escaped).unwrap_or_default();
+            let is_whole = text.first().is_some_and(|&lead| utf8_len(lead) == text.len());
             report(
                 e.span().start + 1 + character.start(),
-                pattern.get(start + 1..start + 1 + escaped).unwrap_or_default(),
+                if is_whole { text } else { "\u{FFFD}".as_bytes() },
                 false,
                 !is_in_set_operation,
                 cx,
@@ -200,11 +200,14 @@ impl NoUselessEscape {
     /// If `node` is a character with a `\` that is not needed: the length of the character, and
     /// whether it is an operand of `&&` or `--`.
     fn useless_escape(&self, node: regex::Node<'_>, unicode_sets: bool) -> Option<(usize, bool)> {
-        let value = char::from_u32(node.character()?)?;
+        let value = node.character()?;
         let escaped = node.raw().strip_prefix(b"\\")?;
-        if escaped != value.encode_utf8(&mut [0; 4]).as_bytes()
-            || self.allow_regex_characters.iter().any(|it| it == escaped)
-        {
+        let stands_for_itself = match char::from_u32(value) {
+            Some(value) => escaped == value.encode_utf8(&mut [0; 4]).as_bytes(),
+            // Without the `u` and `v` flags, the first half of a character outside the BMP. Not `\ud83d`.
+            None => escaped.len() == 2,
+        };
+        if !stands_for_itself || self.allow_regex_characters.iter().any(|it| it == escaped) {
             return None;
         }
         let class = node.ancestors().find(|it| {
@@ -255,43 +258,14 @@ impl NoUselessEscape {
         Some((escaped.len(), is_in_set_operation))
     }
 
+    /// The templates among the types.
     fn check_type<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        match ty.kind() {
-            TypeKind::StringLit(_) => {
-                let is_template = ty.text().starts_with(b"`");
-                validate_string(ty.span(), if is_template { Quoted::Template } else { Quoted::String }, cx);
+        if let Some(template) = ty.as_template() {
+            for i in 0..template.quasi_count() {
+                validate_string(template.quasi_span(i), Quoted::Template, cx);
             }
-            TypeKind::Template(_) => {
-                if let Some(template) = ty.as_template() {
-                    for i in 0..template.quasi_count() {
-                        validate_string(template.quasi_span(i), Quoted::Template, cx);
-                    }
-                }
-            }
-            TypeKind::Import { .. } => {
-                if let Some(source) = ty.import_source_span() {
-                    check_literal(source, cx);
-                }
-                for entry in ty.import_attributes().into_iter().flat_map(ImportAttributes::entries) {
-                    check_key(entry.key(), cx);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// The names and the module specifiers that are written as strings.
-    fn check_statement<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        match statement.kind() {
-            StmtKind::ExportStar { alias: Some(alias), .. } => check_literal(alias.span(), cx),
-            StmtKind::Module(module) => check_literal(module.name_span(), cx),
-            _ => {}
-        }
-        if let Some(specifier) = statement.module_specifier_span() {
-            check_literal(specifier, cx);
-        }
-        for entry in statement.import_attributes().into_iter().flat_map(ImportAttributes::entries) {
-            check_key(entry.key(), cx);
+        } else if ty.text().starts_with(b"`") {
+            validate_string(ty.span(), Quoted::Template, cx);
         }
     }
 }
@@ -313,44 +287,19 @@ impl Rule for NoUselessEscape {
         if !strings::contains_char(file.text(), b'\\') {
             return;
         }
-        on.exprs([ExprTag::String], Self::check_string);
+        on.string_literals(Self::check_literal);
         on.exprs([ExprTag::Template], Self::check_template);
         on.exprs([ExprTag::Regex], Self::check_regex);
-        // TODO(api): replace by utils::string_literals
-        // The strings and the templates that are nodes for ESLint and not expressions here.
-        on.props(|_, prop, cx| check_key(prop.key(), cx));
-        on.members(|_, member, cx| {
-            if !member.flags().contains(Flags::STRING_NAME) {
-                return;
-            }
-            match member.constructor_keyword() {
-                Some(keyword) => check_literal(keyword.span(), cx),
-                None => check_key(member.key(), cx),
-            }
-        });
-        on.enum_members(|_, member, cx| check_key(member.key(), cx));
+        if !strings::contains_char(file.text(), b'`') {
+            return;
+        }
+        on.types([TypeTag::StringLit, TypeTag::Template], Self::check_type);
+        on.props(|_, prop, cx| check_template_key(prop.key(), cx));
+        on.members(|_, member, cx| check_template_key(member.key(), cx));
         on.pats([PatTag::Object], |_, pat, cx| {
             if let PatKind::Object(props) = pat.kind() {
-                props.iter().for_each(|prop| check_key(prop.key(), cx));
+                props.iter().for_each(|prop| check_template_key(prop.key(), cx));
             }
         });
-        on.types([TypeTag::StringLit, TypeTag::Template, TypeTag::Import], Self::check_type);
-        on.import_specs(|_, spec, cx| check_literal(spec.imported().span(), cx));
-        on.export_specs(|_, spec, cx| {
-            check_literal(spec.local().span(), cx);
-            if spec.is_renamed() {
-                check_literal(spec.exported().span(), cx);
-            }
-        });
-        on.stmts(
-            [
-                StmtTag::Import,
-                StmtTag::ExportNamed,
-                StmtTag::ExportStar,
-                StmtTag::ImportEquals,
-                StmtTag::Module,
-            ],
-            Self::check_statement,
-        );
     }
 }

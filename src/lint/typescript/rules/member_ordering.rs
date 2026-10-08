@@ -349,8 +349,10 @@ fn get_member_name<'a>(member: Member<'a>) -> Cow<'a, [u8]> {
         MemberKind::CallSignature => b"call",
         MemberKind::StaticBlock => b"static block",
         MemberKind::IndexSignature => {
+            // Upstream's `getNameFromIndexSignature`: `...a` is a `RestElement`, not an `Identifier`.
             let params = member.func().map(Func::params);
-            match params.and_then(|params| params.iter().find_map(|param| param.pat().as_ident())) {
+            let is_identifier = |param: &Param| !param.is_rest() && param.default().is_none();
+            match params.and_then(|params| params.iter().filter(is_identifier).find_map(|param| param.pat().as_ident())) {
                 Some(name) => name.bytes(),
                 None => b"(index signature)",
             }

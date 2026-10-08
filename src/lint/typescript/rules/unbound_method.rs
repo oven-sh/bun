@@ -160,31 +160,49 @@ fn is_not_imported(symbol: TsSymbol) -> bool {
 /// Whether `property_name` is a member of an instance of a built-in class that the specification
 /// defines as bound to that instance, which TypeScript's library declares as a plain method:
 /// upstream's `nativelyBoundInstanceMethods` is `Collator.compare`.
-fn is_spec_bound_builtin_method(object_type: Type, property_name: Name) -> bool {
-    property_name.is("compare")
+fn is_spec_bound_builtin_method(object_type: Type, property_name: &[u8]) -> bool {
+    property_name == b"compare"
         && object_type
             .get_symbol()
             .is_some_and(|symbol| symbol.name() == b"Collator" && is_symbol_from_default_library(symbol))
+}
+
+/// The `object` of a `MemberExpression`, or what is destructured.
+#[derive(Copy, Clone)]
+struct ObjectNode<'a> {
+    /// Its name, if it is an `Identifier`.
+    identifier: Option<&'a [u8]>,
+    node: TsNode<'a>,
+}
+
+impl<'a> From<Expr<'a>> for ObjectNode<'a> {
+    fn from(object: Expr<'a>) -> Self {
+        ObjectNode {
+            identifier: object.as_ident().map(Name::bytes),
+            node: object.ts_node(),
+        }
+    }
 }
 
 /// The `property` of a `MemberExpression`, or the `key` of a `Property`.
 #[derive(Copy, Clone)]
 struct PropertyNode<'a> {
     /// Its name, if it is an `Identifier`.
-    identifier: Option<Name<'a>>,
+    identifier: Option<&'a [u8]>,
     node: TsNode<'a>,
 }
 
-fn is_natively_bound<'a>(object: Expr<'a>, property: PropertyNode<'a>) -> bool {
+fn is_natively_bound<'a>(object: impl Into<ObjectNode<'a>>, property: PropertyNode<'a>) -> bool {
+    let object = object.into();
     // The types alone do not tell: some declarations are not from the default library but from
     // `@types/node`, and the signature in an interface does not say whether a method is bound.
-    if let (Some(object_name), Some(property_name)) = (object.as_ident(), property.identifier)
-        && is_natively_bound_member(object_name.bytes(), property_name.bytes())
-        && object.ts_symbol().is_some_and(is_not_imported)
+    if let (Some(object_name), Some(property_name)) = (object.identifier, property.identifier)
+        && is_natively_bound_member(object_name, property_name)
+        && object.node.get_symbol_at_location().is_some_and(is_not_imported)
     {
         return true;
     }
-    let object_type = object.ty();
+    let object_type = object.node.get_type_at_location();
     if property.identifier.is_some_and(|property_name| is_spec_bound_builtin_method(object_type, property_name)) {
         return true;
     }
@@ -346,7 +364,7 @@ impl UnboundMethod {
                     return;
                 }
                 let property = PropertyNode {
-                    identifier: Some(name.name()),
+                    identifier: Some(name.bytes()),
                     node: NameOf(node).ts_node(),
                 };
                 if !is_natively_bound(object, property) {
@@ -355,7 +373,7 @@ impl UnboundMethod {
             }
             ExprKind::Index { obj: object, index, .. } => {
                 let property = PropertyNode {
-                    identifier: index.as_ident(),
+                    identifier: index.as_ident().map(Name::bytes),
                     node: index.ts_node(),
                 };
                 if is_natively_bound(object, property) {
@@ -379,6 +397,37 @@ impl UnboundMethod {
         }
     }
 
+    /// `implements a.b`, and `extends a.b` of an interface: a `MemberExpression` for ESLint, a type here.
+    fn check_heritage<'a>(&self, heritage: TypeNode<'a>, cx: &Cx<'a, Self>) {
+        let TypeKind::Ref { name, .. } = heritage.kind() else {
+            return;
+        };
+        let (Some(first), Some(property_name)) = (name.first(), name.last().filter(|_| name.len() > 1)) else {
+            return;
+        };
+        let node = heritage.ts_node();
+        let access = match node.kind() {
+            SyntaxKind::PropertyAccessExpression => Some(node),
+            _ => node.children().next().filter(|it| it.kind() == SyntaxKind::PropertyAccessExpression),
+        };
+        let mut children = access.into_iter().flat_map(TsNode::children);
+        let (Some(object), Some(property)) = (children.next(), children.next()) else {
+            return;
+        };
+        let object = ObjectNode {
+            identifier: (name.len() == 2).then(|| first.bytes()),
+            node: object,
+        };
+        let property = PropertyNode {
+            identifier: Some(property_name.bytes()),
+            node: property,
+        };
+        if !is_natively_bound(object, property) {
+            let object_type = object.node.get_type_at_location();
+            self.check_union_constituents_and_report(cx, name.span(), property_name.bytes(), object_type);
+        }
+    }
+
     fn check_property<'a>(
         &self,
         cx: &Cx<'a, Self>,
@@ -389,7 +438,7 @@ impl UnboundMethod {
     ) {
         if let Some(init_node) = pattern.init_node {
             let property = PropertyNode {
-                identifier: Some(key_name),
+                identifier: Some(key_name.bytes()),
                 node: key_node,
             };
             if !is_natively_bound(init_node, property) {
@@ -484,5 +533,11 @@ impl Rule for UnboundMethod {
         on.exprs([ExprTag::Dot, ExprTag::Index], Self::check_member_expression);
         on.pats([PatTag::Object], Self::check_binding_pattern);
         on.exprs([ExprTag::Object], Self::check_assignment_target);
+        on.classes(|rule, class, cx| class.implements().iter().for_each(|it| rule.check_heritage(it, cx)));
+        on.stmts([StmtTag::Interface], |rule, statement, cx| {
+            if let StmtKind::Interface(interface) = statement.kind() {
+                interface.extends().iter().for_each(|it| rule.check_heritage(it, cx));
+            }
+        });
     }
 }

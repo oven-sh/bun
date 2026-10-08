@@ -5,6 +5,7 @@ use bun_lint::utils::ts_scope::{
     is_used_global_variable,
 };
 use bun_lint::utils::ts_utils::is_definition_file;
+use rustc_hash::FxHashMap;
 
 /// Disallow unused variables.
 pub struct NoUnusedVars {
@@ -162,29 +163,20 @@ fn is_first_parameter_named<'a>(symbol: Symbol<'a>, pat: Pat<'a>) -> bool {
     first == Some(pat)
 }
 
-/// Whether no parameter of `function` after `variable` is used.
-fn is_after_last_used_arg<'a>(
-    function: Func<'a>,
-    variable: Symbol<'a>,
-    analysis: &VariableAnalysis<'a>,
-) -> bool {
-    let (mut is_posterior, mut is_last) = (false, true);
+/// Where the last parameter of `function` that is used starts. 0 if none is used.
+fn last_used_arg<'a>(function: Func<'a>, analysis: &VariableAnalysis<'a>) -> u32 {
+    let mut last = 0;
     for param in function.params() {
         param.pat().for_each_binding(&mut |pat| {
-            let Some(it) = pat.symbol() else {
-                return;
-            };
-            if it == variable {
-                is_posterior = true;
-            } else if is_posterior
+            if let Some(it) = pat.symbol()
                 && (it.references().next().is_some() || analysis.is_eslint_used(Variable::new(it)))
                 && is_first_parameter_named(it, pat)
             {
-                is_last = false;
+                last = pat.span().start;
             }
         });
     }
-    is_last
+    last
 }
 
 // ───────────────────────────── fixes ─────────────────────────────
@@ -200,8 +192,17 @@ enum ImportFix<'a> {
     Specifier(ImportSpec<'a>),
 }
 
+/// `getDeclaredVariables(declaration)`, from the last to the first: they are reported from the first
+/// to the last, so one that has not been reported is found at once.
+fn imported_variables<'a>(declaration: Import<'a>) -> impl Iterator<Item = Symbol<'a>> {
+    let scope = Node::Stmt(declaration.stmt()).scope();
+    let named = declaration.named().iter().map(|specifier| specifier.local());
+    let locals = declaration.default().into_iter().chain(declaration.namespace()).chain(named);
+    locals.rev().filter_map(move |local| scope.get_name(local.name()))
+}
+
 fn are_all_specifiers_unused(declaration: Import, reported: &SymbolSet) -> bool {
-    Node::Stmt(declaration.stmt()).declared_symbols().into_iter().all(|it| reported.contains(it))
+    imported_variables(declaration).all(|it| reported.contains(it))
 }
 
 fn get_import_fixer<'a>(variable: Variable<'a>, reported: &SymbolSet) -> Option<ImportFix<'a>> {
@@ -265,7 +266,7 @@ fn fix_import_specifier<'a>(
     let is_used_named_specifier = |it: Symbol<'a>| {
         !reported.contains(it) && matches!(it.declarations().next(), Some(Declaration::ImportSpec(_)))
     };
-    if !Node::Stmt(declaration).declared_symbols().into_iter().any(is_used_named_specifier) {
+    if !imported_variables(specifier.import()).any(is_used_named_specifier) {
         // `import Used, { Unused } from 'module'`: from the `,` to the `}`.
         let left_curly = file.tokens_in(declaration).find(|token| token.is_punctuator("{"))?;
         let left_token = file.token_before(left_curly).filter(|token| token.is_punctuator(","))?;
@@ -408,7 +409,7 @@ impl NoUnusedVars {
         &self,
         cx: &Cx<'a, Self>,
         analysis: &VariableAnalysis<'a>,
-        reported: &mut SymbolSet,
+        (reported, last_used_args): (&mut SymbolSet, &mut FxHashMap<Func<'a>, u32>),
         (used, variable): (bool, Variable<'a>),
     ) -> bool {
         let Some(def) = variable.defs().next() else {
@@ -460,9 +461,12 @@ impl NoUnusedVars {
                     report_if_used(VariableType::Parameter);
                     return false;
                 }
+                // Upstream's `isAfterLastUsedArg`.
                 if self.args == Args::AfterUsed
                     && let Some(function) = function_of_plain_parameter(def)
-                    && !is_after_last_used_arg(function, variable.symbol(), analysis)
+                    && let Declaration::Param(pat) = def
+                    && pat.span().start
+                        < *last_used_args.entry(function).or_insert_with(|| last_used_arg(function, analysis))
                 {
                     return false;
                 }
@@ -547,8 +551,9 @@ impl NoUnusedVars {
         let variables = (analysis.unused_variables().iter().map(|it| (false, *it)))
             .chain(used_variables.iter().map(|it| (true, *it)));
         let mut unused_vars = Vec::new();
+        let mut last_used_args = FxHashMap::default();
         for variable in variables {
-            if self.is_unused_variable(cx, &analysis, &mut reported, variable) {
+            if self.is_unused_variable(cx, &analysis, (&mut reported, &mut last_used_args), variable) {
                 unused_vars.push(variable.1);
             }
         }

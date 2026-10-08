@@ -35,15 +35,21 @@ fn does_exponent_need_parens(exponent: Expr) -> bool {
 
 /// Whether a `**` expression in the place of `node` would need parentheses.
 fn does_exponentiation_expression_need_parens(node: Expr) -> bool {
+    // ESLint compares the operand, the arguments and the property of the parent with the call, and
+    // never finds it there if a `ChainExpression` is around it.
+    let is_in_chain_expression = node.is_chain_root();
     let needs_parens = match node.parent() {
         // Not for a decorator.
         Node::Class(class) => class.extends() == Some(node),
         Node::Expr(parent) => match parent.kind() {
-            ExprKind::Binary { op, right, .. } => op == BinOp::Pow && right != node,
-            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
-                call.callee() == node
+            ExprKind::Binary { op, right, .. } => {
+                op == BinOp::Pow && (right != node || is_in_chain_expression)
             }
-            ExprKind::Index { obj, .. } => obj == node,
+            ExprKind::Call(call) | ExprKind::New(call) => {
+                call.callee() == node || is_in_chain_expression
+            }
+            ExprKind::TaggedTemplate(call) => call.callee() == node,
+            ExprKind::Index { obj, .. } => obj == node || is_in_chain_expression,
             // ESLint goes by the name of the type: `TSAsExpression`, but `TSTypeAssertion`.
             ExprKind::As { .. } | ExprKind::AsConst(_) => !parent.is_angle_bracket_assertion(),
             ExprKind::Unary { .. }

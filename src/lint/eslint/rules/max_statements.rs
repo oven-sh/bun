@@ -35,6 +35,7 @@ fn may_contain_blocks(statement: &Stmt) -> bool {
             | StmtTag::Labeled
             | StmtTag::Switch
             | StmtTag::Try
+            | StmtTag::Module
     )
 }
 
@@ -71,6 +72,9 @@ fn count_statements(func: Func) -> usize {
                 finalizer,
                 ..
             } => pending.extend([Some(block), handler, finalizer].into_iter().flatten()),
+            StmtKind::Module(module) => {
+                pending.extend(module.innermost().body().iter().filter(may_contain_blocks));
+            }
             _ => {}
         }
     }

@@ -155,10 +155,7 @@ impl ArrayCallbackReturn {
             .data("arrayMethodName", full_method_name(array_method_name))
     }
 
-    fn check_function<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-        let Node::Func(func) = node else {
-            return;
-        };
+    fn check_function<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if !matches!(func.kind(), FnKind::Expr | FnKind::Arrow) {
             return;
         }
@@ -179,9 +176,12 @@ impl ArrayCallbackReturn {
             }
         }
         // If the end is reachable, there are paths which do not return or throw.
-        if matches!(func.body(), FnBody::Block(_))
-            && cx.state.last().is_some_and(|code_path| code_path.is_current_reachable())
-        {
+        let FnBody::Block(body) = func.body() else {
+            return;
+        };
+        let ends_with_jump =
+            matches!(body.last().map(Stmt::tag), Some(StmtTag::Return | StmtTag::Throw));
+        if !ends_with_jump && func.is_end_reachable() {
             let message = if has_return { EXPECTED_AT_END } else { EXPECTED_INSIDE };
             Self::report(cx, ast_utils::get_function_head_loc(func), message, func, method);
         }
@@ -223,8 +223,7 @@ impl ArrayCallbackReturn {
 
 impl Rule for ArrayCallbackReturn {
     const META: Meta = Meta::eslint("array-callback-return", Kind::Problem).has_suggestions();
-    /// The code paths around the current node.
-    type State<'a> = Vec<CodePath<'a>>;
+    type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -235,16 +234,9 @@ impl Rule for ArrayCallbackReturn {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Vec<CodePath<'a>> {
-        if !file.has_exprs([ExprTag::Fn]) || !file.has_exprs([ExprTag::Call]) {
-            return Vec::new();
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if file.has_exprs([ExprTag::Call]) {
+            on.funcs(Self::check_function);
         }
-        // TODO(api): replace by code_path::Func::is_end_reachable, which analyzes one function.
-        on.code_path_start(|_, code_path, _, cx| cx.state.push(code_path));
-        on.code_path_end(|_, _, _, cx| {
-            cx.state.pop();
-        });
-        on.exit(NodeTags::FUNC, Self::check_function);
-        Vec::new()
     }
 }

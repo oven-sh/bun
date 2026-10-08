@@ -222,7 +222,8 @@ impl NoUseBeforeDefine {
             _ => initializers.iter().any(|it| is_in_range(*it, location)),
         };
         for reference in references {
-            if reference.is_init() {
+            // What JSX makes of `React` is a reference whose identifier is the declaration.
+            if reference.is_init() || reference.is_jsx_pragma() {
                 continue;
             }
             let identifier = reference.span();

@@ -1,7 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ast_utils::{
-    TokenOrText, can_tokens_be_adjacent, get_precedence, is_literal,
-    is_logical_assignment_operator, is_same_reference,
+    TokenOrText, can_tokens_be_adjacent, get_binary_operator_precedence, get_precedence,
+    is_literal, is_logical_assignment_operator, is_same_reference,
 };
 use bun_lint::utils::estree_compat::is_assignment_target;
 
@@ -35,21 +35,6 @@ fn is_non_commutative_operator_with_shorthand(op: BinOp) -> bool {
             | BinOp::UShr
             | BinOp::Pow
     )
-}
-
-/// ESLint's `getPrecedence` of a `BinaryExpression` with an operator that has a shorthand.
-// TODO(api): replace by utils::ast_utils::get_binary_operator_precedence
-fn precedence_of(op: BinOp) -> i32 {
-    match op {
-        BinOp::BitOr => 6,
-        BinOp::BitXor => 7,
-        BinOp::BitAnd => 8,
-        BinOp::Shl | BinOp::Shr | BinOp::UShr => 11,
-        BinOp::Add | BinOp::Sub => 12,
-        BinOp::Mul | BinOp::Div | BinOp::Rem => 13,
-        BinOp::Pow => 15,
-        _ => 0,
-    }
 }
 
 /// Whether evaluating `e` once instead of twice, or the reverse, runs the same getters, setters and
@@ -141,7 +126,9 @@ impl OperatorAssignment {
             }
             let (left_text, new_operator) = (file.slice(before_operator), bin_op_text(op).as_bytes());
             let mut text = [left_text, b"= ", left_text, new_operator].concat();
-            if get_precedence(value) <= precedence_of(op) && !value.is_parenthesized() {
+            if get_precedence(value) <= get_binary_operator_precedence(op)
+                && !value.is_parenthesized()
+            {
                 text.extend_from_slice(file.slice(Span::new(operator.end, value.span().start)));
                 text.push(b'(');
                 text.extend_from_slice(value.text());

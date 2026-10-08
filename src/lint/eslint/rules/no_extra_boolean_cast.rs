@@ -139,7 +139,7 @@ impl NoExtraBooleanCast {
         let ExprKind::Call(call) = e.kind() else {
             return;
         };
-        if !calls_boolean(call) || !self.is_in_flagged_context(e) {
+        if !call.callee().is_ident("Boolean") || !self.is_in_flagged_context(e) || !calls_boolean(call) {
             return;
         }
         cx.report(e, UNEXPECTED_CALL).fix(|fixer| {

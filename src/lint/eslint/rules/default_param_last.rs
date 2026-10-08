@@ -22,7 +22,8 @@ pub fn check<'a, R: Rule>(func: Func<'a>, reports_rest: bool, cx: &Cx<'a, R>) {
     }
     let mut has_seen_required_parameter = false;
     for param in func.params().iter().rev() {
-        let has_default = param.default().is_some();
+        // `...a = []` is an error, and a `RestElement` for ESLint.
+        let has_default = param.default().is_some() && !param.is_rest();
         if !has_default && !param.is_rest() && !param.is_optional() {
             has_seen_required_parameter = true;
         } else if has_seen_required_parameter && (reports_rest || has_default || param.is_optional()) {

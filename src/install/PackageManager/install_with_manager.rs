@@ -357,9 +357,8 @@ pub fn install_with_manager(
                     // `Option::clone` won't see it — map by hand.
                     match &lockfile.trusted_dependencies {
                         Some(td) => *lf.trusted_dependencies = Some(td.clone()?),
-                        // The manifests on disk declare no list, but a workspace is missing
-                        // and can be the one that did. Keep the list that bun.lock records.
-                        None if !summary.pruned_workspaces.is_empty() => {}
+                        // Keep the list that bun.lock records.
+                        None if summary.manifests_incomplete() => {}
                         None => *lf.trusted_dependencies = None,
                     }
 

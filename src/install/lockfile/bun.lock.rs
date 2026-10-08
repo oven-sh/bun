@@ -540,8 +540,7 @@ impl Stringifier {
 
             index_sort::sort_slice_by(&mut tree_sort_buf, tree_sort_is_less_than);
 
-            // A list with no name in the tree is still written: its presence is what turns the
-            // default list off (bun.lockb has `HAS_EMPTY_TRUSTED_DEPENDENCIES_TAG` for this).
+            // Written even when empty: the key is what turns the default list off.
             if lockfile.trusted_dependencies.is_some() {
                 Self::write_indent(writer, *indent)?;
                 if found_trusted_dependencies.len() == 0 {

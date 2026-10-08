@@ -899,9 +899,7 @@ pub struct DiffSummary {
     pub(crate) added_trusted_dependencies:
         ArrayHashMap<TruncatedPackageNameHash, AddedTrustedDependency, ArrayIdentityContext>,
     pub(crate) removed_trusted_dependencies: TrustedDependenciesSet,
-    /// The manifests went from the default trusted list to their own `trustedDependencies`
-    /// list or back. A diff even when no name changed: `[]` adds nothing and still turns the
-    /// default list off.
+    /// A list appeared or disappeared. `[]` adds no name, so the two maps above cannot report it.
     pub(crate) trusted_dependencies_list_toggled: bool,
 
     pub(crate) patched_dependencies_changed: bool,
@@ -913,6 +911,12 @@ pub struct DiffSummary {
 }
 
 impl DiffSummary {
+    /// A workspace listed in the lockfile is missing on disk, so its package.json was not parsed.
+    #[inline]
+    pub(crate) fn manifests_incomplete(&self) -> bool {
+        !self.pruned_workspaces.is_empty()
+    }
+
     #[inline]
     pub(crate) fn changes_resolutions(&self) -> bool {
         self.add > 0
@@ -1547,9 +1551,7 @@ impl Diff {
         Ok(summary)
     }
 
-    /// `trusted_dependencies` is one set for the whole lockfile: the union over the root and
-    /// every workspace manifest. So it is compared once, at the root, after the loop above has
-    /// parsed the workspace members into `to_lockfile`.
+    /// Root only, after the member loop: the set is the union over every parsed manifest.
     fn diff_trusted_dependencies(
         from_lockfile: &mut Lockfile,
         to_lockfile: &Lockfile,
@@ -1602,13 +1604,10 @@ impl Diff {
                 }
             }
 
-            // The list was removed, the default list applies again. Default entries missing from
-            // the old list are added, but not to the lockfile: the default list is never written
-            // there. Old entries outside the default list are removed.
+            // The list was removed: the default list applies again.
             (Some(from_trusted_dependencies), None) => {
-                // A workspace that is missing on disk can be the one that declared the list.
-                // Its manifest was not parsed, so "no list" proves nothing here.
-                if !summary.pruned_workspaces.is_empty() {
+                // The missing manifest can be the one that declares the list.
+                if summary.manifests_incomplete() {
                     return Ok(());
                 }
 
@@ -1637,8 +1636,7 @@ impl Diff {
                 }
             }
 
-            // A list replaced the default list. Every entry is added, even one that is also on
-            // the default list, because the lockfile did not have it. Nothing is removed.
+            // A list replaced the default list.
             (None, Some(to_trusted_dependencies)) => {
                 summary.trusted_dependencies_list_toggled = true;
 

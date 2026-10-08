@@ -53,7 +53,6 @@ struct Http2ResponseData {
     bool endAfterDrain = false;
 
     uint64_t offset = 0;
-    uint64_t totalSize = 0;
     uint8_t state = HTTP_RESPONSE_PENDING;
 
     void appendHeader(const char *name, unsigned nlen, const char *value, unsigned vlen) {

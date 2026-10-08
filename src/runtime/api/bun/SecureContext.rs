@@ -22,6 +22,7 @@ use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsClass as _;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_uws as uws;
+use core::cell::Cell;
 
 /// Re-export the codegen-emitted module so
 /// `$rust(SecureContext.rs, js.getConstructor)` in
@@ -39,7 +40,8 @@ pub(crate) struct SecureContext {
     /// `BunSocketContextOptions.digest()` — exactly the fields that reach
     /// `us_ssl_ctx_from_options`. Stored so an `intern()` WeakGCMap hit (keyed by
     /// the low 64 bits) can do a full content-equality check before reusing.
-    pub(crate) digest: [u8; 32],
+    /// Also `ctx`'s session id context, so `addCACert` folds each added certificate into it.
+    pub(crate) digest: Cell<[u8; 32]>,
     /// Approximate cert/key/CA byte length plus the BoringSSL `SSL_CTX` floor
     /// (~50 KB), so the GC can account for the off-heap allocation.
     pub(crate) extra_memory: usize,
@@ -238,7 +240,7 @@ impl SecureContext {
         let d = ctx_opts.digest();
 
         let mut err = uws::create_bun_socket_error_t::none;
-        let Some(ctx) = ctx_opts.create_ssl_context(&mut err) else {
+        let Some(ctx) = ctx_opts.create_ssl_context_with_digest(&d, &mut err) else {
             if err == uws::create_bun_socket_error_t::none
                 || err == uws::create_bun_socket_error_t::invalid_ciphers
             {
@@ -254,7 +256,7 @@ impl SecureContext {
         };
         let sc = Box::new(SecureContext {
             ctx,
-            digest: d,
+            digest: Cell::new(d),
             extra_memory: ctx_opts.approx_cert_bytes() + SSL_CTX_BASE_COST,
             shared: false,
         });
@@ -284,7 +286,7 @@ impl SecureContext {
                 // 64-bit key collision is ~2⁻⁶⁴ but a false hit hands the wrong
                 // cert to a connection. Full-digest compare is 32 bytes; cheap.
                 // SAFETY: `from_js` returns a live `m_ctx` pointer owned by the JS wrapper.
-                if unsafe { (*existing).digest } == d {
+                if unsafe { (*existing).digest.get() } == d {
                     return Ok(cached);
                 }
             }
@@ -356,7 +358,7 @@ impl SecureContext {
         };
         Ok(Box::new(SecureContext {
             ctx,
-            digest: d,
+            digest: Cell::new(d),
             extra_memory: ctx_opts.approx_cert_bytes() + SSL_CTX_BASE_COST,
             shared: true,
         }))
@@ -411,6 +413,21 @@ impl SecureContext {
         };
         if ok == 0 {
             return Err(global.throw(format_args!("Invalid CA certificate")));
+        }
+        // Its trust set changed, so it stops sharing sessions with same-option contexts.
+        let mut folded = [0u8; 32];
+        let mut hasher = bun_sha_hmac::SHA256::init();
+        hasher.update(&this.digest.get());
+        hasher.update(bytes);
+        hasher.r#final(&mut folded);
+        this.digest.set(folded);
+        // SAFETY: `this.ctx` is live; the call copies the 32 bytes.
+        unsafe {
+            boringssl::SSL_CTX_set_session_id_context(
+                this.ctx.as_ptr(),
+                folded.as_ptr(),
+                folded.len(),
+            );
         }
         Ok(JSValue::UNDEFINED)
     }

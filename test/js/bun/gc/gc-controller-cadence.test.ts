@@ -151,6 +151,15 @@ describe.skipIf(isDebug)("GarbageCollectionController eden cadence", () => {
     // Observed ~128 before the fix (env var ignored).
     expect(eden).toBeLessThan(5);
   });
+
+  // A parked app whose timers still allocate a little (a TUI redrawing its prompt) is idle: after 30 ticks in which the
+  // heap grew by less than the slack, the tick goes from BUN_GC_TIMER_INTERVAL to 30 s. The back-off used to test for no
+  // growth at all, so a trickle of a few KB per tick kept it requesting an eden collection on every tick for as long as
+  // the app sat there (20 ms ticks, 4 KB every 20 ms for 1.6 s: ~80 collections before, ~32 after).
+  test.concurrent("the tick backs off while timers allocate a trickle", async () => {
+    const { eden } = await countEdenCollections({ BUN_GC_TIMER_INTERVAL: "20" }, 80, 4_000, 20);
+    expect(eden).toBeLessThan(55);
+  });
 });
 
 // After BUN_IDLE_GC_SECONDS of timer ticks in which the JS heap did not grow,
@@ -241,12 +250,56 @@ describe("idle release", () => {
     15_000, // It fills 100 MB and waits for the collection.
   );
 
+  // A requested collection advances at the mutator's safepoints while the mutator holds the collector's conn, and a
+  // program parked in the event loop has none: a heap that does not finish marking in the first increment used to sit in
+  // its concurrent phase until the program did something (the timer's eden requests are subsumed by it and provide no
+  // safepoint). The JS thread now parks without heap access while an idle collection is unfinished, so the collector
+  // thread finishes it. Not on Windows (libuv), where the ticks still drive it; debug/ASAN builds take too long to build
+  // the heap. The child exits by itself so that JSC's buffered GC log is complete when it is read.
+  (isWindows || isASAN || isDebug ? test.skip : test.concurrent)(
+    "an idle collection finishes while the program is parked",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `globalThis.live = new Map();
+           for (let i = 0; i < 400_000; i++) live.set(i, { id: i, name: "user-" + i, tags: ["a" + i, "b" + i], extra: { a: i, c: [i, i + 1] } });
+           Bun.gc(true);
+           console.error("PARKED");
+           setTimeout(() => process.exit(0), 4000);`,
+        ],
+        env: {
+          ...bunEnv,
+          BUN_IDLE_GC_SECONDS: "1",
+          BUN_JSC_logGC: "1",
+          BUN_GC_TIMER_DISABLE: undefined,
+          BUN_GC_TIMER_INTERVAL: undefined,
+          // No courtesy safepoints on the first parks after JS ran: the collection gets none unless the park provides for it.
+          BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS: "0",
+        },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const log = stderr.slice(stderr.indexOf("PARKED"));
+      // Every full collection that started while parked (the idle one starts ~1 s in) has ended by the time the program exits.
+      const starts = [...log.matchAll(/=> FullCollection/g)].map(m => m.index);
+      expect(starts.length, log).toBeGreaterThan(0);
+      for (const start of starts)
+        expect(log.indexOf("END]", start), log.slice(start, start + 600)).toBeGreaterThan(start);
+      expect(exitCode).toBe(0);
+    },
+    20_000,
+  );
+
   // An idle collection is requested, not run: it proceeds at the mutator's safepoints, and in a program that runs no JS
-  // those are the timer's ticks. With the collection requested on the 30 s tick (a 20 ms tick goes slow after 0.6 s) a
-  // server held on to 1.5 GB of a burst's garbage for a minute and a half after its traffic stopped: the timer now stays on
-  // its fast tick for 30 ticks after one. 50 MB stay alive so that the collection does not finish in the step that starts
-  // it; the 300 MB that nothing refers to any more a second in have survived a full collection, so only another one frees
-  // them. Linux: it reads /proc; ASAN and debug builds take too long to fill the heap.
+  // there are none once it parks in the event loop. With the collection requested on the 30 s tick (a 20 ms tick goes
+  // slow after 0.6 s) a server held on to 1.5 GB of a burst's garbage for a minute and a half after its traffic stopped:
+  // the JS thread now gives up heap access while it is parked with such a collection unfinished, and the collector thread
+  // finishes it. 50 MB stay alive so that the collection does not finish in the step that starts it; the 300 MB that
+  // nothing refers to any more a second in have survived a full collection, so only another one frees them. Linux: it
+  // reads /proc; ASAN and debug builds take too long to fill the heap.
   (!isLinux || isASAN || isDebug ? test.skip : test.concurrent)(
     "a burst's garbage is given back within seconds of the idle collection",
     async () => {

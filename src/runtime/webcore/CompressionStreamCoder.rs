@@ -803,7 +803,6 @@ pub(crate) extern "C" fn CompressionStreamCoder__create(
 
 /// Releases the C++ cell's reference; see [`CompressionStreamCoder::ref_count`].
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCoder) {
     if !this.is_null() {
         // SAFETY: `this` was returned by `CompressionStreamCoder__create` and
@@ -816,7 +815,6 @@ pub(crate) extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionS
 /// a fresh (possibly empty) `Uint8Array` and sets `more` if the coder must be
 /// stepped again (with `input` null), or throws a `TypeError` and returns zero.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) extern "C" fn CompressionStreamCoder__transform(
     this: *mut CompressionStreamCoder,
     global: &JSGlobalObject,
@@ -888,7 +886,6 @@ fn throw_codec_error(global: &JSGlobalObject, e: CodecError) {
 /// native JSSink `sink_ptr`: returns the sink's `write` result (see
 /// nativeSinkWriteIsBackpressure), `undefined` when there was no output.
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
     this: *mut CompressionStreamCoder,
     global: &JSGlobalObject,
@@ -1025,7 +1022,6 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
 /// Schedules one off-thread step; a continuation step passes no chunk and no
 /// input (the coder kept the tail).
 #[unsafe(no_mangle)]
-#[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) extern "C" fn CompressionStreamCoder__transformAsync(
     this: *mut CompressionStreamCoder,
     global: &JSGlobalObject,

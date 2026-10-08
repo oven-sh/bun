@@ -124,7 +124,6 @@ struct us_quic_stream_s {
     lsquic_stream_t *stream;
     us_quic_socket_context_t *ctx;
     struct us_quic_hset *hset;
-    int headers_delivered;
     int fin_delivered;
     /* Set by us_quic_flush_from_on_write, cleared by on_write. */
     int flush_on_write;
@@ -696,7 +695,6 @@ static int us_quic_deliver_hset(lsquic_stream_t *stream, us_quic_stream_t *s) {
     us_quic_hset_finalize(hset);
     us_quic_hset_free(s->hset);
     s->hset = hset;
-    s->headers_delivered = 1;
     if (s->ctx->on_stream_headers) s->ctx->on_stream_headers(s);
     return s->stream ? 1 : -1;
 }

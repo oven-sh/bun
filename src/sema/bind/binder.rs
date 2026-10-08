@@ -15,13 +15,15 @@ struct Label {
 /// Most have a few, which take no allocation and are compared one after the other.
 #[derive(Default)]
 struct Table {
-    few: SmallVec<[(Atom, SymbolId); 4]>,
+    few: SmallVec<[(Atom, SymbolId); Table::FEW]>,
     /// In place of `few`, once there are more than `Table::FEW`.
-    many: Option<Box<FxHashMap<Atom, SymbolId>>>,
+    many: Option<Box<Names>>,
 }
 
+type Names = FxHashMap<Atom, SymbolId>;
+
 impl Table {
-    const FEW: usize = 12;
+    const FEW: usize = 8;
 
     #[inline]
     fn get(&self, name: &Atom) -> Option<&SymbolId> {
@@ -36,8 +38,8 @@ impl Table {
         self.get(name).is_some()
     }
 
-    /// Returns what the name stood for.
-    fn insert(&mut self, name: Atom, symbol: SymbolId) -> Option<SymbolId> {
+    /// Returns what the name stood for. `spare`: maps that are empty and have room.
+    fn insert(&mut self, name: Atom, symbol: SymbolId, spare: &mut Vec<Box<Names>>) -> Option<SymbolId> {
         if let Some(many) = &mut self.many {
             return many.insert(name, symbol);
         }
@@ -48,15 +50,16 @@ impl Table {
             self.few.push((name, symbol));
             return None;
         }
-        let mut many: FxHashMap<Atom, SymbolId> = std::mem::take(&mut self.few).into_iter().collect();
+        let mut many = spare.pop().unwrap_or_default();
+        many.extend(self.few.drain(..));
         many.insert(name, symbol);
-        self.many = Some(Box::new(many));
+        self.many = Some(many);
         None
     }
 
-    fn extend(&mut self, entries: impl IntoIterator<Item = (Atom, SymbolId)>) {
+    fn extend(&mut self, entries: impl IntoIterator<Item = (Atom, SymbolId)>, spare: &mut Vec<Box<Names>>) {
         for (name, symbol) in entries {
-            self.insert(name, symbol);
+            self.insert(name, symbol, spare);
         }
     }
 
@@ -99,6 +102,7 @@ enum IsComputedName {
 pub(super) struct Room {
     pub(super) b: BoundBuilder,
     tables: Vec<Table>,
+    spare_names: Vec<Box<Names>>,
     statement_lists: Vec<IdList<StmtId>>,
     idents: Vec<(ExprId, ScopeId)>,
     assigned: Vec<ExprId>,
@@ -160,6 +164,8 @@ pub(super) struct Binder<'f, 's, const LINT: bool> {
     atoms: &'f dyn crate::atom::Intern,
     b: BoundBuilder,
     tables: Vec<Table>,
+    /// For `Table::insert`.
+    spare_names: Vec<Box<Names>>,
     scope: ScopeId,
     /// The enclosing statement lists, innermost last: of the file, of namespaces and of blocks.
     statement_lists: Vec<IdList<StmtId>>,
@@ -332,13 +338,8 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             import_scope: filled(old.import_scope, f.imports.len(), ScopeId::NONE),
             import_equals_scope: filled(old.import_equals_scope, f.import_equals.len(), ScopeId::NONE),
             export_scope: filled(old.export_scope, f.exports.len(), ScopeId::NONE),
-            symbols: old.symbols,
-            scopes: old.scopes,
-            ids: old.ids,
-            declared: old.declared,
-            scope_node: old.scope_node,
-            expr_kind_counts: old.expr_kind_counts,
-            ..Default::default()
+            // Empty, with the room they had.
+            ..old
         };
         if !LINT {
             b.flow.push(Flow::Unreachable);
@@ -350,6 +351,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             atoms,
             b,
             tables: std::mem::take(&mut room.tables),
+            spare_names: std::mem::take(&mut room.spare_names),
             scope: ScopeId::NONE,
             statement_lists: std::mem::take(&mut room.statement_lists),
             idents: std::mem::take(&mut room.idents),
@@ -402,6 +404,10 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             };
         }
         this.finish();
+        for mut names in this.tables.iter_mut().filter_map(|table| table.many.take()) {
+            names.clear();
+            this.spare_names.push(names);
+        }
         this.tables.clear();
         this.statement_lists.clear();
         this.idents.clear();
@@ -412,6 +418,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         this.returns.clear();
         this.yields.clear();
         room.tables = this.tables;
+        room.spare_names = this.spare_names;
         room.statement_lists = this.statement_lists;
         room.idents = this.idents;
         room.assigned = this.assigned;
@@ -722,7 +729,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             None => {
                 let symbol = self.new_symbol(SymFlags::empty(), name);
                 if !is_in_no_table {
-                    self.tables[table.idx()].insert(name, symbol);
+                    self.tables[table.idx()].insert(name, symbol, &mut self.spare_names);
                 }
                 if is_replaceable_by_method {
                     self.b.symbols[symbol.idx()].flags |= replaceable;
@@ -741,7 +748,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
                 } else if there.contains(replaceable) {
                     // "Javascript constructor-declared symbols can be discarded in favor of prototype symbols like methods."
                     let symbol = self.new_symbol(SymFlags::empty(), name);
-                    self.tables[table.idx()].insert(name, symbol);
+                    self.tables[table.idx()].insert(name, symbol, &mut self.spare_names);
                     symbol
                 } else if includes.intersects(variable) && there.contains(assignment)
                     || includes.contains(assignment) && there.intersects(variable)
@@ -1492,7 +1499,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
                     let (flags, decl) = (SymFlags::MODULE_EXPORTS, Decl::CommonJsVariable);
                     let variable = flags | SymFlags::FUNCTION_SCOPED_VARIABLE;
                     let symbol = self.bind_anonymous_declaration(decl, variable, name);
-                    self.tables[locals.idx()].insert(name, symbol);
+                    self.tables[locals.idx()].insert(name, symbol, &mut self.spare_names);
                     // Its parent is `module`, which `getSymbolChain` never prints, because its
                     // declaration is the file.
                     if name == known::module {
@@ -1530,7 +1537,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             return;
         }
         let table = self.get_exports(equals);
-        self.tables[table.idx()].extend(promoted);
+        self.tables[table.idx()].extend(promoted, &mut self.spare_names);
         self.b.symbols[equals.idx()].flags |= SymFlags::NAMESPACE_MODULE;
     }
 
@@ -1740,7 +1747,8 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
     /// `bindDeferredExpandoAssignments`: `f.name = value`, `f[key] = value` and, in JavaScript,
     /// `Object.defineProperty(f, key, descriptor)` declare a property of `f`.
     fn bind_deferred_expando_assignments(&mut self) {
-        for (e, scope) in std::mem::take(&mut self.expando_assignments) {
+        let assignments = std::mem::take(&mut self.expando_assignments);
+        for &(e, scope) in &assignments {
             let Some(scope) = self.container_of_expando(e, scope) else {
                 continue;
             };
@@ -1806,6 +1814,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             }
             self.b.expando_declarations.push(e);
         }
+        self.expando_assignments = assignments;
         self.b.expando_declarations.as_mut_slice().sort_unstable();
     }
 
@@ -3426,7 +3435,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             SymFlags::TYPE_PARAMETER_EXCLUDES,
         );
         if !self.tables[locals.idx()].contains_key(&self.f[p].name) {
-            self.tables[locals.idx()].insert(self.f[p].name, symbol);
+            self.tables[locals.idx()].insert(self.f[p].name, symbol, &mut self.spare_names);
         }
         self.declared_in(scope, Decl::TypeParam(p), symbol)
     }
@@ -3773,7 +3782,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         let exports = self.get_exports(symbol);
         let prototype = self.new_symbol(SymFlags::PROPERTY, known::prototype);
         self.b.symbols[prototype.idx()].parent = symbol;
-        if let Some(exported) = self.tables[exports.idx()].insert(known::prototype, prototype)
+        if let Some(exported) = self.tables[exports.idx()].insert(known::prototype, prototype, &mut self.spare_names)
             && let Some(&decl) = self.b.symbols[exported.idx()].decls.first()
         {
             self.b.redeclarations.push(Redeclaration {
@@ -4461,7 +4470,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
                     if !is_stray {
                         let own = self.push_scope(ScopeKind::InferConstraint, SymbolId::NONE);
                         let locals = self.b.scopes[own.idx()].locals;
-                        self.tables[locals.idx()].insert(name, symbol);
+                        self.tables[locals.idx()].insert(name, symbol, &mut self.spare_names);
                     }
                     self.ty(constraint);
                     if !is_stray {
@@ -5081,7 +5090,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             Some(&all) => self.add_declaration_to_symbol(all, decl, SymFlags::empty()),
             None => {
                 let all = self.bind_anonymous_declaration(decl, SymFlags::empty(), name);
-                self.tables[exports.idx()].insert(name, all);
+                self.tables[exports.idx()].insert(name, all, &mut self.spare_names);
             }
         }
     }

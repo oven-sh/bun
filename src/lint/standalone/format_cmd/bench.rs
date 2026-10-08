@@ -1,8 +1,7 @@
 //! `bun-lint format bench`.
 
-use super::{Args, collect_files};
+use super::{Args, collect_files, with_file_as};
 use bun_format::Scratch;
-use bun_lint::language::LanguageOptions;
 use std::hash::Hasher as _;
 
 /// `--check` does what `prettier --check` does: it reads each file, formats it and compares. Otherwise the files are read once,
@@ -34,7 +33,6 @@ pub(super) fn bench(args: &Args) {
         true => Vec::new(),
         false => paths.iter().map(|path| std::fs::read(path).unwrap_or_default()).collect(),
     };
-    let language = LanguageOptions::default();
     let (parsing, formatting, bytes) = (AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0));
     let (changed, failed) = (AtomicU64::new(0), AtomicU64::new(0));
     let hashes: Vec<AtomicU64> = paths.iter().map(|_| AtomicU64::new(0)).collect();
@@ -65,18 +63,28 @@ pub(super) fn bench(args: &Args) {
                 formatting.fetch_add(start.elapsed().as_nanos() as u64, Relaxed);
                 return;
             }
-            crate::with_file(&paths[i], code, &language, |file| {
-                parsing.fetch_add(start.elapsed().as_nanos() as u64, Relaxed);
-                if is_only_parsing {
-                    return;
-                }
-                let start = std::time::Instant::now();
-                BUFFERS.with_borrow_mut(|(scratch, out)| {
-                    out.clear();
-                    note(bun_format::format(file, &args.options, scratch, out), out);
+            // As `bun format` does: as a module, and if that is a syntax error, as a script.
+            for is_script in [false, true] {
+                let is_done = with_file_as(is_script, &paths[i], code, |file| {
+                    if file.has_parse_errors() && !is_script {
+                        return false;
+                    }
+                    parsing.fetch_add(start.elapsed().as_nanos() as u64, Relaxed);
+                    if is_only_parsing {
+                        return true;
+                    }
+                    let start = std::time::Instant::now();
+                    BUFFERS.with_borrow_mut(|(scratch, out)| {
+                        out.clear();
+                        note(bun_format::format(file, &args.options, scratch, out), out);
+                    });
+                    formatting.fetch_add(start.elapsed().as_nanos() as u64, Relaxed);
+                    true
                 });
-                formatting.fetch_add(start.elapsed().as_nanos() as u64, Relaxed);
-            });
+                if is_done {
+                    break;
+                }
+            }
         });
     }
     let wall = started.elapsed().as_secs_f64();

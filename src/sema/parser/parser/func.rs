@@ -209,10 +209,6 @@ impl Parser<'_> {
                 break;
             }
         }
-        if self.s.type_params.len() == base {
-            // An empty list is an error.
-            self.refuse(Refusal::Reported);
-        }
         if self.options.is_javascript
             && let [first, .., last] | [first @ last] = self.s.type_params[base..]
         {

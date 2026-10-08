@@ -47,14 +47,14 @@ impl Parser<'_> {
         if self.token() == T::With
             && !(is_export && self.newline_before() && !self.is_ecmascript)
         {
-            mode = self.import_attributes();
+            mode = self.import_attributes(false);
         } else if self.token() == T::Assert && !self.newline_before() {
             // An error of the native parser.
             match self.options.dialect.typescript_5 {
                 true => self.flag(DiagnosticKind::Grammar, 2880, (self.lx.start, self.lx.end), &[]),
                 false => self.report(),
             }
-            mode = self.import_attributes();
+            mode = self.import_attributes(false);
         }
         if !is_type_only {
             mode = ResolutionMode::None;
@@ -69,10 +69,14 @@ impl Parser<'_> {
     }
 
     /// `parseImportAttributes`, at `with`: they are kept as an object literal. Returns
-    /// `getResolutionModeOverride`.
-    fn import_attributes(&mut self) -> ResolutionMode {
+    /// `getResolutionModeOverride`. `is_in_type`: in `import("a", { with: { .. } })`, where a colon
+    /// follows the keyword.
+    pub(crate) fn import_attributes(&mut self, is_in_type: bool) -> ResolutionMode {
         let keyword = self.pos();
         self.next();
+        if is_in_type {
+            self.expect(T::Colon);
+        }
         let open = self.pos();
         self.expect(T::OpenBrace);
         let base = self.s.props.len();

@@ -71,7 +71,15 @@ impl Parser<'_> {
             self.note_identifier(name, name_pos);
             self.next();
         }
+        let less_than = (self.token() == T::LessThan).then(|| self.pos());
         let type_params = self.type_parameters();
+        // `checkGrammarClassLikeDeclaration`. The checker finds the empty list of anything else in
+        // the text.
+        if let Some(less_than) = less_than
+            && type_params.is_empty()
+        {
+            self.flag(DiagnosticKind::Grammar, 1098, (less_than, self.prev_end()), &[]);
+        }
         let (mut extends, mut extends_args) = (ExprId::NONE, IdList::EMPTY);
         if self.eat(T::Extends) {
             // `isHeritageClauseExtendsOrImplementsKeyword`: the list is empty.
@@ -382,9 +390,8 @@ impl Parser<'_> {
 
     /// `parseClassStaticBlockDeclaration`, at `static`.
     fn class_static_block(&mut self, start: Start, first_modifier: usize) {
-        if self.s.modifiers.len() > first_modifier {
-            self.refuse(Refusal::Reported);
-        }
+        // The checker reports them.
+        let modifiers = self.take_modifiers(first_modifier);
         self.next();
         let open = self.pos();
         // `parseClassStaticBlockBody`
@@ -415,7 +422,7 @@ impl Parser<'_> {
                 pos: start.full,
                 end: self.prev_end(),
             },
-            modifiers: Span::EMPTY,
+            modifiers,
         });
     }
 }

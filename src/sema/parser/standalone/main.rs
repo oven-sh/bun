@@ -5,6 +5,7 @@
 //!   compares the results node by node. A `.jsonl` file is a list of texts, one to a line:
 //!   `{"id", "filename", "code", "sourceType", "parser"}`. Without `--dialect` such a text is read as
 //!   its `parser` reads it, `"espree"` or `"typescript"`, and a file as `tsc` reads it.
+//! - `dump <inputs as for compare>`: what the reference makes of each.
 //! - `bench <file or directory>.. [--reference] [--repeat=n]`: parses every file on one thread.
 //! - `snippets <file.json>..`: the same comparison for the `code` strings of test fixtures.
 
@@ -400,6 +401,30 @@ fn compare(args: &[String]) {
         .print(flag(args, "show").unwrap_or(10), list);
 }
 
+fn dump(args: &[String]) {
+    for input in inputs_of(args) {
+        let Some(text) = input.text.or_else(|| std::fs::read(&input.path).ok()) else {
+            continue;
+        };
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let dialect = input.dialect;
+        let (reference, _) = bun_js_parser::sema::summarize_with_recovery(
+            dialect,
+            false,
+            (session.arena(), &session),
+            input.path.as_bytes(),
+            None,
+            &text,
+            &atoms,
+            args.iter().any(|arg| arg == "--decorators"),
+            dialect != Dialect::default() && !dialect.script,
+        );
+        let (nodes, _) = bun_sema_standalone::hir_dump::dump_and_orphans(&reference, &atoms);
+        println!("=== {}\n{nodes}", input.id);
+    }
+}
+
 /// `fuzz <file or directory>.. [--rounds=n] [--seed=n] [--jobs=n] [--keep=directory] [--dialect=..]`
 fn fuzz(args: &[String]) {
     let files = files_of(args);
@@ -485,6 +510,7 @@ fn main() {
         bun_sema_standalone::native::set_stack_size(stack - (256 << 10));
         match args.first().map(String::as_str) {
             Some("compare") => compare(&args[1..]),
+            Some("dump") => dump(&args[1..]),
             Some("bench") => bench(&args[1..]),
             Some("fuzz") => fuzz(&args[1..]),
             _ => eprintln!("usage: bun-hir compare|bench <paths>"),

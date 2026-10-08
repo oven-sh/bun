@@ -37,6 +37,27 @@ fn binary_operator(token: T) -> BinOp {
     }
 }
 
+/// Whether `end` is in a tuple, in an object type or among parameters in the text of types `text`.
+fn is_in_list_of_type(text: &[u8], end: usize) -> bool {
+    let mut open = Vec::new();
+    for (at, c) in text.iter().enumerate().take(end) {
+        match c {
+            b'(' | b'[' | b'{' => open.push(at),
+            b')' | b']' | b'}' => drop(open.pop()),
+            _ => {}
+        }
+    }
+    // `isUnambiguouslyStartOfFunctionType`: otherwise it is a type in parentheses.
+    let starts_parameters = |after: &[u8]| {
+        let after = after.trim_ascii_start();
+        let is_in_name = |c: &&u8| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'$' | 0x80..);
+        let name = after.iter().take_while(is_in_name).count();
+        let next = after.get(name..).unwrap_or_default().trim_ascii_start().first();
+        name == 0 || matches!(next, None | Some(b':' | b',' | b'?' | b'=' | b')'))
+    };
+    open.iter().any(|&at| text[at] != b'(' || starts_parameters(&text[at + 1..]))
+}
+
 /// The operator that a compound assignment combines with. `None` for `=`.
 fn assignment_operator(token: T) -> Option<BinOp> {
     Some(match token {
@@ -1050,10 +1071,32 @@ impl Parser<'_> {
         });
         // TypeScript reports an error in a type and goes on. What it goes on with can end with a `>`,
         // and then these are type arguments with an error in them.
-        if type_arguments.is_none() && self.was_abandoned_at.is_some() {
+        if type_arguments.is_none()
+            && let Some((failed_token, failed_at)) = self.was_abandoned_at
+        {
             let rest = self.lx.src.get(less_than..).unwrap_or_default();
             let statement = rest.get(..256).unwrap_or(rest);
             let statement = match bun_core::strings::index_of_char_usize(statement, b';') {
+                Some(end) => &statement[..end],
+                None => statement,
+            };
+            // It skips no token on the way: any but a comma ends a list of type arguments, which
+            // makes `isInSomeParsingContext` true. So it does not get past a bracket that closes
+            // what was opened before the `<`.
+            let mut depth = 0u32;
+            let is_unmatched = |c: &u8| match c {
+                b'(' | b'[' | b'{' => {
+                    depth += 1;
+                    false
+                }
+                b')' | b']' | b'}' if depth == 0 => true,
+                b')' | b']' | b'}' => {
+                    depth -= 1;
+                    false
+                }
+                _ => false,
+            };
+            let statement = match statement.iter().position(is_unmatched) {
                 Some(end) => &statement[..end],
                 None => statement,
             };
@@ -1067,7 +1110,15 @@ impl Parser<'_> {
                         c.is_ascii_alphanumeric() || b"_$\"'{[<+-~#@".contains(c) || *c >= 0x80
                     })
             };
-            let mut from = 0;
+            // What is before the error was read without one.
+            let mut from = (failed_at as usize).saturating_sub(less_than);
+            // A word where none is expected is left to what is around. Only a list takes it, as its
+            // next element after a missing comma.
+            if failed_token.is_identifier_or_keyword()
+                && !is_in_list_of_type(statement, from)
+            {
+                from = statement.len();
+            }
             while let Some(found) = statement
                 .get(from..)
                 .and_then(|rest| bun_core::strings::index_of_char_usize(rest, b'>'))

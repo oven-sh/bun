@@ -173,10 +173,10 @@ pub(crate) struct Parser<'a> {
     speculations: u32,
     /// `report` was called in one of them.
     has_reported: bool,
-    /// The token at which `fail` was called last.
-    failed_at: T,
+    /// The token at which `fail` was called last, and its position.
+    failed_at: (T, u32),
     /// The last `try_parse` was abandoned because of that call.
-    pub(crate) was_abandoned_at: Option<T>,
+    pub(crate) was_abandoned_at: Option<(T, u32)>,
     stack_check: bun_core::StackCheck,
 }
 
@@ -228,7 +228,7 @@ impl<'a> Parser<'a> {
             last_nullable_type: (TypeNodeId::NONE, 0),
             speculations: 0,
             has_reported: false,
-            failed_at: T::Eof,
+            failed_at: (T::Eof, 0),
             was_abandoned_at: None,
             stack_check: bun_core::StackCheck::init(),
         };
@@ -387,7 +387,7 @@ impl<'a> Parser<'a> {
     #[track_caller]
     pub(crate) fn fail(&mut self) {
         if !self.has_failed() {
-            self.failed_at = self.lx.token;
+            self.failed_at = (self.lx.token, self.lx.start);
         }
         self.lx.refuse(Refusal::Syntax);
     }

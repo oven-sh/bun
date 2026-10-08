@@ -816,15 +816,32 @@ impl Parser<'_> {
         }
         let (spec, spec_pos) = (self.lx.atom, self.pos());
         self.next();
-        if self.token() == T::Comma {
-            self.refuse(Refusal::Unsupported);
+        let (mut mode, mut attributes) = (ResolutionMode::None, ImportAttributesToken::None);
+        // `{ with: { name: "value" } }`
+        if self.eat(T::Comma) {
+            self.expect(T::OpenBrace);
+            attributes = match self.token() {
+                T::With => ImportAttributesToken::With,
+                // An error of the parser.
+                T::Assert => {
+                    self.report();
+                    ImportAttributesToken::Assert
+                }
+                _ => {
+                    self.fail();
+                    ImportAttributesToken::None
+                }
+            };
+            mode = self.import_attributes(true);
+            self.eat(T::Comma);
+            self.expect(T::CloseBrace);
         }
         self.expect(T::CloseParen);
         self.f.specifier_uses.push(SpecifierUse {
             spec,
             pos: spec_pos,
             kind: SpecifierKind::ImportType,
-            mode: ResolutionMode::None,
+            mode,
         });
         let mut name = Span::EMPTY;
         if self.eat(T::Dot) {
@@ -847,8 +864,8 @@ impl Parser<'_> {
             name,
             args,
             is_typeof,
-            mode: ResolutionMode::None,
-            attributes: ImportAttributesToken::None,
+            mode,
+            attributes,
         };
         self.finish_type(kind, start)
     }

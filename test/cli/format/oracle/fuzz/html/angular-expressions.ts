@@ -472,7 +472,17 @@ const kinds: Record<string, () => [string, string, string]> = {
   ],
   directive: () => [`<a ${pick(["*x", "*ngIf", "*ngFor"])}="`, microsyntax(inAttribute), `"></a>`],
   interpolation: () => [pick(["{{", "{{ ", "<b>{{", "text {{ "]), pipe(base, inText) + comment(), pick(["}}", " }}"])],
-  attribute: () => [`<a x="${pick(["", "a ", "{{ b }} "])}{{`, pipe(base, inAttribute), `}}${pick(["", " c"])}"></a>`],
+  attribute: () => [
+    `<a x="${pick(["", "a ", "{{ b }} ", "{{ }}", "a\n  {{\n}} "])}{{`,
+    pipe(base, inAttribute),
+    `}}${pick(["", " c"])}"></a>`,
+  ],
+  i18n: () => {
+    const words: string[] = [];
+    for (let n = upTo(14); n > 0; n--) words.push(pick([...names, "|", "@@id", "{{ a }}", "&quot;", "meaning|description"]));
+    const value = gap() + words.map(word => word + pick([" ", " ", " ", "  ", "\n", "\n\n  "])).join("");
+    return [`<${pick(["a", "a", "pre", "textarea", "p"])} ${pick(["i18n", "i18n-title", "i18n-a.b", "i18n-"])}="`, value, `">`];
+  },
   if: () => [`@if (`, microsyntax(inText), `) {}`],
   for: () => [
     `@for (`,

@@ -13,6 +13,7 @@ use super::js::{self, AngularExpression, Hug};
 use super::printer::Printer;
 use super::utilities::{html_split, html_trim_preserve_indentation, min_indentation};
 use crate::css::text;
+use crate::ir::element::TextWidth;
 use crate::options::{HtmlRoot, InHtml};
 use crate::prelude::*;
 use crate::write;
@@ -128,6 +129,17 @@ fn key_name(part: &Part) -> Option<&[u8]> {
 /// `isNgForOf`
 fn is_ng_for_of(part: &Part, index: usize) -> bool {
     index == 1 && matches!(part, Part::KeyedExpression { key, .. } if key == b"of")
+}
+
+/// Whether there is nothing but what is white space to Angular in `code`.
+fn is_blank(mut code: &[u8]) -> bool {
+    loop {
+        code = match code {
+            [] => return true,
+            [0..=b' ', rest @ ..] | [0xC2, 0xA0, rest @ ..] => rest,
+            _ => return false,
+        };
+    }
 }
 
 /// What `text.split(/\{\{(.+?)\}\}/s)` returns: a text, and then, any number of times, what is between `{{` and `}}` and
@@ -461,6 +473,20 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         for (index, part) in split_at_interpolations(value).into_iter().enumerate() {
             if index % 2 == 0 {
                 self.out.text(part);
+                continue;
+            }
+            // Two `line`s with an `NGEmptyExpression` between them, which is nothing. Where Prettier asks whether something
+            // fits, they are one blank.
+            if is_blank(part) {
+                self.out.start_group();
+                self.out.token("{{");
+                self.out.start_if(false, None);
+                self.out.foreign(|f| f.write_text(b"  ", Some(TextWidth::single(1))));
+                self.out.end_if();
+                self.out.softline();
+                self.out.softline();
+                self.out.token("}}");
+                self.out.end_group();
                 continue;
             }
             let attempt = self.out.start_attempt();

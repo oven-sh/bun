@@ -8,9 +8,12 @@
 //! - there are parentheses where TypeScript would group otherwise: `a => b | c` is `(a => b) | c`, `a && b ?? c` is
 //!   `a && (b ?? c)`, `a + b = c` is `a + (b = c)`, `--a` is `-(-a)`, ``a?.b`c`.d`` is ``(a?.b)`c`.d``, and `a < b` is
 //!   `(a < b)`, which cannot be the start of type arguments;
-//! - a name that is a reserved word of TypeScript starts with `_`, and so for what else is only to be read and is written
-//!   as it is in the text;
-//! - there is no line break before `!`, before `=>` and after `.`.
+//! - what TypeScript does not take is something as long that it takes: a name that is a reserved word starts with `_`, a
+//!   line break before `!`, before `=>` or after `.` is a blank, `1.2.3` is `11111`, and an escape sequence or a line break
+//!   in a string is `_`.
+//!
+//! Names, numbers and strings are written as they are in the text, not as they are parsed: the formatter for JavaScript
+//! takes them from a second text, `shown` of `Code::TypeScript`.
 
 use super::lexer::{Kind, Token, tokenize};
 use bun_core::strings;

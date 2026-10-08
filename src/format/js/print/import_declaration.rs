@@ -76,8 +76,8 @@ pub(crate) fn format_import_and_export_source_with_clause<'a>(statement: Stmt<'a
 
 pub(crate) fn write_import_declaration<'a>(statement: Stmt<'a>, import: Import<'a>, f: &mut Formatter<'a>) {
     write!(f, ["import", space()]);
-    if import.is_deferred() {
-        write!(f, ["defer", space()]);
+    if let Some(phase) = import.phase() {
+        write!(f, [phase, space()]);
     } else if import.is_type_only() {
         write!(f, ["type", space()]);
     }

@@ -4,13 +4,15 @@
 //!   Prints an array of `{ messages, suppressedMessages }`.
 //! - `comment-parser <cases.json>`: `ConfigCommentParser` for each `{ method, text }`.
 //! - `json-parse <cases.json>`: `JSON.parse` for each string.
+//! - `globals <cases.json>`: for each `{ code, filename, languageOptions, names }`, what `File::global` says about each name.
+//! - `environments`: the tables of the `globals` package.
 //! - `rules`: the names of the rules that exist.
 //! - `conformance <fixtures> [--rule=r] [--verbose]`: the test cases of ESLint and typescript-eslint, each linted as its
 //!   `languageOptions`, its `settings` and the comments in its code say.
 
 use bun_lint::ast::File;
 use bun_lint::context::Severity;
-use bun_lint::language::LanguageOptions;
+use bun_lint::language::{Global, LanguageOptions};
 use bun_lint::linter::{
     LintMessage, LintOptions, Linter, Registry, ResolvedConfig, RuleId, Utf16Offsets, severity_of, testing,
 };
@@ -205,6 +207,58 @@ fn json_parse(args: &[String]) {
     print(&out);
 }
 
+fn setting_name(setting: Global) -> Json {
+    Json::String(match setting {
+        Global::Readonly => b"readonly".to_vec(),
+        Global::Writable => b"writable".to_vec(),
+        Global::Off => b"off".to_vec(),
+    })
+}
+
+fn globals(args: &[String]) {
+    let cases = read_cases(args);
+    let results = cases.iter().map(|case| {
+        let null = Json::Null;
+        let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
+        let filename = case.get(b"filename").and_then(Json::as_str).map(text).unwrap_or_default();
+        let language = LanguageOptions::from_json(case.get(b"languageOptions").unwrap_or(&null), &null);
+        with_file(&filename, code, &language, |file| {
+            let names = case.get(b"names").and_then(Json::as_array).unwrap_or_default().iter().filter_map(Json::as_str);
+            let described = names.map(|name| match file.global(name) {
+                None => Json::Null,
+                Some(global) => Json::Object(vec![
+                    (b"writeable".to_vec(), Json::Bool(global.is_writable)),
+                    (b"implicit".to_vec(), global.implicit_setting.map_or(Json::Null, setting_name)),
+                    (b"comments".to_vec(), Json::Array(global.comments.iter().map(|it| Json::Number(f64::from(it.start))).collect())),
+                    (b"names".to_vec(), {
+                        let spans = global.comments.iter().map(|it| file.name_in_global_comment(*it, name));
+                        Json::Array(spans.map(|it| Json::Array(vec![Json::Number(f64::from(it.start)), Json::Number(f64::from(it.end))])).collect())
+                    }),
+                    (b"isType".to_vec(), Json::Bool(global.is_type)),
+                    (b"isValue".to_vec(), Json::Bool(global.is_value)),
+                ]),
+            });
+            Json::Array(described.collect())
+        })
+    });
+    let mut out = Vec::new();
+    testing::write_json(&mut out, &Json::Array(results.collect()));
+    out.push(b'\n');
+    print(&out);
+}
+
+fn environments() {
+    let tables = bun_lint::linter::globals::environments().map(|name| {
+        let variables = bun_lint::linter::globals::environment(name.as_bytes()).into_iter().flatten();
+        let variables = variables.map(|(name, setting)| (name.to_vec(), Json::Bool(setting == Global::Writable)));
+        (name.as_bytes().to_vec(), Json::Object(variables.collect()))
+    });
+    let mut out = Vec::new();
+    testing::write_json(&mut out, &Json::Object(tables.collect()));
+    out.push(b'\n');
+    print(&out);
+}
+
 /// A message as a fixture has it, for comparing.
 #[derive(PartialEq, Eq, Debug)]
 struct Reported {
@@ -322,6 +376,8 @@ pub(crate) fn run(args: &[String]) {
         Some("comment-parser") => comment_parser(&args[1..]),
         Some("json-parse") => json_parse(&args[1..]),
         Some("conformance") => conformance(&args[1..]),
+        Some("globals") => globals(&args[1..]),
+        Some("environments") => environments(),
         Some("rules") => {
             let ids = linter().registry().all().iter().map(|it| Json::String(RuleId::Known(it.meta).to_vec()));
             let mut out = Vec::new();

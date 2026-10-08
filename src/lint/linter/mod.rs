@@ -5,18 +5,23 @@
 //! - [`ResolvedConfig`]: what is configured for one file.
 //! - [`Linter::lint`]: ESLint's `Linter.verify` for a file that is parsed already.
 //! - [`LintMessage`]: what it reports.
+//! - [`globals`]: the global variables that a file does not declare.
 
 mod comment;
 mod directives;
 mod disable;
+pub mod globals;
 mod json_v8;
 mod levn;
 mod message;
+mod per_file;
 mod registry;
 mod resolved;
 mod space;
 
+pub use globals::{CommentGlobal, GlobalVariable};
 pub use message::{LintMessage, RuleId, Suppression, Utf16Offsets};
+pub(crate) use per_file::PerFile;
 pub use registry::{Registry, parse_rule_id};
 pub use resolved::{ConfiguredRule, LinterOptions, ResolvedConfig, severity_of};
 
@@ -142,13 +147,16 @@ impl Linter {
             }
         }
 
+        if !options.allow_inline_config || config.linter.no_inline_config {
+            file.ignore_config_comments();
+        }
         let comments = match options.allow_inline_config {
-            true => directives::config_comments(file),
-            false => Vec::new(),
+            true => file.config_comments(),
+            false => Default::default(),
         };
         let (mut parents, mut disable_directives) = (Vec::new(), Vec::new());
         if config.linter.no_inline_config {
-            for comment in &comments {
+            for comment in &comments[..] {
                 let message = quoted(&[
                     b"'",
                     file.slice(comment.span),
@@ -166,10 +174,10 @@ impl Linter {
                 skipped: &mut result.skipped_rules,
                 configured: Vec::new(),
             };
-            for comment in &comments {
+            for comment in &comments[..] {
                 inline.apply(comment, &mut running);
             }
-            for comment in &comments {
+            for comment in &comments[..] {
                 inline.disable_directives(comment, &mut parents, &mut disable_directives);
             }
         }

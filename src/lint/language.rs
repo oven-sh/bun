@@ -1,8 +1,10 @@
 //! ESLint's `languageOptions` and `settings`: what the configuration says about the code of a
 //! file.
 
+use crate::linter::globals::ConfigGlobals;
 use crate::options::Json;
 use bun_sema::resolve::ScriptKind;
+use std::sync::OnceLock;
 
 /// ESLint's `languageOptions.sourceType`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -95,6 +97,10 @@ pub struct LanguageOptions {
     pub parser_options: Json,
     /// ESLint's `settings`.
     pub settings: Json,
+    /// Computed from the fields above the first time it is asked for. They must not change after
+    /// that.
+    #[doc(hidden)]
+    pub config_globals: OnceLock<ConfigGlobals>,
 }
 
 /// What the parser is told about a file: arguments of `bun_js_parser::sema::summarize`.
@@ -204,7 +210,12 @@ impl LanguageOptions {
                 .any(|key| is_truthy(parser_options.get(key))),
             parser_options,
             settings: settings.clone(),
+            config_globals: OnceLock::new(),
         }
+    }
+
+    pub(crate) fn config_globals(&self) -> &ConfigGlobals {
+        self.config_globals.get_or_init(|| ConfigGlobals::new(self))
     }
 
     /// The `sourceType` that the scopes of a file are analyzed with. `@typescript-eslint/parser`
@@ -267,6 +278,7 @@ impl Default for LanguageOptions {
             wants_types: false,
             parser_options: Json::Null,
             settings: Json::Null,
+            config_globals: OnceLock::new(),
         }
     }
 }

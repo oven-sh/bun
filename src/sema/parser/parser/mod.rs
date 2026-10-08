@@ -185,7 +185,7 @@ impl<'a> Parser<'a> {
         }
         match atoms {
             Some(atoms) => scratch.names.belong_to(atoms),
-            None => scratch.names.begin_own(),
+            None => scratch.names.begin_own(text.len()),
         }
         let atoms = atoms.unwrap_or(&crate::names::NoInterner);
         let mut file = recycled_file(std::mem::take(&mut scratch.recycled));

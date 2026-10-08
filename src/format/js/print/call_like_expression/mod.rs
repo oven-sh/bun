@@ -12,6 +12,7 @@ use crate::js::utils::call_expression::{
 };
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::member_chain::write_member_chain;
+use crate::js::utils::typecast::is_cast_target;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -71,7 +72,7 @@ fn keeps_arguments_on_one_line<'a>(e: Expr<'a>, call: Call<'a>, f: &Formatter<'a
     is_template_on_its_own_line_only_argument(call.args(), f)
         || is_simple_module_import(e, call, f)
         || is_commonjs_or_amd_module_definition(e, call, f)
-        || is_test_call_expression_in_flavor(e, f)
+        || (is_test_call_expression_in_flavor(e, f) && !call.args().iter().any(|argument| is_cast_target(argument, f)))
 }
 
 pub(crate) fn write_new_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut Formatter<'a>) {
@@ -158,7 +159,11 @@ impl<'a> Format<'a> for FormatArgumentsOnOneLine<'a> {
 
 /// Prettier's `isTemplateOnItsOwnLine` of the only argument, which is not written as the language in it.
 fn is_template_on_its_own_line_only_argument<'a>(args: List<'a, Expr<'a>>, f: &Formatter<'a>) -> bool {
-    let is_one = |only| is_multiline_template_starting_on_same_line(only, f.source_text()) && !arguments::has_embed_label(only, f);
+    let is_one = |only| {
+        is_multiline_template_starting_on_same_line(only, f.source_text())
+            && !arguments::has_embed_label(only, f)
+            && !is_cast_target(only, f)
+    };
     args.len() == 1 && args.first().is_some_and(is_one)
 }
 

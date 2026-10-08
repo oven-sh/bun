@@ -1,0 +1,31 @@
+------------------
+{ printWidth: 80 }
+------------------
+x = a && /** @type {T} */ b && c;
+y = /** @type {T} */ a + b + c;
+z = a + /** @type {T} */ (b + c);
+w = /** @type {T} */ a && b && c;
+v = a || /** @type {T} */ b || c || d;
+o = {
+  key: /** @type {T} */ (
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" +
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  ),
+};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+x = a && /** @type {T} */ b && c;
+y = /** @type {T} */ a + b + c;
+z = a + /** @type {T} */ (b + c);
+w = /** @type {T} */ a && b && c;
+v = a || /** @type {T} */ b || c || d;
+o = {
+  key: /** @type {T} */ (
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" +
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  ),
+};
+
+===================== End =====================

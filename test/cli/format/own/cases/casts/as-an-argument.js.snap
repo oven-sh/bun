@@ -1,0 +1,66 @@
+------------------
+{ printWidth: 80 }
+------------------
+describe(
+  "a title",
+  /** @type {T} */ (
+    () => {
+      it("works", () => {
+        f();
+      });
+    }
+  ),
+);
+evaluate(/** @type {T} */ (
+  `
+  text
+`
+));
+on(
+  "close",
+  /** @type {T} */ (mustCall(() => server.close())),
+);
+connect(
+  /** @type {T} */ ({ port: 1234 }),
+  {
+    alpn: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    token: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  },
+);
+const [get, set] = /** @type {SequenceExpression} */ (
+  context.visit(attribute.expression)
+).expressions;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+describe(
+  "a title",
+  /** @type {T} */ (
+    () => {
+      it("works", () => {
+        f();
+      });
+    }
+  ),
+);
+evaluate(/** @type {T} */ (
+  `
+  text
+`
+));
+on(
+  "close",
+  /** @type {T} */ (mustCall(() => server.close())),
+);
+connect(
+  /** @type {T} */ ({ port: 1234 }),
+  {
+    alpn: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    token: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  },
+);
+const [get, set] = /** @type {SequenceExpression} */ (context.visit(attribute.expression))
+  .expressions;
+
+===================== End =====================

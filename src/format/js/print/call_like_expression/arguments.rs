@@ -98,7 +98,7 @@ impl<'a> Format<'a> for FormatArguments<'a> {
 
         if has_empty_line
             || (has & (kind(ExprTag::Fn) | kind(ExprTag::Call) | kind(ExprTag::NonNull)) != 0
-                && is_function_composition_args(self.args)
+                && is_function_composition_args(self.args, f)
                 && !matches!(self.parent.parent(), AstNodes::Decorator(_)))
         {
             return format_all_args_broken_out(self, true, f);
@@ -186,13 +186,15 @@ fn is_empty_line_kept_after<'a>(args: List<'a, Expr<'a>>, index: usize, f: &Form
 
 /// Prettier's `isFunctionCompositionArguments`: `compose(sortBy(x => x), flatten, map(x => [x, x * 2]))`
 /// has several functions among the arguments, or in the arguments of an argument.
-fn is_function_composition_args<'a>(args: List<'a, Expr<'a>>) -> bool {
+fn is_function_composition_args<'a>(args: List<'a, Expr<'a>>, f: &Formatter<'a>) -> bool {
     if args.len() <= 1 {
         return false;
     }
     let mut has_seen_function_like = false;
     for arg in args {
-        if is_function_like(arg) {
+        if is_cast_target(arg, f) {
+            // Neither a function nor a call.
+        } else if is_function_like(arg) {
             if has_seen_function_like {
                 return true;
             }
@@ -302,7 +304,7 @@ fn arguments_grouped_layout<'a>(
 fn should_group_first_argument<'a>(first: Expr<'a>, second: Expr<'a>, f: &Formatter<'a>) -> bool {
     // A function expression, or an arrow function with a block.
     match first.as_fn() {
-        Some(func) if !matches!(func.body(), FnBody::Expr(_)) => {}
+        Some(func) if !matches!(func.body(), FnBody::Expr(_)) && !is_cast_target(first, f) => {}
         _ => return false,
     }
     if is_function_like(second) || matches!(second.kind(), ExprKind::Cond { .. }) {
@@ -335,6 +337,7 @@ fn should_group_last_argument_impl<'a>(
 
     // Not if the one before is of the same kind.
     if let Some(penultimate) = penultimate
+        && !is_cast_target(penultimate, f)
         && matches!(
             (penultimate.as_ast_nodes(), last.as_ast_nodes()),
             (AstNodes::ObjectExpression(_), AstNodes::ObjectExpression(_))

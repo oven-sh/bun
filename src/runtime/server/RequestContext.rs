@@ -1964,12 +1964,10 @@ where
                     let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
                     self.do_write_status(416);
                     if let Some(response) = self.response_mut() {
-                        if let Some(mut headers_) = response.swap_init_headers() {
-                            self.do_write_headers(&mut headers_);
-                            // `HeadersRef` releases the +1 ref in Drop; do NOT
-                            // call `.deref()` explicitly (would double-free).
-                            drop(headers_);
+                        if let Some(headers_) = response.get_init_headers() {
+                            self.do_write_headers(headers_);
                         }
+                        self.release_headers_of_used_body(response);
                     }
                     let cr = RangeRequest::format_content_range(
                         &mut crbuf,
@@ -2595,10 +2593,7 @@ where
                     if let Some(transfer_encoding) =
                         headers.fast_get(jsc::HTTPHeaderName::TransferEncoding)
                     {
-                        // fastGet() borrows the header map's StringImpl; renderMetadata() ->
-                        // doWriteHeaders() calls fastRemove(.TransferEncoding) and derefs the
-                        // FetchHeaders, freeing that StringImpl before we write it. Clone so
-                        // the bytes outlive renderMetadata().
+                        // Copied out: `render_metadata()` borrows the Response again.
                         let transfer_encoding_str = transfer_encoding.to_utf8().into_owned();
                         this.render_metadata();
                         resp.write_header(b"transfer-encoding", transfer_encoding_str.slice());
@@ -2607,8 +2602,7 @@ where
                     }
                 }
                 if let Some(content_length) = headers.fast_get(jsc::HTTPHeaderName::ContentLength) {
-                    // Parse before renderMetadata(): doWriteHeaders() will fastRemove(.ContentLength)
-                    // and deref the FetchHeaders, freeing the borrowed StringImpl.
+                    // Parsed first: `render_metadata()` borrows the Response again.
                     let content_length_str = content_length.to_utf8();
                     let len: usize = HTTP::parse_content_length(content_length_str.slice());
                     drop(content_length_str);
@@ -3478,7 +3472,6 @@ where
         let (status, app_content_length) = {
             let response: &mut Response = this.response_mut().unwrap();
             let status = response.status_code();
-            // Parsed before render_metadata() fast_remove()s it and derefs the headers.
             let app_cl = (status == 304)
                 .then(|| {
                     let s = response
@@ -3801,7 +3794,7 @@ where
         });
         let mut has_content_disposition = false;
         let mut has_content_range = false;
-        if let Some(mut headers_) = response.swap_init_headers() {
+        if let Some(headers_) = response.get_init_headers_mut() {
             has_content_disposition = headers_.fast_has(jsc::HTTPHeaderName::ContentDisposition);
             has_content_range = headers_.fast_has(jsc::HTTPHeaderName::ContentRange);
             // For .slice()-driven ranges, only promote to 206 if the user
@@ -3813,12 +3806,8 @@ where
             }
 
             self.do_write_status(status);
-            self.do_write_headers(&mut headers_);
-            // `HeadersRef` is RAII — its Drop
-            // already calls `WebCore__FetchHeaders__deref`, so an explicit
-            // `.deref()` here would resolve (via DerefMut) to the inherent
-            // `FetchHeaders::deref` and double-free the C++ object.
-            drop(headers_);
+            self.do_write_headers(headers_);
+            self.release_headers_of_used_body(response);
         } else if needs_content_range {
             status = 206;
             self.do_write_status(status);
@@ -3929,12 +3918,20 @@ where
         }
     }
 
-    fn do_write_headers(&self, headers: &mut FetchHeaders) {
+    /// The list belongs to the handler's `Response`, which can be sent again: read it, never edit it.
+    fn do_write_headers(&self, headers: &FetchHeaders) {
         ctx_log!("writeHeaders");
-        headers.fast_remove(jsc::HTTPHeaderName::ContentLength);
-        headers.fast_remove(jsc::HTTPHeaderName::TransferEncoding);
         if let Some(resp) = self.resp.get() {
-            headers.to_uws_response(uws::ResponseKind::of(resp), resp.as_ptr());
+            headers.to_uws_response_without_framing(uws::ResponseKind::of(resp), resp.as_ptr());
+        }
+    }
+
+    /// A send that used the body up leaves a `Response` that the next GET refuses, so its header
+    /// list is freed here, while the list is hot. A `Response` whose body is not used keeps the
+    /// list for its next answer. So does the `Response` of a HEAD request: HEAD answers it again.
+    fn release_headers_of_used_body(&self, response: &Response) {
+        if self.method != Method::HEAD && matches!(response.get_body_value(), Body::Value::Used) {
+            response.set_init_headers(None);
         }
     }
 

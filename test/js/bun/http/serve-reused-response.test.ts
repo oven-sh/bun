@@ -1,6 +1,7 @@
 import { serve } from "bun";
 import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { connectH2, request as h2Request } from "./serve-http2-helpers";
 
 // A fetch handler that returns a Response whose body has already been used
 // (most often the same Response object returned for every request) must invoke
@@ -259,5 +260,228 @@ describe("returning a Response with an already-used body", () => {
     expect(stderr).toContain("Response body already used");
     // The error is reported like any other unhandled error thrown from the fetch handler.
     expect(exitCode).toBe(1);
+  });
+});
+
+// A Response without a body has nothing that a send uses up, so a handler can keep one and return
+// it for every request. The server reads its headers. It does not take or edit them.
+describe("returning the same Response without a body for every request", () => {
+  type Answer = { status: number; headers: Record<string, string> };
+
+  async function answer(url: string | URL, method = "GET"): Promise<Answer> {
+    const res = await fetch(url, { method, redirect: "manual" });
+    await res.arrayBuffer();
+    const headers = Object.fromEntries(res.headers);
+    delete headers.date;
+    return { status: res.status, headers };
+  }
+
+  async function threeAnswers(url: string | URL, method = "GET") {
+    return [await answer(url, method), await answer(url, method), await answer(url, method)];
+  }
+
+  const cors = {
+    "access-control-allow-origin": "https://app.example",
+    "access-control-allow-headers": "authorization",
+  };
+  const challenge = { "www-authenticate": 'Basic realm="shop"', "cache-control": "no-store" };
+  const kept: Record<string, { make: () => Response; status: number; headers: Record<string, string> }> = {
+    "a redirect": { make: () => Response.redirect("/login", 302), status: 302, headers: { location: "/login" } },
+    "a 204 with CORS headers": {
+      make: () => new Response(null, { status: 204, headers: cors }),
+      status: 204,
+      headers: cors,
+    },
+    "a 401": { make: () => new Response(null, { status: 401, headers: challenge }), status: 401, headers: challenge },
+    "a 304 with an ETag and a Content-Length": {
+      make: () => new Response(null, { status: 304, headers: new Headers({ etag: '"v1"', "content-length": "42" }) }),
+      status: 304,
+      headers: { etag: '"v1"', "content-length": "42" },
+    },
+    "an undefined body": {
+      make: () => new Response(undefined, { headers: { "x-kept": "1" } }),
+      status: 200,
+      headers: { "x-kept": "1" },
+    },
+    "an empty string body": {
+      make: () => new Response("", { headers: { "x-kept": "1" } }),
+      status: 200,
+      headers: { "x-kept": "1" },
+    },
+    "headers that were read before the first send": {
+      make: () => {
+        const response = new Response(null, { status: 204, headers: cors });
+        response.headers.get("access-control-allow-origin");
+        return response;
+      },
+      status: 204,
+      headers: cors,
+    },
+  };
+
+  // Each way a handler can hand a Response to the server, given the kept Response of each path.
+  const doors: Record<string, (responses: Record<string, Response>) => Partial<Bun.Serve.Options<undefined>>> = {
+    "the fetch handler": responses => ({ fetch: req => responses[new URL(req.url).pathname] }),
+    "a fetch handler that resolves later": responses => ({
+      async fetch(req) {
+        await new Promise(resolve => setImmediate(resolve));
+        return responses[new URL(req.url).pathname];
+      },
+    }),
+    "a route function": responses => ({
+      routes: Object.fromEntries(Object.keys(responses).map(path => [path, () => responses[path]])),
+    }),
+    "the error handler": responses => ({
+      fetch(req) {
+        throw Object.assign(new Error("handler failed"), { path: new URL(req.url).pathname });
+      },
+      error: (err: any) => responses[err.path],
+    }),
+  };
+
+  it.each(Object.keys(doors))("through %s, every answer has the headers of the first answer", async door => {
+    const cases = ["GET", "HEAD"].flatMap(method =>
+      Object.entries(kept).map(([name, shape], i) => ({
+        name: `${method} ${name}`,
+        path: `/${method}/${i}`,
+        method,
+        shape,
+        response: shape.make(),
+      })),
+    );
+    await using server = serve({
+      port: 0,
+      ...doors[door](Object.fromEntries(cases.map(c => [c.path, c.response]))),
+    } as Bun.Serve.Options<undefined>);
+
+    const seen: Record<string, Answer[]> = {};
+    const expected: Record<string, unknown[]> = {};
+    for (const { name, path, method, shape } of cases) {
+      const answers = await threeAnswers(new URL(path, server.url), method);
+      seen[name] = answers;
+      expected[name] = [
+        { status: shape.status, headers: expect.objectContaining(shape.headers) },
+        answers[0],
+        answers[0],
+      ];
+    }
+    expect(seen).toEqual(expected);
+  });
+
+  // HEAD on a Response without a body sends the handler's framing header as GET would (#15355).
+  it.each([
+    ["Content-Length", { "content-length": "1234" }],
+    ["Transfer-Encoding", { "transfer-encoding": "chunked" }],
+  ])("every HEAD answer has the handler's %s", async (_name, framing) => {
+    const response = new Response(null, { headers: { ...framing, "x-kept": "1" } });
+    await using server = serve({ port: 0, fetch: () => response });
+
+    const answers = await threeAnswers(server.url, "HEAD");
+    expect(answers).toEqual([
+      { status: 200, headers: expect.objectContaining({ ...framing, "x-kept": "1" }) },
+      answers[0],
+      answers[0],
+    ]);
+  });
+
+  // HEAD sends no body, and it does not refuse a Response whose body it has sized before.
+  it("every HEAD answer has the headers of a kept Response with a body", async () => {
+    const response = new Response("abc", { headers: { "x-kept": "1" } });
+    await using server = serve({ port: 0, fetch: () => response });
+
+    const answers = await threeAnswers(server.url, "HEAD");
+    expect(answers.map(({ status, headers }) => ({ status, kept: headers["x-kept"] }))).toEqual([
+      { status: 200, kept: "1" },
+      { status: 200, kept: "1" },
+      { status: 200, kept: "1" },
+    ]);
+  });
+
+  it.each([
+    ["were read before the first send", true],
+    ["were not read before the first send", false],
+  ])("a send leaves the Response as it was when its headers %s", async (_name, readFirst) => {
+    const headers = { "cache-control": "no-store", "content-length": "0", "x-kept": "1" };
+    const response = new Response(null, { status: 204, headers });
+    if (readFirst) expect(Object.fromEntries(response.headers)).toEqual(headers);
+    await using server = serve({ port: 0, fetch: () => response });
+
+    expect((await answer(server.url)).status).toBe(204);
+    expect({
+      bodyUsed: response.bodyUsed,
+      headers: Object.fromEntries(response.headers),
+      clone: Object.fromEntries(response.clone().headers),
+      asInit: Object.fromEntries(new Response(null, response).headers),
+    }).toEqual({ bodyUsed: false, headers, clone: headers, asInit: headers });
+  });
+
+  it("a header that changes between two answers is in the next answer", async () => {
+    const response = new Response(null, { status: 204, headers: { "x-kept": "1", "x-count": "1" } });
+    await using server = serve({ port: 0, fetch: () => response });
+
+    const first = await answer(server.url);
+    response.headers.set("x-count", "2");
+    const second = await answer(server.url);
+    response.headers.delete("x-count");
+    const third = await answer(server.url);
+
+    expect(
+      [first, second, third].map(({ headers }) => ({ kept: headers["x-kept"], count: headers["x-count"] })),
+    ).toEqual([
+      { kept: "1", count: "1" },
+      { kept: "1", count: "2" },
+      { kept: "1", count: undefined },
+    ]);
+  });
+
+  it("two requests in flight get the same headers", async () => {
+    const response = new Response(null, { status: 204, headers: { "x-kept": "1" } });
+    const bothStarted = Promise.withResolvers<void>();
+    let started = 0;
+    await using server = serve({
+      port: 0,
+      async fetch() {
+        if (++started === 2) bothStarted.resolve();
+        await bothStarted.promise;
+        return response;
+      },
+    });
+
+    const answers = await Promise.all([answer(server.url), answer(server.url)]);
+    expect(answers.map(({ status, headers }) => ({ status, kept: headers["x-kept"] }))).toEqual([
+      { status: 204, kept: "1" },
+      { status: 204, kept: "1" },
+    ]);
+  });
+
+  // HTTP/2 frames the body itself: the handler's Content-Length and Transfer-Encoding stay on the
+  // Response and are not sent.
+  it("over HTTP/2, every answer has the headers of the first answer", async () => {
+    const response = new Response(null, {
+      headers: { "content-length": "5", "transfer-encoding": "chunked", "x-kept": "1" },
+    });
+    await using server = serve({ port: 0, http2: true, fetch: () => response });
+    const session = await connectH2(server.port!, false);
+    try {
+      const answers: unknown[] = [];
+      for (let i = 0; i < 3; i++) {
+        const { status, headers } = await h2Request(session, { ":method": "GET", ":path": "/" });
+        answers.push({
+          status,
+          kept: headers["x-kept"],
+          contentLength: headers["content-length"],
+          transferEncoding: headers["transfer-encoding"],
+        });
+      }
+      const each = { status: 200, kept: "1", contentLength: "0", transferEncoding: undefined };
+      expect(answers).toEqual([each, each, each]);
+    } finally {
+      session.close();
+    }
+    expect(Object.fromEntries(response.headers)).toEqual({
+      "content-length": "5",
+      "transfer-encoding": "chunked",
+      "x-kept": "1",
+    });
   });
 });

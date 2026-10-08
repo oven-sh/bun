@@ -295,6 +295,19 @@ impl Headers {
             .unwrap_or_else(|_| bun_alloc::out_of_memory());
     }
 
+    /// Removes every entry named `name` (ASCII case-insensitive). Its bytes stay in `buf`.
+    pub fn remove(&mut self, name: &[u8]) {
+        let mut i = 0;
+        while i < self.entries.len() {
+            let name_ptr = self.entries.items_name()[i];
+            if strings::eql_case_insensitive_ascii(self.as_str(name_ptr), name, true) {
+                let _ = self.entries.ordered_remove(i);
+            } else {
+                i += 1;
+            }
+        }
+    }
+
     pub fn get_content_disposition(&self) -> Option<&[u8]> {
         self.get(b"content-disposition")
     }

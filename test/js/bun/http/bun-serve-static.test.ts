@@ -170,6 +170,40 @@ describe("static route Content-Type", () => {
   });
 });
 
+// A static route frames the body itself. It leaves Content-Length and Transfer-Encoding out of
+// its own copy of the headers and does not remove them from the Response.
+test("a static route keeps the framing headers on the Response it was made from", async () => {
+  const response = new Response("abc", {
+    headers: { "content-length": "3", "transfer-encoding": "chunked", "x-kept": "1" },
+  });
+  const fallback = () => new Response("fallback");
+  using server = Bun.serve({ port: 0, static: { "/a": response, "/b": response }, fetch: fallback });
+
+  async function sent(path: string) {
+    const res = await fetch(new URL(path, server.url));
+    return {
+      status: res.status,
+      body: await res.text(),
+      contentLength: res.headers.get("content-length"),
+      transferEncoding: res.headers.get("transfer-encoding"),
+      kept: res.headers.get("x-kept"),
+    };
+  }
+  const each = { status: 200, body: "abc", contentLength: "3", transferEncoding: null, kept: "1" };
+  expect({ a: await sent("/a"), b: await sent("/b") }).toEqual({ a: each, b: each });
+
+  // server.reload() registers the same Response again.
+  server.reload({ static: { "/a": response }, fetch: fallback });
+  expect(await sent("/a")).toEqual(each);
+
+  expect(Object.fromEntries(response.headers)).toEqual({
+    "content-length": "3",
+    "content-type": "text/plain;charset=utf-8",
+    "transfer-encoding": "chunked",
+    "x-kept": "1",
+  });
+});
+
 // RFC 9110 §6.6.1: Date is a singleton field. When a Response already carries a
 // Date header, the static-route serializer must not append Bun's own clock.
 describe("static route Date header", () => {

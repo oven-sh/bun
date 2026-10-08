@@ -400,11 +400,6 @@ impl Response {
     }
 
     #[inline]
-    pub(crate) fn swap_init_headers(&self) -> Option<HeadersRef> {
-        self.init.with_mut(|init| init.headers.take())
-    }
-
-    #[inline]
     pub(crate) fn get_method(&self) -> Method {
         self.init.get().method
     }

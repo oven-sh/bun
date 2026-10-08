@@ -387,7 +387,9 @@ static bool connectionValueHasClose(const WTF::String& value)
     return false;
 }
 
-template<bool isSSL>
+// omitFraming: the caller frames the body itself, so Content-Length and
+// Transfer-Encoding stay in the list and are not written.
+template<bool isSSL, bool omitFraming = false>
 static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::HttpResponse<isSSL>* res)
 {
     auto& internalHeaders = headers.internalHeaders();
@@ -400,6 +402,10 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
     auto* data = res->getHttpResponseData();
 
     for (const auto& header : internalHeaders.commonHeaders()) {
+        if constexpr (omitFraming) {
+            if (header.key == WebCore::HTTPHeaderName::ContentLength || header.key == WebCore::HTTPHeaderName::TransferEncoding)
+                continue;
+        }
 
         const auto& name = WebCore::httpHeaderNameString(header.key);
         const auto& value = header.value;
@@ -852,7 +858,8 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
 }
 
 /* Http2Response and Http3Response share this surface: headers are buffered
- * as a list and framed by the transport, so there is no Transfer-Encoding. */
+ * as a list and framed by the transport, so there is no Transfer-Encoding,
+ * and the caller writes the Content-Length it frames the body with. */
 template<typename Response, typename ResponseData>
 static void writeFetchHeadersToStreamResponse(WebCore::FetchHeaders& headers, Response* res)
 {
@@ -872,17 +879,11 @@ static void writeFetchHeadersToStreamResponse(WebCore::FetchHeaders& headers, Re
     }
 
     for (const auto& header : internalHeaders.commonHeaders()) {
-        if (header.key == WebCore::HTTPHeaderName::ContentLength) {
-            if (!(data->state & ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
-                data->state |= ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-                res->writeMark();
-            }
-        }
+        if (header.key == WebCore::HTTPHeaderName::ContentLength || header.key == WebCore::HTTPHeaderName::TransferEncoding)
+            continue;
         if (header.key == WebCore::HTTPHeaderName::Date) {
             data->state |= ResponseData::HTTP_WROTE_DATE_HEADER;
         }
-        // No Transfer-Encoding on these transports; if a user header reaches
-        // here it was already stripped by doWriteHeaders().
         writeOne(WebCore::httpHeaderNameString(header.key), header.value);
     }
 
@@ -899,6 +900,22 @@ extern "C" void WebCore__FetchHeaders__toUWSResponse(WebCore::FetchHeaders* arg0
         break;
     case UWSResponseKind::SSL:
         writeFetchHeadersToUWSResponse<true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
+        break;
+    case UWSResponseKind::H2:
+    case UWSResponseKind::H3:
+        // The only caller is server.upgrade(), which is HTTP/1-only.
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+extern "C" void WebCore__FetchHeaders__toUWSResponseWithoutFraming(WebCore::FetchHeaders* arg0, UWSResponseKind kind, void* arg2)
+{
+    switch (kind) {
+    case UWSResponseKind::TCP:
+        writeFetchHeadersToUWSResponse<false, true>(*arg0, reinterpret_cast<uWS::HttpResponse<false>*>(arg2));
+        break;
+    case UWSResponseKind::SSL:
+        writeFetchHeadersToUWSResponse<true, true>(*arg0, reinterpret_cast<uWS::HttpResponse<true>*>(arg2));
         break;
     case UWSResponseKind::H2:
         writeFetchHeadersToStreamResponse<uWS::Http2Response, uWS::Http2ResponseData>(*arg0, reinterpret_cast<uWS::Http2Response*>(arg2));

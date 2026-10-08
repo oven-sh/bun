@@ -69,6 +69,12 @@ unsafe extern "C" {
         kind: ResponseKind,
         arg2: *mut c_void,
     );
+    // safe: as `toUWSResponse` above; C++ only reads the header list.
+    safe fn WebCore__FetchHeaders__toUWSResponseWithoutFraming(
+        arg0: &FetchHeaders,
+        kind: ResponseKind,
+        arg2: *mut c_void,
+    );
     safe fn WebCore__FetchHeaders__createFromH3(arg0: *mut c_void) -> *mut FetchHeaders;
 
     safe fn WebCore__FetchHeaders__createFromJS(
@@ -155,8 +161,15 @@ impl FetchHeaders {
             .expect("WebCore__FetchHeaders__createFromH3 returned null")
     }
 
+    /// HTTP/1 only: `kind` is `Tcp` or `Ssl`.
     pub fn to_uws_response(&mut self, kind: ResponseKind, uws_response: *mut c_void) {
         WebCore__FetchHeaders__toUWSResponse(self, kind, uws_response)
+    }
+
+    /// Writes every header except Content-Length and Transfer-Encoding, for a
+    /// caller that frames the body itself. The list is not changed.
+    pub fn to_uws_response_without_framing(&self, kind: ResponseKind, uws_response: *mut c_void) {
+        WebCore__FetchHeaders__toUWSResponseWithoutFraming(self, kind, uws_response)
     }
 
     pub fn create_empty() -> NonNull<FetchHeaders> {

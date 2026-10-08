@@ -206,11 +206,6 @@ impl StaticRoute {
                 }
             };
 
-            if let Some(h) = response.get_init_headers_mut() {
-                h.fast_remove(HTTPHeaderName::TransferEncoding);
-                h.fast_remove(HTTPHeaderName::ContentLength);
-            }
-
             // Consuming the body left a plain `Blob` behind, which no longer implies
             // the `text/plain` a string body carried. Record it on the response's own
             // headers so re-registering the same `Response` serves the same type.
@@ -227,6 +222,9 @@ impl StaticRoute {
                 response.get_init_headers(),
                 any_blob_content_type(&blob),
             );
+            // The route frames the body itself. Only its own snapshot drops these.
+            headers.remove(b"transfer-encoding");
+            headers.remove(b"content-length");
 
             // Generate ETag if not already present
             if headers.get(b"etag").is_none() {

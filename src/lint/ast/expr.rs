@@ -464,6 +464,125 @@ impl<'a> Expr<'a> {
         }
     }
 
+    #[inline]
+    pub fn as_class(self) -> Option<Class<'a>> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Class(class) => Some(Class::new(self.file, class)),
+            _ => None,
+        }
+    }
+
+    /// The call, if it is a `Call`, a `New` or a `TaggedTemplate`.
+    #[inline]
+    pub fn as_call_like(self) -> Option<Call<'a>> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Call(call) | hir::ExprKind::New(call) | hir::ExprKind::TaggedTemplate(call) => {
+                Some(Call::new(self.file, call))
+            }
+            _ => None,
+        }
+    }
+
+    /// What is called by a `Call` or a `New`.
+    #[inline]
+    pub fn callee(self) -> Option<Expr<'a>> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Call(call) | hir::ExprKind::New(call) => Some(Call::new(self.file, call).callee()),
+            _ => None,
+        }
+    }
+
+    /// The `obj` of a `Dot` or an `Index`.
+    #[inline]
+    pub fn object(self) -> Option<Expr<'a>> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Dot { obj, .. } | hir::ExprKind::Index { obj, .. } => Some(Expr::new(self.file, obj)),
+            _ => None,
+        }
+    }
+
+    /// The `index` of an `Index`.
+    #[inline]
+    pub fn index(self) -> Option<Expr<'a>> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Index { index, .. } => Some(Expr::new(self.file, index)),
+            _ => None,
+        }
+    }
+
+    /// `obj.#name`
+    #[inline]
+    pub fn is_private_member(self) -> bool {
+        matches!(self.try_raw(), Some(hir::Expr { kind: hir::ExprKind::Dot { name_pos, .. }, .. })
+            if self.file.hir.text.get(*name_pos as usize) == Some(&b'#'))
+    }
+
+    /// The operator of a `Binary`.
+    #[inline]
+    pub fn binary_op(self) -> Option<BinOp> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Binary { op, .. } => Some(op),
+            _ => None,
+        }
+    }
+
+    /// The operator of a `Unary`.
+    #[inline]
+    pub fn unary_op(self) -> Option<UnOp> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Unary { op, .. } => Some(op),
+            _ => None,
+        }
+    }
+
+    /// The operator of an `Assign`: `Some(None)` for plain `=`.
+    #[inline]
+    pub fn assign_op(self) -> Option<Option<BinOp>> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Assign { op, .. } => Some(op),
+            _ => None,
+        }
+    }
+
+    /// The `left` of a `Binary`, the `target` of an `Assign`.
+    #[inline]
+    pub fn left(self) -> Option<Expr<'a>> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Binary { left, .. } | hir::ExprKind::Assign { target: left, .. } => {
+                Some(Expr::new(self.file, left))
+            }
+            _ => None,
+        }
+    }
+
+    /// The `right` of a `Binary`, the `value` of an `Assign`.
+    #[inline]
+    pub fn right(self) -> Option<Expr<'a>> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Binary { right, .. } | hir::ExprKind::Assign { value: right, .. } => {
+                Some(Expr::new(self.file, right))
+            }
+            _ => None,
+        }
+    }
+
+    /// The one expression in a `Unary`, an `Await`, a `Spread`, a `NonNull`, an `As`, an `AsConst`,
+    /// a `Satisfies` or an `Instantiation`.
+    #[inline]
+    pub fn operand(self) -> Option<Expr<'a>> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Unary { operand, .. }
+            | hir::ExprKind::Await(operand)
+            | hir::ExprKind::Spread(operand)
+            | hir::ExprKind::NonNull(operand)
+            | hir::ExprKind::AsConst(operand)
+            | hir::ExprKind::As { expr: operand, .. }
+            | hir::ExprKind::Satisfies { expr: operand, .. }
+            | hir::ExprKind::Instantiation { expr: operand, .. } => Some(Expr::new(self.file, operand)),
+            _ => None,
+        }
+    }
+
     /// `<T>e` or `<const>e`, as opposed to `e as T`.
     pub fn is_angle_bracket_assertion(self) -> bool {
         match self.kind() {

@@ -774,6 +774,13 @@ fn compare_reachability(path: &str) {
             if quick.3 != analysis.3 {
                 differences.push("file-end differs 0".to_owned());
             }
+            compare(
+                "repeating",
+                &quick.4,
+                &analysis.4,
+                |it| it.span().start,
+                &mut differences,
+            );
             differences
         });
         let _ = writeln!(output, "[\"{}\"]", differences.join("\",\""));

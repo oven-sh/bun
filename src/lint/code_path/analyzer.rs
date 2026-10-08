@@ -1166,6 +1166,32 @@ pub(super) fn steps_of<'a>(
     }
 }
 
+/// The loop in which `node` is the first node of the next iteration: `isLoopingTarget` of ESLint's
+/// `no-unreachable-loop`.
+fn loop_with_target(node: Node<'_>) -> Option<Stmt<'_>> {
+    let node = match node {
+        Node::Func(func) => func.owner(),
+        _ => node,
+    };
+    let parent = node.parent().as_stmt()?;
+    let is_target = match parent.kind() {
+        StmtKind::While { test, .. } => node == Node::Expr(test),
+        StmtKind::DoWhile { body, .. } => node == Node::Stmt(body),
+        StmtKind::For {
+            test, update, body, ..
+        } => match update.or(test) {
+            Some(first) => node == Node::Expr(first),
+            None => node == Node::Stmt(body),
+        },
+        StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => {
+            node == Node::Stmt(left)
+                || matches!(left.kind(), StmtKind::Expr(e) if node == Node::Expr(e))
+        }
+        _ => false,
+    };
+    is_target.then_some(parent)
+}
+
 /// Analyzes the code path of `node` alone, which is a function or the file, without the functions
 /// in it. Returns whether its end can be reached, and fills in `reach` for its statements and cases.
 pub(super) fn is_end_reachable(node: Node, reach: Option<&mut Reach>) -> bool {
@@ -1199,6 +1225,8 @@ pub(super) fn is_end_reachable(node: Node, reach: Option<&mut Reach>) -> bool {
     };
     // The code paths that have started and not ended. That of `node` is the first of the store.
     let mut paths = vec![0];
+    // The loops, each with the segment that it goes back to for its next iteration.
+    let mut loops: Vec<(u32, Stmt)> = Vec::new();
     for step in recorder.steps {
         match step {
             Step::Event(event) => {
@@ -1207,6 +1235,17 @@ pub(super) fn is_end_reachable(node: Node, reach: Option<&mut Reach>) -> bool {
                     Event::CodePathStart(path, _) => paths.push(path.id()),
                     Event::CodePathEnd(..) => {
                         paths.pop();
+                    }
+                    Event::SegmentStart(segment, node) => {
+                        loops.extend(loop_with_target(node).map(|it| (segment.id(), it)));
+                    }
+                    // Not from the right side of a `for`-`in` or a `for`-`of`.
+                    Event::SegmentLoop(_, to, Node::Stmt(from)) => {
+                        for &(_, it) in loops.iter().filter(|it| it.0 == to.id()) {
+                            if from == it || from.tag() == StmtTag::Continue {
+                                reach.set_repeating(it);
+                            }
+                        }
                     }
                     _ => {}
                 }

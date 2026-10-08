@@ -17,7 +17,7 @@ use super::analyzer::{
 use super::matters::Marks;
 use crate::ast::{
     Case, Expr, ExprTag, File, FnBody, FnKind, Func, List, Node, PatTag, PropKind, Stmt, StmtKind,
-    VarDecl,
+    StmtTag, VarDecl,
 };
 use bun_sema::atom::Atom;
 
@@ -28,6 +28,8 @@ pub(crate) struct Reach {
     has_unreachable: bool,
     /// The statements whose end can be reached. Not known where the analysis has answered.
     ends: Marks,
+    /// The loops that can start another iteration.
+    repeating: Marks,
     /// The cases whose end can be reached.
     case_ends: Marks,
     /// The functions whose end can be reached.
@@ -41,6 +43,7 @@ impl Reach {
             unreachable: Marks::new(file.hir.stmts.len()),
             has_unreachable: false,
             ends: Marks::new(file.hir.stmts.len()),
+            repeating: Marks::new(file.hir.stmts.len()),
             case_ends: Marks::new(file.hir.cases.len()),
             fn_ends: Marks::new(file.hir.fns.len()),
             is_end_reachable: true,
@@ -71,6 +74,11 @@ impl Reach {
     }
 
     #[inline]
+    pub(super) fn is_repeating(&self, stmt: Stmt) -> bool {
+        self.repeating.has(stmt.id().idx())
+    }
+
+    #[inline]
     pub(super) fn is_case_end_reachable(&self, case: Case) -> bool {
         self.case_ends.has(case.id().idx())
     }
@@ -89,6 +97,12 @@ impl Reach {
     pub(super) fn set_statement(&mut self, stmt: Stmt, is_reachable: bool) {
         self.unreachable.set(stmt.id().idx(), !is_reachable);
         self.ends.set(stmt.id().idx(), false);
+        self.repeating.set(stmt.id().idx(), false);
+    }
+
+    /// What the analysis has found, after [`Reach::set_statement`].
+    pub(super) fn set_repeating(&mut self, stmt: Stmt) {
+        self.repeating.add(stmt.id().idx());
     }
 
     /// What the analysis has found.
@@ -176,6 +190,10 @@ struct Jumps {
     broken: u64,
     /// `continueForkContext`
     continued: u64,
+    /// `continueDestSegments`
+    continue_dest: u64,
+    /// A `continue` leads back to `continue_dest`.
+    is_repeating: bool,
 }
 
 /// More nesting than this is left to the analysis, which does not recurse.
@@ -290,19 +308,21 @@ impl<'a> Quick<'_> {
                 self.push(Target::Loop, label);
                 // `makeWhileTest` makes the next of all the entries.
                 self.add_rest();
+                self.set_continue_dest();
                 self.may_throw(test.into());
                 let after_test = self.head;
                 self.statement(body);
-                self.head = self.pop().broken;
+                self.head = self.pop_loop(stmt, self.head, after_test).broken;
                 if boolean_value_if_simple_constant(test) != Some(true) {
                     self.head |= after_test;
                 }
             }
             StmtKind::DoWhile { body, test } => {
                 self.push(Target::DoWhile, label);
+                let entry = self.head;
                 self.statement(body);
-                let jumps = self.pop();
-                self.head |= jumps.continued;
+                self.head |= self.targets.last().map_or(0, |it| it.continued);
+                let jumps = self.pop_loop(stmt, self.head, entry);
                 self.may_throw(test.into());
                 if boolean_value_if_simple_constant(test) == Some(true) {
                     self.head = 0;
@@ -322,8 +342,9 @@ impl<'a> Quick<'_> {
                 self.may_throw_if_any(test);
                 self.may_throw_if_any(update);
                 let before_body = self.head;
+                self.set_continue_dest();
                 self.statement(body);
-                self.head = self.pop().broken;
+                self.head = self.pop_loop(stmt, self.head, before_body).broken;
                 if test.is_some_and(|test| boolean_value_if_simple_constant(test) != Some(true)) {
                     self.head |= before_body;
                 }
@@ -333,11 +354,19 @@ impl<'a> Quick<'_> {
                 left, expr, body, ..
             } => {
                 self.push(Target::ForInOf, label);
+                self.set_continue_dest();
                 self.head_of_for(left);
                 self.may_throw(expr.into());
                 let before_body = self.head;
+                // The rule takes the way back from the right side for one from the body if that is
+                // a `continue`.
+                if body.tag() == StmtTag::Continue
+                    && let Some(jumps) = self.targets.last_mut()
+                {
+                    jumps.is_repeating |= before_body & jumps.continue_dest != 0;
+                }
                 self.statement(body);
-                self.head |= before_body | self.pop().broken;
+                self.head |= before_body | self.pop_loop(stmt, self.head, before_body).broken;
             }
             StmtKind::Switch { expr, cases } => self.switch(expr, cases, label),
             StmtKind::Try {
@@ -365,7 +394,27 @@ impl<'a> Quick<'_> {
             count: self.count,
             broken: 0,
             continued: 0,
+            continue_dest: 0,
+            is_repeating: false,
         });
+    }
+
+    /// The segments that have just been made are those that the loop goes back to.
+    fn set_continue_dest(&mut self) {
+        if let Some(jumps) = self.targets.last_mut() {
+            jumps.continue_dest = self.head;
+        }
+    }
+
+    /// Leaves a loop, from the end of which `from` lead back to `to`.
+    fn pop_loop(&mut self, stmt: Stmt<'a>, from: u64, to: u64) -> Jumps {
+        let jumps = self.pop();
+        if (jumps.is_repeating || from & to != 0)
+            && let Some(reach) = &mut self.reach
+        {
+            reach.repeating.add(stmt.id().idx());
+        }
+        jumps
     }
 
     fn pop(&mut self) -> Jumps {
@@ -375,6 +424,8 @@ impl<'a> Quick<'_> {
             count: 1,
             broken: 0,
             continued: 0,
+            continue_dest: 0,
+            is_repeating: false,
         })
     }
 
@@ -398,6 +449,8 @@ impl<'a> Quick<'_> {
         };
         if let Some(jumps) = jumps {
             let routes = merge(self.head, self.count, jumps.count);
+            // `makeLooped` connects as many routes as both have.
+            jumps.is_repeating |= self.head & jumps.continue_dest != 0;
             match jumps.target {
                 Target::ForInOf => jumps.broken |= routes,
                 Target::DoWhile => jumps.continued |= routes,

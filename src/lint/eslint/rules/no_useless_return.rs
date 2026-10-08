@@ -1,3 +1,4 @@
+use bun_lint::code_path::{Event, Step, steps_of_code_path};
 use bun_lint::prelude::*;
 use bun_lint::utils::fix_tracker::FixTracker;
 use rustc_hash::FxHashMap;
@@ -20,7 +21,7 @@ struct SegmentInfo<'a> {
 
 struct ScopeInfo<'a> {
     code_path: CodePath<'a>,
-    /// Whether there can be a `return` without a value in it. If not, nothing is kept about it.
+    /// Whether it is the one that is checked. If not, nothing is kept about it.
     is_active: bool,
     useless_returns: Vec<Stmt<'a>>,
     /// The `block` of each `try` statement around the current node that has been left.
@@ -29,6 +30,8 @@ struct ScopeInfo<'a> {
 
 #[derive(Default)]
 pub struct State<'a> {
+    /// What the code paths to analyze start with.
+    roots: Vec<Node<'a>>,
     /// For each of the code paths around the current node, the innermost last.
     scopes: Vec<ScopeInfo<'a>>,
     segments: SegmentInfoMap<'a>,
@@ -68,8 +71,11 @@ impl<'a> State<'a> {
         let mut pending = segment.all_prev_segments();
         while let Some(prev) = pending.pop() {
             if prev.is_reachable() {
-                if let Some(info) = self.segments.get(&prev.id()) {
-                    useless_returns.extend_from_slice(&info.useless_returns);
+                // Each once: or else their number doubles wherever two ways join.
+                for statement in self.segments.get(&prev.id()).map_or(&[][..], |info| &info.useless_returns) {
+                    if !useless_returns.contains(statement) {
+                        useless_returns.push(*statement);
+                    }
                 }
             } else if !traversed.contains(&prev.id()) {
                 traversed.push(prev.id());
@@ -138,7 +144,138 @@ impl<'a> State<'a> {
     }
 }
 
+/// The kinds of statements that the rule listens for.
+const STATEMENTS: [StmtTag; 28] = [
+    StmtTag::Return,
+    StmtTag::Class,
+    StmtTag::Continue,
+    StmtTag::Debugger,
+    StmtTag::DoWhile,
+    StmtTag::Empty,
+    StmtTag::Expr,
+    StmtTag::ForIn,
+    StmtTag::ForOf,
+    StmtTag::For,
+    StmtTag::If,
+    StmtTag::Import,
+    StmtTag::Labeled,
+    StmtTag::Switch,
+    StmtTag::Throw,
+    StmtTag::Try,
+    StmtTag::Var,
+    StmtTag::While,
+    // A `with` statement.
+    StmtTag::Block,
+    StmtTag::ExportNamed,
+    StmtTag::ExportDefault,
+    StmtTag::ExportStar,
+    // These only with an `export`.
+    StmtTag::Fn,
+    StmtTag::Interface,
+    StmtTag::TypeAlias,
+    StmtTag::Enum,
+    StmtTag::Module,
+    StmtTag::ImportEquals,
+];
+
+/// Whether the statements alone tell that a `return` without a value is not reported: it is in a
+/// loop, or something is executed if it is left out. That is the statement after it, or after the
+/// `if` statements and the blocks that it is the end of.
+fn is_known_to_be_useful(statement: Stmt<'_>) -> bool {
+    let mut current = statement;
+    loop {
+        let parent = current.parent();
+        let list = match parent {
+            Node::Func(func) => func.body_statements(),
+            Node::Stmt(parent) => parent.as_block(),
+            _ => None,
+        };
+        if let Some(list) = list {
+            let mut after = list.iter().skip_while(|it| *it != current).skip(1);
+            let is_executed = |it: Stmt<'_>| {
+                matches!(
+                    it.tag(),
+                    StmtTag::Expr
+                        | StmtTag::Var
+                        | StmtTag::If
+                        | StmtTag::Throw
+                        | StmtTag::Switch
+                        | StmtTag::Try
+                        | StmtTag::For
+                        | StmtTag::ForIn
+                        | StmtTag::ForOf
+                        | StmtTag::While
+                        | StmtTag::DoWhile
+                ) || matches!(it.kind(), StmtKind::Return(Some(_)))
+            };
+            if let Some(next) = after.next() {
+                return is_executed(next);
+            }
+        }
+        match parent {
+            Node::Stmt(parent) => match parent.tag() {
+                StmtTag::While | StmtTag::DoWhile | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf => return true,
+                StmtTag::If => current = parent,
+                StmtTag::Block if parent.as_block().is_some() => current = parent,
+                _ => return false,
+            },
+            _ => return false,
+        }
+    }
+}
+
 impl NoUselessReturn {
+    /// Checks the code path that starts with `root`.
+    fn check_code_path<'a>(&self, root: Node<'a>, cx: &mut Cx<'a, Self>) {
+        for step in steps_of_code_path(root, STATEMENTS, [StmtTag::Block, StmtTag::Try]) {
+            match step {
+                Step::Event(Event::CodePathStart(path, node)) => self.on_code_path_start(path, node == root, cx),
+                Step::Event(Event::CodePathEnd(..)) => self.on_code_path_end(cx),
+                Step::Event(Event::SegmentStart(segment, _)) => self.on_segment_start(segment, cx),
+                Step::Event(_) => {}
+                Step::Enter(node) => self.enter_statement(node, cx),
+                Step::Exit(node) => self.exit_statement(node, cx),
+            }
+        }
+        cx.state.segments.clear();
+    }
+
+    fn on_code_path_start<'a>(&self, code_path: CodePath<'a>, is_active: bool, cx: &mut Cx<'a, Self>) {
+        cx.state.scopes.push(ScopeInfo {
+            code_path,
+            is_active,
+            useless_returns: Vec::new(),
+            traversed_try_blocks: Vec::new(),
+        });
+    }
+
+    fn on_code_path_end<'a>(&self, cx: &mut Cx<'a, Self>) {
+        let Some(scope) = cx.state.scopes.pop() else {
+            return;
+        };
+        for statement in scope.useless_returns {
+            cx.report(statement, UNNECESSARY_RETURN).fix(|fixer| {
+                let is_removable = ast_utils::is_statement_list_parent(statement.parent())
+                    && fixer.file().comments_in(statement).next().is_none();
+                // The whole function, so that this does not conflict with `no-else-return`.
+                is_removable.then(|| FixTracker::new(fixer).retain_enclosing_function(statement).remove(statement))
+            });
+        }
+    }
+
+    fn on_segment_start<'a>(&self, segment: Segment<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.state.scopes.last().is_some_and(|scope| scope.is_active) {
+            let useless_returns = cx.state.get_useless_returns(segment);
+            cx.state.segments.insert(
+                segment.id(),
+                SegmentInfo {
+                    useless_returns,
+                    is_returned: false,
+                },
+            );
+        }
+    }
+
     fn enter_statement<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let Node::Stmt(statement) = node else {
             return;
@@ -199,88 +336,22 @@ impl Rule for NoUselessReturn {
         NoUselessReturn
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        let mut returns = file.stmts_of_kind(StmtTag::Return);
-        if !returns.any(|it| matches!(it.kind(), StmtKind::Return(None))) {
-            return State::default();
-        }
-        on.code_path_start(|_, code_path, node, cx| {
-            cx.state.scopes.push(ScopeInfo {
-                code_path,
-                is_active: match node {
-                    Node::File(_) => true,
-                    Node::Func(func) => {
-                        func.returns().any(|it| matches!(it.kind(), StmtKind::Return(None)))
-                    }
-                    _ => false,
-                },
-                useless_returns: Vec::new(),
-                traversed_try_blocks: Vec::new(),
-            });
-        });
-        on.code_path_end(|_, _, _, cx| {
-            let Some(scope) = cx.state.scopes.pop() else {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
+        on.stmts([StmtTag::Return], |_, statement, cx| {
+            if !matches!(statement.kind(), StmtKind::Return(None)) || is_known_to_be_useful(statement) {
                 return;
-            };
-            for statement in scope.useless_returns {
-                cx.report(statement, UNNECESSARY_RETURN).fix(|fixer| {
-                    let is_removable = ast_utils::is_statement_list_parent(statement.parent())
-                        && fixer.file().comments_in(statement).next().is_none();
-                    // The whole function, so that this does not conflict with `no-else-return`.
-                    is_removable.then(|| {
-                        FixTracker::new(fixer).retain_enclosing_function(statement).remove(statement)
-                    })
-                });
+            }
+            let function = Node::Stmt(statement).enclosing_function();
+            let root = function.map_or(Node::File(cx.file()), Node::Func);
+            if !cx.state.roots.contains(&root) {
+                cx.state.roots.push(root);
             }
         });
-        on.segment_start(|_, segment, _, cx| {
-            if cx.state.scopes.last().is_some_and(|scope| scope.is_active) {
-                let useless_returns = cx.state.get_useless_returns(segment);
-                cx.state.segments.insert(
-                    segment.id(),
-                    SegmentInfo {
-                        useless_returns,
-                        is_returned: false,
-                    },
-                );
+        on.finish(|rule, cx| {
+            for root in std::mem::take(&mut cx.state.roots) {
+                rule.check_code_path(root, cx);
             }
         });
-        on.enter(
-            [
-                StmtTag::Return,
-                StmtTag::Class,
-                StmtTag::Continue,
-                StmtTag::Debugger,
-                StmtTag::DoWhile,
-                StmtTag::Empty,
-                StmtTag::Expr,
-                StmtTag::ForIn,
-                StmtTag::ForOf,
-                StmtTag::For,
-                StmtTag::If,
-                StmtTag::Import,
-                StmtTag::Labeled,
-                StmtTag::Switch,
-                StmtTag::Throw,
-                StmtTag::Try,
-                StmtTag::Var,
-                StmtTag::While,
-                // A `with` statement.
-                StmtTag::Block,
-                StmtTag::ExportNamed,
-                StmtTag::ExportDefault,
-                StmtTag::ExportStar,
-                // These only with an `export`.
-                StmtTag::Fn,
-                StmtTag::Interface,
-                StmtTag::TypeAlias,
-                StmtTag::Enum,
-                StmtTag::Module,
-                StmtTag::ImportEquals,
-            ],
-            Self::enter_statement,
-        );
-        on.exit([StmtTag::Block, StmtTag::Try], Self::exit_statement);
         State::default()
     }
 }

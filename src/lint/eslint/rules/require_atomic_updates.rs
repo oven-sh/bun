@@ -1,4 +1,4 @@
-use bun_core::strings;
+use bun_lint::code_path::{Event, Step};
 use bun_lint::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -168,7 +168,72 @@ pub struct State<'a> {
     assignment_references: FxHashMap<Expr<'a>, SmallVec<[(Reference<'a>, Variable<'a>); 1]>>,
 }
 
+/// What `:expression` matches.
+const EXPRESSIONS: [ExprTag; 33] = [
+    ExprTag::Ident,
+    ExprTag::This,
+    ExprTag::Null,
+    ExprTag::True,
+    ExprTag::False,
+    ExprTag::Number,
+    ExprTag::String,
+    ExprTag::BigInt,
+    ExprTag::Regex,
+    ExprTag::Template,
+    ExprTag::TaggedTemplate,
+    ExprTag::Array,
+    ExprTag::Object,
+    ExprTag::Fn,
+    ExprTag::Class,
+    ExprTag::Dot,
+    ExprTag::Index,
+    ExprTag::Call,
+    ExprTag::New,
+    ExprTag::Unary,
+    ExprTag::Binary,
+    ExprTag::Assign,
+    ExprTag::Cond,
+    ExprTag::Await,
+    ExprTag::Yield,
+    ExprTag::As,
+    ExprTag::Satisfies,
+    ExprTag::AsConst,
+    ExprTag::NonNull,
+    ExprTag::Instantiation,
+    ExprTag::ImportCall,
+    ExprTag::ImportMeta,
+    ExprTag::NewTarget,
+];
+
 impl RequireAtomicUpdates {
+    /// Checks an async function or a generator, with the functions in it: what is assigned can be
+    /// one of them, and is then looked at where it ends.
+    fn check_function<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        let is_in_another = Node::Func(func).ancestors().any(|it| match it {
+            Node::Func(outer) => outer.is_async() || outer.is_generator(),
+            _ => false,
+        });
+        if is_in_another {
+            return;
+        }
+        let whole = func.span();
+        let file = cx.file();
+        let mut pauses = file.exprs_of_kind(ExprTag::Await).chain(file.exprs_of_kind(ExprTag::Yield));
+        if !pauses.any(|it| whole.contains(it.span())) {
+            return;
+        }
+        for step in func.code_path_steps(NodeTags::PAT | ExprTag::Ident.into(), EXPRESSIONS) {
+            match step {
+                Step::Event(Event::CodePathStart(path, node)) => self.on_code_path_start(path, node, cx),
+                Step::Event(Event::CodePathEnd(path, node)) => self.on_code_path_end(path, node, cx),
+                Step::Event(Event::SegmentStart(segment, node)) => self.on_segment_start(segment, node, cx),
+                Step::Event(_) => {}
+                Step::Enter(node) => self.on_identifier(node, cx),
+                Step::Exit(node) => self.on_expression_exit(node, cx),
+            }
+        }
+    }
+
     fn on_code_path_start<'a>(&self, code_path: CodePath<'a>, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let scope = match node {
             Node::Func(func) if func.is_async() || func.is_generator() => func.scope(),
@@ -311,53 +376,14 @@ impl Rule for RequireAtomicUpdates {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        // Nothing is outdated without one of them, and then the file need not be walked.
-        if !strings::contains(file.text(), b"await") && !strings::contains(file.text(), b"yield") {
-            return State::default();
+        // Nothing is outdated without one of them.
+        if file.has_exprs([ExprTag::Await, ExprTag::Yield]) {
+            on.funcs(|rule, func, cx| {
+                if (func.is_async() || func.is_generator()) && func.has_body() {
+                    rule.check_function(func, cx);
+                }
+            });
         }
-        on.code_path_start(Self::on_code_path_start);
-        on.code_path_end(Self::on_code_path_end);
-        on.segment_start(Self::on_segment_start);
-        on.enter(NodeTags::PAT | ExprTag::Ident.into(), Self::on_identifier);
-        // What `:expression` matches.
-        on.exit(
-            [
-                ExprTag::Ident,
-                ExprTag::This,
-                ExprTag::Null,
-                ExprTag::True,
-                ExprTag::False,
-                ExprTag::Number,
-                ExprTag::String,
-                ExprTag::BigInt,
-                ExprTag::Regex,
-                ExprTag::Template,
-                ExprTag::TaggedTemplate,
-                ExprTag::Array,
-                ExprTag::Object,
-                ExprTag::Fn,
-                ExprTag::Class,
-                ExprTag::Dot,
-                ExprTag::Index,
-                ExprTag::Call,
-                ExprTag::New,
-                ExprTag::Unary,
-                ExprTag::Binary,
-                ExprTag::Assign,
-                ExprTag::Cond,
-                ExprTag::Await,
-                ExprTag::Yield,
-                ExprTag::As,
-                ExprTag::Satisfies,
-                ExprTag::AsConst,
-                ExprTag::NonNull,
-                ExprTag::Instantiation,
-                ExprTag::ImportCall,
-                ExprTag::ImportMeta,
-                ExprTag::NewTarget,
-            ],
-            Self::on_expression_exit,
-        );
         State::default()
     }
 }

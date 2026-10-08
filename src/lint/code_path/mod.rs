@@ -251,6 +251,17 @@ impl<'a> Stmt<'a> {
     }
 }
 
+impl<'a> Stmt<'a> {
+    /// Whether a loop can start another iteration: the end of its body or a `continue` for it can
+    /// be reached. It is what ESLint's `no-unreachable-loop` finds out from
+    /// `onCodePathSegmentLoop`.
+    ///
+    /// See [`Stmt::is_reachable`] for what it costs.
+    pub fn is_repeating_loop(self) -> bool {
+        self.file().reach().is_repeating(self)
+    }
+}
+
 impl<'a> Case<'a> {
     /// Whether execution can reach the end of the case, and so falls through to the next: what
     /// ESLint's rules ask with `isAnySegmentReachable(currentSegments)` when they leave it.
@@ -262,19 +273,29 @@ impl<'a> Case<'a> {
 }
 
 /// What [`Stmt::is_reachable`] and the like answer for `file` if they find out by `method`: the
-/// unreachable statements, the cases and the functions whose end can be reached, and whether that
-/// of the file can. For comparing the methods.
+/// unreachable statements, the cases and the functions whose end can be reached, whether that of
+/// the file can, and the loops that repeat. For comparing the methods.
 #[doc(hidden)]
 pub fn reachability<'a>(
     file: &'a File<'a>,
     method: Method,
-) -> (Vec<Stmt<'a>>, Vec<Case<'a>>, Vec<Func<'a>>, bool) {
+) -> (
+    Vec<Stmt<'a>>,
+    Vec<Case<'a>>,
+    Vec<Func<'a>>,
+    bool,
+    Vec<Stmt<'a>>,
+) {
     let reach = Reach::new(file, method);
-    let (mut statements, mut cases, mut funcs) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut statements, mut cases, mut funcs, mut loops) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for id in 0..file.hir.stmts.len() as u32 {
         let stmt = Stmt::from_raw(file, id);
         if !reach.is_reachable(stmt) {
             statements.push(stmt);
+        }
+        if reach.is_repeating(stmt) {
+            loops.push(stmt);
         }
     }
     file.every_case(|case| {
@@ -287,7 +308,13 @@ pub fn reachability<'a>(
             funcs.push(func);
         }
     });
-    (statements, cases, funcs, reach.is_file_end_reachable())
+    (
+        statements,
+        cases,
+        funcs,
+        reach.is_file_end_reachable(),
+        loops,
+    )
 }
 
 pub type Segments<'a> = SmallVec<[Segment<'a>; 2]>;

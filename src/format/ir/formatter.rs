@@ -446,13 +446,19 @@ impl<'a> Formatter<'a> {
         }
     }
 
+    /// The number of columns that `text` takes, which has no line break.
+    #[inline]
+    pub(crate) fn string_width(&self, text: &[u8]) -> u32 {
+        super::width::string_width_as(text, self.options().flavor)
+    }
+
     /// Writes the source text of `span`, which has no line break and no tab.
     #[inline]
     pub(crate) fn write_source_token(&mut self, span: Span) {
         let len = span.len();
         let width = match self.width_is_len {
             true => len,
-            false => super::width::string_width(self.source.get(span.range()).unwrap_or_default()),
+            false => self.string_width(self.source.get(span.range()).unwrap_or_default()),
         };
         self.write_element(FormatElement::SourceText(Text {
             start: span.start,
@@ -465,7 +471,7 @@ impl<'a> Formatter<'a> {
     /// the source text.
     pub(crate) fn write_text(&mut self, text: &[u8], width: Option<TextWidth>) {
         let width = width
-            .unwrap_or_else(|| TextWidth::from_text(text, self.options().indent_width.value()));
+            .unwrap_or_else(|| TextWidth::from_text_as(text, self.options().flavor));
         let (source, part) = (self.source.as_ptr_range(), text.as_ptr_range());
         if source.start <= part.start && part.end <= source.end {
             self.write_element(FormatElement::SourceText(Text {
@@ -493,7 +499,7 @@ impl<'a> Formatter<'a> {
         let start = self.storage.text.len();
         build(&mut self.storage.text);
         let text = self.storage.text.get(start..).unwrap_or_default();
-        let width = TextWidth::from_text(text, self.options().indent_width.value());
+        let width = TextWidth::from_text_as(text, self.options().flavor);
         let len = text.len() as u32;
         self.write_element(FormatElement::OwnedText(Text {
             start: start as u32,

@@ -6,6 +6,7 @@
 //! source or of the formatter's own text buffer, and a sub-document that is written in more than
 //! one place is a range of the formatter's pool.
 
+use crate::options::Flavor;
 use std::num::NonZeroU32;
 
 const _: () = assert!(size_of::<FormatElement>() == 16);
@@ -209,6 +210,11 @@ impl TextWidth {
     /// `text` can have tabs, `\n` and anything else. A tab counts as nothing, like any control
     /// character: that is what Prettier's `getStringWidth` does.
     pub(crate) fn from_text(text: &[u8], _indent_width: u8) -> TextWidth {
+        Self::from_text_as(text, Flavor::Prettier)
+    }
+
+    /// The same as `flavor` counts.
+    pub(crate) fn from_text_as(text: &[u8], flavor: Flavor) -> TextWidth {
         if super::width::is_all_printable(text) {
             return Self::single(text.len() as u32);
         }
@@ -216,9 +222,9 @@ impl TextWidth {
         let mut rest = text;
         loop {
             let Some(at) = bun_core::strings::index_of_any(rest, b"\t\n") else {
-                return Self::single(width + super::width::string_width(rest));
+                return Self::single(width + super::width::string_width_as(rest, flavor));
             };
-            width += super::width::string_width(&rest[..at]);
+            width += super::width::string_width_as(&rest[..at], flavor);
             if rest[at] == b'\n' {
                 return Self::multiline(width);
             }

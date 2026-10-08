@@ -134,7 +134,10 @@ pub(crate) fn token(text: &'static str) -> &'static str {
 /// Any text without `\r`. It is copied unless it is part of the source text.
 #[inline]
 pub(crate) fn text(text: &[u8]) -> Text<'_> {
-    Text { text, width: None }
+    Text {
+        text,
+        has_whitespace: true,
+    }
 }
 
 /// Text that has no whitespace in it.
@@ -142,20 +145,21 @@ pub(crate) fn text(text: &[u8]) -> Text<'_> {
 pub(crate) fn text_without_whitespace(text: &[u8]) -> Text<'_> {
     Text {
         text,
-        width: Some(TextWidth::single(super::width::string_width(text))),
+        has_whitespace: false,
     }
 }
 
 #[derive(Copy, Clone)]
 pub(crate) struct Text<'t> {
     text: &'t [u8],
-    width: Option<TextWidth>,
+    has_whitespace: bool,
 }
 
 impl<'a> Format<'a> for Text<'_> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
-        f.write_text(self.text, self.width);
+        let width = (!self.has_whitespace).then(|| TextWidth::single(f.string_width(self.text)));
+        f.write_text(self.text, width);
     }
 }
 

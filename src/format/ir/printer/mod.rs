@@ -21,7 +21,7 @@ use super::element::{
     PrintMode, Tag, TextWidth,
 };
 use super::formatter::{END_LINE_SUFFIX, HARD_LINE_BREAK, Storage};
-use crate::options::{FormatOptions, IndentStyle, LineEnding};
+use crate::options::{Flavor, FormatOptions, IndentStyle, LineEnding};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum PrintError {
@@ -40,6 +40,7 @@ pub(crate) struct PrinterOptions {
     pub(crate) print_width: usize,
     pub(crate) line_ending: LineEnding,
     pub(crate) indent_style: IndentStyle,
+    pub(crate) flavor: Flavor,
 }
 
 impl PrinterOptions {
@@ -49,6 +50,7 @@ impl PrinterOptions {
             print_width: options.line_width.value() as usize,
             line_ending: options.line_ending.resolve(source),
             indent_style: options.indent_style,
+            flavor: options.flavor,
         }
     }
 }
@@ -775,7 +777,7 @@ impl<'d> Printer<'d> {
             last = Some(line);
         }
         if let Some(last) = last {
-            self.line_width = TextWidth::from_text(last, self.options.indent_width).value() as usize;
+            self.line_width = TextWidth::from_text_as(last, self.options.flavor).value() as usize;
         }
     }
 

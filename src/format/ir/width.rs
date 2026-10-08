@@ -1,6 +1,7 @@
 //! Prettier's `getStringWidth`: the number of columns that a text takes.
 
-use super::width_tables::{EMOJI, EMOJI_MODIFIER_BASE, NARROW_EMOJI, WIDE};
+use super::width_tables::{EMOJI, EMOJI_MODIFIER_BASE, NARROW_EMOJI, OXFMT_ZERO_WIDTH, WIDE};
+use crate::options::Flavor;
 
 fn is_in(table: &[(u32, u32)], c: u32) -> bool {
     let after = table.partition_point(|range| range.0 <= c);
@@ -62,7 +63,7 @@ fn emoji_len(chars: &[u32]) -> usize {
 }
 
 #[cold]
-fn width_of_non_ascii(text: &[u8]) -> u32 {
+fn width_of_non_ascii(text: &[u8], flavor: Flavor) -> u32 {
     let chars: smallvec::SmallVec<[u32; 64]> =
         bstr::ByteSlice::chars(text).map(u32::from).collect();
     let (mut width, mut i) = (0, 0);
@@ -80,6 +81,7 @@ fn width_of_non_ascii(text: &[u8]) -> u32 {
             0..=0x1F | 0x7F..=0x9F => 0,
             0x20..=0x7E => 1,
             0x300..=0x36F | 0xFE00..=0xFE0F => 0,
+            _ if flavor.is_oxfmt() && is_in(OXFMT_ZERO_WIDTH, c) => 0,
             _ if is_in(WIDE, c) => 2,
             _ => 1,
         };
@@ -116,8 +118,14 @@ pub(crate) fn is_width_len(source: &[u8]) -> bool {
 /// `text` has no line breaks. Control characters count as nothing.
 #[inline]
 pub(crate) fn string_width(text: &[u8]) -> u32 {
+    string_width_as(text, Flavor::Prettier)
+}
+
+/// The same as `flavor` counts.
+#[inline]
+pub(crate) fn string_width_as(text: &[u8], flavor: Flavor) -> u32 {
     match all_bytes(text, |byte| is_printable(byte) | (byte == 0x7F)) {
         true => text.len() as u32,
-        false => width_of_non_ascii(text),
+        false => width_of_non_ascii(text, flavor),
     }
 }

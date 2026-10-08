@@ -377,6 +377,10 @@ impl<'d> Printer<'d> {
 
     #[inline]
     fn fits_text(&self, measure: &mut Measure, width: TextWidth) -> Fits {
+        // To Prettier, a text that is empty is not there.
+        if width == TextWidth::single(0) {
+            return Fits::Maybe;
+        }
         let print_width = self.options.print_width;
         measure.line_width += measure.pending_indent + usize::from(measure.pending_space) + width.value() as usize;
         measure.pending_indent = 0;

@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::tokens::next_token;
+use smallvec::SmallVec;
 
 /// Require `return` statements to either always or never specify values.
 pub struct ConsistentReturn {
@@ -34,11 +35,26 @@ fn for_each_return<'a>(node: Node<'a>, visit: &mut dyn FnMut(Stmt<'a>)) {
     if let Node::Func(func) = node {
         return func.returns().for_each(visit);
     }
-    node.for_each_child(|child| match child {
-        Node::Stmt(statement) if statement.tag() == StmtTag::Return => visit(statement),
-        Node::Stmt(_) | Node::Case(_) => for_each_return(child, &mut *visit),
-        _ => {}
-    });
+    // What is still to visit, the first last.
+    let mut pending = SmallVec::<[Node<'a>; 16]>::new();
+    pending.push(node);
+    while let Some(node) = pending.pop() {
+        if let Node::Stmt(statement) = node
+            && statement.tag() == StmtTag::Return
+        {
+            visit(statement);
+            continue;
+        }
+        let first = pending.len();
+        node.for_each_child(|child| {
+            if matches!(child, Node::Stmt(_) | Node::Case(_)) {
+                pending.push(child);
+            }
+        });
+        if let Some(children) = pending.get_mut(first..) {
+            children.reverse();
+        }
+    }
 }
 
 /// Where a function that does not end with a `return` is reported.

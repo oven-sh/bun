@@ -1,4 +1,5 @@
 import { serve } from "bun";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, it, jest } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import net from "node:net";
@@ -484,6 +485,22 @@ describe("returning the same Response without a body for every request", () => {
       "transfer-encoding": "chunked",
       "x-kept": "1",
     });
+  });
+
+  // The Response owns its header list until it is collected, so the list counts in the size
+  // that the Response reports to the garbage collector.
+  it("the size estimate of a Response includes its headers", () => {
+    const value = Buffer.alloc(1024, "v").toString();
+    const headers: Record<string, string> = {};
+    for (let i = 0; i < 64; i++) headers[`x-header-${i}`] = value;
+
+    expect(estimateShallowMemoryUsageOf(new Response(null, { headers }))).toBeGreaterThan(
+      estimateShallowMemoryUsageOf(new Response(null)) + 64 * 1024,
+    );
+    // Response.redirect() makes its Location header natively.
+    expect(estimateShallowMemoryUsageOf(Response.redirect("https://example.com/" + value))).toBeGreaterThanOrEqual(
+      estimateShallowMemoryUsageOf(Response.redirect("https://example.com/")) + 1024,
+    );
   });
 
   // The server drops the Response of a request that it does not answer: the client left, the

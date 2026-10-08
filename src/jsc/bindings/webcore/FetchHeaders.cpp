@@ -383,3 +383,8 @@ FetchHeaders::Iterator::Iterator(FetchHeaders& headers, bool lowerCaseKeys = tru
 }
 
 } // namespace WebCore
+
+extern "C" size_t WebCore__FetchHeaders__memoryCost(const WebCore::FetchHeaders* headers)
+{
+    return headers->memoryCost();
+}

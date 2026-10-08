@@ -436,10 +436,20 @@ impl Response {
     }
 
     pub(crate) fn calculate_estimated_byte_size(&self) {
+        let body = self.body.get().value.get();
+        // `Bun.serve` frees the header list of a body it sends when it writes the headers.
+        // A `Response` without a body keeps its list until it is collected.
+        let headers = match body {
+            BodyValue::Null | BodyValue::Empty => {
+                self.get_init_headers().map_or(0, FetchHeaders::memory_cost)
+            }
+            _ => 0,
+        };
         self.reported_estimated_size.set(
-            self.body.get().value.get().estimated_size()
+            body.estimated_size()
                 + self.url.get().byte_slice().len()
                 + self.init.get().status_text.byte_slice().len()
+                + headers
                 + mem::size_of::<Response>(),
         );
     }

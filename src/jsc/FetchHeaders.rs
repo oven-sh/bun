@@ -60,6 +60,7 @@ unsafe extern "C" {
         arg3: &JSGlobalObject,
     );
     safe fn WebCore__FetchHeaders__isEmpty(arg0: &FetchHeaders) -> bool;
+    safe fn WebCore__FetchHeaders__memoryCost(arg0: &FetchHeaders) -> usize;
     safe fn WebCore__FetchHeaders__toJS(arg0: &FetchHeaders, arg1: &JSGlobalObject) -> JSValue;
     // safe: `FetchHeaders` is an opaque ZST handle (`&mut` ≡ non-null `*mut`);
     // `arg2` is an opaque handle to a C++-owned uWS response (never dereferenced
@@ -149,6 +150,11 @@ impl FetchHeaders {
 
     pub fn is_empty(&mut self) -> bool {
         WebCore__FetchHeaders__isEmpty(self)
+    }
+
+    /// The bytes this list owns, for the GC estimate of the object that holds it.
+    pub fn memory_cost(&self) -> usize {
+        WebCore__FetchHeaders__memoryCost(self)
     }
 
     pub fn create_from_uws(uws_request: *mut c_void) -> NonNull<FetchHeaders> {

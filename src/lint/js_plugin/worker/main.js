@@ -140,7 +140,10 @@ async function loadPlugin([location, position, firstRule]) {
   if (found === undefined) pluginsByLocation.set(key, (found = await findPlugin(location)));
   const { name, plugin } = found;
   const described = [];
-  Object.entries(plugin.rules ?? {}).forEach(([ruleName, rule], i) => {
+  // Sorted: a plugin that imports its rules all at once has them in another order each time.
+  const names = Object.keys(plugin.rules ?? {}).sort();
+  names.forEach((ruleName, i) => {
+    const rule = plugin.rules[ruleName];
     // A function is a rule without `meta`, as for ESLint until version 8.
     const definition = typeof rule === "function" ? { create: rule } : rule;
     const meta = definition.meta;

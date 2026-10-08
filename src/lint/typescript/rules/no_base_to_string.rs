@@ -22,7 +22,7 @@ const BASE_TO_STRING: Message = Message::new(
 );
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Usefulness {
+pub enum Usefulness {
     Always,
     Never,
     Sometimes,
@@ -41,7 +41,24 @@ struct Walk<'a> {
     pending: Vec<Type<'a>>,
     /// Since it was asked, something was not [`Usefulness::Always`].
     found_other: bool,
+    /// What has been found for an array or tuple type, if it does not depend on what was in `visited`. Otherwise a `[T, T]` of a
+    /// `[U, U]` of .. is looked into two to the power of the depth times.
+    known: FxHashMap<Type<'a>, Known>,
+    /// The first of `visited` that has been come across again, since the type that is looked into was begun with.
+    first_revisited: Option<usize>,
+    /// Since then, something was deeper than [`MAX_DEPTH`].
+    was_cut_off: bool,
 }
+
+#[derive(Copy, Clone)]
+struct Known {
+    certainty: Usefulness,
+    depth: u32,
+    was_cut_off: bool,
+}
+
+/// What has been found for the type of an expression, and whether that was for `join()`.
+type Certainties<'a> = FxHashMap<(Type<'a>, bool), Usefulness>;
 
 /// Upstream has no bound.
 const MAX_DEPTH: u32 = 100;
@@ -239,10 +256,14 @@ impl NoBaseToString {
     fn to_string_certainty<'a>(&self, ty: Type<'a>, walk: &mut Walk<'a>, depth: u32) -> Usefulness {
         if depth > MAX_DEPTH {
             walk.found_other = true;
+            walk.was_cut_off = true;
             return Usefulness::Always;
         }
         // A self referencing array or tuple type is not reported.
-        if walk.assumed.is_none() && walk.visited.contains(&ty) {
+        if walk.assumed.is_none()
+            && let Some(revisited) = walk.visited.iter().position(|it| *it == ty)
+        {
+            walk.first_revisited = Some(walk.first_revisited.map_or(revisited, |first| first.min(revisited)));
             return Usefulness::Always;
         }
         let depth = depth + 1;
@@ -302,9 +323,29 @@ impl NoBaseToString {
             if is_always.is_none() && self.is_always_on_every_path(ty, walk, depth) {
                 return Usefulness::Always;
             }
+            // Less deep, nothing more is cut off.
+            if let Some(&known) = walk.known.get(&ty)
+                && (depth == known.depth || depth < known.depth && !known.was_cut_off)
+            {
+                walk.was_cut_off |= known.was_cut_off;
+                return known.certainty;
+            }
+            let revisited_before = walk.first_revisited.take();
+            let was_cut_off_before = std::mem::take(&mut walk.was_cut_off);
+            let index = walk.visited.len();
             walk.visited.push(ty);
             let certainty = self.collect_elements_certainty(ty, walk, depth);
             walk.visited.pop();
+            let revisited_around = walk.first_revisited.filter(|&first| first < index);
+            if revisited_around.is_none() {
+                let was_cut_off = walk.was_cut_off;
+                walk.known.insert(ty, Known { certainty, depth, was_cut_off });
+            }
+            walk.was_cut_off |= was_cut_off_before;
+            walk.first_revisited = match (revisited_before, revisited_around) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
             return certainty;
         }
 
@@ -324,12 +365,16 @@ impl NoBaseToString {
         cx.report(node, message).data("name", node.text()).data("certainty", certainty);
     }
 
-    fn check_expression<'a>(&self, node: Expr<'a>, ty: Option<Type<'a>>, cx: &Cx<'a, Self>) {
+    fn check_expression<'a>(&self, node: Expr<'a>, ty: Option<Type<'a>>, cx: &mut Cx<'a, Self>) {
         if is_literal(node) {
             return;
         }
         let ty = ty.unwrap_or_else(|| node.ty());
-        let certainty = self.collect_to_string_certainty(ty, &mut Walk::default(), 0);
+        if ty.has_flags(TypeFlags::PRIMITIVE | TypeFlags::ANY | TypeFlags::NEVER) {
+            return;
+        }
+        let collect = || self.collect_to_string_certainty(ty, &mut Walk::default(), 0);
+        let certainty = *cx.state.entry((ty, false)).or_insert_with(collect);
         Self::report(node, BASE_TO_STRING, certainty, cx);
     }
 
@@ -384,7 +429,8 @@ impl NoBaseToString {
         }
         if is_join {
             let ty = get_constrained_type_at_location(object);
-            let certainty = self.collect_join_certainty(ty, &mut Walk::default(), 0);
+            let collect = || self.collect_join_certainty(ty, &mut Walk::default(), 0);
+            let certainty = *cx.state.entry((ty, true)).or_insert_with(collect);
             Self::report(object, BASE_ARRAY_JOIN, certainty, cx);
         } else {
             self.check_expression(object, None, cx);
@@ -409,7 +455,7 @@ impl Rule for NoBaseToString {
     const META: Meta = Meta::typescript("no-base-to-string", Kind::Suggestion)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    type State<'a> = Certainties<'a>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -423,9 +469,10 @@ impl Rule for NoBaseToString {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Certainties<'a> {
         on.exprs([ExprTag::Binary, ExprTag::Assign], Self::check_addition);
         on.exprs([ExprTag::Call], Self::check_call);
         on.exprs([ExprTag::Template], Self::check_template_literal);
+        Certainties::default()
     }
 }

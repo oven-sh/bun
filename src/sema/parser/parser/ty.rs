@@ -680,6 +680,11 @@ impl Parser<'_> {
             };
             self.s.names.push(name);
         }
+        // No atom of a name that is missing is looked at.
+        if self.has_failed() {
+            self.s.names.truncate(base);
+            return TypeNodeId::NONE;
+        }
         // `a.b.c` as an expression.
         let mut expr = ExprId::NONE;
         for index in base..self.s.names.len() {

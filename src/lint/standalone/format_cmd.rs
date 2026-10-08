@@ -10,9 +10,11 @@
 //!   failure are written there.
 //! - `check-idempotent <paths..>`: formatting what has been formatted changes nothing.
 //! - `verify <paths..>`: what has been formatted has the same tokens. See `bun_format::verify`.
-//! - `bench <paths..> [--iterations=n]`: MB/s, with and without parsing.
+//! - `bench <paths..> [--iterations=n] [--threads=n] [--check] [--only=parse]`: MB/s, with and without parsing.
 //! - `serve`: formats the file at each path that is read from stdin, one per line, and answers
 //!   `ok <length>\n<bytes>` or `error <message>\n`. test/cli/format/oracle/compare.ts talks to it.
+
+mod bench;
 
 use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_lint::language::LanguageOptions;
@@ -468,37 +470,6 @@ fn verify(args: &Args) {
     println!("the same tokens: {passed}, not: {failed}, not formatted: {errors}");
 }
 
-fn bench(args: &Args) {
-    let iterations: usize = args.flag("iterations").and_then(|it| it.parse().ok()).unwrap_or(10);
-    let files: Vec<(String, Vec<u8>)> = collect_files(&args.positional)
-        .iter()
-        .filter_map(|path| Some((path.to_string_lossy().into_owned(), std::fs::read(path).ok()?)))
-        .filter(|(path, code)| format_text(path, code, &args.options).is_ok())
-        .collect();
-    let bytes: usize = files.iter().map(|it| it.1.len()).sum();
-    let language = LanguageOptions::default();
-    let (mut scratch, mut out) = (Scratch::default(), Vec::new());
-
-    let (mut parsing, mut formatting) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
-    for _ in 0..iterations {
-        for (path, code) in &files {
-            let start = std::time::Instant::now();
-            crate::with_file(path, code, &language, |file| {
-                parsing += start.elapsed();
-                let start = std::time::Instant::now();
-                out.clear();
-                let _ = bun_format::format(file, &args.options, &mut scratch, &mut out);
-                formatting += start.elapsed();
-            });
-        }
-    }
-    let megabytes = (bytes * iterations) as f64 / 1e6;
-    println!("{} files, {:.2} MB, {iterations} iterations", files.len(), bytes as f64 / 1e6);
-    println!("format:         {:8.1} MB/s", megabytes / formatting.as_secs_f64());
-    println!("parse + bind:   {:8.1} MB/s", megabytes / parsing.as_secs_f64());
-    println!("all:            {:8.1} MB/s", megabytes / (parsing + formatting).as_secs_f64());
-}
-
 fn serve(args: &Args) {
     std::panic::set_hook(Box::new(|_| {}));
     let mut stdout = std::io::stdout().lock();
@@ -541,7 +512,7 @@ pub(crate) fn run(args: &[String]) {
         Some("conformance") => conformance(&args),
         Some("check-idempotent") => check_idempotent(&args),
         Some("verify") => verify(&args),
-        Some("bench") => bench(&args),
+        Some("bench") => bench::bench(&args),
         Some("serve") => serve(&args),
         _ => println!("usage: bun-lint format file|ir|conformance|check-idempotent|verify|bench|serve .."),
     }

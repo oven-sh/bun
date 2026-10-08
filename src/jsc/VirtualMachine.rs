@@ -1791,7 +1791,8 @@ impl VirtualMachine {
         if self.has_queued_work_excluding_immediates() || self.has_immediates() {
             return true;
         }
-        let timers = runtime_hooks().map_or_else(TimersLeft::default, |hooks| (hooks.timers_left)());
+        let timers =
+            runtime_hooks().map_or_else(TimersLeft::default, |hooks| (hooks.timers_left)());
         timers.armed
             || self.has_handles(timers.holds_loop_ref)
             || self.has_handles_off_the_loop()

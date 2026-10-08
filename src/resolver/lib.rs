@@ -15,9 +15,9 @@
 pub mod data_url;
 pub mod dir_info;
 pub mod error;
-mod import_meta_glob;
 #[path = "fs.rs"]
 mod fs_full;
+mod import_meta_glob;
 pub mod node_fallbacks;
 pub mod package_json;
 pub mod tsconfig_json;

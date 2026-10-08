@@ -1,8 +1,8 @@
 // https://github.com/oven-sh/bun/issues/10428
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, tempDir } from "harness";
 
 // Every fixture pushes what happens, in order, to `globalThis.events` and prints it from a test.
 const modules = {

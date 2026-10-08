@@ -1616,7 +1616,8 @@ pub mod formatter {
         /// `ShellError` prints a more readable message.
         pub(crate) format_buffer_as_text: bool,
         /// Set for `bun:test` matcher messages. True when it printed `value`, a DOM node or collection.
-        pub dom_printer: Option<fn(&mut Formatter<'_>, &mut dyn bun_io::Write, JSValue) -> JsResult<bool>>,
+        pub dom_printer:
+            Option<fn(&mut Formatter<'_>, &mut dyn bun_io::Write, JSValue) -> JsResult<bool>>,
     }
 
     impl<'a> Formatter<'a> {

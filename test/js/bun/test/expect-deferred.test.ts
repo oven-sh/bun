@@ -486,9 +486,7 @@ describe.concurrent(".resolves and .rejects", () => {
         expect("second").toMatchSnapshot();
       });
     `);
-    expect(written[1]).toContain(
-      'exports[`file 1`] = `"first"`;\n\nexports[`file 2`] = `"second"`;',
-    );
+    expect(written[1]).toContain('exports[`file 1`] = `"first"`;\n\nexports[`file 2`] = `"second"`;');
     expect(exitCode).toBe(0);
   });
 
@@ -558,11 +556,7 @@ describe.concurrent(".resolves and .rejects", () => {
         "b.test.js": prelude + `test("goes on for a while", () => later(0, 200));`,
       });
       expect(stdout).toEqual([]);
-      expect(report).toEqual([
-        "(fail) times out",
-        "  ^ this test timed out after 20ms.",
-        "(pass) goes on for a while",
-      ]);
+      expect(report).toEqual(["(fail) times out", "  ^ this test timed out after 20ms.", "(pass) goes on for a while"]);
       expect(stderr).not.toContain("Unhandled error");
       expect(exitCode).toBe(1);
     }

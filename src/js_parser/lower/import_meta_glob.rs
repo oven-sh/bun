@@ -47,7 +47,12 @@ fn is_node_modules(name: &[u8]) -> bool {
 fn path_below<'p>(dir: &[u8], path: &'p [u8]) -> Option<&'p [u8]> {
     match path.strip_prefix(dir)? {
         [separator, below @ ..] if bun_paths::is_sep_native(*separator) => Some(below),
-        below if below.is_empty() || dir.last().is_none_or(|&last| bun_paths::is_sep_native(last)) => {
+        below
+            if below.is_empty()
+                || dir
+                    .last()
+                    .is_none_or(|&last| bun_paths::is_sep_native(last)) =>
+        {
             Some(below)
         }
         _ => None,
@@ -139,9 +144,10 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
         &self,
         call: &E::Call,
     ) -> Option<js_ast::StoreRef<E::Call>> {
-        let (ExprData::EDot(dot), Some(ExprData::ECall(glob))) =
-            (call.target.data, call.args.slice().first().map(|arg| arg.data))
-        else {
+        let (ExprData::EDot(dot), Some(ExprData::ECall(glob))) = (
+            call.target.data,
+            call.args.slice().first().map(|arg| arg.data),
+        ) else {
             return None;
         };
         (dot.name == b"keys"
@@ -301,17 +307,14 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
             return;
         };
 
-        let then_parameter = if !only_keys
-            && !options.eager
-            && !options.import.is_empty()
-            && !files.is_empty()
-        {
-            let parameter = self.new_symbol(js_ast::symbol::Kind::Other, b"m");
-            self.declare_temp_var(parameter);
-            Some(parameter)
-        } else {
-            None
-        };
+        let then_parameter =
+            if !only_keys && !options.eager && !options.import.is_empty() && !files.is_empty() {
+                let parameter = self.new_symbol(js_ast::symbol::Kind::Other, b"m");
+                self.declare_temp_var(parameter);
+                Some(parameter)
+            } else {
+                None
+            };
 
         // Vite's `?raw` and `?url` are loaders here, and the bundler resolves no path with a query.
         let loader = match options.query {
@@ -342,9 +345,8 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
                     _ => from_root,
                 }
             };
-            let import_path: &'a [u8] = self
-                .arena
-                .alloc_slice_copy(&[&import_path, query].concat());
+            let import_path: &'a [u8] =
+                self.arena.alloc_slice_copy(&[&import_path, query].concat());
             let key: &'a [u8] = self.arena.alloc_slice_copy(&key);
 
             let value = if only_keys {
@@ -619,13 +621,9 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
                 Err(err) => Ok(Err(err)),
             });
             match walked {
-                Ok(Ok(walker)) => files.extend(
-                    walker
-                        .matched_paths
-                        .keys()
-                        .iter()
-                        .map(|file| file.to_vec()),
-                ),
+                Ok(Ok(walker)) => {
+                    files.extend(walker.matched_paths.keys().iter().map(|file| file.to_vec()))
+                }
                 Ok(Err(err))
                     if matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {}
                 Ok(Err(err)) => {

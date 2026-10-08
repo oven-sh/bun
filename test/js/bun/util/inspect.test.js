@@ -1409,7 +1409,9 @@ describe("values of another realm", () => {
     expect(Bun.inspect(vm.runInContext("var b = 2; this", vm.createContext({})))).toBe("{\n  b: 2,\n}");
     expect(Bun.inspect(vm.runInNewContext("this"))).toBe("{}");
     expect(
-      Bun.inspect(vm.runInNewContext("Object.setPrototypeOf(this, (class Window { m() {} }).prototype); this.a = 1; this")),
+      Bun.inspect(
+        vm.runInNewContext("Object.setPrototypeOf(this, (class Window { m() {} }).prototype); this.a = 1; this"),
+      ),
     ).toBe("Window {\n  a: 1,\n  m: [Function: m],\n}");
   });
 

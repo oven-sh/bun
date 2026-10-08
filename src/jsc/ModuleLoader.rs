@@ -171,7 +171,8 @@ extern "C" fn Bun__fetchBuiltinModule(
 #[inline]
 pub fn alias_cfg() -> bun_resolve_builtins::Cfg {
     bun_resolve_builtins::Cfg {
-        rewrite_jest_for_tests: crate::virtual_machine::isBunTest.load(core::sync::atomic::Ordering::Relaxed),
+        rewrite_jest_for_tests: crate::virtual_machine::isBunTest
+            .load(core::sync::atomic::Ordering::Relaxed),
     }
 }
 

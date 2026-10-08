@@ -237,9 +237,13 @@ fn desugar(operator: &[u8], version: &Partial, out: &mut Vec<Comparator>) -> Opt
     Some(())
 }
 
+fn words_of(text: &[u8]) -> impl Iterator<Item = &[u8]> {
+    strings::split_any(text, b" \t\n\r\x0B\x0C").filter(|it| !it.is_empty())
+}
+
 /// `parseRange`: what is between two `||`.
 fn parse_set(text: &[u8]) -> Option<Vec<Comparator>> {
-    let words: Vec<&[u8]> = text.split(u8::is_ascii_whitespace).filter(|it| !it.is_empty()).collect();
+    let words: Vec<&[u8]> = words_of(text).collect();
     let mut comparators = Vec::new();
     if let [from, b"-", to] = words[..] {
         // `hyphenReplace`
@@ -297,7 +301,7 @@ pub(crate) struct Range {
 impl Range {
     /// `None` where `new Range(text)` throws.
     pub(crate) fn parse(text: &[u8]) -> Option<Range> {
-        let raw = text.split(u8::is_ascii_whitespace).filter(|it| !it.is_empty()).collect::<Vec<_>>().join(&b" "[..]);
+        let raw = words_of(text).collect::<Vec<_>>().join(&b" "[..]);
         let mut set = Vec::new();
         for part in strings::split(&raw, b"||") {
             set.push(parse_set(part)?);

@@ -1,21 +1,27 @@
-//! Runs the test cases of the rules that are about several files. A case is a file of `fixtures/import-project`, with other text
-//! than is on the disk.
+//! Runs the test cases of the rules that look at other files. A case is a file of `fixtures/import-project` or
+//! `fixtures/n-project`, with other text than is on the disk.
 
 use crate::linter_cmd::{CaseOutcome, linter};
 use bun_lint::context::Severity;
 use bun_lint::linter::{Again, LintOptions, LintResult, ResolvedConfig, RuleId};
 use bun_lint::modules::{Import, ModuleId, Modules, Request, RequestKind, Resolved};
 use bun_lint::options::Json;
+use bun_lint::rule::Plugin;
 use bun_lint::runner::RuleEntry;
 use bun_lint_graph::{Graph, Store, with_file};
 use std::sync::OnceLock;
 
-static PROJECT: OnceLock<String> = OnceLock::new();
+static FIXTURES: OnceLock<String> = OnceLock::new();
 
 /// `fixtures`: the directory of the fixtures.
 pub(crate) fn set_fixtures(fixtures: &str) {
-    let project = std::fs::canonicalize(format!("{fixtures}/import-project"));
-    let _ = PROJECT.set(project.map_or_else(|_| fixtures.to_owned(), |it| it.to_string_lossy().into_owned()));
+    let absolute = std::fs::canonicalize(fixtures);
+    let _ = FIXTURES.set(absolute.map_or_else(|_| fixtures.to_owned(), |it| it.to_string_lossy().into_owned()));
+}
+
+/// Whether the cases of the rule are files of a project.
+pub(crate) fn is_for(entry: &RuleEntry) -> bool {
+    entry.meta.needs_modules || entry.meta.plugin == Plugin::Node
 }
 
 /// The same as `linter_cmd::lint_case`.
@@ -36,7 +42,8 @@ pub(crate) fn lint_case(
     ]);
     let mut config = ResolvedConfig::from_json(linter().registry(), &config, &mut Vec::new());
     config.linter.report_unused_disable_directives = Severity::Off;
-    let project = PROJECT.get().map_or(".", |it| &it[..]);
+    let directory = if entry.meta.plugin == Plugin::Node { "n-project" } else { "import-project" };
+    let project = &format!("{}/{directory}", FIXTURES.get().map_or(".", |it| &it[..]));
     let path = if filename.starts_with(['<', '/']) { filename.to_owned() } else { format!("{project}/{filename}") };
     let store = Store::new(project.as_bytes());
     let graph = Graph::new(&store);
@@ -68,7 +75,7 @@ impl Modules for WithoutDynamicImports<'_, '_> {
     }
     fn record(&self, path: &[u8], requests: &[Request], is_always_checked: bool) {
         let text = std::fs::read(String::from_utf8_lossy(path).as_ref()).unwrap_or_default();
-        let lines: Vec<&[u8]> = text.split(|it| *it == b'\n').collect();
+        let lines: Vec<&[u8]> = bun_core::strings::split(&text, b"\n").collect();
         let mut kept: Vec<Request> = requests.iter().filter(|it| it.kind != RequestKind::Dynamic).copied().collect();
         for request in &mut kept {
             // The statement starts in the line of the specifier, or in one before.

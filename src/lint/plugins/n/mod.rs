@@ -1,6 +1,9 @@
 //! What the rules `n/no-unsupported-features/*` share.
 
 pub(crate) mod data;
+pub(crate) mod es_syntax;
+pub(crate) mod es_syntax_data;
+pub(crate) mod object_type;
 pub(crate) mod semver;
 
 use bun_lint::prelude::*;
@@ -35,7 +38,7 @@ pub(crate) const NOT_SUPPORTED_YET: Message = Message::new(
 );
 
 /// `getVersionRange`
-fn version_range(option: Option<&Json>) -> Option<Range> {
+pub(crate) fn version_range(option: Option<&Json>) -> Option<Range> {
     Range::parse(option?.get(b"version")?.as_str().filter(|it| !it.is_empty())?)
 }
 
@@ -199,8 +202,14 @@ impl Builtins {
             let tracker = ReferenceTracker::new(file).with_mode(Mode::Legacy);
             if !tables.modules.is_empty() {
                 let modules = TraceMap::new(&tables.modules);
-                self.report(tables, &[], &tracker.iterate_cjs_references(&modules), cx);
-                for found in tracker.iterate_global_references(&GET_BUILTIN_MODULE) {
+                if file.has_expr_named("require") {
+                    self.report(tables, &[], &tracker.iterate_cjs_references(&modules), cx);
+                }
+                let get_builtin_module = match file.has_expr_named("getBuiltinModule") {
+                    true => tracker.iterate_global_references(&GET_BUILTIN_MODULE),
+                    false => Vec::new(),
+                };
+                for found in get_builtin_module {
                     let (Some(node), Some(call)) = (found.expr(), found.call()) else {
                         continue;
                     };
@@ -224,8 +233,9 @@ impl Builtins {
                 }
                 self.report(tables, &[], &tracker.iterate_esm_references(&modules), cx);
             }
-            if !tables.globals.is_empty() {
-                self.report(tables, &[], &tracker.iterate_global_references(&TraceMap::new(&tables.globals)), cx);
+            let globals: Vec<(&'static str, Map)> = tables.globals.iter().filter(|it| file.has_expr_named(it.0)).copied().collect();
+            if !globals.is_empty() {
+                self.report(tables, &[], &tracker.iterate_global_references(&TraceMap::new(&globals)), cx);
             }
             if !tables.import_meta.is_empty() {
                 let (tracker, map) = (ReferenceTracker::new(file), TraceMap::new(&tables.import_meta));

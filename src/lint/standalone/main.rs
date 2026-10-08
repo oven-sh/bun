@@ -102,7 +102,7 @@ fn lint(
     language_options: &Json,
     settings: &Json,
 ) -> Outcome {
-    let lint_case = if entry.meta.needs_modules { plugins_cmd::lint_case } else { linter_cmd::lint_case };
+    let lint_case = if plugins_cmd::is_for(entry) { plugins_cmd::lint_case } else { linter_cmd::lint_case };
     outcome_of(entry, code, lint_case(entry, code, path, options, language_options, settings))
 }
 

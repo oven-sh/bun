@@ -359,6 +359,17 @@ impl Rule for ExhaustiveDeps {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+        let from_settings = || {
+            let pattern = file.settings().get(b"react-hooks")?.get(b"additionalEffectHooks")?.as_str()?;
+            Regex::from_bytes(pattern, b"").ok()
+        };
+        let additional_hooks = if self.additional_hooks.is_none() { from_settings() } else { None };
+        if self.additional_hooks.is_none()
+            && additional_hooks.is_none()
+            && !file.has_expr_named_any(&["useEffect", "useLayoutEffect", "useCallback", "useMemo", "useImperativeHandle"])
+        {
+            return State::default();
+        }
         on.exprs([ExprTag::Call], |rule, e, cx| {
             if let ExprKind::Call(call) = e.kind()
                 && rule.get_reactive_hook_callback_index(call.callee(), &cx.state).is_some()
@@ -374,12 +385,8 @@ impl Rule for ExhaustiveDeps {
                 rule.visit_call_expression(call, cx);
             }
         });
-        let from_settings = || {
-            let pattern = file.settings().get(b"react-hooks")?.get(b"additionalEffectHooks")?.as_str()?;
-            Regex::from_bytes(pattern, b"").ok()
-        };
         State {
-            additional_hooks: if self.additional_hooks.is_none() { from_settings() } else { None },
+            additional_hooks,
             ..State::default()
         }
     }

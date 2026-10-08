@@ -296,8 +296,8 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
             if !f.is_quiet()
                 && let AstNodes::UnaryExpression(unary) = outermost.parent()
                 && let [comment, ..] = f.comments().unprinted_comments()
-                && comment.span.start >= right.span().end
-                && comment.span.end <= unary.span().end
+                && comment.start() >= right.span().end
+                && comment.end() <= unary.span().end
                 && is_last_binary_operand_comment(outermost.expr, comment, f)
             {
                 write!(f, FormatTrailingComments::Comments(std::slice::from_ref(comment)));
@@ -327,7 +327,7 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
         //       c;
         let should_break = !f.is_quiet()
             && (f.comments().printed_comments().iter().rev())
-                .take_while(|comment| left.span().end < comment.span.start && right.span().start > comment.span.end)
+                .take_while(|comment| left.span().end < comment.start() && right.span().start > comment.end())
                 .any(|comment| comment.is_line());
         write!(f, group(&operator_and_right_expression).should_expand(should_break));
     }

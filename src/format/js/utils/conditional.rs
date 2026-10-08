@@ -145,7 +145,7 @@ fn format_operand_trailing_comments<'a>(mut start: u32, end: u32, operator: u8, 
     let mut index_before_operator = None;
     let mut count = None;
     for (index, comment) in comments.iter().enumerate() {
-        if comment.span.end > end {
+        if comment.end() > end {
             count = Some(index_before_operator.unwrap_or(index));
             break;
         }

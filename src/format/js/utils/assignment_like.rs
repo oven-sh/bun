@@ -54,7 +54,7 @@ fn format_left_trailing_comments<'a>(start: u32, right: Expr<'a>, f: &mut Format
     }
     // A `(` after the operator can be the first token of the right side.
     let end_of_line_comments = Some(f.comments().end_of_line_comments_after_left_side(start))
-        .filter(|comments| comments.last().is_none_or(|last| last.span.end <= right.span().start))
+        .filter(|comments| comments.last().is_none_or(|last| !last.is_moved() && last.end() <= right.span().start))
         .unwrap_or_default();
     let comments = if end_of_line_comments.is_empty() {
         let comments = f.comments().comments_before_character(start, b'=');
@@ -136,14 +136,22 @@ impl<'a> AssignmentLike<'a> {
         let text_width_for_break = (f.options().indent_width.value() + MIN_OVERLAP_FOR_BREAK) as usize;
         match *self {
             AssignmentLike::VariableDeclarator(declarator) => {
-                let (id, type_annotation) = (declarator.pat(), declarator.ty().map(FormatTypeAnnotation));
+                let (id, ty) = (declarator.pat(), declarator.ty());
                 let definite = declarator.is_definite().then_some("!");
-                if let Some(init) = declarator.init() {
-                    write!(f, [FormatNodeWithoutTrailingComments(&id), definite, type_annotation]);
-                    format_left_trailing_comments(id.span().end, init, f);
-                } else {
-                    write!(f, [id, definite, type_annotation]);
-                }
+                let Some(init) = declarator.init() else {
+                    write!(f, [id, definite, ty.map(FormatTypeAnnotation)]);
+                    return false;
+                };
+                write!(f, [FormatNodeWithoutTrailingComments(&id), definite]);
+                let end = match ty {
+                    Some(ty) => {
+                        let type_annotation = WithSpan(FormatTypeAnnotation(ty), ty.span());
+                        write!(f, FormatNodeWithoutTrailingComments(&type_annotation));
+                        ty.span().end
+                    }
+                    None => id.span().end,
+                };
+                format_left_trailing_comments(end, init, f);
                 false
             }
             AssignmentLike::AssignmentExpression(assignment) => {
@@ -547,17 +555,17 @@ fn is_poorly_breakable_member_or_call_chain<'a>(expression: Expr<'a>, f: &mut Fo
     let Some(&first_call) = call_expressions.first() else {
         return true;
     };
-    if f.comments().has_comment_in_span(first_call.span()) {
-        return false;
-    }
-
     for &call_expression in &call_expressions {
         let Some(call) = call_expression.call() else {
             continue;
         };
         let is_breakable_call = match (call.args().len(), call.args().first()) {
             (0, _) | (_, None) => false,
-            (1, Some(first)) => matches!(first.kind(), ExprKind::Spread(_)) || !is_short_argument(first, threshold, f),
+            (1, Some(first)) => {
+                matches!(first.kind(), ExprKind::Spread(_))
+                    || !is_short_argument(first, threshold, f)
+                    || f.comments().has_comment_in_range(call.callee().span().end, call_expression.span().end)
+            }
             _ => true,
         };
         if is_breakable_call || is_complex_type_arguments(call_expression, call.type_args(), f) {

@@ -398,7 +398,7 @@ fn assignment_needs_parentheses<'a>(e: Expr<'a>, left: Expr<'a>, parent: AstNode
 pub(crate) fn has_own_line_comment_between(start: u32, end: u32, f: &Formatter<'_>) -> bool {
     let breaks = |comment: &Comment| comment.followed_by_newline() || comment.is_multiline_block();
     let comments = f.comments();
-    comments.printed_comments().iter().rev().take_while(|comment| comment.span.start >= start).any(breaks)
+    comments.printed_comments().iter().rev().take_while(|comment| comment.start() >= start).any(breaks)
         || comments.comments_before_iter(end).any(breaks)
 }
 

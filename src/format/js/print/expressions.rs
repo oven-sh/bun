@@ -61,7 +61,7 @@ fn write_object_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) {
             && !f.comments().has_comment_in_span(key.span(f.file()))
         {
             let comments = Some(f.comments().end_of_line_comments_after_left_side(key.span(f.file()).end))
-                .filter(|comments| comments.last().is_none_or(|last| last.span.end <= value.span().start))
+                .filter(|comments| comments.last().is_none_or(|last| !last.is_moved() && last.end() <= value.span().start))
                 .unwrap_or_default();
             if comments.iter().any(|comment| f.comments().is_suppression_comment(comment)) {
                 return write!(f, FormatSuppressedNode(property.span()));
@@ -115,26 +115,26 @@ pub(crate) fn write_unary_expression<'a>(e: Expr<'a>, op: UnOp, operand: Expr<'a
 /// not depend on which comments are printed already.
 pub(crate) fn unary_argument_has_comments<'a>(unary: Expr<'a>, argument: Expr<'a>, f: &Formatter<'a>) -> bool {
     let (outer, inner) = (unary.span(), argument.span());
-    let is_leading = |comment: &Comment| comment.span.start >= outer.start && comment.span.end <= inner.start;
+    let is_leading = |comment: &Comment| comment.start() >= outer.start && comment.end() <= inner.start;
     let comments = f.comments();
     if comments.printed_comments().last().is_some_and(is_leading) {
         return true;
     }
     let unprinted = comments.unprinted_comments();
     match unprinted.first() {
-        Some(first) if first.span.start < outer.end => {
+        Some(first) if first.start() < outer.end => {
             if is_leading(first) {
                 return true;
             }
         }
         _ => return false,
     }
-    let after = unprinted.partition_point(|comment| comment.span.start < inner.end);
+    let after = unprinted.partition_point(|comment| comment.start() < inner.end);
     unprinted
         .get(after..)
         .unwrap_or_default()
         .iter()
-        .take_while(|comment| comment.span.end <= outer.end)
+        .take_while(|comment| comment.end() <= outer.end)
         .any(|comment| !is_last_binary_operand_comment(argument, comment, f))
 }
 

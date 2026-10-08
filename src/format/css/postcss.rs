@@ -33,6 +33,8 @@ impl Range {
 struct Texts<'a> {
     css: &'a [u8],
     extra: Vec<u8>,
+    /// Tokens that follow each other in a list do so in the text: only `postcss-less` moves them.
+    is_in_order: bool,
 }
 
 /// Where the ranges of `extra` start. There is a gap, for the end of the text not to touch them.
@@ -80,7 +82,10 @@ impl Texts<'_> {
 
     /// The texts of `tokens`, one after the other.
     fn range_of(&mut self, tokens: &[Token]) -> Range {
-        tokens.iter().fold(Range::default(), |all, token| self.join(all, token.range))
+        match tokens {
+            [first, .., last] if self.is_in_order => Range::new(first.range.start, last.range.end),
+            _ => tokens.iter().fold(Range::default(), |all, token| self.join(all, token.range)),
+        }
     }
 
     fn spaces_and_comments_from_end(&mut self, tokens: &mut Vec<Token>) -> Range {
@@ -398,8 +403,12 @@ pub(crate) enum Kind {
 pub(crate) struct Node {
     pub(crate) kind: Kind,
     pub(crate) parent: NodeId,
-    /// `None`: it has no `{ .. }`.
-    pub(crate) nodes: Option<Vec<NodeId>>,
+    /// Whether it has `nodes`: a `{ .. }`.
+    pub(crate) has_block: bool,
+    /// The first and the last of `nodes`, and the node that follows in the `nodes` of the parent. 0: there is none.
+    pub(crate) first_child: NodeId,
+    pub(crate) last_child: NodeId,
+    pub(crate) next_sibling: NodeId,
     /// `source.start.offset`
     pub(crate) start: u32,
     /// `source.end.offset`, if it has been set.
@@ -454,6 +463,13 @@ pub(crate) struct Tree {
     pub(crate) extra: Vec<u8>,
 }
 
+impl Tree {
+    /// The `nodes` of `node`.
+    pub(crate) fn children(&self, node: &Node) -> impl Iterator<Item = NodeId> {
+        std::iter::successors(Some(node.first_child), |&id| Some(self.nodes[id as usize].next_sibling)).take_while(|&id| id != 0)
+    }
+}
+
 struct Parser<'a> {
     css: &'a [u8],
     texts: Texts<'a>,
@@ -468,6 +484,8 @@ struct Parser<'a> {
     depth: u32,
     /// The next word is not the name of a custom property, whatever it looks like.
     is_custom_property_set: bool,
+    /// For the tokens of a statement.
+    token_buffer: Vec<Token>,
 }
 
 /// How deep rules can be nested. What writes them is recursive.
@@ -476,6 +494,10 @@ const MAX_DEPTH: u32 = 256;
 /// `raw`: the text of `tokens` without the comments that have a space next to them, or `None` if that
 /// is all of their text.
 fn clean(css: &[u8], tokens: &[Token], custom_property: bool) -> Option<Box<[u8]>> {
+    let ends_with_space = !custom_property && tokens.last().is_some_and(|it| it.kind == TokenKind::Space);
+    if !ends_with_space && !tokens.iter().any(|it| it.kind == TokenKind::Comment) {
+        return None;
+    }
     let is_safe_neighbor = |token: Option<&Token>| token.is_none_or(|it| it.kind == TokenKind::Space);
     let mut value: Vec<u8> = Vec::new();
     let mut is_clean = true;
@@ -524,7 +546,13 @@ impl<'a> Parser<'a> {
     fn new_node(&mut self, kind: Kind, offset: u32) -> NodeId {
         let id = self.nodes.len() as NodeId;
         let current = self.current;
-        self.node(current).nodes.get_or_insert_default().push(id);
+        let parent = self.node(current);
+        let previous = std::mem::replace(&mut parent.last_child, id);
+        parent.has_block = true;
+        match previous {
+            0 => parent.first_child = id,
+            previous => self.node(previous).next_sibling = id,
+        }
         self.nodes.push(Node {
             kind,
             parent: current,
@@ -540,7 +568,7 @@ impl<'a> Parser<'a> {
     }
 
     fn open(&mut self, id: NodeId) -> Result<(), SyntaxError> {
-        self.node(id).nodes = Some(Vec::new());
+        self.node(id).has_block = true;
         self.current = id;
         self.depth += 1;
         if self.depth > MAX_DEPTH { Err(SyntaxError) } else { Ok(()) }
@@ -578,7 +606,7 @@ impl<'a> Parser<'a> {
     fn close_current(&mut self) {
         let (current, semicolon, spaces) = (self.current, self.semicolon, std::mem::take(&mut self.spaces));
         let node = &mut self.nodes[current as usize];
-        if node.nodes.as_ref().is_some_and(|nodes| !nodes.is_empty()) {
+        if node.first_child != 0 {
             node.semicolon = semicolon;
         }
         node.after = self.texts.join(node.after, spaces);
@@ -601,9 +629,10 @@ impl<'a> Parser<'a> {
     fn free_semicolon(&mut self, token: Token) {
         self.spaces = self.texts.join(self.spaces, token.range);
         let current = self.current;
-        let Some(&prev) = self.node(current).nodes.as_ref().and_then(|nodes| nodes.last()) else {
+        let prev = self.node(current).last_child;
+        if prev == 0 {
             return;
-        };
+        }
         let spaces = self.spaces;
         let prev = self.node(prev);
         if prev.kind == Kind::Rule && !prev.own_semicolon {
@@ -728,12 +757,20 @@ impl<'a> Parser<'a> {
     }
 
     fn other(&mut self, start: Token) -> Result<(), SyntaxError> {
+        let mut tokens = std::mem::take(&mut self.token_buffer);
+        tokens.clear();
+        let result = self.other_with(start, &mut tokens);
+        self.token_buffer = tokens;
+        result
+    }
+
+    /// `tokens` is empty.
+    fn other_with(&mut self, start: Token, tokens: &mut Vec<Token>) -> Result<(), SyntaxError> {
         let mut end = false;
         let mut colon = false;
         let mut brackets: Vec<u8> = Vec::new();
         let custom_property = !std::mem::take(&mut self.is_custom_property_set) && self.text_of(start).starts_with(b"--");
 
-        let mut tokens: Vec<Token> = Vec::new();
         let mut next = Some(start);
         while let Some(token) = next {
             tokens.push(token);
@@ -780,7 +817,7 @@ impl<'a> Parser<'a> {
         self.decl(tokens, custom_property)
     }
 
-    fn rule(&mut self, tokens: Vec<Token>) -> Result<(), SyntaxError> {
+    fn rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), SyntaxError> {
         match self.syntax {
             Syntax::Css => self.base_rule(tokens),
             Syntax::Scss => self.scss_rule(tokens),
@@ -788,13 +825,13 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn base_rule(&mut self, mut tokens: Vec<Token>) -> Result<(), SyntaxError> {
+    fn base_rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), SyntaxError> {
         tokens.pop();
         let start = tokens.first().map_or(0, |token| token.start);
         let id = self.new_node(Kind::Rule, start);
-        let between = self.texts.spaces_and_comments_from_end(&mut tokens);
-        let clean_selector = clean(self.css, &tokens, false);
-        let selector = self.texts.range_of(&tokens);
+        let between = self.texts.spaces_and_comments_from_end(tokens);
+        let clean_selector = clean(self.css, tokens, false);
+        let selector = self.texts.range_of(tokens);
         let node = self.node(id);
         node.between = between;
         node.selector = selector;
@@ -825,19 +862,20 @@ impl<'a> Parser<'a> {
         Ok(None)
     }
 
-    /// Takes `!important` from the end of `tokens`. `lowest`: the index of the first token that is
-    /// looked at. `any_case`: whether it can be written in upper case.
-    fn take_important(&mut self, id: NodeId, tokens: &mut Vec<Token>, lowest: usize, any_case: bool) {
+    /// Takes `!important` from the end of `tokens`, of which only those from `base` on are there for it.
+    /// `lowest`: the index of the first of them that is looked at. `any_case`: whether it can be written in upper
+    /// case.
+    fn take_important(&mut self, id: NodeId, tokens: &mut Vec<Token>, base: usize, lowest: usize, any_case: bool) {
         let is = |text: &[u8], word: &[u8]| if any_case { text.eq_ignore_ascii_case(word) } else { text == word };
         let mut index = tokens.len();
-        while index > lowest {
+        while index > base + lowest {
             index -= 1;
             let token = tokens[index];
             let text = self.text_of(token);
             if is(text, b"!important") {
                 let string = self.texts.range_of(&tokens[index..]);
                 tokens.truncate(index);
-                let keep = tokens.iter().rposition(|it| it.kind != TokenKind::Space).map_or(0, |at| at + 1);
+                let keep = base + tokens[base..].iter().rposition(|it| it.kind != TokenKind::Space).map_or(0, |at| at + 1);
                 let spaces = self.texts.range_of(&tokens[keep..]);
                 let string = self.texts.join(spaces, string);
                 tokens.truncate(keep);
@@ -847,9 +885,9 @@ impl<'a> Parser<'a> {
                 node.raw_important = (!is_plain).then_some(string);
                 break;
             } else if is(text, b"important") {
-                let mut cache = tokens.clone();
+                let mut cache = tokens[base..].to_vec();
                 let mut string = Range::default();
-                let mut j = index;
+                let mut j = index - base;
                 while j > 0 {
                     let starts_with_bang = text::trim(self.texts.of(string)).starts_with(b"!");
                     if starts_with_bang && cache.get(j).is_some_and(|it| it.kind != TokenKind::Space) {
@@ -864,7 +902,8 @@ impl<'a> Parser<'a> {
                     let node = self.node(id);
                     node.important = true;
                     node.raw_important = Some(string);
-                    *tokens = cache;
+                    tokens.truncate(base);
+                    tokens.extend_from_slice(&cache);
                 }
             }
             if !token.is_space_or_comment() {
@@ -873,7 +912,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn decl(&mut self, mut tokens: Vec<Token>, custom_property: bool) -> Result<(), SyntaxError> {
+    fn decl(&mut self, tokens: &mut Vec<Token>, custom_property: bool) -> Result<(), SyntaxError> {
         let Some((&first, &last)) = tokens.first().zip(tokens.last()) else {
             return Err(SyntaxError);
         };
@@ -920,20 +959,19 @@ impl<'a> Parser<'a> {
         while tokens.get(at).is_some_and(|token| token.is_space_or_comment()) {
             at += 1;
         }
-        let first_spaces = tokens[first_spaces_start..at].to_vec();
-        let mut tokens = tokens.split_off(at);
-        self.take_important(id, &mut tokens, 0, true);
+        self.take_important(id, tokens, at, 0, true);
+        let (first_spaces, tokens) = tokens[first_spaces_start..].split_at(at - first_spaces_start);
 
         let has_word = tokens.iter().any(|token| !token.is_space_or_comment());
-        let mut value = self.texts.range_of(&tokens);
-        let first_spaces_range = self.texts.range_of(&first_spaces);
+        let mut value = self.texts.range_of(tokens);
+        let first_spaces_range = self.texts.range_of(first_spaces);
         let clean_value;
         if has_word {
             between = self.texts.join(between, first_spaces_range);
-            clean_value = clean(self.css, &tokens, custom_property);
+            clean_value = clean(self.css, tokens, custom_property);
         } else {
             value = self.texts.join(first_spaces_range, value);
-            clean_value = clean(self.css, &[&first_spaces[..], &tokens[..]].concat(), custom_property);
+            clean_value = clean(self.css, &[first_spaces, tokens].concat(), custom_property);
         }
         let extend = self.syntax == Syntax::Less && has_extend(clean_value.as_deref().unwrap_or_else(|| self.texts.of(value)), b"extend(");
         let node = self.node(id);
@@ -943,13 +981,13 @@ impl<'a> Parser<'a> {
         node.clean_value = clean_value;
         node.extend = extend;
 
-        if !custom_property && self.colon(&tokens)?.is_some() {
+        if !custom_property && self.colon(tokens)?.is_some() {
             return Err(SyntaxError);
         }
         Ok(())
     }
 
-    fn unknown_word(&mut self, tokens: Vec<Token>) -> Result<(), SyntaxError> {
+    fn unknown_word(&mut self, tokens: &mut Vec<Token>) -> Result<(), SyntaxError> {
         let (Syntax::Less, Some(&first)) = (self.syntax, tokens.first()) else {
             return Err(SyntaxError);
         };
@@ -970,14 +1008,14 @@ impl<'a> Parser<'a> {
 
     // ───────────────────────────── postcss-scss ─────────────────────────────
 
-    fn scss_rule(&mut self, mut tokens: Vec<Token>) -> Result<(), SyntaxError> {
+    fn scss_rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), SyntaxError> {
         let mut with_colon = false;
         let mut brackets = 0;
         // Of what is behind the colon, comments aside: the first character, and whether there is
         // more to it than white space.
         let mut first_byte = None;
         let mut is_blank = true;
-        for &token in &tokens {
+        for &token in tokens.iter() {
             let text = self.text_of(token);
             if with_colon {
                 if token.kind != TokenKind::Comment && !token.is(b'{') {
@@ -1032,17 +1070,17 @@ impl<'a> Parser<'a> {
             at += 1;
         }
         let between = self.texts.range_of(&tokens[between_start..at]);
-        let mut tokens = tokens.split_off(at);
-        self.take_important(id, &mut tokens, 1, false);
+        self.take_important(id, tokens, at, 1, false);
+        let tokens = &tokens[at..];
 
-        let clean_value = clean(self.css, &tokens, false);
-        let value = self.texts.range_of(&tokens);
+        let clean_value = clean(self.css, tokens, false);
+        let value = self.texts.range_of(tokens);
         let node = self.node(id);
         node.prop = prop;
         node.between = between;
         node.value = value;
         node.clean_value = clean_value;
-        if self.colon(&tokens)?.is_some() {
+        if self.colon(tokens)?.is_some() {
             return Err(SyntaxError);
         }
         self.open(id)
@@ -1105,7 +1143,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn less_each(&mut self, mut tokens: Vec<Token>) -> Result<(), SyntaxError> {
+    fn less_each(&mut self, tokens: &mut Vec<Token>) -> Result<(), SyntaxError> {
         let first_paren = tokens.iter().position(|token| token.is(b'(')).ok_or(SyntaxError)?;
         let last_paren = tokens.iter().rposition(|token| token.is(b')')).ok_or(SyntaxError)?;
         let params = self.texts.range_of(&tokens[first_paren..(first_paren + last_paren).min(tokens.len())]);
@@ -1124,7 +1162,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn less_mixin(&mut self, mut tokens: Vec<Token>) -> Result<(), SyntaxError> {
+    fn less_mixin(&mut self, tokens: &mut Vec<Token>) -> Result<(), SyntaxError> {
         let first = *tokens.first().ok_or(SyntaxError)?;
         let identifier = Range::new(first.range.start, first.range.start + 1);
         let brackets_index = tokens.iter().position(|token| token.kind == TokenKind::Brackets);
@@ -1196,7 +1234,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn less_rule(&mut self, tokens: Vec<Token>) -> Result<(), SyntaxError> {
+    fn less_rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), SyntaxError> {
         if let [.., prev, last] = tokens[..]
             && prev.kind == TokenKind::AtWord
             && last.is(b'{')
@@ -1288,6 +1326,7 @@ fn parse_from(css: &[u8], syntax: Syntax, pos: usize, is_custom_property_set: bo
         texts: Texts {
             css,
             extra: Vec::new(),
+            is_in_order: syntax != Syntax::Less,
         },
         syntax,
         tokenizer: Tokenizer {
@@ -1300,17 +1339,19 @@ fn parse_from(css: &[u8], syntax: Syntax, pos: usize, is_custom_property_set: bo
             last_bad_paren: None,
             next_close: None,
         },
-        nodes: vec![Node {
-            nodes: Some(Vec::new()),
-            ..Node::default()
-        }],
+        nodes: Vec::with_capacity((css.len() - pos.min(css.len())) / 32 + 1),
         current: 0,
         last_node: 0,
         spaces: Range::default(),
         semicolon: false,
         depth: 0,
         is_custom_property_set,
+        token_buffer: Vec::new(),
     };
+    parser.nodes.push(Node {
+        has_block: true,
+        ..Node::default()
+    });
     parser.parse()?;
     Ok(Tree {
         nodes: parser.nodes,

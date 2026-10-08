@@ -303,16 +303,16 @@ impl<'a> Context<'a> {
         Ok(node.variable)
     }
 
-    fn convert_children(&self, tree: &Tree, ids: &[NodeId]) -> Result<Vec<CssNode<'a>>, SyntaxError> {
-        ids.iter().map(|&id| self.convert(tree, id)).collect()
+    fn convert_children(&self, tree: &Tree, raw: &postcss::Node) -> Result<Vec<CssNode<'a>>, SyntaxError> {
+        tree.children(raw).map(|id| self.convert(tree, id)).collect()
     }
 
     /// `parseNestedCSS`, and `calculateLoc` for the node.
     fn convert(&self, tree: &Tree, id: NodeId) -> Result<CssNode<'a>, SyntaxError> {
         let raw = &tree.nodes[id as usize];
-        let nodes = match &raw.nodes {
-            Some(ids) => Some(self.convert_children(tree, ids)?),
-            None => None,
+        let nodes = match raw.has_block {
+            true => Some(self.convert_children(tree, raw)?),
+            false => None,
         };
         let mut node = CssNode {
             kind: raw.kind,
@@ -406,7 +406,9 @@ impl<'a> Context<'a> {
                     self.syntax,
                     raw.start,
                 )
-                && let [only] = *tree.nodes[0].nodes.as_deref().unwrap_or_default()
+                && let only = tree.nodes[0].first_child
+                && only != 0
+                && only == tree.nodes[0].last_child
                 && tree.nodes[only as usize].kind == Kind::Rule
                 // What is in it would not live long enough.
                 && tree.extra.is_empty()

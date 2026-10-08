@@ -1,5 +1,5 @@
-use super::complexity::{Climber, Step};
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::FxHashSet;
 
 /// Enforce the consistent use of either `function` declarations or expressions assigned to variables.
@@ -28,7 +28,7 @@ pub struct State<'a> {
     candidates: Vec<(Func<'a>, VarDecl<'a>)>,
     /// The arrow functions that are the innermost function around a `this` or a `super`.
     with_this_or_super: FxHashSet<Func<'a>>,
-    functions: Climber<'a, Option<Func<'a>>>,
+    functions: AncestorMemo<'a, Func<'a>>,
     /// The overload signatures of the file, once a function declaration asks: what has the list of
     /// statements it is in, its name, and whether it is exported.
     overloads: Option<FxHashSet<(Node<'a>, Name<'a>, bool)>>,
@@ -121,7 +121,7 @@ impl FuncStyle {
 
     fn check_this_or_super<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         // A static block and the initializer of a property are not functions to ESLint.
-        let (function, _) = cx.state.functions.climb(Node::Expr(e), None, |_, ancestor| match ancestor {
+        let function = cx.state.functions.find(Node::Expr(e), |_, ancestor| match ancestor {
             Node::Func(func)
                 if matches!(
                     func.kind(),
@@ -134,9 +134,9 @@ impl FuncStyle {
                         | FnKind::Constructor
                 ) =>
             {
-                Step::Stop(Some(func))
+                Some(func)
             }
-            _ => Step::Pass,
+            _ => None,
         });
         if let Some(func) = function
             && func.is_arrow()

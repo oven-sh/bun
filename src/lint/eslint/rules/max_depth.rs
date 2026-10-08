@@ -1,5 +1,5 @@
-use super::complexity::{Climber, Step};
 use bun_lint::prelude::*;
+use rustc_hash::FxHashMap;
 
 /// Enforce a maximum depth that blocks can be nested.
 pub struct MaxDepth {
@@ -34,17 +34,76 @@ fn keyword_of(stmt: Stmt) -> Option<&'static str> {
     })
 }
 
+/// Counts ancestors, for a rule that asks that of many nodes.
+///
+/// A long walk towards the root leaves its count at every [`AncestorCounter::STRIDE`]th node on its
+/// way, and a walk that comes to such a node ends there. So all the walks in a file together take
+/// O(nodes + walks) steps, however deep the nodes are in each other.
+#[derive(Default)]
+pub struct AncestorCounter<'a> {
+    /// How many ancestors of a node count.
+    known: FxHashMap<Node<'a>, u32>,
+}
+
+/// What an ancestor is to an [`AncestorCounter`].
+pub(crate) enum Ancestor {
+    /// Neither it nor what is above it counts.
+    End,
+    Counted,
+    Passed,
+}
+
+impl<'a> AncestorCounter<'a> {
+    const STRIDE: u32 = 32;
+
+    /// How many of the ancestors of `start` count. `classify` depends on nothing but the ancestor.
+    pub(crate) fn count(&mut self, start: Node<'a>, classify: impl Fn(Node<'a>) -> Ancestor) -> usize {
+        let (mut at, mut steps, mut count) = (start, 0u32, 0u32);
+        loop {
+            if !self.known.is_empty()
+                && let Some(&above) = self.known.get(&at)
+            {
+                count += above;
+                break;
+            }
+            if matches!(at, Node::File(_)) {
+                break;
+            }
+            at = at.parent();
+            match classify(at) {
+                Ancestor::End => break,
+                Ancestor::Counted => count += 1,
+                Ancestor::Passed => {}
+            }
+            steps += 1;
+        }
+        if steps >= Self::STRIDE {
+            let (mut at, mut above) = (start, count);
+            for i in 0..steps {
+                if i % Self::STRIDE == 0 {
+                    self.known.insert(at, above);
+                }
+                at = at.parent();
+                if matches!(classify(at), Ancestor::Counted) {
+                    above = above.saturating_sub(1);
+                }
+            }
+        }
+        count as usize
+    }
+}
+
 impl MaxDepth {
     fn check<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let (Some(max), Some(keyword)) = (self.max, keyword_of(stmt)) else {
             return;
         };
-        let (_, around) = cx.state.climb(Node::Stmt(stmt), (), |_, ancestor| match ancestor {
-            Node::Func(_) => Step::Stop(()),
-            Node::Stmt(outer) if keyword_of(outer).is_some() => Step::Count,
-            _ => Step::Pass,
+        let around = cx.state.count(Node::Stmt(stmt), |ancestor| match ancestor {
+            Node::Func(_) => Ancestor::End,
+            Node::Stmt(outer) if keyword_of(outer).is_some() => Ancestor::Counted,
+            _ => Ancestor::Passed,
         });
-        let depth = around as usize + 1;
+        let depth = around + 1;
         if depth > max {
             let start = stmt.span().start;
             cx.report(Span::new(start, start + keyword.len() as u32), TOO_DEEPLY)
@@ -56,7 +115,7 @@ impl MaxDepth {
 
 impl Rule for MaxDepth {
     const META: Meta = Meta::eslint("max-depth", Kind::Suggestion);
-    type State<'a> = Climber<'a, ()>;
+    type State<'a> = AncestorCounter<'a>;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -68,7 +127,7 @@ impl Rule for MaxDepth {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Climber<'a, ()> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> AncestorCounter<'a> {
         on.stmts(
             [
                 StmtTag::If,
@@ -84,6 +143,6 @@ impl Rule for MaxDepth {
             ],
             Self::check,
         );
-        Climber::default()
+        AncestorCounter::default()
     }
 }

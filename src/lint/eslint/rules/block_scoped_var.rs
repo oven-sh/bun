@@ -1,5 +1,5 @@
-use super::complexity::{Climber, Step};
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::FxHashMap;
 
 /// Enforce the use of variables within the scope they are defined.
@@ -12,7 +12,7 @@ const OUT_OF_SCOPE: Message = Message::new(
 
 #[derive(Default)]
 pub struct State<'a> {
-    binding_contexts: Climber<'a, Option<Span>>,
+    binding_contexts: AncestorMemo<'a, Span>,
     /// The last statement with several names that declares the symbol.
     declared_in: FxHashMap<Symbol<'a>, Stmt<'a>>,
 }
@@ -21,21 +21,19 @@ impl BlockScopedVar {
     /// The innermost block, loop, `switch` or static block around `statement`. `None` at the top
     /// level of the file, which nothing is outside of.
     fn binding_context<'a>(statement: Stmt<'a>, cx: &mut Cx<'a, Self>) -> Option<Span> {
-        let found = |span: Option<Span>| span.map_or(Step::Pass, |it| Step::Stop(Some(it)));
-        let context = cx.state.binding_contexts.climb(Node::Stmt(statement), None, |_, ancestor| match ancestor {
-            Node::Func(func) if func.kind() == FnKind::StaticBlock => found(Some(func.owner().span())),
-            Node::Func(func) => found(func.body_span()),
+        cx.state.binding_contexts.find(Node::Stmt(statement), |_, ancestor| match ancestor {
+            Node::Func(func) if func.kind() == FnKind::StaticBlock => Some(func.owner().span()),
+            Node::Func(func) => func.body_span(),
             Node::Stmt(it) => match it.kind() {
                 StmtKind::Block(_)
                 | StmtKind::For { .. }
                 | StmtKind::ForIn { .. }
                 | StmtKind::ForOf { .. }
-                | StmtKind::Switch { .. } => found(Some(it.span())),
-                _ => Step::Pass,
+                | StmtKind::Switch { .. } => Some(it.span()),
+                _ => None,
             },
-            _ => Step::Pass,
-        });
-        context.0
+            _ => None,
+        })
     }
 
     fn check<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {

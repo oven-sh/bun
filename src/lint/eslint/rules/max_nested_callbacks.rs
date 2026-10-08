@@ -1,4 +1,4 @@
-use super::complexity::{Climber, Step};
+use super::max_depth::{Ancestor, AncestorCounter};
 use bun_lint::prelude::*;
 
 /// Enforce a maximum depth that callbacks can be nested.
@@ -33,11 +33,11 @@ impl MaxNestedCallbacks {
         if !self.is_callback(e) {
             return;
         }
-        let (_, around) = cx.state.climb(Node::Expr(e), (), |_, ancestor| match ancestor {
-            Node::Expr(outer) if outer.tag() == ExprTag::Fn && self.is_callback(outer) => Step::Count,
-            _ => Step::Pass,
+        let around = cx.state.count(Node::Expr(e), |ancestor| match ancestor {
+            Node::Expr(outer) if outer.tag() == ExprTag::Fn && self.is_callback(outer) => Ancestor::Counted,
+            _ => Ancestor::Passed,
         });
-        let depth = around as usize + 1;
+        let depth = around + 1;
         if depth > max {
             cx.report(ast_utils::get_function_head_loc(func), EXCEED).data("num", depth).data("max", max);
         }
@@ -46,7 +46,7 @@ impl MaxNestedCallbacks {
 
 impl Rule for MaxNestedCallbacks {
     const META: Meta = Meta::eslint("max-nested-callbacks", Kind::Suggestion);
-    type State<'a> = Climber<'a, ()>;
+    type State<'a> = AncestorCounter<'a>;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -59,8 +59,8 @@ impl Rule for MaxNestedCallbacks {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Climber<'a, ()> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> AncestorCounter<'a> {
         on.exprs([ExprTag::Fn], Self::check);
-        Climber::default()
+        AncestorCounter::default()
     }
 }

@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::token_key::push_token_key;
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 
@@ -84,7 +85,7 @@ fn are_equal_keys<'a>(file: &'a File<'a>, left: Key<'a>, right: Key<'a>) -> bool
 enum KeyIdentity<'a> {
     Private(Name<'a>),
     Static(Cow<'a, [u8]>),
-    /// The kind, the length and the value of each token.
+    /// What [`push_token_key`] makes of it.
     Tokens(Vec<u8>),
 }
 
@@ -97,12 +98,7 @@ impl<'a> KeyIdentity<'a> {
             return KeyIdentity::Static(name);
         }
         let mut tokens = Vec::new();
-        for token in file.tokens_in(key.inner_span(file)) {
-            let value = token.decoded_value();
-            tokens.push(token.kind() as u8);
-            tokens.extend_from_slice(&(value.len() as u32).to_le_bytes());
-            tokens.extend_from_slice(&value);
-        }
+        push_token_key(file, key.inner_span(file), &mut tokens);
         KeyIdentity::Tokens(tokens)
     }
 }

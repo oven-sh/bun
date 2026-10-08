@@ -29,7 +29,7 @@ impl<'a> Format<'a> for FormatSuppressedNode {
         // asked of all its lines together.
         let width = match TextWidth::from_text(&text, 0) {
             width if !width.is_multiline() => width,
-            _ => TextWidth::multiline(
+            _ => TextWidth::multiline_string(
                 bun_core::strings::split(&text, b"\n").map(|line| TextWidth::from_text(line, 0).value()).sum(),
             ),
         };

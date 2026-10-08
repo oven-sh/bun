@@ -10,6 +10,7 @@ use bun_lint::types::utils::{
 use bun_lint::types::{Type, TypeFlags};
 use bun_lint::utils::estree_span;
 use bun_lint::utils::ts_utils::{WrappingFixerParams, get_wrapping_fixer, is_parenless_arrow_function};
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 /// Disallow certain types in boolean expressions.
@@ -571,6 +572,8 @@ impl StrictBooleanExpressions {
             return;
         }
         let mut flatten_types: SmallVec<[Type<'a>; 8]> = SmallVec::new();
+        // All of them, once they are many.
+        let mut many_flatten_types: FxHashSet<Type<'a>> = FxHashSet::default();
         for signature in predicate_type.get_call_signatures() {
             let ty = signature.get_return_type();
             let ty = match is_type_parameter(ty) {
@@ -581,8 +584,16 @@ impl StrictBooleanExpressions {
                 return;
             }
             for constituent in union_constituents(ty) {
-                if !flatten_types.contains(&constituent) {
-                    flatten_types.push(constituent);
+                let is_new = match flatten_types.spilled() {
+                    true => many_flatten_types.insert(constituent),
+                    false => !flatten_types.contains(&constituent),
+                };
+                if !is_new {
+                    continue;
+                }
+                flatten_types.push(constituent);
+                if flatten_types.spilled() && many_flatten_types.is_empty() {
+                    many_flatten_types.extend(flatten_types.iter().copied());
                 }
             }
         }

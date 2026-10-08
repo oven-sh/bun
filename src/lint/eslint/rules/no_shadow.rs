@@ -161,7 +161,7 @@ fn unwrap_expression(mut e: Expr<'_>) -> Expr<'_> {
 
 /// ESLint's `isFunctionNameInitializerException`, typescript-eslint's `isOnInitializer`:
 /// `var a = function a() {}`, `var { A = foo || class A {} } = b`.
-fn is_function_name_initializer_exception<'a>(variable: Variable<'a>, shadowed: Variable<'a>) -> bool {
+fn is_function_name_initializer_exception<'a>(variable: &Variable<'a>, shadowed: &Variable<'a>) -> bool {
     let owner = match variable.definition {
         Declaration::Fn(func) if func.kind() == FnKind::Expr => func.owner(),
         Declaration::Class(class) => class.owner(),
@@ -191,7 +191,7 @@ fn get_outer_scope(scope: Scope<'_>) -> Option<Scope<'_>> {
 
 /// ESLint's `isInitPatternNode`: the variable is in a callback in the initializer of what it
 /// shadows, as in `const a = [].find(a => a)`.
-fn is_init_pattern_node<'a>(variable: Variable<'a>, shadowed: Variable<'a>) -> bool {
+fn is_init_pattern_node<'a>(variable: &Variable<'a>, shadowed: &Variable<'a>) -> bool {
     let (Declaration::Var(outer) | Declaration::Param(outer)) = shadowed.definition else {
         return false;
     };
@@ -319,7 +319,7 @@ impl Checker {
     }
 
     /// ESLint's `isDeclareInDTSFile`.
-    fn is_declare_in_dts_file(&self, file: &File, variable: Variable) -> bool {
+    fn is_declare_in_dts_file(&self, file: &File, variable: &Variable) -> bool {
         let path = file.path();
         let is_definition_file = match self.dialect {
             Dialect::Eslint => {
@@ -341,7 +341,7 @@ impl Checker {
     }
 
     /// ESLint's `isInTdz`: the variable comes before what it shadows, and that is not hoisted.
-    fn is_in_tdz(&self, variable: Variable, shadowed: Variable) -> bool {
+    fn is_in_tdz(&self, variable: &Variable, shadowed: &Variable) -> bool {
         if variable.identifier.end >= shadowed.identifier.start {
             return false;
         }
@@ -364,7 +364,7 @@ impl Checker {
     }
 
     /// ESLint's `isTypeValueShadow`. `shadowed` is `None` for a global variable.
-    fn is_type_value_shadow(&self, variable: Variable, shadowed: Option<Variable>) -> bool {
+    fn is_type_value_shadow(&self, variable: &Variable, shadowed: Option<&Variable>) -> bool {
         if !self.ignore_type_value_shadow {
             return false;
         }
@@ -384,8 +384,8 @@ impl Checker {
     /// ESLint's `isFunctionTypeParameterNameValueShadow`.
     fn is_function_type_parameter_name_value_shadow(
         &self,
-        variable: Variable,
-        shadowed: Option<Variable>,
+        variable: &Variable,
+        shadowed: Option<&Variable>,
         is_global_value: bool,
     ) -> bool {
         if !self.ignore_function_type_parameter_name_value_shadow {
@@ -404,8 +404,8 @@ impl Checker {
     /// ESLint's `isGenericOfAStaticMethodShadow`.
     fn is_generic_of_a_static_method_shadow(
         &self,
-        variable: Variable,
-        shadowed: Option<Variable>,
+        variable: &Variable,
+        shadowed: Option<&Variable>,
     ) -> bool {
         match self.dialect {
             Dialect::Eslint => is_type_parameter_of_static_member(variable.definition),
@@ -420,8 +420,8 @@ impl Checker {
     /// `declare module "m" { interface A {} }`.
     fn is_external_declaration_merging<'a>(
         &self,
-        variable: Variable<'a>,
-        shadowed: Variable<'a>,
+        variable: &Variable<'a>,
+        shadowed: &Variable<'a>,
     ) -> bool {
         let Some(import) = import_of(shadowed.definition) else {
             return false;
@@ -474,10 +474,10 @@ impl Checker {
         let file = cx.file();
         if is_global_augmentation(variable.scope)
             || variable.is_duplicated_class_name
-            || self.is_declare_in_dts_file(file, variable)
-            || self.is_type_value_shadow(variable, shadowed)
-            || self.is_function_type_parameter_name_value_shadow(variable, shadowed, is_global_value)
-            || self.is_generic_of_a_static_method_shadow(variable, shadowed)
+            || self.is_declare_in_dts_file(file, &variable)
+            || self.is_type_value_shadow(&variable, shadowed.as_ref())
+            || self.is_function_type_parameter_name_value_shadow(&variable, shadowed.as_ref(), is_global_value)
+            || self.is_generic_of_a_static_method_shadow(&variable, shadowed.as_ref())
         {
             return;
         }
@@ -485,10 +485,10 @@ impl Checker {
             cx.report(variable.identifier, NO_SHADOW_GLOBAL).data("name", name);
             return;
         };
-        if is_function_name_initializer_exception(variable, shadowed)
-            || (self.ignore_on_initialization && is_init_pattern_node(variable, shadowed))
-            || self.is_in_tdz(variable, shadowed)
-            || self.is_external_declaration_merging(variable, shadowed)
+        if is_function_name_initializer_exception(&variable, &shadowed)
+            || (self.ignore_on_initialization && is_init_pattern_node(&variable, &shadowed))
+            || self.is_in_tdz(&variable, &shadowed)
+            || self.is_external_declaration_merging(&variable, &shadowed)
         {
             return;
         }

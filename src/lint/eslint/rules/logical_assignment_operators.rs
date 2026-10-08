@@ -186,7 +186,7 @@ struct Descriptor {
 
 impl LogicalAssignmentOperators {
     /// ESLint's `createConditionalFixer`. `fix` returns nothing if there are comments in the way.
-    fn report<'a>(cx: &Cx<'a, Self>, descriptor: Descriptor, fix: impl FnOnce(Fixer<'a>) -> Vec<Fix>) {
+    fn report<'a>(cx: &Cx<'a, Self>, descriptor: &Descriptor, fix: impl FnOnce(Fixer<'a>) -> Vec<Fix>) {
         let operator = assign_op_text(Some(descriptor.operator));
         let report = cx.report(descriptor.node, descriptor.message).data("operator", operator);
         if descriptor.should_be_fixed {
@@ -211,7 +211,7 @@ impl LogicalAssignmentOperators {
             operator: op,
             should_be_fixed: cannot_be_getter(target),
         };
-        Self::report(cx, descriptor, |fixer| {
+        Self::report(cx, &descriptor, |fixer| {
             let Some(operator_token) = assignment.operator_span() else {
                 return Vec::new();
             };
@@ -264,7 +264,7 @@ impl LogicalAssignmentOperators {
             operator: op,
             should_be_fixed: cannot_be_getter(target),
         };
-        Self::report(cx, descriptor, |fixer| {
+        Self::report(cx, &descriptor, |fixer| {
             let (Some(assignment_operator), Some(logical_operator)) =
                 (assignment.operator_span(), parent.operator_span())
             else {
@@ -303,7 +303,7 @@ impl LogicalAssignmentOperators {
             operator: op,
             should_be_fixed: cannot_be_getter(left) || accesses_single_property(left),
         };
-        Self::report(cx, descriptor, |fixer| {
+        Self::report(cx, &descriptor, |fixer| {
             let Some(operator_token) = right.operator_span() else {
                 return Vec::new();
             };
@@ -354,7 +354,7 @@ impl LogicalAssignmentOperators {
             operator,
             should_be_fixed: cannot_be_getter(reference) || (!is_logical_test && accesses_single_property(reference)),
         };
-        Self::report(cx, descriptor, |fixer| {
+        Self::report(cx, &descriptor, |fixer| {
             let file = fixer.file();
             let (Some(operator_token), Some(first_body_token)) = (expression.operator_span(), file.first_token(body))
             else {

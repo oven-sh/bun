@@ -19,6 +19,7 @@ struct Restriction {
     message: Text,
 }
 
+#[derive(Copy, Clone)]
 enum Found<'r> {
     ObjectProperty(&'r Restriction),
     Property(&'r Restriction),

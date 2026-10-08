@@ -167,7 +167,7 @@ enum Matcher {
     /// An element of `paths`.
     Path(Box<[u8]>),
     /// `regex` of an element of `patterns`.
-    Regex(Regex),
+    Regex(Box<Regex>),
     /// `group` of an element of `patterns`.
     Ignore(Ignore),
 }
@@ -482,7 +482,7 @@ impl Restrictions {
             let is_case_sensitive = object.bool_or("caseSensitive", false);
             let matcher = match object.str("regex") {
                 Some(regex) => {
-                    Regex::new(regex, if is_case_sensitive { "u" } else { "iu" }).ok().map(Matcher::Regex)
+                    Regex::new(regex, if is_case_sensitive { "u" } else { "iu" }).ok().map(|it| Matcher::Regex(Box::new(it)))
                 }
                 None => object.has("group").then(|| {
                     let group = object.strings("group");

@@ -8,7 +8,7 @@ pub struct HandleCallbackErr {
 enum ErrorArgument {
     Name(Box<[u8]>),
     /// It starts with `^`. `None` if it is not a valid regular expression.
-    Pattern(Option<Regex>),
+    Pattern(Option<Box<Regex>>),
 }
 
 const EXPECTED: Message = Message::new("expected", "Expected error to be handled.");
@@ -57,7 +57,7 @@ impl Rule for HandleCallbackErr {
         let argument = options.str(0).filter(|it| !it.is_empty()).unwrap_or("err");
         HandleCallbackErr {
             error_argument: match argument.starts_with('^') {
-                true => ErrorArgument::Pattern(Regex::new(argument, "u").ok()),
+                true => ErrorArgument::Pattern(Regex::new(argument, "u").ok().map(Box::new)),
                 false => ErrorArgument::Name(argument.as_bytes().into()),
             },
         }

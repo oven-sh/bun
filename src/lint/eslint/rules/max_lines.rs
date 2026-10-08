@@ -77,7 +77,7 @@ impl Rule for MaxLines {
         let object = options.object(0);
         MaxLines {
             max: (object.usize("max"))
-                .or(options.number(0).map(|n| n as usize))
+                .or_else(|| options.number(0).map(|n| n as usize))
                 .unwrap_or(300),
             skip_comments: object.bool_or("skipComments", false),
             skip_blank_lines: object.bool_or("skipBlankLines", false),

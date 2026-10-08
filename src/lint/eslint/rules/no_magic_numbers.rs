@@ -243,7 +243,7 @@ impl Checker {
 
     fn is_ignored_value(&self, value: Value) -> bool {
         match value {
-            Value::Number(value) => self.ignore.iter().any(|ignored| *ignored == value),
+            Value::Number(value) => self.ignore.contains(&value),
             Value::BigInt { is_negative, digits } => {
                 self.ignore_bigints.iter().any(|ignored| ignored.0 == is_negative && *ignored.1 == *digits)
             }

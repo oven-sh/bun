@@ -167,7 +167,7 @@ impl Rule for ObjectCurlyNewline {
                 _ => None,
             };
             let annotation = ty.map(TypeNode::annotation_span);
-            let node = Span::new(pat.span().start, annotation.map_or(pat.span().end, |it| it.start));
+            let node = Span::new(pat.span().start, annotation.map_or_else(|| pat.span().end, |it| it.start));
             check(cx, rule.object_pattern, node, props.len(), annotation);
         });
         on.stmts([StmtTag::Import, StmtTag::ExportNamed], |rule, statement, cx| {

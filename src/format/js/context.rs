@@ -5,9 +5,10 @@ use super::source_text::SourceText;
 use crate::cursor::CursorRegion;
 use crate::ir::element::FormatElement;
 use crate::options::FormatOptions;
-use bun_lint::ast::File;
+use bun_lint::ast::{Expr, File};
 use bun_lint::span::{Span, Spanned};
 use rustc_hash::FxHashMap;
+use std::cell::Cell;
 
 pub(crate) struct JsFormatContext<'a> {
     /// `None` for a document that is not written for JavaScript.
@@ -27,6 +28,9 @@ pub(crate) struct JsFormatContext<'a> {
     stack_check: bun_core::StackCheck,
     /// Something has not been written because it is nested too deeply.
     pub(crate) ran_out_of_stack: bool,
+    /// The last member access with many member accesses around it, and whether it stays on the line
+    /// of its object. The one around it has the same answer.
+    pub(crate) long_member_chain: Cell<Option<(Expr<'a>, bool)>>,
 }
 
 impl<'a> JsFormatContext<'a> {
@@ -50,6 +54,7 @@ impl<'a> JsFormatContext<'a> {
             cursor: CursorRegion::NONE,
             stack_check: bun_core::StackCheck::init(),
             ran_out_of_stack: false,
+            long_member_chain: Cell::new(None),
         }
     }
 

@@ -98,9 +98,59 @@ fn should_inline<'a>(e: Expr<'a>, object: Expr<'a>, object_start: usize, f: &For
     if !is_in_member && !is_private && object.tag() == ExprTag::Ident {
         return true;
     }
+    let mut steps = 0;
     while is_member_or_wrapper(outer) {
         outer = outer.parent();
+        steps += 1;
+        if steps == LONG_CHAIN
+            && let Some(answer) = answer_for_object(object, f)
+        {
+            f.context().long_member_chain.set(Some((e, answer)));
+            return answer;
+        }
     }
+    let answer = should_inline_in(e, object, object_start, outer, is_in_member, f);
+    if steps >= LONG_CHAIN {
+        f.context().long_member_chain.set(Some((e, answer)));
+    }
+    answer
+}
+
+/// With so many member accesses and `!`s around one, the way up is not gone for each of them.
+const LONG_CHAIN: u32 = 16;
+
+/// What [`should_inline`] came to for the member access that `object` is, or is an `[..]` or a `!`
+/// of, if that is the last one in a long chain that it was asked about. The way up from there leads
+/// through what `object` is the object of, unless a `ChainExpression` is in between.
+fn answer_for_object<'a>(object: Expr<'a>, f: &Formatter<'a>) -> Option<bool> {
+    let (last, answer) = f.context().long_member_chain.get()?;
+    let mut at = object;
+    loop {
+        if is_chain_root(at) {
+            return None;
+        }
+        if at == last {
+            return Some(answer);
+        }
+        at = match at.tag() {
+            ExprTag::Index => at.object()?,
+            ExprTag::Dot if at.is_private_member() => at.object()?,
+            ExprTag::NonNull => at.operand()?,
+            _ => return None,
+        };
+    }
+}
+
+/// `outer`: the first thing around `e` that is neither a member access nor a `!`. `is_in_member`:
+/// `e`, with the `!`s after it, is in a member access.
+fn should_inline_in<'a>(
+    e: Expr<'a>,
+    object: Expr<'a>,
+    object_start: usize,
+    outer: Node<'a>,
+    is_in_member: bool,
+    f: &Formatter<'a>,
+) -> bool {
     match outer {
         Node::Expr(it) if !matches!(it.tag(), ExprTag::Assign | ExprTag::New) => return false,
         Node::VarDecl(_) if is_in_member => return false,

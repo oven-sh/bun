@@ -199,13 +199,13 @@ pub(crate) mod js_fns {
                 }
                 bun_core::scoped_log!(bun_test_group, "genericHook in preload");
 
-                let _ = bun_test_root.hook_scope.append_hook(
+                bun_test_root.hook_scope.append_hook(
                     tag.as_hook_tag().unwrap(),
                     args.callback,
                     cfg,
                     BaseScopeCfg::default(),
                     AddedInPhase::Preload,
-                )?;
+                );
                 return Ok(JSValue::UNDEFINED);
             };
 
@@ -217,13 +217,13 @@ pub(crate) mod js_fns {
                             tag_name
                         )));
                     }
-                    let _ = bun_test.collection.active_scope_mut().append_hook(
+                    bun_test.collection.active_scope_mut().append_hook(
                         tag.as_hook_tag().unwrap(),
                         args.callback,
                         cfg,
                         BaseScopeCfg::default(),
                         AddedInPhase::Collection,
-                    )?;
+                    );
                     Ok(JSValue::UNDEFINED)
                 }
                 Phase::Execution => {
@@ -1835,11 +1835,13 @@ impl DescribeScope {
         cfg: ExecutionEntryCfg,
         base: BaseScopeCfg,
         phase: AddedInPhase,
-    ) -> JsResult<&mut ExecutionEntry> {
+    ) {
         let entry = ExecutionEntry::create(None, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
-        let list = self.get_hook_entries(tag);
-        list.push(entry);
-        Ok(&mut **list.last_mut().unwrap())
+        // Nothing in a skipped scope runs, and an entry without a callback is reported as a test.
+        if entry.callback.is_none() {
+            return;
+        }
+        self.get_hook_entries(tag).push(entry);
     }
 }
 

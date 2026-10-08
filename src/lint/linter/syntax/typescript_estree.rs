@@ -86,6 +86,7 @@ fn var_kind_text(kind: VarKind) -> &'static str {
 
 struct Checks<'a> {
     file: &'a File<'a>,
+    is_of_prettier: bool,
     /// The checks that fail, and for each its error.
     candidates: Vec<Candidate>,
     errors: Vec<SyntaxError>,
@@ -94,9 +95,11 @@ struct Checks<'a> {
 /// More errors than this are not told apart: the file is refused with one of these.
 const MAX_CANDIDATES: usize = 1024;
 
-pub(super) fn first_error<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+/// `is_of_prettier`: the version that Prettier 3.9 has, which does not look at the values of import attributes.
+pub(super) fn first_error<'a>(file: &'a File<'a>, is_of_prettier: bool) -> Option<SyntaxError> {
     let mut checks = Checks {
         file,
+        is_of_prettier,
         candidates: Vec::new(),
         errors: Vec::new(),
     };
@@ -1248,7 +1251,7 @@ impl<'a> Checks<'a> {
                 self.fail(Span::new(raw.start, raw.end), raw.local_pos, message);
             }
         }
-        if !hir.import_attributes.is_empty() {
+        if !hir.import_attributes.is_empty() && !self.is_of_prettier {
             self.import_attributes();
         }
     }

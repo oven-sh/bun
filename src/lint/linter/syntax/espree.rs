@@ -857,7 +857,8 @@ impl<'a> Checks<'a> {
                         _ => None,
                     })
                     .unwrap_or(false),
-                Node::Class(_) => true,
+                // For Babel the name of a class is only a reserved word there.
+                Node::Class(_) => !self.is_babel,
                 _ => false,
             };
             if is_lexical {

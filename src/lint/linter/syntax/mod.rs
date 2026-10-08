@@ -82,7 +82,7 @@ pub fn parse_error<'a>(file: &'a File<'a>) -> Option<LintMessage> {
             .map(|it| it.1))
         .or_else(|| espree::typescript_in_javascript(file).filter(|_| file.is_javascript())),
         // It converts a tree only if the parser has nothing to say.
-        (Parser::TypeScript, None) => typescript_estree::first_error(file),
+        (Parser::TypeScript, None) => typescript_estree::first_error(file, false),
         (Parser::Espree, of_parser) => {
             espree::first_error(file, of_parser.map(|it| (it.0, it.1.at)))
         }
@@ -133,7 +133,7 @@ pub fn refused_by_prettier<'a>(file: &'a File<'a>) -> bool {
     }
     match is_javascript {
         true => espree::is_refused_by_babel(file),
-        false => typescript_estree::first_error(file).is_some(),
+        false => typescript_estree::first_error(file, true).is_some(),
     }
 }
 

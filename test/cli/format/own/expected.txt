@@ -8,10 +8,14 @@ FAIL oxfmt cases/classes/semicolon-on-a-later-line.js { printWidth: 80 }
 FAIL oxfmt cases/classes/semicolon-on-a-later-line.js { printWidth: 100 }
 FAIL oxfmt cases/classes/semicolon-on-a-later-line.ts { printWidth: 80 }
 FAIL oxfmt cases/classes/semicolon-on-a-later-line.ts { printWidth: 100 }
-FAIL prettier cases/comments/after-the-dot-of-a-member.js { printWidth: 80 }
-FAIL prettier cases/comments/after-the-dot-of-a-member.js { printWidth: 100 }
 FAIL oxfmt cases/comments/after-the-dot-of-a-member.js { printWidth: 80 }
 FAIL oxfmt cases/comments/after-the-dot-of-a-member.js { printWidth: 100 }
+FAIL oxfmt cases/comments/before-the-parentheses-of-a-nested-chain.js { printWidth: 80 }
+FAIL oxfmt cases/comments/before-the-parentheses-of-a-nested-chain.js { printWidth: 100 }
+FAIL oxfmt cases/comments/type-comment-behind-the-key-of-a-property.js { printWidth: 80 }
+FAIL oxfmt cases/comments/type-comment-behind-the-key-of-a-property.js { printWidth: 100 }
+FAIL oxfmt cases/comments/type-comment-behind-the-operator-of-a-conditional.js { printWidth: 80 }
+FAIL oxfmt cases/comments/type-comment-behind-the-operator-of-a-conditional.js { printWidth: 100 }
 FAIL oxfmt cases/comments/white-space-that-is-not-ascii.js { printWidth: 80 }
 FAIL oxfmt cases/comments/white-space-that-is-not-ascii.js { printWidth: 100 }
 FAIL oxfmt cases/ignore/comment-that-trails-on-its-own-line.ts { printWidth: 80 }
@@ -19,5 +23,6 @@ FAIL oxfmt cases/ignore/comment-that-trails-on-its-own-line.ts { printWidth: 100
 FAIL oxfmt cases/ignore/semicolon-behind-the-comment.js { printWidth: 80 }
 FAIL oxfmt cases/ignore/semicolon-behind-the-comment.js { printWidth: 100 }
 FAIL oxfmt cases/jsx-narrow/group-with-nothing-but-text.jsx { printWidth: 35 }
-as Prettier prints them: 52/54
-as oxfmt prints them, in its flavor: 29/48
+FAIL oxfmt cases/operator-at-the-start/comment-before-the-operator.js { experimentalOperatorPosition: "start", printWidth: 50 }
+as Prettier prints them: 70/70
+as oxfmt prints them, in its flavor: 36/62

@@ -70,6 +70,8 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                     Err(Failure::SyntaxError) => b"<SyntaxError>".to_vec(),
                     Err(Failure::Other) => b"<the formatter failed>".to_vec(),
                 };
+                // The library that writes oxfmt's snapshots makes `\n` of every `\r\n`.
+                let actual = if flavor == b"oxfmt" { strings::replace_owned(&actual, b"\r\n", b"\n") } else { actual };
                 count.add(actual == expected);
                 if actual != expected {
                     output_line!("FAIL {} {} {}", BStr::new(flavor), BStr::new(name), BStr::new(line));

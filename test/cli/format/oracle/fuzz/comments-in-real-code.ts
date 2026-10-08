@@ -2,7 +2,7 @@
 // JSON lines, each with a key that says where Prettier attaches the comment: `comment-fuzz-report.ts` groups them by it.
 //
 //   bun comment-fuzz.ts --bin=<bun-lint> --prettier=<directory with node_modules/prettier> --out=<file.jsonl> --tmp=<directory>
-//     [--oxfmt=<path of oxfmt's dist/index.js>: compare with oxfmt, in its flavor] [--shard=i/n] [--max-snippets=n] [--min-lines=n] [--per-file=n] [--options=json] [--kinds=eol,own,..] <files and directories..>
+//     [--oxfmt=<path of oxfmt's dist/index.js>: compare with oxfmt, in its flavor] [--shard=i/n] [--max-snippets=n] [--min-lines=n] [--per-file=n] [--options=json] [--kinds=eol,own,..] [--mark=prettier-ignore: the text of the comment] <files and directories..>
 //
 // A snippet is a statement at the top of a file, of 3 to 45 lines, that both format the same without the comment.
 // Kinds: `eol` (` // c` at the end of each line), `eolns` (without the space), `eolblock`, `eolblockns`, `own` (on a line of its
@@ -73,7 +73,7 @@ async function ours(text: string, ext: string): Promise<string | undefined> {
   return undefined;
 }
 
-const MARK = "c0mment";
+const MARK = flags.get("mark") ?? "c0mment";
 function find(ast: any): { key: string } | undefined {
   // The node that the comment is attached to, and its parent.
   const stack: [any, any, string][] = [[ast, undefined, ""]];

@@ -117,9 +117,9 @@ fn indent_level_in_source(e: Expr<'_>, options: &FormatOptions) -> u32 {
         .text()
         .get(..e.span().start as usize)
         .unwrap_or_default();
-    let line_start = strings::last_index_of_char(before, b'\n')
-        .max(strings::last_index_of_char(before, b'\r'))
-        .map_or(0, |at| at + 1);
+    // A line that is longer than this has not been formatted.
+    let before = &before[before.len().saturating_sub(1024)..];
+    let line_start = strings::last_index_of_any(before, b"\n\r").map_or(0, |at| at + 1);
     let indent_width = u32::from(options.indent_width.value()).max(1);
     let mut columns = 0;
     for byte in &before[line_start..] {

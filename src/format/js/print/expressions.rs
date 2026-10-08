@@ -193,9 +193,7 @@ pub(crate) fn write_array_assignment_target<'a>(e: Expr<'a>, elements: List<'a, 
                         f,
                     );
                 }
-                if let Some(rest) = rest {
-                    write!(f, [(count > 0).then_some(soft_line_break_or_space()), rest]);
-                }
+                write!(f, rest);
             })))
         );
     }

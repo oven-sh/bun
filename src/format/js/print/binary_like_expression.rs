@@ -259,11 +259,7 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
         {
             if operands != Operands::Last {
                 write_trailing_comments_of_nested(binary_like_expression.left, f);
-                write!(f, [space(), operator.as_str()]);
-                match is_inlined_operand(right_logical.left) {
-                    true => write!(f, space()),
-                    false => write!(f, soft_line_break_or_space()),
-                }
+                write_operator(operator, right_logical.left, is_inlined_operand(right_logical.left), f);
                 match BinaryLikeExpression::new(right_logical.left).filter(|left| left.operator == operator) {
                     Some(left_logical_child) => {
                         format_flattened_logical_expression(left_logical_child, inside_parenthesis, f);
@@ -282,14 +278,10 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
         let is_jsx = matches!(right.kind(), ExprKind::Jsx(_));
 
         let operator_and_right_expression = format_with(|f| {
-            write!(f, [space(), binary_like_expression.operator.as_str()]);
-            if binary_like_expression.should_inline_logical_expression() {
-                write!(f, space());
-                if !is_jsx && f.comments().has_leading_own_line_comment(right.span().start) {
-                    return write!(f, soft_line_indent_or_space(&right));
-                }
-            } else {
-                write!(f, soft_line_break_or_space());
+            let is_inlined = binary_like_expression.should_inline_logical_expression();
+            write_operator(binary_like_expression.operator, right, is_inlined, f);
+            if is_inlined && !is_jsx && f.comments().has_leading_own_line_comment(right.span().start) {
+                return write!(f, soft_line_indent_or_space(&right));
             }
             write!(f, right);
             // See `is_last_binary_operand_comment`.
@@ -327,10 +319,34 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
         //       c;
         let should_break = !f.is_quiet()
             && (f.comments().printed_comments().iter().rev())
-                .take_while(|comment| left.span().end < comment.start() && right.span().start > comment.end())
+                .take_while(|comment| left.span().end <= comment.start() && right.span().start >= comment.end())
                 .any(|comment| comment.is_line());
         write!(f, group(&operator_and_right_expression).should_expand(should_break));
     }
+}
+
+/// Writes `operator` and what is around it. `right`: the operand after it. `is_inlined`: it stays on
+/// the line of the operator.
+fn write_operator<'a>(operator: BinOp, right: Expr<'a>, is_inlined: bool, f: &mut Formatter<'a>) {
+    if is_inlined {
+        return write!(f, [space(), operator.as_str(), space()]);
+    }
+    if f.options().experimental_operator_position.is_end() {
+        return write!(f, [space(), operator.as_str(), soft_line_break_or_space()]);
+    }
+    // A comment that ends its line stays before the operator.
+    let start = right.span().start;
+    let has_comment_before_operator = !f.is_quiet()
+        && match right.kind() {
+            ExprKind::Jsx(_) => f.comments().is_suppressed(start),
+            _ => f.comments().has_leading_own_line_comment(start),
+        }
+        && !f.comments().comments_before_iter(start).any(|comment| f.comments().is_type_cast_comment(comment));
+    match has_comment_before_operator {
+        true => write!(f, [space(), soft_line_break_or_space(), format_leading_comments(right.span())]),
+        false => write!(f, soft_line_break_or_space()),
+    }
+    write!(f, [operator.as_str(), space()]);
 }
 
 /// Whether `right`, the right side of a logical expression, stays on the line of the operator.

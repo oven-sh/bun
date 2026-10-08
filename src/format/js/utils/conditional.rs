@@ -285,7 +285,12 @@ impl<'a> FormatConditionalLike<'a> {
                     else {
                         return;
                     };
-                    write!(f, [check, space(), "extends", space(), FormatNodeWithoutTrailingComments(&extends)]);
+                    write!(f, [check, space(), "extends", space()]);
+                    // A union writes the comments after it in its own group.
+                    match extends.kind() {
+                        TypeKind::Union(types) if types.len() > 1 => write!(f, extends),
+                        _ => write!(f, FormatNodeWithoutTrailingComments(&extends)),
+                    }
                     (extends.span().end, yes.span().start)
                 }
             };

@@ -1,0 +1,123 @@
+//! `bun_sema_parser` on bytes. It has to refuse or to parse. What it parses has to be valid for the
+//! parser that recovers from errors too, with the same HIR: as `bun-hir fuzz`, with coverage.
+
+#![no_main]
+
+#[path = "../../../../../../src/sema/parser/standalone/compare.rs"]
+mod compare;
+
+use bun_fuzz::{Input, Run, shape, show, shows};
+use bun_sema::atom::Interner;
+use bun_sema::hir::{DiagnosticKind, ExprKind};
+use bun_sema::resolve::{Dialect, ScriptKind};
+use bun_sema::session::Session;
+use bun_sema_parser::{Options, Scratch};
+use std::cell::RefCell;
+
+const PATHS: [&str; 9] = ["a.ts", "a.tsx", "a.js", "a.jsx", "a.d.ts", "a.mts", "a.cts", "a.mjs", "a.cjs"];
+
+fn dialect_of(which: u32, script: bool) -> (&'static str, Dialect) {
+    match which % 6 {
+        0 => ("tsc", Dialect::default()),
+        1 => ("estree", Dialect::typescript_estree(script)),
+        2 => ("espree", Dialect::espree(script)),
+        3 => ("babel", Dialect::babel(script)),
+        4 => ("flow", Dialect::flow(script)),
+        _ => ("flow-parser", Dialect::flow_parser(script)),
+    }
+}
+
+/// As in src/sema/parser/standalone/main.rs.
+fn options_for(path: &[u8], dialect: Dialect) -> Options {
+    let kind = ScriptKind::from_file_name(path);
+    let is_javascript = kind.is_some_and(ScriptKind::is_javascript);
+    Options {
+        is_declaration_file: bun_sema::resolve::is_declaration_file_name(path),
+        is_jsx: is_javascript || kind == Some(ScriptKind::Tsx),
+        is_javascript,
+        await_is_a_name: is_javascript && dialect.ecmascript && dialect.script,
+        dialect,
+        ..Options::default()
+    }
+}
+
+/// What is wrong, and what it is about. As `compare_one` there.
+fn compare_one(
+    path: &[u8],
+    text: &[u8],
+    decorators: bool,
+    dialect: Dialect,
+    scratch: &mut Scratch,
+) -> Option<(&'static str, String)> {
+    let session = Session::new();
+    let atoms = Interner::new_in(&session);
+    let every_file_is_a_module = dialect != Dialect::default() && !dialect.script;
+    let (reference, _) = bun_js_parser::sema::summarize_with_recovery(
+        dialect,
+        false,
+        (session.arena(), &session),
+        path,
+        None,
+        text,
+        &atoms,
+        decorators,
+        every_file_is_a_module,
+    );
+    let is_refused_by_reference = reference.has_errors
+        || reference.has_parse_diagnostics
+        || (reference.diagnostics.iter()).any(|it| it.kind == DiagnosticKind::Parse)
+        || reference.ran_out_of_stack;
+    let mut options = options_for(path, dialect);
+    let mut parsed = bun_sema_parser::parse(text, options, &atoms, scratch);
+    if let Ok(first) = &parsed
+        && first.has_top_level_await
+        && !every_file_is_a_module
+        && !first.file.has_module_syntax
+        && (dialect.script
+            || ![&b".mts"[..], b".cts", b".mjs", b".cjs"].iter().any(|it| path.ends_with(it)))
+        && !(first.file.exprs.iter()).any(|e| matches!(e.kind, ExprKind::ImportMeta))
+    {
+        options.await_is_a_name = true;
+        parsed = bun_sema_parser::parse(text, options, &atoms, scratch);
+    }
+    let parsed = parsed.ok()?;
+    let wrong = if is_refused_by_reference {
+        let first = reference.diagnostics.first();
+        Some(("accepted", format!("{:?}", first.map(|it| (it.kind, it.code)))))
+    } else {
+        let mut comparison = compare::Comparison::new(&reference, &parsed.file);
+        comparison.run();
+        comparison.difference.take().map(|it| ("different", it))
+    };
+    scratch.recycle(parsed.file);
+    wrong
+}
+
+thread_local! {
+    static SCRATCH: RefCell<Scratch> = RefCell::default();
+}
+
+fn run(data: &[u8]) {
+    let Some(input) = Input::new(data) else {
+        return;
+    };
+    let path = PATHS[input.variant as usize % PATHS.len()];
+    let (name, dialect) = dialect_of(u32::from(input.width), input.has(0));
+    let mut run = Run::new(data);
+    run.how = format!("{path} --dialect={name} script={} decorators={}", input.has(0), input.has(1));
+    if shows() {
+        show(&run.how, input.text);
+    }
+    let wrong = run.guarded(|| {
+        // After a panic it is in no state to be used again.
+        let mut scratch = SCRATCH.take();
+        let wrong = compare_one(path.as_bytes(), input.text, input.has(1), dialect, &mut scratch);
+        SCRATCH.set(scratch);
+        wrong
+    });
+    if let Some(Some((kind, what))) = wrong {
+        run.report(kind, &format!("{name}-{}", shape(what.as_bytes())), &what);
+    }
+}
+
+libfuzzer_sys::fuzz_target!(|data: &[u8]| run(data));

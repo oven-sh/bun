@@ -1384,7 +1384,7 @@ pub struct Options<'a> {
 
     pub mangled_props: Option<&'a crate::MangledProps>,
 
-    pub type_tags: Option<&'static [(u32, u32)]>,
+    pub type_tags: Option<&'a [(u32, u32)]>,
 }
 
 impl<'a> Options<'a> {
@@ -2517,10 +2517,12 @@ pub(crate) mod __gated_printer {
             has_rest_arg: bool,
             // is_arrow can be used for minifying later
             _is_arrow: bool,
+            tag_at: bun_ast::Loc,
         ) {
             let wrap = true;
 
             if wrap {
+                self.print_type_tag(tag_at);
                 if let Some(loc) = open_paren_loc {
                     self.add_source_mapping(loc);
                 }
@@ -2556,6 +2558,7 @@ pub(crate) mod __gated_printer {
                 slice_of(func.args),
                 func.flags.contains(G::FnFlags::HasRestArg),
                 false,
+                func.open_parens_loc,
             );
             self.print_space();
             self.print_block(func.body.loc, slice_of(func.body.stmts), None);
@@ -3496,7 +3499,7 @@ pub(crate) mod __gated_printer {
                     self.print_space();
                     self.print_expr(e.target, Level::New, ExprFlag::forbid_call());
                     let args = e.args.slice();
-                    if !args.is_empty() || level.gte(Level::Postfix) {
+                    if !args.is_empty() || level.gte(Level::Postfix) || self.options.type_tags.is_some() {
                         self.print(b"(");
 
                         if !args.is_empty() {
@@ -3508,6 +3511,7 @@ pub(crate) mod __gated_printer {
                             }
                         }
 
+                        self.print_type_tag(expr.loc);
                         if e.close_parens_loc.start > expr.loc.start {
                             self.add_source_mapping(e.close_parens_loc);
                         }
@@ -3578,6 +3582,7 @@ pub(crate) mod __gated_printer {
                         }
                     }
                     if e.close_paren_loc.start > expr.loc.start {
+                        self.print_type_tag(e.close_paren_loc);
                         self.add_source_mapping(e.close_paren_loc);
                     }
                     self.print(b")");
@@ -3746,7 +3751,6 @@ pub(crate) mod __gated_printer {
                             self.print(b".");
                         }
 
-                        self.print_type_tag(e.name_loc);
                         self.add_source_mapping(e.name_loc);
                         self.print_identifier(&e.name);
                     } else {
@@ -3866,6 +3870,7 @@ pub(crate) mod __gated_printer {
                         &e.args,
                         e.has_rest_arg,
                         true,
+                        expr.loc,
                     );
                     self.print_whitespacer(ws!(b" => "));
 
@@ -3939,6 +3944,7 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::EArray(e) => {
+                    self.print_type_tag(expr.loc);
                     self.add_source_mapping(expr.loc);
                     self.print(b"[");
                     let items = e.items.slice();
@@ -4320,6 +4326,7 @@ pub(crate) mod __gated_printer {
                             level.gte(Level::New) || flags.contains(ExprFlag::ForbidCall),
                         );
                     } else {
+                        self.print_type_tag(expr.loc);
                         self.print_identifier(name);
                     }
 
@@ -4427,6 +4434,9 @@ pub(crate) mod __gated_printer {
 
                     if !did_print {
                         self.print_space_before_identifier();
+                        if !self.is_lazy_namespace(e.ref_) {
+                            self.print_type_tag(expr.loc);
+                        }
                         self.add_source_mapping(expr.loc);
                         self.print_namespace_symbol(
                             e.ref_,
@@ -5331,7 +5341,6 @@ pub(crate) mod __gated_printer {
 
                                         if str.is_utf8() {
                                             self.print_space_before_identifier();
-                                            self.print_type_tag(property.key.loc);
                                             if lexer::is_identifier(str.slice8()) {
                                                 self.print_identifier(str.slice8());
 
@@ -7117,6 +7126,7 @@ pub(crate) mod __gated_printer {
                     slice_of(func.args),
                     func.flags.contains(G::FnFlags::HasRestArg),
                     false,
+                    bun_ast::Loc::EMPTY,
                 );
                 self.print_space();
                 self.print(b"{\n");
@@ -7232,6 +7242,7 @@ pub(crate) mod __gated_printer {
                     slice_of(func.args),
                     func.flags.contains(G::FnFlags::HasRestArg),
                     false,
+                    bun_ast::Loc::EMPTY,
                 );
                 self.print(b" => {\n");
                 self.indent();

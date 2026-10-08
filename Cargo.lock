@@ -155,6 +155,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_aot"
+version = "0.0.0"
+dependencies = [
+ "bun_ast",
+ "bun_core",
+ "bun_sema",
+ "rustc-hash",
+ "smallvec",
+]
+
+[[package]]
 name = "bun_api"
 version = "0.0.0"
 dependencies = [
@@ -1233,6 +1244,7 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_analytics",
+ "bun_aot",
  "bun_ast",
  "bun_ast_jsc",
  "bun_base64",
@@ -1403,6 +1415,7 @@ version = "0.0.0"
 dependencies = [
  "bstr",
  "bun_alloc",
+ "bun_aot",
  "bun_core",
  "bun_js_parser",
  "bun_paths",

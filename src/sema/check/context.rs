@@ -120,7 +120,7 @@ impl<'p, 's> Checker<'p, 's> {
                     ExprKind::Call(c) | ExprKind::New(c) => {
                         if hir[c].callee != at
                             && self.p.calls.get(&self.task, &(file, parent)).is_none()
-                            && !self.stack.contains(&Query::Call(file, parent))
+                            && !self.is_in_flight(Query::Call(file, parent))
                         {
                             // The call may be an argument itself: resolve the outermost enclosing call first. As the outermost query,
                             // `resolved_signature` does that itself. Doing it twice doubles the work per nesting level if the enclosing
@@ -179,7 +179,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// element.
     fn prepare_jsx(&mut self, file: FileId, e: ExprId) {
         if self.p.calls.get(&self.task, &(file, e)).is_none()
-            && !self.stack.contains(&Query::Call(file, e))
+            && !self.is_in_flight(Query::Call(file, e))
         {
             self.prepare_context(file, e);
             self.resolved_signature(file, e);
@@ -824,7 +824,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn check_declaration_initializer(&mut self, file: FileId, initializer: ExprId) -> TypeId {
         let q = Query::Expr(file, initializer);
         let from = self.resolution_start.min(self.stack.len());
-        if !self.may_be_in_flight(q) || !self.stack[from..].contains(&q) {
+        if self.innermost(q, from).is_none() {
             return self.type_of_expr(file, initializer);
         }
         // Results computed under what is pushed are not valid here, nor these there.
@@ -1092,6 +1092,12 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         (!types.is_empty()).then(|| self.union_unreduced(&types))
+    }
+
+    /// The type an object literal is checked against, narrowed to the member of a union that its properties single out.
+    pub fn contextual_type_of_literal(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+        self.prepare_enclosing(file, e);
+        self.apparent_type_of_contextual_type(file, e, ContextFlags::empty())
     }
 
     /// `getApparentTypeOfContextualType`
@@ -2414,7 +2420,7 @@ impl<'p, 's> Checker<'p, 's> {
         match *self.types().sig(sig) {
             SigData::Decl { file, func, .. } => {
                 let q = Query::ReturnAtFirstLook(file, func);
-                self.may_be_in_flight(q) && self.stack.contains(&q)
+                self.is_in_flight(q)
             }
             SigData::Synth { ref of, .. } => of.iter().any(|&s| self.is_at_first_look(s)),
             _ => false,

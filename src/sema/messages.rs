@@ -1,7 +1,7 @@
 //! TypeScript's diagnostic messages, by code.
 //!
 //! Generated from `internal/diagnostics/diagnostics_generated.go` of typescript-go 7.0.2 (Copyright Microsoft Corporation, Apache
-//! License 2.0). Not edited by hand.
+//! License 2.0). Not edited by hand, but for `OWN_MESSAGES`.
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Category {
@@ -32,11 +32,23 @@ pub fn text(bytes: &[u8]) -> String {
 /// The category and the text of the message with `code`. `{0}`, `{1}`, ... are placeholders for its
 /// arguments.
 pub fn message(code: u32) -> Option<(Category, &'static str)> {
-    MESSAGES
+    let messages = if code > LAST_OF_TYPESCRIPT { OWN_MESSAGES } else { MESSAGES };
+    messages
         .binary_search_by_key(&code, |m| m.0)
         .ok()
-        .map(|i| (MESSAGES[i].1, MESSAGES[i].2))
+        .map(|i| (messages[i].1, messages[i].2))
 }
+
+/// The greatest code that TypeScript uses.
+const LAST_OF_TYPESCRIPT: u32 = 100000;
+
+/// The messages that TypeScript does not have, sorted by code, from 100001 on.
+static OWN_MESSAGES: &[(u32, Category, &str)] = &[
+    (100001, Category::Error, "Variable '{0}' has no initializer and may be read before it is assigned."),
+    (100002, Category::Message, "It is read here, in a function that may run before the assignment."),
+    (100003, Category::Message, "It is read here, and not every path to here assigns it."),
+    (100004, Category::Message, "It is exported, and another file may read it before the assignment."),
+];
 
 /// `Message.Format`: writes `text` with `{n}` replaced by `args[n]`. A placeholder without an
 /// argument is left unchanged.

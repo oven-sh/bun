@@ -60,16 +60,14 @@ const ruleVars = {
   // shims.ts
   host_tool_cc: [],
   // source.ts
-  dep_build: ["name", "builddir", "buildtype", "targets"],
   dep_cargo: ["name", "manifestdir", "env", "args"],
   dep_cargo_cross: ["name", "manifestdir", "env", "args", "rust_target"],
   dep_check_undefined: ["name", "nm", "symbols"],
   dep_codegen: ["name", "cwd", "tool", "args"],
-  dep_configure: ["name", "srcdir", "builddir", "args"],
   dep_fetch: ["name", "repo", "commit", "dest", "cache", "patches"],
   dep_fetch_prebuilt: ["name", "url", "dest", "identity", "rm_paths"],
+  dep_gen: ["name", "desc", "opts", "cmd"],
   dep_host_cc: ["flags"],
-  dep_prebuild: ["name", "cwd", "cmd"],
   dep_subst: ["pairs"],
 } as const satisfies Record<string, readonly string[]>;
 

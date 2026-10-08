@@ -1402,7 +1402,7 @@ impl<'s> Checker<'_, 's> {
     // ───────────────────────────── declarations ─────────────────────────────
 
     /// `node.End()` of whatever `func` is: a function, a method, an accessor, a signature with its `;`, a function type.
-    pub(super) fn end_of_fn(&self, file: FileId, func: FnId) -> u32 {
+    pub fn end_of_fn(&self, file: FileId, func: FnId) -> u32 {
         let hir = self.hir(file);
         match self.bound(file).fns.get(func.idx()).map(|func| func.owner) {
             Some(FnOwner::Expr(e)) => hir[e].end,

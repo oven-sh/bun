@@ -8,6 +8,7 @@ export type CompiledFunction = {
   start: number;
   kind: number;
   name: string;
+  typed?: { entrypoint: string; number: number; path: string; position: number };
 };
 
 export type Place =
@@ -44,7 +45,9 @@ export class ImageMap {
       const [what, ...fields] = line.split("\t");
       if (what === "F") {
         const [index, offset, size, module, start, kind] = fields.map(Number);
-        this.functions.push({ index, offset, size, module, start, kind, name: fields[6] ?? "" });
+        const [entrypoint, number, path, position] = fields.slice(7);
+        const typed = entrypoint ? { entrypoint, number: +number, path, position: +position } : undefined;
+        this.functions.push({ index, offset, size, module, start, kind, name: fields[6] ?? "", typed });
       } else if (what === "T") this.#stubs.push({ offset: +fields[0], name: fields[1] });
       else if (what === "C") this.#stubCopies.push(+fields[0]);
       else if (what === "R") this.#regExpsStart = +fields[0];
@@ -78,7 +81,9 @@ export class ImageMap {
   }
 }
 
-export function nameOf({ index, module, start, name }: CompiledFunction) {
+export function nameOf({ index, module, start, name, typed }: CompiledFunction) {
+  if (typed)
+    return `${name || "(anonymous)"} [${typed.entrypoint}] (function ${index}, f${typed.number}, ${typed.path} at ${typed.position})`;
   const where = start === 0xffffffff ? `top-level code of module ${module}` : `module ${module} at ${start}`;
   return `${name || "(anonymous)"} (function ${index}, ${where})`;
 }

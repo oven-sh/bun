@@ -44,7 +44,7 @@ struct Mentioned {
 }
 
 /// `toInt32` of jsnum.go
-fn to_int32(n: f64) -> i32 {
+pub(super) fn to_int32(n: f64) -> i32 {
     if !n.is_finite() {
         return 0;
     }
@@ -355,7 +355,7 @@ fn exponentiate(base: f64, exponent: f64) -> f64 {
 }
 
 /// The operators `evaluate` knows, on numbers.
-fn number_operation(op: BinOp, a: f64, b: f64) -> Option<f64> {
+pub(super) fn number_operation(op: BinOp, a: f64, b: f64) -> Option<f64> {
     let shift = to_int32(b) as u32 & 31;
     Some(match op {
         BinOp::BitOr => f64::from(to_int32(a) | to_int32(b)),
@@ -2505,7 +2505,7 @@ impl<'p, 's> Checker<'p, 's> {
         self.evaluate(file, e, Location::Expr(file, e)).value
     }
 
-    fn constant_text(&self, value: EnumValue) -> &'p [u8] {
+    pub(super) fn constant_text(&self, value: EnumValue) -> &'p [u8] {
         let atom = match value {
             EnumValue::String(s) => s,
             EnumValue::Number(bits) => self.number_name(f64::from_bits(bits)),

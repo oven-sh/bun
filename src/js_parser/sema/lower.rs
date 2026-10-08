@@ -1675,6 +1675,7 @@ impl<'p, 'a> Lower<'p, 'a> {
             other_implements,
             members,
             start,
+            body_pos: self.pos_of(class.body_loc),
             modifiers,
         });
         for (e, _) in of_class {

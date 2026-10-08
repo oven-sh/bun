@@ -453,6 +453,11 @@ pub struct Options {
     pub strict_bind_call_apply: bool,
     pub use_unknown_in_catch_variables: bool,
     pub strict_property_initialization: bool,
+    /// `strictVariableInitialization`, which TypeScript does not have, as it is specified. It is no part of the `strict` family.
+    pub strict_variable_initialization: Option<bool>,
+    /// Whether 100001 is reported: `strict_variable_initialization`, with `strict_null_checks`. Where the option is not specified the
+    /// driver says: it is on for a program that is compiled by its types.
+    pub reports_uninitialized_variables: bool,
     pub no_implicit_this: bool,
     pub allow_unreachable_code: Option<bool>,
     pub allow_unused_labels: Option<bool>,
@@ -510,6 +515,10 @@ pub struct Options {
     /// They, and what only they bring in, are not its sources: nothing is emitted for them, so
     /// `rootDir` and `composite` have no say about them. `None`: all are its own.
     pub own_roots: Option<usize>,
+    /// The root files from this one on are the files of a bundle. An import is resolved here for its types, and by the bundler for the
+    /// code that runs, often to another file: `@types/react/index.d.ts` and `react/index.js`. Those of them that the program does not
+    /// have anyway are loaded for whoever compiles it, see `Module::is_only_code`. `None`: there are none.
+    pub roots_for_code: Option<usize>,
     /// `validatedFilesSpec`, as absolute paths.
     pub file_specs: Vec<Vec<u8>>,
     /// `validatedIncludeSpecsBeforeSubstitution`, each paired with the corresponding entry of
@@ -768,6 +777,9 @@ impl Options {
         options.strict_bind_call_apply = strict_flag(b"strictBindCallApply");
         options.use_unknown_in_catch_variables = strict_flag(b"useUnknownInCatchVariables");
         options.strict_property_initialization = strict_flag(b"strictPropertyInitialization");
+        options.strict_variable_initialization = specified(b"strictVariableInitialization");
+        options.reports_uninitialized_variables =
+            options.strict_variable_initialization == Some(true) && options.strict_null_checks;
         options.no_implicit_this = strict_flag(b"noImplicitThis");
         options.no_unchecked_side_effect_imports =
             specified(b"noUncheckedSideEffectImports").unwrap_or(true);

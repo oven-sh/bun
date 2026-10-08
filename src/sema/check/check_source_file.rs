@@ -119,6 +119,12 @@ impl<'s> Checker<'_, 's> {
         self.order_dependent_filter = 0;
     }
 
+    /// Called after `begin_task`. Nothing of what the task finds out about expressions goes to the barrier. For a task after which no
+    /// file is checked, and whose types and declarations are still read: see `Checker::keep_type`.
+    pub fn withhold_tables_of_expressions(&mut self) {
+        self.task.withhold_tables_of_expressions();
+    }
+
     /// Called on the thread of the task, after everything else this checker does.
     pub fn end_task(&mut self) -> Finished<'s> {
         let diagnostics = self.take_diagnostics();
@@ -170,6 +176,9 @@ impl<'s> Checker<'_, 's> {
         self.check_exprs_visited_by_queries(file);
         if hir.kind != FileKind::Declaration {
             self.check_unused_renamed_binding_elements(file);
+        }
+        if self.p.files.options.reports_uninitialized_variables {
+            self.check_variable_initialization(file);
         }
         self.reported_unreachable_nodes.clear();
     }

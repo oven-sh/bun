@@ -148,6 +148,16 @@ impl<'s> Task<'s> {
         debug_assert_eq!(self.withheld.count_ones() as usize, TABLES_OF_RECORDS.len());
     }
 
+    /// `finish` passes no entry of `TABLES_OF_EXPRESSIONS` to the barrier.
+    pub(super) fn withhold_tables_of_expressions(&mut self) {
+        for (slot, name) in table_names().into_iter().enumerate() {
+            if TABLES_OF_EXPRESSIONS.contains(&name) {
+                self.withheld |= 1 << slot;
+            }
+        }
+        debug_assert_eq!(self.withheld.count_ones() as usize, TABLES_OF_EXPRESSIONS.len());
+    }
+
     fn drop_everything(&mut self) {
         (self.place, self.is_read_later, self.file) = (None, true, None);
         self.withheld = 0;
@@ -347,6 +357,23 @@ const TABLES_OF_RECORDS: [&str; 28] = [
     "constraints",
     "plain_global_refs",
     "equivalent_base_types",
+];
+
+/// The `Buffered` tables keyed by an expression. They are most of what a task publishes. Whoever asks about an expression and finds no
+/// entry evaluates it, as a task does with an expression of a file of its own step, going by what the tables keyed by a declaration, a
+/// symbol or a type hold.
+const TABLES_OF_EXPRESSIONS: [&str; 11] = [
+    "expr_types",
+    "context_free_expr_types",
+    "calls",
+    "call_return_types",
+    "call_diagnostics",
+    "diagnostics_of_re_resolved_calls",
+    "calls_before_signatures",
+    "effects_signatures",
+    "resolved_effects_signatures",
+    "flows_too_deep",
+    "deferred_nodes",
 ];
 
 /// The names of the `Buffered` fields of `Program`, by slot.

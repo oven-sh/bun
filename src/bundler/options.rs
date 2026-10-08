@@ -969,6 +969,9 @@ pub(crate) fn defines_from_transform_options(
         omit_unused_global_calls,
     )?;
     define.user_hash = user_hash;
+    define.user_inputs = (user_defines.keys().iter().zip(user_defines.values().iter()))
+        .map(|(key, value)| (Box::from(key.as_ref()), Box::from(value.as_ref())))
+        .collect();
     Ok(define)
 }
 
@@ -1208,11 +1211,31 @@ pub struct TypeChecked<'a, 'i> {
     /// The path, the text and the loader of each JavaScript, TypeScript and JSON file of the
     /// bundle, which the type checker takes instead of reading the file again.
     pub sources: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8], Loader)>,
+    /// What each import of those files has been resolved to: the path of the file, the specifier as it is written, and the path of
+    /// the file of the bundle it stands for.
+    pub imports: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8], &'a [u8])>,
+    /// The imports that are not in the bundle: the path of the file and the specifier. An import of TypeScript that turned out to be
+    /// of types only, and what a barrel file re-exports and nothing asks it for.
+    pub dropped_imports: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8])>,
+    /// The path and the text of each file of the bundle that is imported as a string.
+    pub texts: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8])>,
+    /// The path of each file that is copied next to the bundle, or into the executable, and what stands for its final path until that
+    /// is known (`unique_key_for_additional_file`).
+    pub assets: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8])>,
+    /// `Define::user_inputs`
+    pub defines: &'a [(Box<[u8]>, Box<[u8]>)],
+    /// The flags for which `feature()` of `bun:bundle` is true.
+    pub features: &'i mut dyn Iterator<Item = &'a [u8]>,
 }
 
 /// `BundleOptions::type_check`. Errors are added to `log`, or reported in another way. Returns
 /// whether the build goes on.
 pub type TypeCheck = fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> bool;
+
+/// `BundleOptions::analyze`: the whole-program analysis that ahead-of-time compilation is driven by. `None`: there is nothing to say
+/// about the program.
+pub type Analyze =
+    fn(checked: TypeChecked<'_, '_>, log: &mut bun_ast::Log) -> Option<bun_ast::type_tags::ProgramFacts>;
 
 /// BundleOptions is effectively webpack + babel
 pub struct BundleOptions<'a> {
@@ -1351,6 +1374,7 @@ pub struct BundleOptions<'a> {
     /// anything is linked. `bun_runtime` provides it: the bundler does not depend on the type
     /// checker.
     pub type_check: Option<TypeCheck>,
+    pub analyze: Option<Analyze>,
     /// `--conditions`, `conditions`: those of `conditions` that are not there by default.
     pub custom_conditions: Vec<Box<[u8]>>,
 
@@ -1480,6 +1504,7 @@ impl<'a> BundleOptions<'a> {
                 dots_filter: self.define.dots_filter.clone(),
                 drop_debugger: self.define.drop_debugger,
                 user_hash: self.define.user_hash,
+                user_inputs: self.define.user_inputs.clone(),
             }),
             drop: self.drop.clone(),
             bundler_feature_flags: self
@@ -1567,6 +1592,7 @@ impl<'a> BundleOptions<'a> {
             fold_chunks: self.fold_chunks,
             module_preload: self.module_preload,
             type_check: self.type_check,
+            analyze: self.analyze,
             custom_conditions: self.custom_conditions.clone(),
             ignore_dce_annotations: self.ignore_dce_annotations,
             emit_dce_annotations: self.emit_dce_annotations,
@@ -1754,6 +1780,7 @@ impl<'a> BundleOptions<'a> {
             fold_chunks: true,
             module_preload: true,
             type_check: None,
+            analyze: None,
             custom_conditions: transform.conditions.clone(),
             drop: transform.drop.clone().into_boxed_slice(),
             bundler_feature_flags,

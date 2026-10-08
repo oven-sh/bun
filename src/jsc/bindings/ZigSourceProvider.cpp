@@ -17,6 +17,7 @@
 #include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
 #include <JavaScriptCore/InitializeThreading.h>
+#include <JavaScriptCore/AOTFacts.h>
 #include <JavaScriptCore/AOTProgramData.h>
 #include <JavaScriptCore/AOTFunction.h>
 #include <zstd.h>
@@ -328,7 +329,7 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(const BunStr
 
 // `bun build --compile --bytecode` with a payload order file (--bytecode-order): one payload for the whole link.
 // Created, fed and finished on the bundler's bytecode thread (it uses that thread's bytecode VM).
-extern "C" JSC::BytecodeLinkEncoder* Bun__BytecodeLinkEncoder__create(JSC::EncoderStringTable* externalStrings, const uint64_t* hotFunctions, size_t hotFunctionCount, const uint64_t* knownFunctions, size_t knownFunctionCount, const uint64_t* evaluatedModules, size_t evaluatedModuleCount, const uint64_t* notEvaluatedModules, size_t notEvaluatedModuleCount, bool compileAheadOfTime)
+extern "C" JSC::BytecodeLinkEncoder* Bun__BytecodeLinkEncoder__create(JSC::EncoderStringTable* externalStrings, const uint64_t* hotFunctions, size_t hotFunctionCount, const uint64_t* knownFunctions, size_t knownFunctionCount, const uint64_t* evaluatedModules, size_t evaluatedModuleCount, const uint64_t* notEvaluatedModules, size_t notEvaluatedModuleCount, bool compileAheadOfTime, const uint8_t* facts, size_t factsSize)
 {
     JSC::VM& vm = vmForBytecodeCache();
     JSC::JSLockHolder locker(vm);
@@ -345,6 +346,12 @@ extern "C" JSC::BytecodeLinkEncoder* Bun__BytecodeLinkEncoder__create(JSC::Encod
     options.definePlainInstanceFieldsInConstructor |= compileAheadOfTime;
     options.keepAllSourceLineStarts |= compileAheadOfTime;
     vm.useImmutableIntrinsics |= compileAheadOfTime;
+#if ENABLE(AOT)
+    JSC::AOT::Facts::load(vm, std::span { facts, factsSize });
+#else
+    UNUSED_PARAM(facts);
+    UNUSED_PARAM(factsSize);
+#endif
     return new JSC::BytecodeLinkEncoder(vm, externalStrings, WTF::move(hints));
 }
 
@@ -373,6 +380,11 @@ extern "C" bool Bun__BytecodeLinkEncoder__addModule(JSC::BytecodeLinkEncoder* en
         return false;
     encoder->addModule(key, unlinkedCodeBlock, sourceCode, names.view());
     return true;
+}
+
+extern "C" bool Bun__BytecodeLinkEncoder__setTypedProgram(JSC::BytecodeLinkEncoder* encoder, const uint8_t* program, size_t size, uint32_t module, const uint8_t* replacedStrings, size_t replacedStringsSize)
+{
+    return encoder->setTypedProgram({ program, size }, module, { replacedStrings, replacedStringsSize });
 }
 
 extern "C" void Bun__BytecodeLinkEncoder__setPrelinkedModuleGraph(JSC::BytecodeLinkEncoder* encoder, const uint8_t* blob, size_t blobSize, const uint32_t* stringSlots, size_t stringSlotCount, const uint32_t* graphModuleIndices, size_t addCount)
@@ -496,14 +508,14 @@ extern "C" void Bun__AOT__buildProgramData(const uint8_t* strings, size_t string
     RefPtr payload = std::exchange(s_lastLinkPayload, nullptr);
     Vector<uint32_t> modules = std::exchange(s_lastLinkModules, { });
     Vector<std::optional<Vector<uint32_t>>> variablesExportedByModules = std::exchange(s_lastLinkExportedVariables, { });
-    JSC::AOT::ProgramData::RetainedPositions positions { reportableSites, [&](uint32_t moduleEntryOffset, JSC::LineColumn inModule, CString& sourceName, JSC::LineColumn& inSource) {
+    JSC::AOT::ProgramData::RetainedPositions positions { reportableSites, [&](uint32_t moduleEntryOffset, JSC::LineColumn inModule, UTF8CString& sourceName, JSC::LineColumn& inSource) {
         const uint8_t* name = nullptr;
         size_t nameLength = 0;
         uint32_t line = 0;
         uint32_t column = 0;
         if (!find(findCtx, moduleEntryOffset, inModule.line, inModule.column, &name, &nameLength, &line, &column))
             return false;
-        sourceName = CString(std::span { reinterpret_cast<const char*>(name), nameLength });
+        sourceName = UTF8CString(std::span { reinterpret_cast<const char8_t*>(name), nameLength });
         inSource = { line, column };
         return true;
     } };

@@ -657,7 +657,7 @@ impl<'p, 's> Checker<'p, 's> {
         // no guard, and resolves the members again with the base types that there are so far.
         if let TypeData::Ref { target, .. } = *self.data(key)
             && self.base_types_so_far.iter().any(|it| it.0 == target)
-            && self.stack[self.resolution_start..].contains(&Query::Shape(key))
+            && self.innermost(Query::Shape(key), self.resolution_start).is_some()
         {
             self.note_members_in_place();
             let shape = meanwhile(self);
@@ -671,7 +671,7 @@ impl<'p, 's> Checker<'p, 's> {
                 origin: Origin::Mapped(..),
                 ..
             }
-        ) && self.stack[self.resolution_start..].contains(&Query::Shape(key))
+        ) && self.innermost(Query::Shape(key), self.resolution_start).is_some()
         {
             self.note_members_in_place();
             let shape = meanwhile(self);
@@ -695,7 +695,7 @@ impl<'p, 's> Checker<'p, 's> {
         if !self.enter(Query::Shape(key)) {
             // `enter` also fails for lack of stack space.
             let is_in_progress = !self.is_stack_low()
-                && self.stack[self.resolution_start..].contains(&Query::Shape(key));
+                && self.innermost(Query::Shape(key), self.resolution_start).is_some();
             let shape = if is_in_progress {
                 meanwhile(self)
             } else {
@@ -2497,10 +2497,7 @@ impl<'p, 's> Checker<'p, 's> {
             .task
             .file
             .filter(|_| self.found_cycle && self.task.checker_count == 0);
-        let from = self.resolution_start.min(self.stack.len());
-        let head = self.stack[from..]
-            .iter()
-            .rposition(|&q| q == Query::Bases(sym));
+        let head = self.innermost(Query::Bases(sym), self.resolution_start);
         // `return data.resolvedBaseTypes`
         let mut in_progress = self.base_types_so_far.iter().rev();
         let so_far = in_progress.find(|it| it.0 == sym);
@@ -2509,7 +2506,7 @@ impl<'p, 's> Checker<'p, 's> {
             return so_far;
         };
         let before = self.files().rank_of_file(own);
-        let members = self.stack[from + head..].iter().filter_map(|&q| match q {
+        let members = self.stack[head..].iter().filter_map(|&q| match q {
             Query::Bases(member) => Some((
                 self.first_declaration_checked_before(member, before)?,
                 member,
@@ -5564,11 +5561,7 @@ impl<'p, 's> Checker<'p, 's> {
             // `pushTypeResolution` marks every entry from the start of the cycle to the top of the
             // stack, whatever the kind of type. Callers call `has_non_circular_base_constraint`
             // while these entries are still on the stack.
-            let from = self.resolution_start;
-            if let Some(i) = self.stack[from..]
-                .iter()
-                .rposition(|q| *q == Query::Constraint(ty))
-                .map(|i| i + from)
+            if let Some(i) = self.innermost(Query::Constraint(ty), self.resolution_start)
                 && !self.eager.iter().any(|&eager| eager > i)
             {
                 for j in i..self.stack.len() {
@@ -5757,7 +5750,7 @@ impl<'p, 's> Checker<'p, 's> {
             // Another frame of `ty` can be in progress below a `resolution_start` barrier. Its
             // first read was a miss, so it learns of the cycle at its own `leave`: the mark is for
             // that frame too.
-            let is_in_flight = self.stack.contains(&Query::Constraint(ty));
+            let is_in_flight = self.is_in_flight(Query::Constraint(ty));
             match marked {
                 Some(marked) if !is_in_flight => {
                     self.constraints_marked_circular.swap_remove(marked);

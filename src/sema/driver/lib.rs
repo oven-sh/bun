@@ -6,6 +6,7 @@
 
 pub mod format;
 pub mod host;
+pub mod snapshot;
 
 pub use bun_sema::check::explain::MessageChain;
 pub use bun_sema::messages::Category;
@@ -20,16 +21,19 @@ use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
 use bun_sema::check::task::{Finished, Published};
 use bun_sema::check::{
-    FOREIGN_EVALUATION_KINDS, Program, Requested, compute_ecma_line_starts, decode_rune,
+    FOREIGN_EVALUATION_KINDS, Requested, compute_ecma_line_starts, decode_rune,
 };
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::{ExprTag, FileKind};
 use bun_sema::json::Json;
 use bun_sema::messages;
 use bun_sema::program::{
-    FileId, Files, declaration_emit_output_file_path, own_emit_output_file_path,
+    Files, declaration_emit_output_file_path, own_emit_output_file_path,
 };
+pub use bun_sema::check::{Checker, Program};
+pub use bun_sema::program::FileId;
 pub use bun_sema::resolve::ScriptKind;
+pub use bun_sema::util::InParallel;
 use bun_sema::resolve::{
     Host, Options, Phase, ancestors, contains_path, inside, is_declaration_file_name,
     is_javascript, is_javascript_file, is_relative, is_same_path, join,
@@ -425,7 +429,10 @@ fn overriding_options(request: &Request, is_build: bool) -> Vec<(Vec<u8>, Json)>
             };
             (name.clone(), value)
         })
-        .chain((!is_build && !request.build).then(|| (b"noEmit".to_vec(), Json::Bool(true))))
+        .chain(
+            ((!is_build || request.is_one_program) && !request.build)
+                .then(|| (b"noEmit".to_vec(), Json::Bool(true))),
+        )
         .collect()
 }
 
@@ -455,6 +462,16 @@ pub struct Request<'a> {
     /// `paths` are the entry points of what is then run or bundled. JavaScript among them is loaded
     /// for what it imports, whatever `allowJs` says. Its own errors are those of `checkJs`.
     pub are_entry_points: bool,
+    /// `paths` are the entry points of what is then compiled by its types. The check is that of `are_entry_points`, but for this: all
+    /// of them are checked in one program, that of the project of the first, and its `references` do not count.
+    /// JavaScript that is imported is loaded, whatever `allowJs` says: it is compiled with the program, by what is inferred of it.
+    /// No tree is freed before the check is over, and no type is bound to a file: whoever compiles a file asks about the files whose
+    /// code it imports, which need not be the files that the checker has it refer to.
+    /// With `after_file`, every call of that is made by a task of the plan, so that what it keeps goes through a barrier
+    /// (`Checker::keep_type`), and the files of `code` are visited too.
+    pub is_one_program: bool,
+    /// With `is_one_program`: the files of the bundle that `paths` are the entry points of. See `Options::roots_for_code`.
+    pub code: &'a [Vec<u8>],
     /// `Host::script_kind` of those of `paths` whose names do not tell what they are run as.
     pub script_kinds: &'a [(Vec<u8>, ScriptKind)],
     /// `--loader .js:ts`: `Host::extra_file_extensions`, which is also `Host::script_kind` of the
@@ -495,10 +512,44 @@ pub struct Request<'a> {
     pub loaded: Option<&'a (dyn Fn(&Program) + Sync)>,
     /// Called with it again when all of it is checked.
     pub checked: Option<&'a (dyn Fn(&Program) + Sync)>,
-    /// Called for each file right after it is checked, on the thread that checked it, while the types that are local to the file
-    /// are still alive. The way to read the type of every expression without `retains_everything`. An invalid task is retried
-    /// (`Program::validate`), so this can be called more than once for a file: the last call counts.
-    pub after_file: Option<&'a (dyn Fn(&mut bun_sema::check::Checker<'_, '_>, FileId) + Sync)>,
+    /// The same, for what compiles the program by its types. It is handed the pool that the tasks ran on, and the file and the offset of
+    /// every error. It answers for each whether the error stands: one that lies in code that is no part of what is compiled does
+    /// not. Those that do not stand go to `Report::not_in_program`. If one stands, nothing is to be compiled. It is not called
+    /// if the check has stopped early (`stops_like_tsc`), if it is incomplete, or if an error lies in no file of the program: nothing is
+    /// compiled then either.
+    pub compile: Option<&'a (dyn Fn(&Program, InParallel<'_>, &[(FileId, u32)]) -> Vec<bool> + Sync)>,
+    /// Called for each file right after it is checked, on the thread and with the checker that checked it, while the types that are
+    /// local to the task are still alive. The way to read the type of every expression without `retains_everything`. The files that
+    /// are not checked are visited when the others have been: a declaration file under `skipLibCheck`, a JSON file, a file that is
+    /// only code.
+    ///
+    /// Calls for different files run at the same time. Calls for one file do not: a file is in one task of a round, and a barrier is
+    /// between two rounds. The calls of a task come one after the other, with one checker. Which files share a task is a function of
+    /// the program.
+    ///
+    /// An invalid task is retried (`Program::validate`): all it has found may be wrong, its files are checked again, cut into other
+    /// tasks, and this is called again for each of them. So it can be called more than once for a file, and the last call counts. For
+    /// that to be enough:
+    /// - What a call yields is stored under its file, and replaces all that an earlier call has stored there.
+    /// - A call writes nothing else that outlives it. Whatever one call leaves for another to find, a claim, a cache in which the
+    ///   first entry wins, a counter, may have been left by a task that is then found invalid, after a valid one has relied on it.
+    ///   Shared state is read-only, or a function of the trees alone.
+    /// - What it yields holds no id that is local to the task: those of types, signatures, mappers, component lists and atoms with
+    ///   `LOCAL`. Files, nodes and symbols are numbered before the first task.
+    /// - What it keeps by `Checker::keep_type` needs no care: what an invalid task has kept is dropped with the task.
+    ///
+    /// It is called before anyone knows whether the program has errors, so it meets error types, names that do not resolve and trees
+    /// of files that do not parse. `compile` is told of the errors. What it can know beforehand is
+    /// `Program::files_without_whole_trees`, from `loaded` on. With `stops_like_tsc` a parse error in a file that is checked ends the run
+    /// before the first call, so the only such trees it meets then are of files that are only code.
+    pub after_file: Option<&'a (dyn Fn(&mut Checker<'_, '_>, FileId) + Sync)>,
+    /// With `is_one_program` and `after_file`. Called like `after_file`, under the same conditions, for each of the files that are not
+    /// checked, by the tasks of a step of its own, before `after_file` is called for the first of them. For what `after_file` has to
+    /// know of all files to deal with one that is not checked.
+    pub before_visits: Option<&'a (dyn Fn(&mut Checker<'_, '_>, FileId) + Sync)>,
+    /// With `is_one_program` and `after_file`. Called once, with no task running, when `after_file` has been called for every file that
+    /// is checked and `before_visits` for every other, and the tasks that did so are valid.
+    pub all_visited_once: Option<&'a (dyn Fn(&Program) + Sync)>,
     /// Called with the path and the text of each declaration file that a project of a `tsc -b` run
     /// emits for the projects that reference it.
     /// Nothing is written to disk: this is the way to observe them.
@@ -586,6 +637,8 @@ pub struct Report {
     /// Sorted as TypeScript sorts them: diagnostics without a file first, then by path and
     /// position.
     pub diagnostics: Vec<Diagnostic>,
+    /// The errors of which `Request::compile` has said that they do not stand, in the same order.
+    pub not_in_program: Vec<Diagnostic>,
     /// Files in which a query was abandoned because the stack ran out: errors may be missing.
     pub incomplete: Vec<Vec<u8>>,
     /// Whether `@types/bun` is installed where a checked project would resolve it.
@@ -642,6 +695,7 @@ impl Report {
     /// Adds the result of checking another project. The diagnostics are left unsorted.
     fn merge(&mut self, other: Report) {
         self.diagnostics.extend(other.diagnostics);
+        self.not_in_program.extend(other.not_in_program);
         self.incomplete.extend(other.incomplete);
         self.listed_files.extend(other.listed_files);
         self.scripts_elsewhere.extend(other.scripts_elsewhere);
@@ -1155,10 +1209,17 @@ fn check_request(disk: &host::Disk, request: &Request) -> Report {
         if scripts.is_empty() {
             return report;
         }
-        // They are run, whatever has found them: see `Request::are_entry_points`.
+        // They are run, whatever has found them: see `Request::are_entry_points`. What is compiled is the program that imports the pages.
         let of_pages = Request {
             paths: &scripts,
             are_entry_points: true,
+            is_one_program: false,
+            code: &[],
+            loaded: None,
+            compile: None,
+            after_file: None,
+            before_visits: None,
+            all_visited_once: None,
             ..*request
         };
         report.merge(check_paths(disk, &of_pages));
@@ -1219,6 +1280,17 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         counts_javascript: request.are_entry_points && paths.iter().any(|it| is_javascript(it)),
         ..Default::default()
     };
+    if request.is_one_program && !paths.is_empty() {
+        let nearest = config_in(dirname::<Posix>(&paths[0]));
+        let owner = projects.owner_of(disk, request, nearest, &paths[0]);
+        let owner = owner.unwrap_or_else(|nearest| nearest);
+        let of = OfProject {
+            config: owner.as_deref(),
+            named: Some((Extent::Project, paths.as_slice())),
+            elsewhere: None,
+        };
+        return check_project_of(disk, request, &mut projects, of, report, started);
+    }
     if paths.is_empty() {
         match project_in(&cwd) {
             Some(config) => {
@@ -1437,6 +1509,25 @@ fn check_project_of(
         |it: (Extent, &[Vec<u8>])| it.1.iter().any(|file| is_javascript_file(disk, file));
     if request.are_entry_points && named.is_some_and(names_javascript) {
         project.options.allow_js = true;
+    }
+    if request.is_one_program {
+        project.options.allow_js = true;
+        project.references.clear();
+        project.has_references = false;
+        let cwd = host::from_native(request.cwd);
+        let files = project.files.iter();
+        let mut seen: FxHashSet<Vec<u8>> =
+            files.map(|it| to_path(it, is_case_sensitive).into_owned()).collect();
+        let code: Vec<Vec<u8>> = (request.code.iter())
+            .map(|path| join(&cwd, path))
+            .filter(|path| seen.insert(to_path(path, is_case_sensitive).into_owned()))
+            .collect();
+        if !code.is_empty() {
+            project.options.own_roots.get_or_insert(project.files.len());
+            project.options.roots_for_code = Some(project.files.len());
+            project.files.extend(code);
+            project.options.files.clone_from(&project.files);
+        }
     }
     if request.build || !project.references.is_empty() {
         check_with_references(disk, project, request, report, started, named, of.elsewhere)
@@ -2329,7 +2420,9 @@ fn check_named_files(
 
     let written = std::mem::take(&mut project.raw_compiler_options);
     let is_true = |name: &[u8]| written.contains(&(name.to_vec(), Json::Bool(true)));
-    project.options.drops_unreferenced = !request.retains_everything;
+    project.options.drops_unreferenced = !request.retains_everything && !request.is_one_program;
+    project.options.reports_uninitialized_variables = project.options.strict_null_checks
+        && (project.options.strict_variable_initialization).unwrap_or(request.is_one_program);
     let before = host.times();
     host.spent(Phase::Discover, started.elapsed());
     // Declared before everything that is allocated in it, so it is dropped last.
@@ -2378,6 +2471,7 @@ fn check_named_files(
         .filter(|&i| {
             let module = &program.files.modules[i];
             match module.hir.kind {
+                _ if module.is_only_code => false,
                 // Only parse errors are reported for JSON files.
                 FileKind::Json => module.hir.has_parse_diagnostics,
                 _ if module.is_lib => !skip_lib_check && !skip_default_lib_check,
@@ -2564,6 +2658,8 @@ fn check_named_files(
         0 => 0,
         checkers => checkers.min(program.files.order.len()).clamp(1, 256),
     };
+    // Every call of `after_file` is made by a task of the plan: see `Request::is_one_program`.
+    let visits_in_tasks = request.is_one_program && request.after_file.is_some();
     // The files that are checked but not yet rendered. The task of another file may still report
     // diagnostics in them.
     let unfinished: Guarded<Vec<(FileId, Checked)>> = Guarded::new(Vec::new());
@@ -2587,20 +2683,24 @@ fn check_named_files(
             unsafe { program.files.free_tree(file) };
         }
     };
-    // `task`: its step, its index in the step, and `is_read_later`. `None`: the files are checked
-    // outside the plan.
+    // `task`: its step, its index in the step, `is_read_later`, and whether only its types and
+    // declarations are. `None`: the files are checked outside the plan.
     let check_chunk =
-        |files: &[FileId], expected: Requested, task: Option<(usize, usize, bool)>| {
+        |files: &[FileId], expected: Requested, task: Option<(usize, usize, bool, bool)>| {
             let mut checker = new_checker(expected);
-            if let Some((step, index, is_read_later)) = task {
+            if let Some((step, index, is_read_later, withholds_expressions)) = task {
                 checker.begin_task(step as u32, index as u32, is_read_later);
                 checker.set_checker_count(checker_count as u32);
+                if withholds_expressions {
+                    checker.withhold_tables_of_expressions();
+                }
             }
             let (mut checked, mut incomplete) = (Vec::new(), Vec::new());
             for &file in files {
                 checked.push((file, checker.check_file(file)));
                 if let Some(after_file) = request.after_file
                     && expected == Requested::All
+                    && (task.is_some() || !visits_in_tasks)
                 {
                     after_file(&mut checker, file);
                 }
@@ -2652,6 +2752,36 @@ fn check_named_files(
                 .generic_relation_entries_not_published(),
             trees_to_free: Vec::new(),
             obstacles,
+        }
+    };
+    // `visited`: `after_file` or `before_visits`, for files that the task does not check. `place`: as above. `None`: the task is
+    // outside the plan. `is_visited_again`: another step visits the files once more.
+    type Visited<'a> = &'a (dyn Fn(&mut Checker<'_, '_>, FileId) + Sync);
+    let visit_chunk = |files: &[FileId], place: Option<[usize; 2]>, visited: Visited<'_>, is_visited_again: bool| {
+        let mut checker = new_checker(Requested::All);
+        if let Some(place) = place {
+            checker.begin_task(place[0] as u32, place[1] as u32, true);
+            if !is_visited_again && !request.retains_everything {
+                checker.withhold_tables_of_expressions();
+            }
+        }
+        let mut incomplete = Vec::new();
+        for &file in files {
+            checker.visit_file(file);
+            visited(&mut checker, file);
+            if checker.take_ran_out_of_stack() {
+                incomplete.push(file);
+            }
+        }
+        deepest_stack.fetch_max(checker.deepest_stack(), Ordering::Relaxed);
+        Outcome {
+            finished: place.map(|_| checker.end_task()),
+            checked: Vec::new(),
+            incomplete,
+            generic_relation_entries_not_published: checker
+                .generic_relation_entries_not_published(),
+            trees_to_free: Vec::new(),
+            obstacles: 0,
         }
     };
     let declaration_files: Guarded<Vec<(Vec<u8>, Vec<u8>)>> = Guarded::new(Vec::new());
@@ -2761,9 +2891,12 @@ fn check_named_files(
         // After the last step the published state is read by the loop over the files that are not
         // checked, which runs with `after_file`, and by a caller that goes on to query the program.
         // The tasks of split files read the ranges, and nothing else of the step before theirs.
-        let is_read_later = number + 1 + usize::from(!plan.ahead.is_empty()) < plan.steps.len()
-            || request.retains_everything
-            || request.after_file.is_some();
+        let is_read_by_a_step = number + 1 + usize::from(!plan.ahead.is_empty()) < plan.steps.len();
+        let is_read_later =
+            is_read_by_a_step || request.retains_everything || request.after_file.is_some();
+        // What is made of the files in the tasks is put together by the types that were kept.
+        let withholds_expressions =
+            visits_in_tasks && !is_read_by_a_step && !request.retains_everything;
         let tasks = step.len();
         let weight_of = |i: usize| step[i].iter().map(|&it| size_of(it)).sum::<usize>();
         // The largest first, so that no thread begins it when the others are nearly done.
@@ -2781,7 +2914,10 @@ fn check_named_files(
             let files: Vec<FileId> = step[index].iter().map(|&file| to_check[file]).collect();
             let outcome = match ahead.get(index).copied().flatten() {
                 Some(range) => check_ahead(files[0], range, expected, [number, index]),
-                None => check_chunk(&files, expected, Some((number, index, is_read_later))),
+                None => {
+                    let task = (number, index, is_read_later, withholds_expressions);
+                    check_chunk(&files, expected, Some(task))
+                }
             };
             *outcomes[index].lock() = Some(outcome);
             let elapsed = began.elapsed();
@@ -2946,6 +3082,7 @@ fn check_named_files(
         }
         std::mem::take(&mut *emit_diagnostics.lock())
     };
+    let mut is_all_checked = false;
     'stages: {
         if stops {
             let suspects: Vec<FileId> = (0..program.files.modules.len())
@@ -2954,6 +3091,7 @@ fn check_named_files(
                     (hir.has_parse_diagnostics
                         || hir.has_parse_or_grammar_diagnostics()
                         || hir.is_js)
+                        && !program.files.modules[i].is_only_code
                         && is_reached.as_ref().is_none_or(|reached| reached[i])
                 })
                 .map(|i| FileId(i as u32))
@@ -3003,26 +3141,90 @@ fn check_named_files(
         // `iterateBaseline`: a caller that writes output for every file also does so for the files
         // that are not checked.
         if let Some(after_file) = request.after_file {
-            let mut is_checked = vec![false; program.files.modules.len()];
-            for file in to_check.iter().chain(&only_emitted) {
-                is_checked[file.idx()] = true;
+            // None of TypeScript's own libraries is a file of the caller's. With `libReplacement` a
+            // library can be any file.
+            let mut is_visited_now: Vec<bool> = (program.files.modules.iter())
+                .map(|module| match module.is_lib {
+                    true => options.lib_replacement,
+                    false => {
+                        matches!(module.hir.kind, FileKind::Declaration | FileKind::Json)
+                            || module.is_only_code
+                    }
+                })
+                .collect();
+            // A file of the bundle can be a file of the project that the entry points do not lead to as the checker resolves imports.
+            let cwd = host::from_native(request.cwd);
+            let code = request.code.iter().filter(|_| visits_in_tasks);
+            for file in code.filter_map(|path| program.files.by_path.get(&join(&cwd, path))) {
+                is_visited_now[file.idx()] = true;
             }
-            for i in 0..program.files.modules.len() {
-                let (file, module) = (FileId(i as u32), &program.files.modules[i]);
-                // None of TypeScript's own libraries is a file of the caller's. With
-                // `libReplacement` a library can be any file.
-                let is_left_out = match module.is_lib {
-                    true => !options.lib_replacement,
-                    false => !matches!(module.hir.kind, FileKind::Declaration | FileKind::Json),
-                };
-                if is_left_out || is_checked[i] {
-                    continue;
+            for file in &to_check {
+                is_visited_now[file.idx()] = false;
+            }
+            for file in &only_emitted {
+                is_visited_now[file.idx()] = visits_in_tasks;
+            }
+            let to_visit: Vec<FileId> = (0..program.files.modules.len())
+                .filter(|&i| is_visited_now[i])
+                .map(|i| FileId(i as u32))
+                .collect();
+            // A step after those of the plan. As there, the files of invalid tasks are visited again until every task is valid.
+            let visit = |mut to_visit: Vec<FileId>, step: usize, visited: Visited<'_>, is_visited_again: bool| {
+                while !to_visit.is_empty() {
+                    let weight_of = |index: usize| size(to_visit[index]) as usize + 1;
+                    let indices = (0..to_visit.len()).collect();
+                    let tasks = Plan::cut(indices, &weight_of, &request.plan_options);
+                    let tasks: Vec<Vec<FileId>> = (tasks.iter())
+                        .map(|task| task.iter().map(|&index| to_visit[index]).collect())
+                        .collect();
+                    let weight_of = |i: usize| tasks[i].iter().map(|&it| size(it) as usize).sum::<usize>();
+                    let mut start_order: Vec<usize> = (0..tasks.len()).collect();
+                    match request.order {
+                        1 => start_order.sort_by_key(|&i| Reverse(weight_of(i))),
+                        order => start_order.sort_by_key(|&i| (i as u32 + 1).wrapping_mul(order)),
+                    }
+                    let outcomes: Vec<Guarded<Option<Outcome>>> =
+                        (0..tasks.len()).map(|_| Guarded::new(None)).collect();
+                    host.parallel(tasks.len(), &|i| {
+                        let index = start_order[i];
+                        let place = visits_in_tasks.then_some([step, index]);
+                        let outcome = visit_chunk(&tasks[index], place, visited, is_visited_again);
+                        *outcomes[index].lock() = Some(outcome);
+                    });
+                    let mut outcomes: Vec<Outcome> = (outcomes.into_iter())
+                        .map(|mut outcome| outcome.get_mut().take().unwrap())
+                        .collect();
+                    to_visit.clear();
+                    if visits_in_tasks {
+                        let mut finished: Vec<Finished> = (outcomes.iter_mut())
+                            .map(|outcome| outcome.finished.take().unwrap())
+                            .collect();
+                        let is_invalid = program.validate(&finished);
+                        let mut at = is_invalid.iter();
+                        finished.retain(|_| !*at.next().unwrap());
+                        let mut at = is_invalid.iter().zip(&tasks);
+                        outcomes.retain(|_| {
+                            let (&is_invalid, task) = at.next().unwrap();
+                            if is_invalid {
+                                to_visit.extend(task);
+                            }
+                            !is_invalid
+                        });
+                        program.link(&mut finished, &in_parallel);
+                        program.publish(&mut finished, &in_parallel, request.digests);
+                    }
+                    outcomes.into_iter().for_each(&accept);
                 }
-                let mut checker = program.checker();
-                checker.begin_stack_budget();
-                after_file(&mut checker, file);
+            };
+            if let Some(before_visits) = request.before_visits.filter(|_| visits_in_tasks) {
+                visit(to_visit.clone(), plan.steps.len(), before_visits, true);
             }
+            if let Some(all_visited_once) = request.all_visited_once.filter(|_| visits_in_tasks) {
+                all_visited_once(program);
+            }
+            visit(to_visit, plan.steps.len() + 1, after_file, false);
         }
+        is_all_checked = true;
     }
     report.deepest_stack = deepest_stack.into_inner();
     report.steps = std::mem::take(&mut *steps.lock());
@@ -3037,6 +3239,25 @@ fn check_named_files(
     report.declaration_files = std::mem::take(&mut *declaration_files.lock());
     if let Some(checked) = request.checked {
         checked(program);
+    }
+    let is_error = |d: &Diagnostic| d.category == Category::Error;
+    let places: Vec<Option<(FileId, u32)>> = (report.diagnostics.iter())
+        .map(|d| Some((program.files.by_path.get(&d.path).filter(|_| is_error(d) && !d.has_undefined_range)?, d.start)))
+        .collect();
+    if let Some(compile) = request.compile
+        && is_all_checked
+        && report.incomplete.is_empty()
+        && (report.diagnostics.iter().zip(&places)).all(|(d, place)| !is_error(d) || place.is_some())
+    {
+        let errors: Vec<(FileId, u32)> = places.iter().flatten().copied().collect();
+        let mut stands = compile(program, &in_parallel, &errors).into_iter();
+        for (diagnostic, place) in std::mem::take(&mut report.diagnostics).into_iter().zip(places) {
+            if place.is_none() || stands.next().unwrap_or(true) {
+                report.diagnostics.push(diagnostic);
+            } else {
+                report.not_in_program.push(diagnostic);
+            }
+        }
     }
     root.release();
     report

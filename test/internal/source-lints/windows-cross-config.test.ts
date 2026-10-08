@@ -26,7 +26,6 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     clangVersion: "23.1.1",
     clangResourceDir: "/fake/llvm/lib/clang/23",
     ar: "/fake/llvm/bin/llvm-lib",
-    ranlib: undefined,
     ld: "/fake/llvm/bin/lld-link",
     ld64Lld: undefined,
     rustLlvmVersion: "23.1.1",
@@ -49,7 +48,6 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
     rustupHome: undefined,
     msvcLinker: undefined,
     rc: "/fake/llvm/bin/llvm-rc",
-    mt: undefined,
     nasm: "/fake/bin/nasm",
     ...overrides,
   };

@@ -52,6 +52,16 @@ impl Checked {
 }
 
 impl Program<'_> {
+    /// The files whose trees are not what their texts say: the parser has reported an error and gone on, or it or the binder has run
+    /// out of stack. For `Request::after_file`: nothing is made of such a tree, nor of a file that may look into one. It holds from
+    /// when the program is loaded. Not every such file is reported: one that is only code is not checked.
+    pub fn files_without_whole_trees(&self) -> Vec<FileId> {
+        (self.files.modules.iter().enumerate())
+            .filter(|(_, module)| module.hir.has_parse_diagnostics || module.hir.has_errors || module.hir.ran_out_of_stack)
+            .map(|(i, _)| FileId(i as u32))
+            .collect()
+    }
+
     /// The errors of `file`, after the last barrier. It runs no query and reads no HIR.
     pub fn finish_file(&self, file: FileId, checked: Checked) -> Vec<Explained> {
         let mut out = Vec::new();
@@ -138,9 +148,9 @@ impl Checker<'_, '_> {
         self.prepared.retain(|key| key.0 != file);
     }
 
-    /// Runs every check that queries `file`. Diagnostics it causes in other files, or other files
-    /// cause in this one, are in the sink.
-    pub fn check_file(&mut self, file: FileId) -> Checked {
+    /// From now on the task visits `file`. What is only good for the file it visited before is
+    /// dropped.
+    fn begin_file(&mut self, file: FileId) {
         if let Some(previous) = self.task.file
             && previous != file
             && self.files().module(previous).is_leaf
@@ -170,10 +180,24 @@ impl Checker<'_, '_> {
         self.reported.clear();
         self.release_provisional_shapes();
         self.is_type_checked = false;
-        let hir = self.hir(file);
-        if hir.ran_out_of_stack {
+        if self.hir(file).ran_out_of_stack {
             self.ran_out_of_stack.set(true);
         }
+    }
+
+    /// The task visits `file` and does not check it: for a caller that is about to ask about its
+    /// nodes. The checker is in the state `check_file` leaves it in, so what the queries find
+    /// wrong in `file` is not reported.
+    pub fn visit_file(&mut self, file: FileId) {
+        self.begin_file(file);
+        self.is_type_checked = true;
+    }
+
+    /// Runs every check that queries `file`. Diagnostics it causes in other files, or other files
+    /// cause in this one, are in the sink.
+    pub fn check_file(&mut self, file: FileId) -> Checked {
+        self.begin_file(file);
+        let hir = self.hir(file);
         // `GetSyntacticDiagnostics` and `getBindAndCheckDiagnosticsWithChecker` are separate: only the second depends on whether the
         // file is checked.
         self.report_hir_diagnostics(file, &[DiagnosticKind::Parse, DiagnosticKind::Js]);
@@ -1130,7 +1154,7 @@ impl Checker<'_, '_> {
     /// `node.Parent` of the node `parent` represents, as far as `Parent` can express it: a pattern
     /// is skipped. `None`: for a member of a type literal and for a function type, whose parents
     /// are not stored.
-    pub(super) fn parent_of_node(&self, file: FileId, parent: Parent) -> Parent {
+    pub fn parent_of_node(&self, file: FileId, parent: Parent) -> Parent {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let of_class = |c: ClassId| bound.class_owner[c.idx()].to_parent();
         let of_member = |m: MemberId| match bound.member_owner[m.idx()] {

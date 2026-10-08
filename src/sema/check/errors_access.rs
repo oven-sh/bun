@@ -984,6 +984,7 @@ impl<'p> Checker<'p, '_> {
         for (frame, dropped) in self.frames.iter_mut().zip(dropped) {
             frame.drops_reported = dropped;
         }
+        self.forget_marked_frames();
         self.add_error_or_suggestion(!is_unchecked_js || diagnostic.code != 2568, diagnostic);
     }
 

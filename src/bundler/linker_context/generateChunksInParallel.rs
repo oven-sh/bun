@@ -527,32 +527,6 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
     }
 
-    if let Some(coverage) = bun_ast::type_tags::take_table_coverage() {
-        bun_core::Output::print_errorln(format_args!("type table: {} sources tagged", coverage.tagged));
-        bun_core::Output::print_errorln(format_args!("type table: {} sources differ", coverage.differing));
-        bun_core::Output::print_errorln(format_args!("type table: {} sources unknown", coverage.unknown));
-        if coverage.tagged == 0 || !coverage.refused.is_empty() {
-            let mut msg: Vec<u8> = Vec::new();
-            if coverage.refused.is_empty() {
-                writeln!(
-                    &mut msg,
-                    "The type table (BUN_SOUND_TYPES_TAGS) has seen none of the sources of this bundle"
-                )?;
-            } else {
-                writeln!(
-                    &mut msg,
-                    "The type table (BUN_SOUND_TYPES_TAGS) was not made from the sources of this bundle: {} of them differ from what it has seen or are unknown to it, so what it says about the whole program does not hold",
-                    coverage.refused.len()
-                )?;
-            }
-            for (path, what) in coverage.refused.iter().take(20) {
-                writeln!(&mut msg, "  {}: {}", what, bstr::BStr::new(path))?;
-            }
-            c.log_mut().add_error(None, bun_ast::Loc::EMPTY, msg);
-            return Err(crate::Error::BuildFailed);
-        }
-    }
-
     // After final_rel_path is computed for all chunks, fix up module_info
     // cross-chunk import specifiers. During printing, cross-chunk imports use
     // unique_key placeholders as paths. Now that final paths are known, replace
@@ -703,6 +677,22 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
         }
     }
 
+    // For the compiled program: the paths of the files it refers to, which are known by now. The list of those files is taken apart below.
+    let mut replaced_strings: Vec<u8> = Vec::new();
+    {
+        let graph = c.parse_graph();
+        let keys = graph.input_files.items_unique_key_for_additional_file();
+        let additional_files = graph.input_files.items_additional_files();
+        for (key, files) in keys.iter().zip(additional_files) {
+            let Some(file) = files.last().filter(|_| !key.is_empty()) else { continue };
+            let path = &graph.additional_output_files.as_slice()[crate::chunk::additional_output_file_index(file)].dest_path;
+            let path = cheap_prefix_normalizer(c.options.public_path, path).concat();
+            for bytes in [&key[..], &path[..]] {
+                replaced_strings.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                replaced_strings.extend_from_slice(bytes);
+            }
+        }
+    }
     let mut output_files =
         OutputFileListBuilder::init(c, chunks, c.parse_graph().additional_output_files.len())?;
 
@@ -1424,9 +1414,16 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 table,
                 order,
                 c.options.aot,
+                c.facts.as_ref().map_or(&[][..], |facts| &facts.table),
             );
         linked_bytecode_chunks
             .sort_by_key(|&(chunk_index, _, _)| output_files.output_files[chunk_index].load_order);
+        // The compiled program takes the place of the code of the first entry point, which is empty: `empty_first_entry_point`.
+        let typed_module = c.facts.as_ref().and_then(|facts| facts.typed.as_deref()).and_then(|_| {
+            linked_bytecode_chunks.iter().position(|&(chunk_index, _, _)| {
+                chunks[chunk_index].is_entry_point() && chunks[chunk_index].entry_point.entry_point_id() == 0
+            })
+        });
         let is_esm = c.options.output_format == options::Format::Esm;
         // What `IntermediateOutput::code` wrote where a text imports a chunk.
         let mut chunk_paths: Vec<Vec<u8>> = chunks
@@ -1473,6 +1470,11 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             internal_names,
             names_out: crate::bytecode_order::names_out().map(|path| (path, Vec::new())),
         };
+        if let Some(typed) = c.facts.as_ref().and_then(|facts| facts.typed.as_deref()) {
+            if !linked.encoder.set_typed_program(typed, typed_module.unwrap_or(0) as u32, &replaced_strings) {
+                c.log_mut().add_error(None, bun_ast::Loc::EMPTY, b"The engine does not take the program the compiler made: they are of different versions");
+            }
+        }
         for ((chunk_index, bytecode_index, source_provider_url), names) in
             linked_bytecode_chunks.iter().zip(&names)
         {

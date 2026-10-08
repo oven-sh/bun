@@ -501,6 +501,8 @@ pub mod defines {
         pub drop_debugger: bool,
         /// `hash_user_inputs` of this table's inputs, for the runtime transpiler cache key.
         pub user_hash: Option<u64>,
+        /// What the user defined, as written: the dotted name and the JavaScript text of the value.
+        pub user_inputs: Vec<(Box<[u8]>, Box<[u8]>)>,
     }
 
     #[derive(Clone)]

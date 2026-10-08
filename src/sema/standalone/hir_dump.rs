@@ -1153,10 +1153,11 @@ impl Dump<'_, '_> {
             other_implements,
             members,
             start,
+            body_pos,
             modifiers,
         } = node!(self, depth, label, classes, id);
         let mut head = format!(
-            "Class name={} name_pos={name_pos} flags={flags:?} start={start}",
+            "Class name={} name_pos={name_pos} flags={flags:?} start={start} body_pos={body_pos}",
             self.q(name)
         );
         for modifier in self.file.modifier_list(modifiers) {

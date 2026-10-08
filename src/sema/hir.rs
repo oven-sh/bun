@@ -1186,6 +1186,8 @@ pub struct Class {
     pub members: Span<MemberId>,
     /// Position of its first token, including decorators and modifiers.
     pub start: u32,
+    /// Position of the `{` of its body.
+    pub body_pos: u32,
     /// `node.Modifiers()`. For a declaration, the list of its statement.
     pub modifiers: Span<ModifierId>,
 }

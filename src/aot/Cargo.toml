@@ -1,0 +1,17 @@
+[package]
+name = "bun_aot"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+bun_sema.workspace = true
+bun_core.workspace = true
+bun_ast.workspace = true
+rustc-hash = "2"
+smallvec.workspace = true
+
+[lints]
+workspace = true

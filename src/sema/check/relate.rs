@@ -1891,7 +1891,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getDefaultConstraintOfConditionalType`
-    pub(super) fn default_constraint_of_conditional(&mut self, t: TypeId) -> TypeId {
+    pub fn default_constraint_of_conditional(&mut self, t: TypeId) -> TypeId {
         let (yes, no) = (self.cond_inferred_true(t), self.cond_false(t));
         // A branch that is `any` would make the whole assignable to anything.
         if self.is_any(yes) {

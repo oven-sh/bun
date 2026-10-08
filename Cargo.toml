@@ -20,6 +20,7 @@ members = [
   "src/paths",
   "src/resolver",
   "src/safety",
+  "src/aot",
   "src/sema",
   "src/sema/baselines",
   "src/sema/driver",
@@ -369,6 +370,7 @@ bun_md = { path = "src/md" }
 bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
+bun_aot = { path = "src/aot" }
 bun_sema = { path = "src/sema" }
 bun_sema_baselines = { path = "src/sema/baselines" }
 bun_sema_driver = { path = "src/sema/driver" }

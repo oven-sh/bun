@@ -279,11 +279,11 @@ $ git clone https://github.com/oven-sh/WebKit vendor/WebKit
 # (a commit sha or an autobuild-* release tag; this handles both)
 $ bun sync-webkit-source
 
-# Build bun with the local JSC build — this automatically configures and builds JSC
+# Build bun with JSC compiled from that checkout
 $ bun run build:local
 ```
 
-`bun run build:local` handles everything: configuring JSC, building JSC, and building Bun. On subsequent runs, JSC will incrementally rebuild if any WebKit sources changed.
+`bun run build:local` compiles JSC in the same build graph as Bun itself (no separate CMake build), so one command builds both, and on subsequent runs only what a changed WebKit source affects is rebuilt. JSC's code generators need `ruby`, `python3` and `perl` in your `PATH`. To keep the clone somewhere else, or share one between worktrees, set `BUN_WEBKIT_PATH` to it. `bun run build:local --target=jsc` builds the `jsc` shell at `./build/debug-local/jsc`.
 
 The build output goes to `./build/debug-local` (instead of `./build/debug`), so you'll need to update a couple of places:
 

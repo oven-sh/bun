@@ -1043,6 +1043,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.output_format = config.format;
         transpiler.options.bytecode = config.bytecode;
         transpiler.options.aot = config.compile.as_ref().is_some_and(|compile| compile.aot);
+        transpiler.options.analyze = Some(crate::cli::check_command::analyze_for_build);
         transpiler.options.bytecode_depth = config.bytecode_depth;
         transpiler.options.optimize_bytecode = config.optimize_bytecode;
         if let Some(compile) = &config.compile {

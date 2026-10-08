@@ -807,3 +807,8 @@ unsafe extern "C" fn WTF__parseDouble(p: *const u8, len: usize, counted: *mut us
         .and_then(|s| s.parse().ok())
         .unwrap_or(0.0)
 }
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__offsetInCode(_address: *const c_void) -> i64 {
+    -1
+}

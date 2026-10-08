@@ -7249,11 +7249,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// check is still in progress.
     fn check_expression_cached_again(&mut self, file: FileId, e: ExprId) -> TypeId {
         let q = Query::Expr(file, e);
-        let from = self.resolution_start.min(self.stack.len());
-        let Some(first) = self.stack[from..].iter().rposition(|&x| x == q) else {
+        let Some(first) = self.innermost(q, self.resolution_start) else {
             return self.type_of_expr(file, e);
         };
-        let first = first + from;
         if let Some(raw) = self.provisional(q) {
             return TypeId(raw as u32);
         }

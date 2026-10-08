@@ -1798,6 +1798,8 @@ fn run_one(
             build: false,
             paths: &[],
             are_entry_points: false,
+            is_one_program: false,
+            code: &[],
             threads: 1,
             libs: bun_sema_driver::Libs::Directory(setup.lib_dir.as_bytes()),
             progress: None,
@@ -1813,9 +1815,12 @@ fn run_one(
             stops_like_tsc: false,
             uses_typescript_wording: true,
             loaded: None,
+            compile: None,
             checked: None,
             declaration_file_emitted: None,
             after_file,
+            before_visits: None,
+            all_visited_once: None,
         };
         let began = std::time::Instant::now();
         bun_sema_driver::check_project(&host, project, &request, Report::default(), began)

@@ -303,10 +303,7 @@ impl<'p, 's> Checker<'p, 's> {
             return known;
         }
         // `resolvingSignature`
-        let in_progress_at = self
-            .stack
-            .iter()
-            .rposition(|&q| q == Query::Call(file, call));
+        let in_progress_at = self.innermost(Query::Call(file, call), 0);
         let is_in_progress = in_progress_at.is_some();
         let resolution_start = self.resolution_start;
         // There is no re-entrancy guard. A call that a back edge of a loop reaches while it is
@@ -2937,7 +2934,7 @@ impl<'p, 's> Checker<'p, 's> {
                 .resolved_meanwhile
                 .iter()
                 .any(|r| r.0 == file && r.1 == call)
-            && self.stack.contains(&Query::Call(file, call))
+            && self.is_in_flight(Query::Call(file, call))
         {
             return Some(TypeId::ANY);
         }

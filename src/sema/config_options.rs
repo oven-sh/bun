@@ -147,6 +147,7 @@ bun_core::comptime_string_map! {
         b"strictfunctiontypes" => (b"strictFunctionTypes", Kind::Boolean),
         b"strictnullchecks" => (b"strictNullChecks", Kind::Boolean),
         b"strictpropertyinitialization" => (b"strictPropertyInitialization", Kind::Boolean),
+        b"strictvariableinitialization" => (b"strictVariableInitialization", Kind::Boolean),
         b"stripinternal" => (b"stripInternal", Kind::Boolean),
         b"target" => (b"target", Kind::OneOf(
             &[b"es6", b"es2015", b"es2016", b"es2017", b"es2018", b"es2019", b"es2020", b"es2021", b"es2022", b"es2023", b"es2024", b"es2025", b"esnext"],

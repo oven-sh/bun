@@ -118,6 +118,8 @@ pub struct BundleV2<'a> {
     /// See the comment in `Chunk.OutputPiece`.
     pub(crate) unique_key: u64,
     pub(crate) dynamic_import_entry_points: ArrayHashMap<IndexInt, ()>,
+    /// The files the compiled program refers to by path, which nothing in the bundle imports once its entry point is empty.
+    pub(crate) assets_of_compiled_program: Vec<Index>,
 
     pub(crate) finalizers: Vec<ExternalFreeFunction>,
 
@@ -1521,6 +1523,7 @@ pub mod bv2_impl {
                 evaluated_modules: &[u64],
                 not_evaluated_modules: &[u64],
                 compile_ahead_of_time: bool,
+                facts: &[u8],
             ) -> core::ptr::NonNull<BytecodeLinkEncoder>;
             safe fn __bun_jsc_bytecode_link_encoder_destroy(
                 encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
@@ -1555,6 +1558,12 @@ pub mod bv2_impl {
                 string_slots: &[u32],
                 graph_module_indices: &[u32],
             );
+            safe fn __bun_jsc_bytecode_link_encoder_set_typed_program(
+                encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
+                program: &[u8],
+                module: u32,
+                replaced_strings: &[u8],
+            ) -> bool;
             safe fn __bun_jsc_bytecode_link_encoder_finish(
                 encoder: core::ptr::NonNull<BytecodeLinkEncoder>,
                 module_count: usize,
@@ -1678,6 +1687,7 @@ pub mod bv2_impl {
                 external_strings: core::ptr::NonNull<EncoderStringTable>,
                 order: &crate::bytecode_order::BytecodeOrder,
                 compile_ahead_of_time: bool,
+                facts: &[u8],
             ) -> Self {
                 Self {
                     encoder: __bun_jsc_bytecode_link_encoder_new(
@@ -1687,6 +1697,7 @@ pub mod bv2_impl {
                         &order.evaluated_modules,
                         &order.not_evaluated_modules,
                         compile_ahead_of_time,
+                        facts,
                     ),
                     module_count: 0,
                 }
@@ -1750,6 +1761,10 @@ pub mod bv2_impl {
                 };
                 self.module_count += ok as usize;
                 ok
+            }
+            /// `replaced_strings`: pairs of a string of the program and what to put in its place, each a length in four bytes and the bytes.
+            pub(crate) fn set_typed_program(&mut self, program: &[u8], module: u32, replaced_strings: &[u8]) -> bool {
+                __bun_jsc_bytecode_link_encoder_set_typed_program(self.encoder, program, module, replaced_strings)
             }
             pub(crate) fn finish_linked(
                 &mut self,
@@ -2418,6 +2433,9 @@ pub mod bv2_impl {
                     visitor.visit::<false>(entry_point, false);
                 }
             }
+            for asset in self.assets_of_compiled_program.iter().copied() {
+                visitor.visit::<false>(asset, false);
+            }
 
             if bun_core::env::IS_DEBUG && ReachableFiles.is_visible() {
                 bun_core::scoped_log!(
@@ -2546,10 +2564,13 @@ pub mod bv2_impl {
 
         /// `BundleOptions::type_check`. Every file is parsed, so the pool is idle and the text of
         /// each file is in the graph.
-        fn type_check(&self) -> Result<(), Error> {
-            let Some(type_check) = self.transpiler.options.type_check else {
+        fn type_check(&mut self) -> Result<(), Error> {
+            // The analysis is for the compiler: without it the program would be left out of the bundle and nothing put in its place.
+            let (type_check, analyze) =
+                (self.transpiler.options.type_check, self.transpiler.options.analyze.filter(|_| self.linker.options.aot));
+            if type_check.is_none() && analyze.is_none() {
                 return Ok(());
-            };
+            }
             let sources = self.graph.input_files.items_source();
             let loaders = self.graph.input_files.items_loader();
             let import_records = self.graph.ast.items_import_records();
@@ -2589,28 +2610,158 @@ pub mod bv2_impl {
                     loaders[index].is_javascript_like() && sources[index].path.is_file()
                 })
                 .map(|index| sources[index].path.text);
+            // What is compiled includes the modules that only a plugin provides, which are not files. Each gets a path to go by.
+            let virtual_paths: Vec<Option<Box<[u8]>>> = (sources.iter())
+                .map(|source| {
+                    if analyze.is_none() || source.path.is_file() || source.index.is_runtime() {
+                        return None;
+                    }
+                    Some([b"/$virtual/", source.path.namespace, b"/", source.path.text].concat().into_boxed_slice())
+                })
+                .collect();
+            let virtual_paths = &virtual_paths;
+            let path_of = move |source: &'_ bun_ast::Source| -> Option<&[u8]> {
+                if source.path.is_file() {
+                    // SAFETY-free: the text lives as long as the graph.
+                    return Some(source.path.text);
+                }
+                virtual_paths.get(source.index.get() as usize)?.as_deref()
+            };
             // The types are those of what is written, as in `bun check`, not of what a plugin makes
             // of it. What only a plugin provides is written nowhere else.
             let mut sources = (sources.iter().zip(loaders).zip(flags))
                 .filter(|((source, loader), flags)| {
                     loader.is_javascript_like_or_json()
-                        && source.path.is_file()
-                        && !(flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
+                        && path_of(source).is_some()
+                        // What is compiled is what runs.
+                        && !(analyze.is_none()
+                            && flags.contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
                             && bun_sys::exists(source.path.text))
                 })
-                .map(|((source, loader), _)| (source.path.text, source.contents(), *loader));
+                .filter_map(|((source, loader), _)| Some((path_of(source)?, source.contents(), *loader)));
+            let all_sources = self.graph.input_files.items_source();
+            /// As it is written. An import that is not written, like that of the JSX runtime, has no range.
+            fn specifier_of<'a>(source: &'a bun_ast::Source, record: &'a bun_ast::ImportRecord) -> Option<&'a [u8]> {
+                if !record.original_path.is_empty() {
+                    return Some(record.original_path);
+                }
+                // The range is that of the string literal.
+                let (start, len) = (record.range.loc.start, record.range.len);
+                let (start, len) = (usize::try_from(start).ok()?, usize::try_from(len).ok()?);
+                Some(match source.contents().get(start..start + len)? {
+                    [b'"' | b'\'' | b'`', spec @ .., b'"' | b'\'' | b'`'] => spec,
+                    spec => spec,
+                })
+            }
+            let mut imports = (all_sources.iter().zip(import_records)).flat_map(|(source, records)| {
+                records.as_slice().iter().filter_map(move |record| {
+                    if !record.source_index.is_valid() {
+                        return None;
+                    }
+                    let to = &all_sources[record.source_index.get() as usize];
+                    Some((path_of(source)?, specifier_of(source, record)?, path_of(to)?))
+                })
+            });
+            let mut dropped_imports = (all_sources.iter().zip(import_records)).flat_map(|(source, records)| {
+                use bun_ast::import_record::Flags;
+                let is_dropped = |record: &&bun_ast::ImportRecord| record.flags.intersects(Flags::IS_UNUSED | Flags::IS_BARREL_DEFERRED);
+                let records = records.as_slice();
+                let Some(path) = path_of(source).filter(|_| records.iter().any(|record| is_dropped(&record))) else {
+                    return Vec::new();
+                };
+                // `import type { A } from "a"; import { b } from "a"`: the module is imported.
+                let kept: Vec<&[u8]> = (records.iter().filter(|record| !is_dropped(record))).filter_map(|record| specifier_of(source, record)).collect();
+                (records.iter().filter(is_dropped))
+                    .filter_map(|record| specifier_of(source, record))
+                    .filter(|specifier| !kept.contains(specifier))
+                    .map(|specifier| (path, specifier))
+                    .collect()
+            });
+            let mut texts = (all_sources.iter().zip(loaders))
+                .filter(|(source, loader)| **loader == Loader::Text && source.path.is_file())
+                .map(|(source, _)| (source.path.text, source.contents()));
+            let unique_keys = self.graph.input_files.items_unique_key_for_additional_file();
+            let mut assets = (all_sources.iter().zip(unique_keys))
+                .zip(loaders)
+                .filter(|((_, key), loader)| !key.is_empty() && **loader != Loader::Text)
+                .filter_map(|((source, key), _)| Some((path_of(source)?, &key[..])));
+            let flags = self.transpiler.options.bundler_feature_flags.as_deref();
+            let mut features = flags.into_iter().flat_map(|flags| flags.map.keys().iter().map(|flag| flag.as_ref()));
             let checked = options::TypeChecked {
+                defines: &self.transpiler.options.define.user_inputs,
+                features: &mut features,
                 cwd: self.transpiler.fs().top_level_dir,
                 tsconfig: self.transpiler.options.tsconfig_override.as_deref(),
                 conditions: &self.transpiler.options.custom_conditions,
                 loaders: &self.transpiler.options.loaders,
                 entry_points: &mut entry_points,
                 sources: &mut sources,
+                imports: &mut imports,
+                dropped_imports: &mut dropped_imports,
+                texts: &mut texts,
+                assets: &mut assets,
             };
-            if type_check(checked, self.transpiler.log_mut()) {
+            // The analysis starts with the check that `type_check` is, which so runs once.
+            if let Some(analyze) = analyze {
+                let facts = analyze(checked, self.transpiler.log_mut());
+                let is_compiled = facts.as_ref().is_some_and(|facts| facts.typed.is_some());
+                self.linker.facts = facts;
+                if is_compiled {
+                    self.empty_first_entry_point()?;
+                }
+                return match self.transpiler.log().has_errors() {
+                    true => Err(crate::Error::BuildFailed),
+                    false => Ok(()),
+                };
+            }
+            if type_check.is_some_and(|type_check| type_check(checked, self.transpiler.log_mut())) {
                 return Ok(());
             }
             Err(crate::Error::BuildFailed)
+        }
+
+        /// The compiled program is all that runs once the first entry point is run, so that file becomes an empty module, and what
+        /// only it imports is not in the bundle. The engine puts the program in the place of the code of that module.
+        fn empty_first_entry_point(&mut self) -> Result<(), Error> {
+            let Some(index) = self.graph.entry_points.first().map(|it| it.get() as usize) else {
+                return Ok(());
+            };
+            let heap = self.graph.heap;
+            let target = self.graph.ast.items_target()[index];
+            let path = self.graph.input_files.items_source()[index].path.clone();
+            let source: &mut bun_ast::Source = self.arena_create(bun_ast::Source {
+                path,
+                index: bun_ast::Index(index as u32),
+                contents: std::borrow::Cow::Borrowed(&b""[..]),
+                ..Default::default()
+            });
+            let mut options = bun_js_parser::ParserOptions::init(self.transpiler_for_target(target).options.jsx.clone(), Loader::Js);
+            options.bundle = true;
+            let (define, log): (*mut bun_js_parser::Define, *mut bun_ast::Log) = {
+                let transpiler = self.transpiler_for_target(target);
+                (&raw mut *transpiler.options.define, transpiler.log)
+            };
+            let mut ast = JSAst::init(
+                bun_js_parser::new_lazy_export_ast(
+                    heap,
+                    // SAFETY: `define` and `log` live for `'a` (owned by the Transpiler).
+                    unsafe { &mut *define },
+                    options,
+                    // SAFETY: as above.
+                    unsafe { &mut *log },
+                    Expr::init(E::Undefined {}, bun_ast::Loc::EMPTY),
+                    source,
+                    b"",
+                )?
+                .ok_or(Error::ParserError)?,
+            );
+            ast.target = target;
+            let unique_keys = self.graph.input_files.items_unique_key_for_additional_file();
+            self.assets_of_compiled_program =
+                (unique_keys.iter().enumerate()).filter(|(_, key)| !key.is_empty()).map(|(index, _)| Index::init(index as u32)).collect();
+            self.graph.input_files.items_source_mut()[index] = source.clone();
+            self.graph.ast.set(index, ast);
+            Ok(())
         }
 
         /// `BUN_THREADPOOL_STATS=1` instrumentation hook — dump aggregate worker
@@ -3317,6 +3468,7 @@ pub mod bv2_impl {
                 free_list: Vec::new(),
                 unique_key: 0,
                 dynamic_import_entry_points: ArrayHashMap::new(),
+                assets_of_compiled_program: Vec::new(),
                 finalizers: Vec::new(),
                 drain_defer_task: DeferredBatchTask::default(),
                 asynchronous: false,

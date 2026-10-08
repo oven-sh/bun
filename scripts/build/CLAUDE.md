@@ -20,14 +20,13 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 
 **Minimal cross-platform diffs.** Platform-specific logic is abstracted once, consumed everywhere. `Config` derives `cfg.exeSuffix`/`cfg.objSuffix`/`cfg.libPrefix`/`cfg.libSuffix` so callers write `lib${name}${cfg.libSuffix}` not `if windows ".lib" else ".a"`. Flag tables use `when: c => c.darwin` predicates — one table entry, not a new branch in N files. `shell.ts`/`stream.ts`/`tools.ts`/`compile.ts` absorb the remaining cmd.exe-vs-sh, `.exe` suffix, and clang-vs-clang-cl differences. Where a branch is unavoidable (Windows resources, Darwin dsymutil, Linux setarch), it lives in one function and returns empty on other platforms.
 
-**Deps in our graph by default; native build systems when needed.** `BuildSpec` variants:
+**Deps in our graph.** `BuildSpec` variants:
 
-- `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. The default for the C/C++ deps (zlib, zstd, boringssl, libarchive, mimalloc, …). Skips a sub-process configure entirely and lets LTO see across the dep boundary.
-- `nested-cmake` — invoke the dep's own cmake configure + build as ninja edges. For deps whose build is too entangled to list by hand. Flags forwarded via `-DCMAKE_C_FLAGS`; cmake's own dependency tracking handles incrementality inside.
+- `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. Every C/C++ dep that is compiled (zlib, zstd, boringssl, libarchive, mimalloc, … and a local WebKit checkout). Skips a sub-process configure entirely and lets LTO see across the dep boundary. `groups` are further flag sets (a cmake "target" each), `steps` are generators and target executables.
 - `cargo` — (rule kept for out-of-workspace cargo deps; none today — lolhtml and rust-argon2 are path dependencies compiled as units of bun's own Rust graph).
 - `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (WebKit, nodejs-headers).
 
-The `dep` pool (depth 4) throttles concurrent nested cmake/cargo sub-builds so they don't oversubscribe cores.
+The `dep` pool (depth 4) throttles concurrent fetches and cargo sub-builds.
 
 **Self-obsoleting workarounds** — see "Adding a workaround" below.
 
@@ -37,7 +36,7 @@ Configure time is Phase 1 below — resolve tools, compute flags, glob sources, 
 
 **The smell:** if configure code calls `spawnSync` to compile something, or compares mtimes with `statSync`, it's doing ninja's job. Make it a build edge — `n.rule()` + `n.build()`. Size doesn't matter; a 1-file compile is still a build edge.
 
-**Legitimate `spawnSync` at configure time:** tool detection (`clang --version`), git revision, `xcrun --show-sdk-path` — these probe the environment. None of these compile or fetch anything.
+**Legitimate `spawnSync` at configure time:** tool detection (`clang --version`), git revision, `xcrun --show-sdk-path` — these probe the environment. None of these compile or fetch anything. One more decides which edges exist: with a local WebKit, its own `generate-unified-source-bundles.py` turns `Sources.txt` into JSC's list of translation units (as WebKit's cmake does at its configure).
 
 ## Ninja primer
 
@@ -82,7 +81,7 @@ Edge dependency types:
 
 **`console` pool** — depth 1 and owns the terminal. Only for jobs with a TTY UI worth watching (cargo, dsymutil); never for links, checks, or anything else the graph has several of, since it serializes them.
 
-**`depfile`** — compiler writes `foo.o.d` listing every `#include`d header. Ninja reads it on the next build to know which headers this `.o` depends on. Codegen headers are order-only for this reason: they're declared outputs with restat, the depfile gives exact per-file header deps on build 2+, and order-only just ensures they exist for build 1. Dep outputs (`lib*.a`) are a different story — PCH, cc, and no-PCH cxx use them as _implicit_ deps, because local sub-builds (e.g. WebKit) rewrite forwarding headers as undeclared side effects and order-only would lag one build behind (see Gotchas).
+**`depfile`** — compiler writes `foo.o.d` listing every `#include`d header. Ninja reads it on the next build to know which headers this `.o` depends on. Codegen headers are order-only for this reason: they're declared outputs with restat, the depfile gives exact per-file header deps on build 2+, and order-only just ensures they exist for build 1. Dep outputs (fetch stamps, the prebuilt's `lib*.a`) are a different story — PCH, cc, and no-PCH cxx use them as _implicit_ deps, because a fetch writes the dep's headers as undeclared side effects and order-only would lag one build behind (see Gotchas).
 
 ## Iterating on the build system
 
@@ -118,7 +117,7 @@ Everything ninja does goes through build.ts, never a bare `ninja`: the build run
 
 Build flags must come before exec args. `bun bd --asan=off test foo.ts` works; `bun bd test --asan=off foo.ts` sends `--asan=off` to bun-debug. Use `--` when a runtime flag collides with a build flag: `bun bd -- --target=browser script.ts`.
 
-**`--target=<name>`** builds a specific ninja target instead of the full binary. Every dep gets phonies: `<name>` (full build), `clone-<name>` (fetch only), `configure-<name>` (cmake deps). Also `bun`, `check`, `bun-rust`. List all: `$NINJA -C build/debug -t targets`.
+**`--target=<name>`** builds a specific ninja target instead of the full binary. Every dep gets phonies: `<name>` (full build), `clone-<name>` (fetch only). With a local WebKit: `bmalloc`, `WTF`, `JavaScriptCore`, and the on-request executables `jsc` and `testFFI`. Also `bun`, `check`, `bun-rust`. List all: `$NINJA -C build/debug -t targets`.
 
 ## Common tasks
 
@@ -128,11 +127,13 @@ Build flags must come before exec args. `bun bd --asan=off test foo.ts` works; `
 { flag: "-fno-foo", when: c => c.linux && c.release, desc: "why this flag" },
 ```
 
-Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local WebKit via `computeCpuTargetFlags()`), `globalFlags` (bun + all deps), `bunOnlyFlags` (just bun), `linkFlags`, `stripFlags`. Use `lang: "cxx"` to restrict to C++.
+Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune`), `globalFlags` (bun + all deps), `bunOnlyFlags` (just bun), `linkFlags`, `stripFlags`. Use `lang: "cxx"` to restrict to C++.
 
 **Bump a dependency** — edit the `commit` in `scripts/build/deps/<name>.ts`. See `deps/README.md` for adding/removing deps.
 
 **Iterate on a dependency from a local checkout** — `bun bd --local-deps=mimalloc=~/code/mimalloc …` builds that dep from the clone instead of the pinned tarball (no fetch, no patches; edits rebuild incrementally). Any `github-archive` dep the graph compiles (not lolhtml or rust-argon2 — cargo reads those via `Cargo.toml`); details in `deps/README.md`.
+
+**Work on JavaScriptCore** — `bun run build:local` (`--webkit=local`) compiles the WebKit checkout at `$BUN_WEBKIT_PATH` (or `vendor/WebKit`) in this graph instead of linking the prebuilt; CI and every other profile keep the prebuilt. Which files are compiled, generated from and exposed as headers is read from the checkout at configure (its CMake lists through `cmake.ts`, `Sources.txt` through WebKit's bundler), so adding a file to WebKit needs nothing here. What `deps/webkit.ts` restates by hand, and nothing checks against the checkout: the generator commands (`gen()` ↔ `add_custom_command`), WebKit's compiler flags (`webkitFlags()` ↔ `WebKitCompilerFlags.cmake`, `Options*.cmake`) and the option values (`rows` ↔ `cmakeconfig.h`; the prebuilt tarball has one to diff against). After a WebKit upgrade, read the diff of `Source/cmake/` and of the `add_custom_command`s in `Source/JavaScriptCore/CMakeLists.txt`.
 
 **Add a codegen step** — add a function in `codegen.ts` following the shape of `emitErrorCode` (simple) or `emitCppBind` (needs file-list input). Use the `codegen` rule: it runs the script with `cfg.jsRuntime`, so the script must run under node and bun. Call it from `emitCodegen()` and add outputs to the right `CodegenOutputs` group (`rustInputs` if the Rust build reads it (the `include!`d generated `.rs` files) — `cppSources` if it's a `.cpp` to compile, `cppHeaders` if it's a header. `emitCodegen()` builds `cppAll` from those groups at the end, so do not push to it). A type declaration `src/js/builtins.d.ts` references goes in `cfg.typesDir` and the `generatedTypes` group. The functions take `CodegenFields`: a config field a generator newly reads is added to that `Pick` and must be one `resolveBase()` can decide without a native tool.
 
@@ -146,7 +147,7 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 
 ### Phase 0 — Entry (`scripts/build.ts`)
 
-1. Windows: re-exec inside VS dev shell if `VSINSTALLDIR` unset (provides PATH/INCLUDE/LIB for nested cmake).
+1. Windows: re-exec inside VS dev shell if `VSINSTALLDIR` unset (provides PATH/INCLUDE/LIB for msbuild, which builds a local WebKit's ICU).
 2. Parse CLI: `--profile=<name>`, `--<field>=<value>` overrides, `--target=<ninja-target>`, `-j`/`-v`/`-k` passthrough, bare positionals = exec args for built binary.
 3. Resolve `PartialConfig` from profile + overrides (or `--config-file` for ninja's self-reconfigure).
 
@@ -169,7 +170,7 @@ For `mode: "full"` (the normal case):
 
 1. **Codegen** — `emitCodegen(n, cfg, sources)` emits ~20 generation steps (bindgen, `.classes.ts` → C++, bundled modules, LUTs). Returns grouped outputs.
 2. **Rust** — `emitRust(n, cfg, {...})` emits one rustc edge per crate and returns the crates' rlibs, `bun_runtime`'s and std's included, which the link takes beside the C/C++ objects (after resolving the vendored path deps, lolhtml and rust-argon2). cargo plans, ninja executes: the `rust_plan` edge runs `cargo build … --unit-graph` + `cargo metadata` for exactly the arguments `cargoBuildInvocation()` computes and writes `rust/plan.json`; `build.ninja` depends on that file, so a new plan (lockfile/manifest/toolchain change) reconfigures and ninja restarts. `rust/units.ts` turns each unit into a rustc argv/env (cargo's rules, transcribed and diffed against `cargo -vv`), written to `rust/units/<crate>-<hash>.json`; `rust/emit.ts` emits the edges; `rust/run.ts` executes them. Every edge is one process from start to exit, and a crate is one edge: one rustc with the `.rlib` and the `.rmeta` as outputs. Dependent libraries name only the `.rmeta`, which rustc writes long before it has generated code; the edge carries `early_output_prefix`, which asks ninja to release an output when the running command announces it. oven-sh/ninja (what the driver runs, see `ninja-release.ts`) exports the prefix to the command as `NINJA_EARLY_OUTPUT_PREFIX`, `rust/run.ts` prints it with the `.rmeta`'s path when rustc reports the file written, and dependents start while rustc goes on — cargo's pipelining. A stock ninja ignores the binding and releases both outputs at exit: the same graph, built correctly, without the overlap. Build scripts are a compile edge plus a `rust_build_script` run edge whose parsed directives (`output.json`, restat) feed the package's rustc edges. A Windows target has a second graph built the same way, under `rust/shim/`: the `.bin/` launcher (`src/install/windows-shim`), planned with `--profile shim` and `-Zbuild-std`, with a `bin` root that `run.ts` also writes to `<codegenDir>/bun-shim-impl.exe`, where `bun_install` embeds it from (every edge of that package waits for it). Codegen and Rust are emitted before the deps on purpose: with no `.ninja_log` (every CI build) ninja weighs each edge as 1 and runs the longest remaining chain first, ties in emission order.
-3. **Deps** — loop `allDeps`, call `resolveDep(n, cfg, dep)`. Each emits fetch → configure → build (nested-cmake), or fetch → cargo, or fetch → direct cc+ar, or prebuilt download. Collects objects, lib paths, include dirs, outputs.
+3. **Deps** — loop `allDeps`, call `resolveDep(n, cfg, dep)`. Each emits fetch → direct cc/cxx edges, or fetch → cargo, or prebuilt download. Collects objects, lib paths, include dirs, outputs.
 4. **Flags** — `computeFlags(cfg)` evaluates flag tables → cflags/cxxflags/defines/ldflags/stripflags.
 5. **PCH** — compile `root-pch.h` → PCH.
 6. **Compile** — loop sources, `cxx()`/`cc()` per file.
@@ -216,6 +217,7 @@ It is configured by `configureCodegen()`, not `configure()`, and resolves a `Cod
 | `rules.ts`                     | `registerAllRules()` — calls each module's `registerXxxRules()`                                                                                                         |
 | `compile.ts`                   | `cc`/`cxx`/`pch`/`link`/`ar` + `registerCompileRules()`                                                                                                                 |
 | `unified.ts`                   | WebKit-style unified-source bundling, `generateUnifiedSources()`                                                                                                        |
+| `cmake.ts`                     | Reads file lists out of a project's CMake files without cmake: `parseCMake()`, `evaluateCMake()` (deps/webkit.ts, local mode)                                           |
 | `source.ts`                    | `Dependency` types, `resolveDep()`, fetch/configure/build emission                                                                                                      |
 | `codegen.ts`                   | Code generation steps, `emitCodegen()`, `CodegenOutputs`                                                                                                                |
 | `rust.ts`                      | Rust step entry: target/rustflags/env (`cargoBuildInvocation()`), `emitRust()`, `rustLibPath()`, the Windows shim's plan, cross-compile matrix                          |
@@ -286,19 +288,19 @@ Ninja requires all rules defined before any build references them. Hence:
 1. `registerXxxRules(n, cfg)` — each module registers its rules. Called once via `registerAllRules()`.
 2. `emitXxx(n, cfg, ...)` — each module emits build edges.
 
-Why not auto-register in emit functions? Some rules are shared (`dep_configure` used by both `source.ts` and `webkit.ts` local mode). Explicit registration keeps "which rule lives where" clear.
+Why not auto-register in emit functions? Some rules are shared (`cxx` used by both `bun.ts` and `source.ts`). Explicit registration keeps "which rule lives where" clear.
 
 ## Gotchas
 
 **Dep order in `allDeps` matters.** `fetchDeps: ["X"]` means X must come first (its `.ref` stamp node must exist). Link order matters too: static linking resolves left→right, providers after users.
 
-**PCH, cc, and no-PCH cxx need implicit dep on `depHeaderSignal`**, not order-only. Local WebKit's sub-build rewrites forwarding headers as an undeclared side effect (only `lib*.a` are declared outputs). Depfiles record those headers, but ninja stats them before the sub-build runs — order-only lags one build. The lib itself is the invalidation signal. Codegen headers stay order-only: they're declared outputs with restat, so depfile tracking is exact.
+**PCH, cc, and no-PCH cxx need implicit dep on `depHeaderSignal`**, not order-only. A fetch writes a dep's headers as an undeclared side effect (only the stamp, or the prebuilt's `lib*.a`, are declared outputs). Depfiles record those headers, but ninja stats them before the fetch runs — order-only lags one build. The declared output is the invalidation signal. Codegen headers, and the headers a dep's `steps` generate (`consumerOutputs`), stay order-only: they're declared outputs with restat, so depfile tracking is exact.
 
 **`isExecutable` must check `isFile()`.** `X_OK` on a directory means traversable — a `cmake/` dir in PATH would shadow the real cmake binary.
 
 **cmd.exe quoting is partial.** `shell.ts` quote() handles spaces/special chars but NOT `%VAR%` expansion, `^` escape, `&|>` redirection. If an arg contains those, switch to powershell.
 
-**A tool is named by path, so ninja cannot see it replaced.** An LLVM upgrade behind a stable path (scoop's `current`, a Homebrew `opt/` symlink) leaves every command line unchanged, and the new binary's packaged mtime is usually older than the objects, so naming the binary as an input does not help. Configure writes `<buildDir>/toolchain-identity/<tool>.txt` (`tools.ts` `writeToolIdentities`) with what `cc`, `cxx`, `hostCc`, `nasm` and `ld` report for `--version` (for an llvm.org build: the release and the exact commit, the same on every machine), and an edge takes the file of each tool it runs as an implicit input (`toolIdentityFile(cfg, tool)`): a replaced compiler recompiles, a replaced linker only relinks. The Rust units get the same from the rustc version and commit in their hash. A new edge that runs one of those tools should name its file too. Not covered: a toolchain rebuilt in place at the same version and commit (`bun run clean`), and nested cmake builds, whose own build directory keeps the old compiler's objects.
+**A tool is named by path, so ninja cannot see it replaced.** An LLVM upgrade behind a stable path (scoop's `current`, a Homebrew `opt/` symlink) leaves every command line unchanged, and the new binary's packaged mtime is usually older than the objects, so naming the binary as an input does not help. Configure writes `<buildDir>/toolchain-identity/<tool>.txt` (`tools.ts` `writeToolIdentities`) with what `cc`, `cxx`, `hostCc`, `nasm` and `ld` report for `--version` (for an llvm.org build: the release and the exact commit, the same on every machine), and an edge takes the file of each tool it runs as an implicit input (`toolIdentityFile(cfg, tool)`): a replaced compiler recompiles, a replaced linker only relinks. The Rust units get the same from the rustc version and commit in their hash. A new edge that runs one of those tools should name its file too. Not covered: a toolchain rebuilt in place at the same version and commit (`bun run clean`).
 
 **`rm -rf build/` doesn't clear the cache locally.** `cfg.cacheDir` is machine-shared at `$BUN_INSTALL/build-cache` for non-CI builds (ccache, tarballs, prebuilt WebKit); `$BUN_BUILD_CACHE_DIR` puts it somewhere else, in CI too (`--cacheDir` still wins for one build). Everything there is content-addressed or version-stamped, so a stale entry can't be hit — don't reach for `bun run clean cache` as a debugging step. If a build misbehaves, the bug is in the inputs or the graph, not the cache; nuking it just costs you a cold rebuild. CI keeps `<buildDir>/cache` so `rm -rf build/` is still a full reset there.
 

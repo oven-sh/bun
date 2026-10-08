@@ -248,6 +248,37 @@ fn main() {
                 compiler_options,
                 errors,
             } = command_line;
+            // `--snapshot=<file>`: the files, the entry points and the resolutions of a bundle, as `bun build --compile-aot` wrote them.
+            let mut snapshot = args.iter().find_map(|a| a.strip_prefix("--snapshot=")).map(|path| {
+                let bytes = std::fs::read(path).expect("the snapshot cannot be read");
+                bun_sema_driver::snapshot::Snapshot::from_bytes(&bytes).expect("not a snapshot")
+            });
+            let (cwd, paths, project) = match &snapshot {
+                // `--project` on the command line goes before the one the bundle was made with.
+                Some(it) => (text(&it.cwd), it.entry_points.clone(), project.or_else(|| it.tsconfig.as_deref().map(text))),
+                None => (cwd, paths, project),
+            };
+            let code = snapshot.as_ref().map_or_else(Vec::new, |it| it.code.clone());
+            let script_kinds = snapshot.as_ref().map_or_else(Vec::new, |it| it.script_kinds.clone());
+            let script_kinds_by_extension = snapshot.as_ref().map_or_else(Vec::new, |it| it.script_kinds_by_extension.clone());
+            let conditions = snapshot.as_ref().map_or_else(Vec::new, |it| it.conditions.clone());
+            // `--define=name=value` and `--feature=FLAG`, as for `bun build`.
+            let mut constants = bun_aot::Constants::default();
+            if let Some(it) = &snapshot {
+                constants.defines = it.defines.clone();
+                constants.features = it.features.clone();
+                constants.resolved = Some(it.resolved.clone());
+                constants.dropped_imports = it.dropped_imports.iter().cloned().collect();
+                constants.texts = it.texts.iter().cloned().collect();
+                constants.assets = it.assets.iter().cloned().collect();
+            }
+            for define in args.iter().filter_map(|a| a.strip_prefix("--define=")) {
+                if let Some((name, value)) = define.split_once('=') {
+                    constants.defines.push((name.as_bytes().to_vec(), value.as_bytes().to_vec()));
+                }
+            }
+            // ECMAScript-exact unless asked otherwise: a type annotation promises nothing, and nothing throws because one is wrong.
+            constants.features.extend(args.iter().filter_map(|a| a.strip_prefix("--feature=")).map(|flag| flag.as_bytes().to_vec()));
             // `tscCompilation`: they are reported, and nothing is compiled.
             for (code, file_name) in &errors {
                 let mut line = Vec::new();
@@ -326,6 +357,79 @@ fn main() {
                         error_types.push((path, line, column, kind));
                     }
                 };
+            // `--aot`: what the front end of the compiler makes of the program that starts at the first file on the command line.
+            let roots = paths.clone();
+            let working_directory = bun_sema_driver::host::from_native(cwd.as_bytes());
+            // `--aot-explain=foreign`, `--aot-explain=members`: why a view admits objects that are not laid out, and which views have
+            // members that the relation does not find.
+            // `--aot-explain=uninitialized`: the variables of numbers and booleans that may be read before anything is stored to them.
+            let explain = bun_aot::Explain { foreign: has("--aot-explain=foreign"), members: has("--aot-explain=members"), uninitialized: has("--aot-explain=uninitialized") };
+            let translation = bun_aot::Translation::new(&constants).explaining(explain);
+            let begin_translation = |program: &bun_sema::check::Program| {
+                let roots: Vec<bun_sema::program::FileId> = (roots.iter())
+                    .filter_map(|path| {
+                        let path = bun_sema::resolve::join(&working_directory, path);
+                        program.files.by_path.get(&path)
+                    })
+                    .collect();
+                // As `bun build --compile` does: the executable runs its first entry point.
+                translation.begin(program, &roots[..roots.len().min(1)]);
+            };
+            let loaded = |program: &bun_sema::check::Program| {
+                if has("--memory") {
+                    list_loaded(program);
+                }
+                if has("--aot") {
+                    begin_translation(program);
+                }
+            };
+            let translate_file =
+                |checker: &mut bun_sema::check::Checker<'_, '_>,
+                 file: bun_sema::program::FileId| translation.translate_file(checker, file);
+            let note_file =
+                |checker: &mut bun_sema::check::Checker<'_, '_>,
+                 file: bun_sema::program::FileId| translation.note_file(checker, file);
+            let merge_notes = |program: &bun_sema::check::Program| translation.merge_notes(program);
+            // By entry of `Report::not_in_program`.
+            let why_errors_do_not_stand: Guarded<Vec<String>> = Guarded::new(Vec::new());
+            let translate = |program: &bun_sema::check::Program,
+                             in_parallel: bun_sema::util::InParallel<'_>,
+                             errors: &[(bun_sema::program::FileId, u32)]|
+             -> Vec<bool> {
+                let started = std::time::Instant::now();
+                let mut translated = translation.finish(program, in_parallel, errors);
+                *why_errors_do_not_stand.lock() = std::mem::take(&mut translated.why_errors_do_not_stand);
+                if translated.errors_that_stand.contains(&true) {
+                    return translated.errors_that_stand;
+                }
+                for problem in &translated.problems {
+                    error_line!("{problem}");
+                }
+                error_line!("aot: members: {} pairs asked, {} added", translated.pairs_asked, translated.members_added);
+                for line in &translated.explained {
+                    error_line!("aot: {line}");
+                }
+                let steps: Vec<String> = (translated.times.steps.iter())
+                    .map(|(step, spent)| format!("{step} {:.3} s", spent.as_secs_f64()))
+                    .collect();
+                error_line!(
+                    "aot: link: {}; {} layouts described in {} rounds",
+                    steps.join(", "),
+                    translated.times.layouts_described,
+                    translated.times.rounds
+                );
+                if let Some(path) = args.iter().find_map(|a| a.strip_prefix("--aot-out=")) {
+                    let linked_in = started.elapsed().as_secs_f64();
+                    if translated.problems.is_empty() {
+                        let _ = std::fs::write(path, bun_aot::format::write(&translated.program));
+                    }
+                    error_line!("aot: linked in {:.1} s, written in {:.1} s", linked_in, started.elapsed().as_secs_f64() - linked_in);
+                    return translated.errors_that_stand;
+                }
+                output_line!("{}", translated.program.dump().trim_end());
+                error_line!("aot: {:.3} s", started.elapsed().as_secs_f64());
+                translated.errors_that_stand
+            };
             type AfterFile<'a> = &'a (
                     dyn Fn(&mut bun_sema::check::Checker<'_, '_>, bun_sema::program::FileId) + Sync
                 );
@@ -342,7 +446,9 @@ fn main() {
                     let path = text(checker.p.files.modules[file.idx()].file_name());
                     error_line!("file {:.4} G {path}", (now - before) as f64 / 1e9);
                 };
-            let after_file = if has("--file-instructions") {
+            let after_file = if has("--aot") {
+                Some(&translate_file as AfterFile<'_>)
+            } else if has("--file-instructions") {
                 Some(&note_instructions as AfterFile<'_>)
             } else {
                 has("--error-types").then_some(&note_error_types as AfterFile<'_>)
@@ -385,7 +491,9 @@ fn main() {
                 project: project.as_deref().map(str::as_bytes),
                 build: has("--build"),
                 paths: &paths,
-                are_entry_points: false,
+                are_entry_points: snapshot.is_some() || has("--aot"),
+                is_one_program: has("--aot"),
+                code: &code,
                 threads: args
                     .iter()
                     .find_map(|a| a.strip_prefix("--threads="))
@@ -412,18 +520,27 @@ fn main() {
                 task_clock: has("--task-instructions")
                     .then_some(&task_instructions as &(dyn Fn() -> u64 + Sync)),
                 plan_options,
-                script_kinds: &[],
-                script_kinds_by_extension: &[],
-                conditions: &[],
+                script_kinds: &script_kinds,
+                script_kinds_by_extension: &script_kinds_by_extension,
+                conditions: &conditions,
                 stops_like_tsc: !args.iter().any(|a| a == "--every-stage"),
                 uses_typescript_wording: false,
-                loaded: args
-                    .iter()
-                    .any(|a| a == "--memory")
-                    .then_some(&list_loaded as &(dyn Fn(&bun_sema::check::Program) + Sync)),
-                checked: is_timed
-                    .then_some(&list_largest_tables as &(dyn Fn(&bun_sema::check::Program) + Sync)),
+                loaded: (has("--memory") || has("--aot"))
+                    .then_some(&loaded as &(dyn Fn(&bun_sema::check::Program) + Sync)),
+                compile: has("--aot").then_some(
+                    &translate
+                        as &(dyn Fn(
+                            &bun_sema::check::Program,
+                            bun_sema::util::InParallel<'_>,
+                            &[(bun_sema::program::FileId, u32)],
+                        ) -> Vec<bool>
+                            + Sync),
+                ),
+                checked: is_timed.then_some(&list_largest_tables as &(dyn Fn(&bun_sema::check::Program) + Sync)),
                 after_file,
+                before_visits: has("--aot").then_some(&note_file as AfterFile<'_>),
+                all_visited_once: has("--aot")
+                    .then_some(&merge_notes as &(dyn Fn(&bun_sema::check::Program) + Sync)),
                 declaration_file_emitted: declarations_out
                     .is_some()
                     .then_some(&write_declaration_file as &(dyn Fn(&[u8], &[u8]) + Sync)),
@@ -453,7 +570,11 @@ fn main() {
                     bun_sema_standalone::current_memory() >> 20
                 );
             }
-            bun_sema_driver::check_then(&request, |report| {
+            let provided = snapshot.as_mut().map_or_else(Default::default, |it| bun_sema_driver::host::Provided {
+                already_read: std::mem::take(&mut it.already_read),
+                ..Default::default()
+            });
+            bun_sema_driver::check_provided_then(&request, provided, |report| {
                 let cwd = bun_sema_driver::host::from_native(cwd.as_bytes());
                 let style = Style {
                     layout: if has("--plain") {
@@ -480,6 +601,15 @@ fn main() {
                 let mut out = Vec::new();
                 write_diagnostics(&mut out, &report, &style);
                 let _ = std::io::stdout().write_all(&out);
+                // `--aot-explain=errors`: the errors that do not fail the build, and why each does not.
+                if has("--aot") {
+                    error_line!("aot: {} errors in code that is not in the program", report.not_in_program.len());
+                }
+                let why = why_errors_do_not_stand.lock();
+                for (d, why) in report.not_in_program.iter().zip(why.iter()).filter(|_| has("--aot-explain=errors")) {
+                    let message = d.text.split(|&byte| byte == b'\n').next().unwrap_or_default();
+                    error_line!("aot: {}({},{}): error TS{}: {} [{why}]", text(&d.path), d.line, d.column, d.code, text(message));
+                }
                 let mut error_types = std::mem::take(&mut *error_types.lock());
                 error_types
                     .retain(|at| !report.diagnostics.iter().any(|d| d.path == at.0.as_bytes()));

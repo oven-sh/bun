@@ -498,10 +498,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// (`flowLoopStack`, `getTypeAtFlowLoopLabel`). `None` if no loop was pushed since `e` was
     /// entered.
     fn recheck_in_flow_loop(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
-        let first = self
-            .stack
-            .iter()
-            .rposition(|&q| q == Query::Expr(file, e))?;
+        let first = self.innermost(Query::Expr(file, e), 0)?;
         let pushed_at = self.flow_loop_pushed_since(first)?;
         // Hides the first visit from `enter`, which still fails when time, native stack or query
         // depth run out.
@@ -988,7 +985,7 @@ impl<'p, 's> Checker<'p, 's> {
                         origin: Origin::EnumObject(_),
                         ..
                     }
-                ) && !self.stack.contains(&Query::Shape(apparent)))
+                ) && !self.is_in_flight(Query::Shape(apparent)))
             {
                 return (TypeId::UNRESOLVED, stops);
             }
@@ -1889,6 +1886,18 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getResolvedSymbol`: the symbol an identifier resolves to as a value.
+    /// The entity that creates the JSX element `element` with the classic runtime (`getJsxFactoryEntity`, or `getJsxFragmentFactoryEntity`
+    /// for the tag of a fragment), as its identifiers from left to right, and what the first of them refers to where the element is.
+    pub fn classic_jsx_factory(&self, file: FileId, element: ExprId, is_fragment_tag: bool) -> (Vec<Atom>, Option<Sym>) {
+        let entity = super::errors_jsx::classic_jsx_entity(self.files(), self.atoms(), self.hir(file), is_fragment_tag);
+        let scope = match self.bound(file).expr_scope.get(&element) {
+            Some(&scope) => scope,
+            None => self.enclosing_scope_of_expr(file, element),
+        };
+        let found = self.files().resolve_name(file, scope, entity[0], SymFlags::VALUE);
+        (entity, found)
+    }
+
     pub fn symbol_of_identifier(&self, file: FileId, e: ExprId, name: Atom) -> Option<Sym> {
         self.resolve_identifier(file, e, name, false)
             .unwrap_or(None)
@@ -2289,6 +2298,14 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             t
         }
+    }
+
+    /// `tryGetThisTypeAt` for a `this` in the body of `func`, which is no arrow function: its type before control flow narrowing.
+    pub fn this_type_in_fn(&mut self, file: FileId, func: FnId) -> Option<TypeId> {
+        self.prepare_fn(file, func);
+        let hir = self.hir(file);
+        let container = hir.node(func);
+        self.try_get_this_type_at_ex(file, hir.body(container), container)
     }
 
     /// `tryGetThisTypeAt`
@@ -3552,7 +3569,7 @@ impl<'p, 's> Checker<'p, 's> {
         if holds {
             (self.p.context_checked).insert(&self.task, (file, func), assigned, Stored::new());
             self.context_checked_here.insert((file, func));
-        } else if let Some(at) = self.frames.iter().position(|frame| frame.tainted) {
+        } else if let Some(at) = self.outermost_tainted_frame() {
             let under = (at, self.frames[at].serial, (file, func), assigned);
             self.context_checked_under.push(under);
         }
@@ -4353,7 +4370,7 @@ impl<'p, 's> Checker<'p, 's> {
             at = match bound.expr_parent[at.idx()] {
                 Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
                     ExprKind::Assign { .. } => {
-                        return self.stack.contains(&Query::Expr(file, parent));
+                        return self.is_in_flight(Query::Expr(file, parent));
                     }
                     _ => parent,
                 },
@@ -4414,10 +4431,7 @@ impl<'p, 's> Checker<'p, 's> {
         if matches!(self.hir(file)[p].kind, PropKind::Getter | PropKind::Setter) {
             return None;
         }
-        let first = self
-            .stack
-            .iter()
-            .rposition(|&q| q == Query::LiteralProp(file, p))?;
+        let first = self.innermost(Query::LiteralProp(file, p), 0)?;
         let pushed_at = self.flow_loop_pushed_since(first)?;
         let resolution_start = std::mem::replace(&mut self.resolution_start, self.stack.len());
         let entered = self.enter(Query::LiteralProp(file, p));

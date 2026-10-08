@@ -241,7 +241,7 @@ impl<'p, 's> Checker<'p, 's> {
         let in_report = !self.reporting_nonexistent.is_empty()
             && matches!(value_declaration, Some((file, Decl::Expando(e)))
                 if matches!(self.hir(file)[e].kind, ExprKind::Call(_)));
-        if in_report && self.stack[self.resolution_start..].contains(&Query::Symbol(sym)) {
+        if in_report && self.innermost(Query::Symbol(sym), self.resolution_start).is_some() {
             return self.type_of_circular_symbol(sym, None);
         }
         if let Some(raw) = self.provisional(Query::Symbol(sym)) {
@@ -254,7 +254,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // and the reference has the type of the class without a base type variable.
                 let from = self.resolution_start.min(self.stack.len());
                 if self.files().flags(sym).contains(SymFlags::CLASS)
-                    && self.stack[from..].contains(&Query::Symbol(sym))
+                    && self.innermost(Query::Symbol(sym), from).is_some()
                 {
                     return self.type_of_class_value(sym);
                 }
@@ -2437,7 +2437,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if hir[p].ty.is_none()
                     && hir[p].default.is_some()
                     && hir[bound.param_fn[p.idx()]].kind != FnKind::Setter
-                    && (is_rest || self.stack.contains(&Query::Pat(file, parent)))
+                    && (is_rest || self.is_in_flight(Query::Pat(file, parent)))
                     && {
                         let func = bound.param_fn[p.idx()];
                         let index = (p.0 - hir[func].params.start) as usize;

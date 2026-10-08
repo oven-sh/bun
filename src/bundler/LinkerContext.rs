@@ -103,6 +103,9 @@ pub struct LinkerContext<'a> {
 
     pub(crate) options: LinkerOptions,
 
+    /// `BundleOptions::analyze`
+    pub(crate) facts: Option<bun_ast::type_tags::ProgramFacts>,
+
     pub(crate) r#loop: EventLoop,
 
     /// string buffer containing pre-formatted unique keys
@@ -167,6 +170,7 @@ impl<'a> Default for LinkerContext<'a> {
             preload_runtime_ref: Ref::NONE,
             chunks_runtime_ref: Ref::NONE,
             options: Default::default(),
+            facts: None,
             r#loop: None,
             unique_key_buf: Box::default(),
             unique_key_prefix: Box::default(),
@@ -2483,12 +2487,10 @@ impl<'a> LinkerContext<'a> {
             },
             mangled_props: Some(mangled_props),
             module_info,
-            type_tags: if self.options.generate_bytecode_cache {
+            type_tags: self.facts.as_ref().and_then(|facts| {
                 let source = &parse_graph.input_files.items_source()[source_index.get() as usize];
-                bun_ast::type_tags::tags_for(source.path.text, source.contents())
-            } else {
-                None
-            },
+                facts.tags_for(source.path.text)
+            }),
             ..Default::default()
         };
 

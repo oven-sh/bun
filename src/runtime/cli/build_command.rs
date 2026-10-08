@@ -155,12 +155,18 @@ impl BuildCommand {
             // Nothing is bundled, so nothing has been resolved or read.
             let entry_points = this_transpiler.options.entry_points.iter();
             let checked = options::TypeChecked {
+                defines: &[],
+                features: &mut std::iter::empty(),
+                dropped_imports: &mut std::iter::empty(),
+                texts: &mut std::iter::empty(),
+                assets: &mut std::iter::empty(),
                 cwd: bun_resolver::fs::FileSystem::instance().top_level_dir,
                 tsconfig: ctx.args.tsconfig_override.as_deref(),
                 conditions: &ctx.args.conditions,
                 loaders: &this_transpiler.options.loaders,
                 entry_points: &mut entry_points.map(|path| &**path),
                 sources: &mut core::iter::empty(),
+                imports: &mut core::iter::empty(),
             };
             if !crate::cli::check_command::check_for_build_command(checked, log_ref) {
                 log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
@@ -278,6 +284,7 @@ impl BuildCommand {
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
         this_transpiler.options.aot = ctx.bundler_options.compile_aot;
+        this_transpiler.options.analyze = Some(crate::cli::check_command::analyze_for_build);
         this_transpiler.options.preserve_source_paths = ctx.bundler_options.compile_run;
         this_transpiler.options.rewrite_jest_for_tests = ctx.bundler_options.rewrite_jest_for_tests;
         this_transpiler.options.bytecode_depth = ctx.bundler_options.bytecode_depth;

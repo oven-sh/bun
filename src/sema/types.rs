@@ -1777,6 +1777,11 @@ impl<'s> TypeStore<'s> {
         let record = Types::new(self, &own).new_record(created, self.types.items.len());
         TypeId(self.types.add(spread, record))
     }
+
+    /// How many types are published. Their ids are the numbers below that.
+    pub fn number_of_types(&self) -> u32 {
+        self.types.items.len()
+    }
 }
 
 impl<'p, 's> Types<'p, 's> {
@@ -3353,7 +3358,7 @@ type ContentHash = [u64; 2];
 
 /// Two lanes of multiply and fold, with different constants.
 #[derive(Copy, Clone)]
-struct Lanes(ContentHash);
+pub(crate) struct Lanes(pub(crate) ContentHash);
 
 #[inline]
 fn fold(a: u64, b: u64) -> u64 {
@@ -3362,10 +3367,10 @@ fn fold(a: u64, b: u64) -> u64 {
 }
 
 impl Lanes {
-    const START: Lanes = Lanes([0x243f_6a88_85a3_08d3, 0x1319_8a2e_0370_7344]);
+    pub(crate) const START: Lanes = Lanes([0x243f_6a88_85a3_08d3, 0x1319_8a2e_0370_7344]);
 
     #[inline]
-    fn add(&mut self, word: u64) {
+    pub(crate) fn add(&mut self, word: u64) {
         self.0[0] = fold(self.0[0] ^ word, 0x9e37_79b9_7f4a_7c15);
         self.0[1] = fold(self.0[1].rotate_left(23) ^ word, 0xc2b2_ae3d_27d4_eb4f);
     }

@@ -524,7 +524,7 @@ impl Checker<'_, '_> {
         // is read from its own query stack. Like `anySignature` and `unknownSignature`, it has no parameters.
         let is_this_element = |r: &(FileId, ExprId, ResolvedCall)| r.0 == file && r.1 == e;
         if !self.resolved_meanwhile.iter().any(is_this_element)
-            && self.stack.contains(&Query::Call(file, e))
+            && self.is_in_flight(Query::Call(file, e))
         {
             let signature = self.any_signature();
             return Some(self.jsx_effective_first_argument(file, e, signature));
@@ -1252,6 +1252,20 @@ pub(super) fn jsx_namespace(
         }
     }
     jsx_factory_entity(files, atoms, hir, !is_opening_fragment)[0]
+}
+
+/// What an emitter calls to create an element, or passes as the tag of a fragment: `React.createElement` and `React.Fragment` unless
+/// a pragma or an option says otherwise.
+pub(super) fn classic_jsx_entity(files: &Files, atoms: Atoms<'_, '_>, hir: &hir::File, is_fragment_tag: bool) -> Vec<Atom> {
+    if !is_fragment_tag {
+        return jsx_factory_entity(files, atoms, hir, true);
+    }
+    let pragma = hir.jsx_pragmas.fragment_factory;
+    let text = if pragma.is_some() { atoms.bytes(pragma) } else { &files.options.jsx_fragment_factory };
+    if let Some(entity) = parse_isolated_entity_name(atoms, text) {
+        return entity;
+    }
+    vec![jsx_factory_entity(files, atoms, hir, false)[0], atoms.intern(b"Fragment")]
 }
 
 /// `getJsxFactoryEntity`, returned as its identifiers from left to right. `is_local`:

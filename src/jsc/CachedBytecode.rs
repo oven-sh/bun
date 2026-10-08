@@ -76,6 +76,8 @@ unsafe extern "C" {
         not_evaluated_modules: *const u64,
         not_evaluated_module_count: usize,
         compile_ahead_of_time: bool,
+        facts: *const u8,
+        facts_size: usize,
     ) -> *mut BytecodeLinkEncoder;
     fn Bun__BytecodeLinkEncoder__destroy(this: *mut BytecodeLinkEncoder);
     fn Bun__BytecodeLinkEncoder__addModule(
@@ -115,6 +117,14 @@ unsafe extern "C" {
         graph_module_indices: *const u32,
         add_count: usize,
     );
+    fn Bun__BytecodeLinkEncoder__setTypedProgram(
+        this: *mut BytecodeLinkEncoder,
+        program: *const u8,
+        size: usize,
+        module: u32,
+        replaced_strings: *const u8,
+        replaced_strings_size: usize,
+    ) -> bool;
     fn Bun__BytecodeLinkEncoder__finish(
         this: *mut BytecodeLinkEncoder,
         output_byte_code: *mut Option<NonNull<u8>>,
@@ -331,6 +341,7 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_new(
     evaluated_modules: &[u64],
     not_evaluated_modules: &[u64],
     compile_ahead_of_time: bool,
+    facts: &[u8],
 ) -> NonNull<BytecodeLinkEncoder> {
     crate::initialize(crate::InitializeOptions::default());
     // SAFETY: the slices are valid for the call (C++ copies them); `external_strings` is a live table. `new` never returns null.
@@ -346,6 +357,8 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_new(
             not_evaluated_modules.as_ptr(),
             not_evaluated_modules.len(),
             compile_ahead_of_time,
+            facts.as_ptr(),
+            facts.len(),
         ))
     }
 }
@@ -428,6 +441,25 @@ pub(crate) fn __bun_jsc_bytecode_link_encoder_add_internal_module_from_source(
             source_stamp,
             depth,
             names,
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+pub(crate) fn __bun_jsc_bytecode_link_encoder_set_typed_program(
+    encoder: NonNull<BytecodeLinkEncoder>,
+    program: &[u8],
+    module: u32,
+    replaced_strings: &[u8],
+) -> bool {
+    unsafe {
+        Bun__BytecodeLinkEncoder__setTypedProgram(
+            encoder.as_ptr(),
+            program.as_ptr(),
+            program.len(),
+            module,
+            replaced_strings.as_ptr(),
+            replaced_strings.len(),
         )
     }
 }

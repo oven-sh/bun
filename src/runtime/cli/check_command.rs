@@ -528,6 +528,8 @@ fn request<'a>(
         build: matches!(paths, Paths::Build),
         paths: entries.paths,
         are_entry_points,
+        is_one_program: false,
+        code: &[],
         script_kinds: entries.script_kinds,
         script_kinds_by_extension: entries.script_kinds_by_extension,
         conditions: entries.conditions,
@@ -544,8 +546,11 @@ fn request<'a>(
         stops_like_tsc: true,
         uses_typescript_wording: false,
         loaded: None,
+        compile: None,
         checked: None,
         after_file: None,
+        before_visits: None,
+        all_visited_once: None,
         declaration_file_emitted: None,
     }
 }
@@ -822,6 +827,151 @@ pub(crate) fn check_for_bun_build(checked: TypeChecked, log: &mut bun_ast::Log) 
     check_for_build(checked, log, false)
 }
 
+/// `BundleOptions::analyze` for `bun build --compile-aot`: the entry points are checked as `bun check` checks them, and the bundle is
+/// compiled by the types of that program. What is an error there, in code that is in the program, is an error of the build, and nothing
+/// is compiled: see `bun_aot::Translation::finish`. The checker
+/// resolves every import itself, for its types. What the bundler has resolved it to is the code, which only the compiler is told. It
+/// is the check of `--check` too, which the bundler does not run besides.
+pub(crate) fn analyze_for_build(
+    checked: TypeChecked,
+    log: &mut bun_ast::Log,
+) -> Option<bun_ast::type_tags::ProgramFacts> {
+    use bun_sema_driver::host::from_native;
+    let TypeChecked {
+        cwd,
+        tsconfig,
+        conditions,
+        loaders,
+        entry_points,
+        sources,
+        imports,
+        dropped_imports,
+        texts,
+        assets,
+        defines,
+        features,
+    } = checked;
+    let constants = bun_aot::Constants {
+        defines: defines.iter().map(|(name, value)| (name.to_vec(), value.to_vec())).collect(),
+        features: features.map(<[u8]>::to_vec).collect(),
+        resolved: Some((imports.map(|(from, spec, to)| ((from_native(from), spec.to_vec()), from_native(to)))).collect()),
+        dropped_imports: dropped_imports.map(|(from, spec)| (from_native(from), spec.to_vec())).collect(),
+        texts: texts.map(|(path, text)| (from_native(path), text.to_vec())).collect(),
+        assets: assets.map(|(path, key)| (from_native(path), key.to_vec())).collect(),
+    };
+    let by_extension = script_kinds_by_extension(loaders);
+    let mut script_kinds: Vec<(Vec<u8>, ScriptKind)> = Vec::new();
+    // `Request::code`
+    let mut code: Vec<Vec<u8>> = Vec::new();
+    let mut sources = sources.map(|(path, text, loader)| {
+        let script_kind = script_kind_of(loader).filter(|it| it.differs_from_name(path));
+        script_kinds.extend(script_kind.map(|it| (path.to_vec(), it)));
+        code.push(path.to_vec());
+        (path, text)
+    });
+    let provided = Provided {
+        already_read: already_read(cwd, &mut sources),
+        ..Default::default()
+    };
+    let is_source = |path: &&[u8]| {
+        has_types_with(&by_extension, path) || script_kinds.iter().any(|it| it.0 == **path)
+    };
+    let paths: Vec<Vec<u8>> = (entry_points.filter(is_source))
+        .map(<[u8]>::to_vec)
+        .collect();
+    if paths.is_empty() {
+        return None;
+    }
+    if let Some(path) = bun_core::env_var::BUN_AOT_TYPED_SNAPSHOT.get() {
+        let snapshot = bun_sema_driver::snapshot::Snapshot {
+            cwd: cwd.to_vec(),
+            tsconfig: tsconfig.map(<[u8]>::to_vec),
+            conditions: conditions.to_vec(),
+            entry_points: paths.clone(),
+            code: code.clone(),
+            script_kinds: script_kinds.clone(),
+            script_kinds_by_extension: by_extension.clone(),
+            already_read: provided.already_read.clone(),
+            resolved: constants.resolved.clone().unwrap_or_default(),
+            dropped_imports: constants.dropped_imports.iter().cloned().collect(),
+            texts: constants.texts.iter().map(|(path, text)| (path.clone(), text.clone())).collect(),
+            assets: constants.assets.iter().map(|(path, key)| (path.clone(), key.clone())).collect(),
+            defines: constants.defines.clone(),
+            features: constants.features.clone(),
+        };
+        let _ = std::fs::write(String::from_utf8_lossy(path).as_ref(), snapshot.to_bytes());
+    }
+    let found: bun_threading::Guarded<Option<bun_ast::type_tags::ProgramFacts>> =
+        bun_threading::Guarded::new(None);
+    let translation = bun_aot::Translation::new(&constants);
+    let begin = |program: &bun_sema_driver::Program| {
+        let roots: Vec<_> = (paths.iter())
+            .filter_map(|path| program.files.by_path.get(&from_native(path)))
+            .collect();
+        // The executable runs its first entry point. The others are what it starts workers with, which are not compiled yet.
+        translation.begin(program, &roots[..roots.len().min(1)]);
+    };
+    let translate_file = |checker: &mut bun_sema_driver::Checker<'_, '_>, file: bun_sema_driver::FileId| {
+        translation.translate_file(checker, file);
+    };
+    let note_file = |checker: &mut bun_sema_driver::Checker<'_, '_>, file: bun_sema_driver::FileId| {
+        translation.note_file(checker, file);
+    };
+    let merge_notes = |program: &bun_sema_driver::Program| translation.merge_notes(program);
+    let analyze = |program: &bun_sema_driver::Program,
+                   in_parallel: bun_sema_driver::InParallel<'_>,
+                   errors: &[(bun_sema_driver::FileId, u32)]|
+     -> Vec<bool> {
+        if let Some(path) = bun_core::env_var::BUN_AOT_TYPED_FILE.get() {
+            if errors.is_empty()
+                && let Ok(typed) = std::fs::read(String::from_utf8_lossy(path).as_ref())
+            {
+                *found.lock() = Some(bun_ast::type_tags::ProgramFacts {
+                    table: Box::default(),
+                    tags: Default::default(),
+                    typed: Some(typed.into_boxed_slice()),
+                });
+            }
+            return vec![true; errors.len()];
+        }
+        let (typed, errors_that_stand) = translation.finish_for_engine(program, in_parallel, errors);
+        match typed {
+            Ok(typed) => {
+                *found.lock() = Some(bun_ast::type_tags::ProgramFacts {
+                    table: Box::default(),
+                    tags: Default::default(),
+                    typed: Some(typed.into_boxed_slice()),
+                });
+            }
+            Err(problems) => {
+                for problem in problems {
+                    eprintln!("{problem}");
+                }
+            }
+        }
+        errors_that_stand
+    };
+    let entries = Paths::EntryPoints(Entries {
+        paths: &paths,
+        script_kinds: &script_kinds,
+        script_kinds_by_extension: &by_extension,
+        conditions,
+    });
+    let request = Request {
+        is_one_program: true,
+        code: &code,
+        loaded: Some(&begin),
+        after_file: Some(&translate_file),
+        before_visits: Some(&note_file),
+        all_visited_once: Some(&merge_notes),
+        compile: Some(&analyze),
+        ..request(cwd, tsconfig, &entries, &[], 0, None)
+    };
+    let report = bun_sema_driver::check_provided_then(&request, with_pages(cwd, provided), |report| report);
+    add_to_log(&report, log);
+    found.lock().take().filter(|_| report.is_ok())
+}
+
 /// The files of the bundle, `sources`, are not read again. The errors are added to `log`, which the
 /// build reports like its own. It runs on the thread of the bundler.
 fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress: bool) -> bool {
@@ -832,6 +982,12 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         loaders,
         entry_points,
         sources,
+        imports: _,
+        dropped_imports: _,
+        texts: _,
+        assets: _,
+        defines: _,
+        features: _,
     } = checked;
     let by_extension = script_kinds_by_extension(loaders);
     // The bundler knows what it loads each file with. What is installed is what its name says.
@@ -869,6 +1025,12 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         true => run(cwd, tsconfig, &paths, &[], 0, provided, then),
         false => run_quietly(cwd, tsconfig, &paths, &[], 0, None, provided, then),
     };
+    add_to_log(&report, log);
+    report.is_ok()
+}
+
+/// The errors as those of a build.
+fn add_to_log(report: &Report, log: &mut bun_ast::Log) {
     for reported in &report.diagnostics {
         let kind = match reported.category {
             Category::Error => bun_ast::Kind::Err,
@@ -897,7 +1059,6 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
             ),
         );
     }
-    report.is_ok()
 }
 
 /// `TS2322: Type 'string' is not assignable to type 'number'.`, where it is.

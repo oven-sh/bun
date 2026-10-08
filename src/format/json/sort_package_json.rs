@@ -5,7 +5,7 @@
 //! result. The crate reads the text with `serde_json` and writes it with `serde_json`, so this also
 //! does what that round trip does to the spelling of strings and numbers.
 
-use bun_lint::utils::text::push_code_point;
+use bun_lint::utils::text::{number_to_string, push_code_point};
 use std::borrow::Cow;
 
 #[derive(Debug, Default, Copy, Clone, PartialEq, Eq)]
@@ -314,18 +314,25 @@ fn write_f64(value: f64) -> Vec<u8> {
     if value == 0.0 {
         return if value.is_sign_negative() { b"-0.0".to_vec() } else { b"0.0".to_vec() };
     }
-    let scientific = format!("{:e}", value.abs());
-    let (mantissa, exponent) = scientific.split_once('e').unwrap_or((&scientific, "0"));
-    let digits: Vec<u8> = mantissa.bytes().filter(u8::is_ascii_digit).collect();
+    // The digits of JavaScript. Where two numbers of the same length are as close, `serde_json` takes
+    // the even one, as JavaScript does. `{:e}` takes the greater one.
+    let text = number_to_string(value.abs());
+    let (mantissa, exponent) = bun_core::strings::split_once_char(&text, b'e').unwrap_or((&text, b"0"));
+    let (integer, fraction) = bun_core::strings::split_once_char(mantissa, b'.').unwrap_or((mantissa, b""));
+    let exponent = std::str::from_utf8(exponent).ok().and_then(|it| it.parse::<i32>().ok()).unwrap_or(0);
+    let all = [integer, fraction].concat();
+    let leading_zeros = all.iter().take_while(|digit| **digit == b'0').count();
+    let digits = &all[leading_zeros..];
+    let digits = &digits[..digits.len() - digits.iter().rev().take_while(|digit| **digit == b'0').count()];
     // Where the decimal point is, counted from the first digit.
-    let point = exponent.parse::<i32>().unwrap_or(0) + 1;
+    let point = integer.len() as i32 + exponent - leading_zeros as i32;
     let len = digits.len() as i32;
     let mut out = Vec::with_capacity(24);
     if value < 0.0 {
         out.push(b'-');
     }
     if len <= point && point <= 16 {
-        out.extend_from_slice(&digits);
+        out.extend_from_slice(digits);
         out.extend(std::iter::repeat_n(b'0', (point - len) as usize));
         out.extend_from_slice(b".0");
     } else if 0 < point && point <= 16 {
@@ -335,12 +342,12 @@ fn write_f64(value: f64) -> Vec<u8> {
     } else if -5 < point && point <= 0 {
         out.extend_from_slice(b"0.");
         out.extend(std::iter::repeat_n(b'0', (-point) as usize));
-        out.extend_from_slice(&digits);
-    } else {
-        out.extend_from_slice(&digits[..1]);
-        if len > 1 {
+        out.extend_from_slice(digits);
+    } else if let Some((first, rest)) = digits.split_first() {
+        out.push(*first);
+        if !rest.is_empty() {
             out.push(b'.');
-            out.extend_from_slice(&digits[1..]);
+            out.extend_from_slice(rest);
         }
         out.push(b'e');
         if point > 0 {

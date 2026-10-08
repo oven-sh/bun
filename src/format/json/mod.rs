@@ -231,14 +231,9 @@ pub fn format(
     let result = if options.range_start.is_some() || options.range_end.is_some() {
         range::format(original, if has_carriage_return { &normalized } else { text }, config, options, scratch, out)
     } else {
-        let start = out.len();
+        // It stays, even if nothing but white space follows, which is nothing.
         out.extend_from_slice(bom);
-        let result = format_normalized(if has_carriage_return { &normalized } else { text }, &config, options, scratch, out);
-        // Nothing but white space is nothing.
-        if out.len() == start + bom.len() {
-            out.truncate(start);
-        }
-        result
+        format_normalized(if has_carriage_return { &normalized } else { text }, &config, options, scratch, out)
     };
     scratch.normalized = normalized;
     result

@@ -4,9 +4,9 @@
 //!
 //! - `file <path>`: the formatted file.
 //! - `ir <path>`: the document that the file is printed from.
-//! - `conformance <prettier>/tests/format [--languages=js,jsx,..] [--filter=text] [--report=dir]
-//!   [--verbose]`: Prettier's own tests. With `--report`, `summary.md` and the expected and the
-//!   actual output of each failure are written there.
+//! - `conformance <fixtures> [--languages=js,jsx,..] [--filter=text] [--report=dir] [--table]`:
+//!   Prettier's own tests. With `--report`, the expected and the actual output of each failure are
+//!   written there. `oxfmt-fixtures <fixtures>`: those of oxfmt.
 //! - `check-idempotent <paths..>`: formatting what has been formatted changes nothing.
 //! - `verify <paths..>`: what has been formatted has the same tokens. See `bun_format::verify`.
 //! - `bench <paths..> [--iterations=n] [--threads=n] [--check] [--only=parse]`: MB/s, with and without parsing.
@@ -79,8 +79,18 @@ fn show_cursor(out: &mut Vec<u8>, cursor: Option<u32>) {
     out.splice(at..at, *b"<|>");
 }
 
+/// The formatted text, with `<|>` where the cursor ends up.
 fn format_text(path: &str, code: &[u8], options: &FormatOptions) -> Result<Vec<u8>, FormatError> {
-    fn format<'a>(file: &'a File<'a>, is_script: bool, options: &FormatOptions) -> Result<Vec<u8>, FormatError> {
+    format_text_with_cursor(path, code, options).map(|(mut out, cursor)| {
+        show_cursor(&mut out, cursor);
+        out
+    })
+}
+
+type WithCursor = (Vec<u8>, Option<u32>);
+
+fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> Result<WithCursor, FormatError> {
+    fn format<'a>(file: &'a File<'a>, is_script: bool, options: &FormatOptions) -> Result<WithCursor, FormatError> {
         if file.language().parser == Parser::TypeScript && bun_lint::linter::parse_error(file).is_some() {
             return Err(FormatError::SyntaxError);
         }
@@ -88,9 +98,7 @@ fn format_text(path: &str, code: &[u8], options: &FormatOptions) -> Result<Vec<u
         let path = crate::text(file.path());
         let parse = |slice: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| with_file_as(is_script, &path, slice, |file| then(file));
         let cursor = bun_format::range::format_with_cursor(file, options, &mut scratch, &mut out, parse)?;
-        // Where the cursor ends up is shown the way Prettier's snapshots show it.
-        show_cursor(&mut out, cursor);
-        Ok(out)
+        Ok((out, cursor))
     }
     let name = options.filepath.as_deref().filter(|it| !it.is_empty()).unwrap_or(path.as_bytes());
     let json_parser = match &options.parser {
@@ -105,7 +113,7 @@ fn format_text(path: &str, code: &[u8], options: &FormatOptions) -> Result<Vec<u
             _ => code,
         };
         let mut out = Vec::new();
-        return bun_format::json::format(code, parser, options, &mut Default::default(), &mut out).map(|()| out);
+        return bun_format::json::format(code, parser, options, &mut Default::default(), &mut out).map(|()| (out, None));
     }
     let css_parser = match &options.parser {
         Some(parser) => bun_format::css::Parser::from_name(parser),
@@ -113,14 +121,10 @@ fn format_text(path: &str, code: &[u8], options: &FormatOptions) -> Result<Vec<u
     };
     if let Some(parser) = css_parser {
         let mut out = Vec::new();
-        return bun_format::css::format(code, parser, options, &mut Default::default(), &mut out).map(|()| out);
+        return bun_format::css::format(code, parser, options, &mut Default::default(), &mut out).map(|()| (out, None));
     }
     let code = match bun_format::pragma::before_parsing(code, options) {
-        bun_format::pragma::BeforeParsing::LeaveAsItIs => {
-            let mut out = code.to_vec();
-            show_cursor(&mut out, options.cursor_offset);
-            return Ok(out);
-        }
+        bun_format::pragma::BeforeParsing::LeaveAsItIs => return Ok((code.to_vec(), options.cursor_offset)),
         bun_format::pragma::BeforeParsing::Format(code) => code,
     };
     let format_as = |is_script: bool| {
@@ -286,7 +290,8 @@ fn serve(args: &Args) {
 
 pub(crate) fn run(args: &[String]) {
     let command = args.first().map(String::as_str);
-    let args = Args::parse(args.get(1..).unwrap_or_default());
+    let raw = args.get(1..).unwrap_or_default();
+    let args = Args::parse(raw);
     match command {
         Some("file") => {
             let path = args.positional.first().expect("a path");
@@ -307,7 +312,8 @@ pub(crate) fn run(args: &[String]) {
                 Err(error) => println!("{error:?}"),
             }
         }
-        Some("conformance") => conformance::run(&args),
+        Some("conformance") => conformance::run(&args, raw, bun_format_conformance::run_prettier_tests),
+        Some("oxfmt-fixtures") => conformance::run(&args, raw, bun_format_conformance::run_oxfmt_tests),
         Some("check-idempotent") => check_idempotent(&args),
         Some("verify") => verify(&args),
         Some("bench") => bench::bench(&args),

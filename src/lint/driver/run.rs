@@ -89,12 +89,48 @@ pub(crate) struct Pool {
 /// the engines of a process share what hands out memory for compiled code.
 const MOST_THREADS_WITH_JS_PLUGINS: usize = 16;
 
+/// There is one more engine for JavaScript for so many files that need one: to start it and to load the plugins takes as long as
+/// to lint them.
+const FILES_FOR_AN_ENGINE: usize = 32;
+
+/// What it takes to lint a file, beyond what is in this program.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Needs {
+    Nothing,
+    /// A rule in JavaScript.
+    Engine,
+    /// One for which the engine has to run the configuration file, with all that it imports.
+    Configuration,
+}
+
+/// How many engines lint so many files.
+fn engines_for(files: usize) -> usize {
+    files.div_ceil(FILES_FOR_AN_ENGINE).max(1)
+}
+
+fn needs(target: &Target) -> Needs {
+    let Status::Matched(config) = &target.status else {
+        return Needs::Nothing;
+    };
+    let mut on = (config.js_rules.iter()).filter(|it| it.severity != Severity::Off);
+    if on
+        .clone()
+        .any(|it| it.configured.rule.needs_the_configuration)
+    {
+        Needs::Configuration
+    } else if on.next().is_some() {
+        Needs::Engine
+    } else {
+        Needs::Nothing
+    }
+}
+
 /// How many threads lint. 0: one for each core.
 pub(crate) fn threads_to_lint_on(options: &Options, js_plugins: &Host) -> usize {
     match options.threads {
-        0 if js_plugins.has_plugins() => {
-            usize::from(bun_core::get_thread_count()).min(MOST_THREADS_WITH_JS_PLUGINS)
-        }
+        0 if js_plugins.has_plugins() => usize::from(bun_core::get_thread_count())
+            .min(MOST_THREADS_WITH_JS_PLUGINS)
+            .min(js_plugins.most_realms()),
         threads => threads,
     }
 }
@@ -491,6 +527,14 @@ impl Run<'_> {
             };
             loader.warn(&[&count, noun, b" types, which the configuration does not ask for, and did not run. Use --type-aware to run them."]);
         }
+        // A file with types is linted by the thread that has checked it, whichever that is.
+        let with_engine = (without_types.iter()).filter(|it| needs(it) != Needs::Nothing);
+        context.js_plugins.expect(
+            match with_types.iter().any(|it| needs(it.0) != Needs::Nothing) {
+                true => pool.threads(),
+                false => engines_for(with_engine.count()).min(pool.threads()),
+            },
+        );
         if !with_types.is_empty() {
             let (targets, files): (Vec<&Target>, Vec<Typed>) = with_types.into_iter().unzip();
             let linted = typed::lint(context, self.environment, &files, &on_circular_fixes);
@@ -504,16 +548,34 @@ impl Run<'_> {
         phases.checking = started.elapsed().as_secs_f64();
 
         let started = Instant::now();
-        // The largest first, so that no thread begins it when the others are nearly done.
-        without_types.sort_by_key(|target| std::cmp::Reverse(target.size));
+        // What takes longest first, so that no thread begins it when the others are nearly done: what needs JavaScript, then
+        // the largest.
+        without_types.sort_by_cached_key(|target| std::cmp::Reverse((needs(target), target.size)));
+        let count = |least: Needs| without_types.partition_point(|target| needs(target) >= least);
+        let (with_engine, plain) = without_types.split_at(count(Needs::Engine));
+        // One engine is enough to run the configuration file.
+        let (with_configuration, with_engine) = with_engine.split_at(count(Needs::Configuration));
+        let units: Vec<&[&Target]> = std::iter::once(with_configuration)
+            .chain(with_engine.chunks(1))
+            .collect();
+        let engines = engines_for(units.len());
+        let (next_unit, next_plain) = (AtomicUsize::new(0), AtomicUsize::new(0));
         let (mut results, mut failure) = (Guarded::new(results), Guarded::new(None));
-        pool.for_each(without_types.len(), 1, &|index| match context
-            .lint_file(without_types[index], &on_circular_fixes)
-        {
+        let lint = |target: &Target| match context.lint_file(target, &on_circular_fixes) {
             Ok(Some(result)) => results.lock().push(result),
             Ok(None) => {}
             Err(error) => {
                 failure.lock().get_or_insert(error);
+            }
+        };
+        pool.for_each(pool.threads(), 1, &|worker| {
+            while worker < engines
+                && let Some(unit) = units.get(next_unit.fetch_add(1, Ordering::Relaxed))
+            {
+                unit.iter().for_each(|target| lint(target));
+            }
+            while let Some(target) = plain.get(next_plain.fetch_add(1, Ordering::Relaxed)) {
+                lint(target);
             }
         });
         phases.linting = started.elapsed().as_secs_f64();

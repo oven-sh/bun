@@ -222,6 +222,16 @@ impl<'e> Host<'e> {
         true
     }
 
+    /// [`Engine::expect`]
+    pub fn expect(&self, realms: usize) {
+        self.engine.expect(realms);
+    }
+
+    /// [`Engine::most_realms`]
+    pub fn most_realms(&self) -> usize {
+        self.engine.most_realms()
+    }
+
     /// Whether any plugin has been loaded.
     pub fn has_plugins(&self) -> bool {
         !self.state.lock().plugins.is_empty()

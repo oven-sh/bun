@@ -15,4 +15,12 @@ pub trait Vm {
 pub trait Engine: Sync {
     /// Calls `then` with a realm that nothing else uses meanwhile. `Err`: there is none, and `then` was not called.
     fn with_vm(&self, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>>;
+
+    /// Says how many realms are going to be used at a time, at most. Nobody says so if a realm is needed to find out.
+    fn expect(&self, _realms: usize) {}
+
+    /// How many realms there is memory for.
+    fn most_realms(&self) -> usize {
+        usize::MAX
+    }
 }

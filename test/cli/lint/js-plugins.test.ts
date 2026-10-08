@@ -766,6 +766,39 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  test(
+    "one engine runs the configuration file, for the files with a rule of a plugin that only it has",
+    async () => {
+      const files: Record<string, string> = {
+        "eslint.config.mjs": `
+          import demo from "./plugin.mjs";
+          console.error("The configuration file runs.");
+          const inline = { rules: { "no-bar": { create: context => ({ "Identifier[name='bar']"(node) { context.report({ node, message: "No bar." }); } }) } } };
+          export default [
+            { plugins: { demo }, rules: { "demo/no-foo": "error" } },
+            { files: ["inline/*.js"], plugins: { inline }, rules: { "inline/no-bar": "error" } },
+          ];`,
+        "plugin.mjs": noFoo,
+      };
+      for (let i = 0; i < 8; i++) files[`inline/${i}.js`] = files[`other/${i}.js`] = "foo; bar;\n";
+      const { raw, stderr, exitCode } = await lint(files, [
+        "-f",
+        "json",
+        "--timing",
+        "--threads",
+        "3",
+        "inline",
+        "other",
+      ]);
+      const counts = JSON.parse(raw).map((it: any) => it.messages.length);
+      expect(counts).toEqual([2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 1]);
+      expect(stderr.split("The configuration file runs.").length - 1).toBe(1);
+      expect(stderr).toContain(`with the whole configuration file, which alone has the plugin "inline"`);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
   test("without rules in JavaScript there is no engine", async () => {
     const { stderr, exitCode } = await lint(
       { "eslint.config.mjs": `export default [{ rules: { "no-debugger": "error" } }];`, "a.js": "debugger;\n" },

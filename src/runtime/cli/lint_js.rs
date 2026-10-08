@@ -235,7 +235,15 @@ impl Vm for ThreadVm {
 #[derive(Default)]
 pub(crate) struct ThreadVms {
     initialize: std::sync::Once,
+    /// How many VMs there are going to be at most. 0: nobody knows.
+    expected: core::sync::atomic::AtomicUsize,
 }
+
+/// With no more VMs than this, cores are left to compile and to collect garbage on while the VMs run.
+const FEW_VMS: usize = 4;
+
+/// What a VM with a few plugins takes.
+const MEMORY_OF_A_VM: usize = 384 << 20;
 
 /// Runs the `exit` handlers of the VM of this thread, if it has one. With
 /// `BUN_DESTRUCT_VM_ON_EXIT` the VM is freed too.
@@ -282,8 +290,9 @@ impl Engine for ThreadVms {
     fn with_vm(&self, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
         if !VirtualMachine::is_loaded() {
             self.initialize.call_once(|| {
+                let expected = self.expected.load(core::sync::atomic::Ordering::Relaxed);
                 jsc::initialize(jsc::InitializeOptions {
-                    vm_per_thread: true,
+                    vm_per_thread: expected == 0 || expected > FEW_VMS,
                     ..Default::default()
                 });
             });
@@ -291,5 +300,15 @@ impl Engine for ThreadVms {
         }
         then(&mut ThreadVm);
         Ok(())
+    }
+
+    fn expect(&self, realms: usize) {
+        self.expected
+            .store(realms, core::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Half of the memory is for them.
+    fn most_realms(&self) -> usize {
+        (bun_core::get_total_memory_size() / 2 / MEMORY_OF_A_VM).max(1)
     }
 }

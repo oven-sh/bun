@@ -1111,6 +1111,7 @@ impl<'a> LinkerContext<'a> {
             self.graph.meta.items_flags_mut()[id].wrap = WrapKind::Esm;
 
             let wrapper_ref = self.graph.ast.items_wrapper_ref()[id];
+            debug_assert!(wrapper_ref.is_valid());
             let mut wrapper_part_index = crate::Index::default();
             self.create_wrapper_for_file(
                 WrapKind::Esm,
@@ -1132,8 +1133,8 @@ impl<'a> LinkerContext<'a> {
                 }
                 self.graph.arena().alloc_slice_copy(&name)
             };
-            // SAFETY: with code splitting the parser gives every file a wrapper ref; no
-            // other borrow into `self.graph.symbols` is live across this write.
+            // SAFETY: the caller passes files that have a wrapper ref; no other borrow
+            // into `self.graph.symbols` is live across this write.
             unsafe { self.graph.symbol_mut(wrapper_ref) }.original_name =
                 bun_ast::StoreStr::new(name);
 
@@ -5438,7 +5439,7 @@ impl InsideWrapperPrefix {
         Ok(())
     }
 
-    fn append_sync_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {
+    pub(crate) fn append_sync_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {
         self.stmts.push(Stmt::alloc(
             S::SExpr {
                 value: call_expr,
@@ -5450,7 +5451,7 @@ impl InsideWrapperPrefix {
     }
 
     /// The call starts the dependency. What comes after it in the source does not wait for it.
-    fn append_async_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {
+    pub(crate) fn append_async_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {
         self.async_dependencies.push((self.stmts.len(), call_expr));
         self.append_sync_dependency(call_expr)
     }
@@ -5463,6 +5464,39 @@ impl InsideWrapperPrefix {
                 break;
             }
             self.stmts.pop();
+        }
+        // An import after one of the others can throw, and then the `await` is not reached. The promise
+        // keeps a handler: `init_x()?.catch(() => {})`. A wrapper that is called while it starts returns undefined.
+        for &(index, call_expr) in &self.async_dependencies {
+            let Some(stmt) = self.stmts.get_mut(index) else {
+                break;
+            };
+            let mut args = bun_ast::ExprNodeList::init_capacity(1);
+            args.append_assume_capacity(Expr::init(E::Arrow::NOOP_RETURN_UNDEFINED, Loc::EMPTY));
+            *stmt = Stmt::alloc(
+                S::SExpr {
+                    value: Expr::init(
+                        E::Call {
+                            target: Expr::init(
+                                E::Dot {
+                                    target: call_expr,
+                                    name: bun_ast::StoreStr::new(b"catch"),
+                                    name_loc: Loc::EMPTY,
+                                    optional_chain: Some(bun_ast::OptionalChain::Start),
+                                    ..Default::default()
+                                },
+                                Loc::EMPTY,
+                            ),
+                            args,
+                            optional_chain: Some(bun_ast::OptionalChain::Continuation),
+                            ..Default::default()
+                        },
+                        Loc::EMPTY,
+                    ),
+                    ..Default::default()
+                },
+                call_expr.loc,
+            );
         }
         let promise = match self.async_dependencies.as_slice() {
             [] => return,

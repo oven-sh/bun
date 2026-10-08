@@ -72,6 +72,7 @@ fn find_files_to_wrap(
     let file_entry_bits = c.graph.files.items_entry_bits();
     let css = c.graph.ast.items_css();
     let flags = c.graph.meta.items_flags();
+    let wrapper_refs = c.graph.ast.items_wrapper_ref();
     let loaders = c.parse_graph().input_files.items_loader();
 
     let mut load_graph = EntryLoadGraph::new(c)?;
@@ -125,6 +126,10 @@ fn find_files_to_wrap(
             }
         };
         group_of_file[id] = group;
+        // An AST that the parser did not make (`AstBuilder`) has no symbol for a wrapper.
+        if !wrapper_refs[id].is_valid() {
+            groups[group as usize].is_pinned = true;
+        }
         if already_wrapped.is_set(id) {
             groups[group as usize].is_lazy = true;
             continue;

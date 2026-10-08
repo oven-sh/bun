@@ -2534,6 +2534,26 @@ describe("bundler", () => {
     ],
   });
 
+  // barrel.js and t.js are wrappers. barrel.js waits for t.js, which it only re-exports from.
+  itBundled("splitting/SharedChunkOrderConflictAsyncExportStar", {
+    files: {
+      "/index.js": `import "./p.js"; import { x } from "./barrel.js"; console.log("index", x);`,
+      "/worker.js": `import { x } from "./barrel.js"; import "./p.js"; console.log("worker", x);`,
+      "/barrel.js": `export * from "./t.js";`,
+      "/t.js": `console.log("t"); export const x = await new Promise(resolve => setImmediate(() => resolve(1)));`,
+      "/p.js": `console.log("p");`,
+    },
+    entryPoints: ["/index.js", "/worker.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/index.js", stdout: "p\nt\nindex 1" },
+      { file: "/out/worker.js", stdout: "t\np\nworker 1" },
+    ],
+  });
+
   // An HTML file prints nothing for a <script src>, so nothing would call a wrapper of a.js or
   // b.js. They stay as they are, and so does first.js, which would otherwise run after them.
   itBundled("splitting/SharedChunkOrderConflictHtmlScripts", {

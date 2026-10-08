@@ -3687,6 +3687,33 @@ describe("bundler", () => {
       stdout: "a.cjs\ns1\nt1 start\nb.cjs\ns2\nt2 start\nd.cjs\ns3\nt1 end\nt2 end\nx a b d\ndone 0",
     },
   });
+  // `export *` of a wrapped file is a call too, and barrel.js waits for it like for an import.
+  itBundled("edgecase/EsmWrapperAsyncExportStar", {
+    files: {
+      "/entry.js": `import("./barrel.js").then(ns => console.log("x", ns.x));`,
+      "/barrel.js": `export * from "./t.js";`,
+      "/t.js": `export const x = await new Promise(resolve => setImmediate(() => resolve(1)));`,
+    },
+    run: { stdout: "x 1" },
+  });
+  // t.js has started when boom.js throws, so x.js never gets to wait for it. Its rejection is
+  // not reported on its own: x.js has failed already, as from source.
+  itBundled("edgecase/EsmWrapperAsyncImportRejectsAfterSyncThrow", {
+    files: {
+      "/entry.js": /* js */ `
+        process.on("unhandledRejection", e => console.log("unhandled", e.message));
+        import("./x.js")
+          .catch(e => console.log("caught", e.message))
+          .then(() => new Promise(resolve => setImmediate(resolve)))
+          .then(() => console.log("done"));
+      `,
+      "/x.js": `import "./t.js"; import "./boom.js"; console.log("x");`,
+      "/t.js": `await 0; throw new Error("t.js");`,
+      "/boom.js": `throw new Error("boom.js");`,
+    },
+    target: "bun",
+    run: { stdout: "caught boom.js\ndone" },
+  });
   // Diamond-shaped DAG (half the modules have two importers). The code-
   // splitting reachability pass tracks min distance-from-entry for each file;
   // a LIFO walk with distance relaxation does O(V*E) re-visits here, so this

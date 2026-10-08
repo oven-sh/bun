@@ -709,7 +709,9 @@ fn format_statement<'a>(statement: Stmt<'a>, is_before_another: bool, f: &mut Fo
 #[cold]
 fn format_statement_with_comments<'a>(statement: Stmt<'a>, is_before_another: bool, f: &mut Formatter<'a>) {
     let node = statement.as_ast_nodes();
-    let span = span_for_comments(node, f);
+    let mut span = span_for_comments(node, f);
+    // Prettier's `locStart`: the decorators of a class can be before its `export`.
+    span.start = span.start.min(statement.span().start);
     if f.comments().has_trailing_suppression_comment(node.span().end) {
         format_leading_comments(span).fmt(f);
         write_ignored_statement(statement, span, f);

@@ -30,6 +30,11 @@ fn format_export_keyword_with_class_decorators<'a>(
         if first_decorator.span().end < span.start {
             enter_node(span, f);
             write!(f, [decorators, hard_line_break(), format_leading_comments, keyword, space()]);
+        } else if f.comments().is_suppressed(first_decorator.span().start) {
+            // The class is written as it is, with its decorators.
+            write!(f, format_leading_comments);
+            enter_node(span, f);
+            write!(f, [keyword, space()]);
         } else {
             write!(f, format_leading_comments);
             enter_node(span, f);

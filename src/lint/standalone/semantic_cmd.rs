@@ -167,8 +167,9 @@ fn dump<'a>(file: &'a File<'a>, with_nodes: bool) -> Vec<(Vec<u8>, Json)> {
     let references = file.references().map(|it| dump_reference(it, offsets)).collect();
     let name_and_start = |it: Reference| Json::Array(vec![string(it.name().bytes()), number(offsets.of(it.span().start))]);
     let implicit = file.implicit_globals().map(name_and_start).collect();
-    // Where `Expr::symbol` is not what the reference resolves to.
-    let differs = |it: &Reference| it.expr().is_some_and(|e| e.symbol() != it.symbol());
+    // Where `Expr::symbol` is not the value that the reference resolves to.
+    let is_value = |it: &Symbol| it.is_value_variable() && !it.is_implicit_arguments();
+    let differs = |it: &Reference| it.expr().is_some_and(|e| e.symbol() != it.symbol().filter(is_value));
     let shortcut = file.references().filter(differs).map(name_and_start).collect();
     let mut declared = Vec::new();
     let mut nodes = vec![Node::File(file)];

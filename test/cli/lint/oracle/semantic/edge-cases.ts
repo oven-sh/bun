@@ -98,6 +98,17 @@ export const typescript = [
   "import { value } from './a'; export { value }; export var value = 1;",
   "import { f } from './a'; export { f }; export function f() {} import { I } from './b'; export { I }; export interface I {}",
   "with (obj) const c5 = 0; with (obj) { const c6 = 0; c6; }",
+  // Where TypeScript resolves a name to something else than ESLint does.
+  "namespace N { export type T = 1 } N; let n: N.T; function f(M) { namespace M { export type U = 1 } M; }",
+  "const x = 2; namespace A { export const x = 1; export enum E { a } } namespace A { x; E; } namespace B { export const y = 1 } namespace B { y } y;",
+  "const a = 0; enum E { a = 1, b = a } enum E { c = a, d = b } E.c;",
+  "namespace D { export default class C { m(): C {} } export default function bar() {} } ",
+  "interface I {} const v = I; type T = 1; T; { interface v {} v; } export default I;",
+  "const A = 1; { interface A {} module.exports = A; } export = A;",
+  "let x; var x; const y = 1; function y() {} class z {} var z; x; y; z;",
+  "function f() { arguments; var arguments; } function g(arguments) { arguments; } const h = () => arguments; function i() { { let arguments; arguments; } arguments; }",
+  "const a = 1, p = 2; class S { constructor(@d(() => a) a, @e(function () { return b; }) b, @f(a) c) { a; } m(@g(p) p, @h(class { constructor(@i(p, q) q) {} }) r) { p; } }",
+  "interface J<T> { a: T } interface J<T> { b: T } class K<T> {} interface K<T> { c: T }",
 ];
 
 export const tsx = [
@@ -105,4 +116,5 @@ export const tsx = [
   "import { h, Fragment } from 'preact'; const a = <><b:c/></>;",
   "function f() { const React = 1; return <A<T> b={c}>{d}</A>; } import React from 'r';",
   "type React = 1; <a/>;",
+  "const div = 1, Foo = 2; <div></div>; <Foo></Foo>; <Foo.a></Foo.a>; <div.a></div.a>;",
 ];

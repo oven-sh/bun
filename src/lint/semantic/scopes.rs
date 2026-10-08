@@ -7,7 +7,7 @@
 use super::ScopeKind;
 use crate::ast::File;
 use crate::language::{Parser, SourceType};
-use bun_sema::bind::{self, ClassOwner, FnOwner, MemberOwner, Parent, ScopeNode};
+use bun_sema::bind::{ClassOwner, FnOwner, MemberOwner, Parent};
 use bun_sema::hir::{self, FnKind, StmtKind, TypeNodeKind, VarKind};
 use std::cell::OnceCell;
 
@@ -72,12 +72,33 @@ pub(crate) struct ScopeTree {
     pub(crate) namespace_exports: Vec<hir::StmtId>,
     /// The types of the parameters of `catch` clauses, which typescript-eslint does not visit.
     pub(crate) unvisited: Vec<(u32, u32)>,
-    /// Each position from which on what is written belongs to another scope, with that scope:
-    /// ESLint's `reference.from`. Sorted. Of those at one position the last counts.
-    changes: Vec<(u32, u32)>,
+    /// Each position from which on what is written belongs to another scope. Sorted. Of those at one
+    /// position the last counts.
+    changes: Vec<Change>,
     zones: Vec<Zone>,
     /// Sorted by start. A region comes after the regions that contain it. Computed on demand.
     regions: OnceCell<Vec<Region>>,
+}
+
+#[derive(Copy, Clone)]
+struct Change {
+    pos: u32,
+    /// The scope that what is written from `pos` on belongs to: ESLint's `reference.from`.
+    from: u32,
+    step: Step,
+}
+
+/// What happens at a [`Change`] to the scopes that `pos` is in the range of.
+#[derive(Copy, Clone)]
+pub(crate) enum Step {
+    /// The range of the scope starts.
+    Enter(u32),
+    /// It ends.
+    Leave(u32),
+    /// A part of the range of the scope starts that is evaluated in the scope around it.
+    Suspend(u32),
+    /// It ends.
+    Resume(u32),
 }
 
 #[derive(Copy, Clone)]
@@ -211,30 +232,38 @@ impl ScopeTree {
             regions: OnceCell::new(),
         };
         let mut scope_of_proto = vec![NONE; if zones.is_empty() { 0 } else { protos.len() }];
-        // What is open: where it ends, the scope that what is written in it belongs to, and
-        // whether it is the range of that scope.
-        let mut stack: Vec<(u32, u32, bool)> = Vec::new();
+        // What is open: where it ends, the scope that what is written in it belongs to, and what
+        // happens at its end.
+        let mut stack: Vec<(u32, u32, Step)> = Vec::new();
         for &key in &order {
             let index = key as u32;
             let proto = protos[index as usize];
-            while let Some(&(end, from, is_scope)) = stack.last()
+            while let Some(&(end, _, step)) = stack.last()
                 && end <= proto.start
             {
-                if is_scope {
-                    tree.scopes[from as usize].last = tree.scopes.len() as u32 - 1;
+                if let Step::Leave(scope) = step {
+                    tree.scopes[scope as usize].last = tree.scopes.len() as u32 - 1;
                 }
                 stack.pop();
-                tree.changes.push((end, stack.last().map_or(0, |it| it.1)));
+                tree.changes.push(Change {
+                    pos: end,
+                    from: stack.last().map_or(0, |it| it.1),
+                    step,
+                });
             }
-            let (around_end, outer, _) = stack.last().copied().unwrap_or((u32::MAX, NONE, false));
+            let (around_end, outer) = stack.last().map_or((u32::MAX, NONE), |it| (it.0, it.1));
             // After a syntax error ranges can overlap.
             let end = proto.end.min(around_end);
             match proto.what {
                 What::Lifted => {
                     let parent = tree.scopes.get(outer as usize).map_or(NONE, |it| it.parent);
                     if parent != NONE {
-                        tree.changes.push((proto.start, parent));
-                        stack.push((end, parent, false));
+                        tree.changes.push(Change {
+                            pos: proto.start,
+                            from: parent,
+                            step: Step::Suspend(outer),
+                        });
+                        stack.push((end, parent, Step::Resume(outer)));
                     }
                 }
                 What::Scope(kind, block, body_start) => {
@@ -273,17 +302,25 @@ impl ScopeTree {
                         start: proto.start,
                         end,
                     });
-                    tree.changes.push((proto.start, id));
-                    stack.push((end, id, true));
+                    tree.changes.push(Change {
+                        pos: proto.start,
+                        from: id,
+                        step: Step::Enter(id),
+                    });
+                    stack.push((end, id, Step::Leave(id)));
                 }
             }
         }
         let last = tree.scopes.len() as u32 - 1;
-        while let Some((end, from, is_scope)) = stack.pop() {
-            if is_scope {
-                tree.scopes[from as usize].last = last;
+        while let Some((end, _, step)) = stack.pop() {
+            if let Step::Leave(scope) = step {
+                tree.scopes[scope as usize].last = last;
             }
-            tree.changes.push((end, stack.last().map_or(0, |it| it.1)));
+            tree.changes.push(Change {
+                pos: end,
+                from: stack.last().map_or(0, |it| it.1),
+                step,
+            });
         }
         for zone in &mut zones {
             zone.scope = scope_of_proto[zone.scope as usize];
@@ -342,8 +379,8 @@ impl ScopeTree {
 
     /// ESLint's `reference.from` for what is written at `pos`.
     pub(crate) fn scope_at(&self, pos: u32) -> u32 {
-        let after = self.changes.partition_point(|it| it.0 <= pos);
-        self.changes.get(after.wrapping_sub(1)).map_or(0, |it| it.1)
+        let after = self.changes.partition_point(|it| it.pos <= pos);
+        self.changes.get(after.wrapping_sub(1)).map_or(0, |it| it.from)
     }
 
     fn regions(&self) -> &[Region] {
@@ -408,7 +445,7 @@ impl ScopeTree {
             changes: self.changes.iter(),
             from: 0,
             until: 0,
-            then: 0,
+            then: None,
         }
     }
 
@@ -421,21 +458,31 @@ impl ScopeTree {
 
 pub(crate) struct Cursor<'t> {
     /// Those of `ScopeTree::changes` after `until`.
-    changes: std::slice::Iter<'t, (u32, u32)>,
+    changes: std::slice::Iter<'t, Change>,
     /// `ScopeTree::scope_at` for the positions from the last one up to `until`.
     from: u32,
     until: u32,
-    /// The scope from `until` on.
-    then: u32,
+    /// The change at `until`.
+    then: Option<&'t Change>,
 }
 
 impl Cursor<'_> {
     /// `ScopeTree::scope_at` for `pos`, which is not less than in the call before.
     #[inline]
     pub(crate) fn seek(&mut self, pos: u32) -> u32 {
+        self.seek_by_steps(pos, |_| {})
+    }
+
+    /// The same. `take` is called with every step on the way, in order.
+    #[inline]
+    pub(crate) fn seek_by_steps(&mut self, pos: u32, mut take: impl FnMut(Step)) -> u32 {
         while pos >= self.until {
-            self.from = self.then;
-            (self.until, self.then) = self.changes.next().copied().unwrap_or((u32::MAX, self.then));
+            if let Some(change) = self.then {
+                self.from = change.from;
+                take(change.step);
+            }
+            self.then = self.changes.next();
+            self.until = self.then.map_or(u32::MAX, |it| it.pos);
             if self.until == u32::MAX {
                 break;
             }
@@ -487,44 +534,8 @@ impl<'f, 'a> Collector<'f, 'a> {
         if file.language().scope_source_type() == SourceType::Module && all.has_block_scopes {
             all.scope(ScopeKind::Module, Block::File, 0, u32::MAX);
         }
-        let (scopes, nodes) = (file.binding.scopes(), file.binding.scope_nodes());
-        match scopes.len() == nodes.len() {
-            true => all.what_the_binder_lists(scopes, nodes),
-            false => all.what_the_tree_has(),
-        }
+        all.what_the_tree_has();
         all
-    }
-
-    /// The binder goes through the file nearly in source order.
-    fn what_the_binder_lists(&mut self, scopes: &[bind::Scope], nodes: &[ScopeNode]) {
-        let hir = &self.file.hir;
-        for (scope, node) in scopes.iter().zip(nodes) {
-            match (scope.kind, *node) {
-                (bind::ScopeKind::Fn(f), _) => self.function(f.idx()),
-                (bind::ScopeKind::Class(c), _) => {
-                    self.class(c.idx());
-                    let members = hir.classes.get(c.idx()).map(|it| it.members).unwrap_or_default();
-                    members.iter().for_each(|m| self.member(m.idx()));
-                }
-                (bind::ScopeKind::Block, ScopeNode::Stmt(s)) => self.statement(s.idx()),
-                _ if self.is_javascript => {}
-                (bind::ScopeKind::TypeParams, ScopeNode::Type(t)) => self.ty(t.idx()),
-                (bind::ScopeKind::Interface(i), _) => self.interface(hir.interfaces.get(i.idx())),
-                (bind::ScopeKind::TypeAlias(a), _) => self.alias(hir.aliases.get(a.idx())),
-                (bind::ScopeKind::Enum(e), _) => self.enumeration(hir.enums.get(e.idx())),
-                (bind::ScopeKind::Module(m), _) => self.module(hir.modules.get(m.idx())),
-                _ => {}
-            }
-        }
-        // To the binder neither is a scope.
-        let has_with = !hir.with_bodies.is_empty();
-        if has_with || !self.is_javascript {
-            for (i, stmt) in hir.stmts.iter().enumerate() {
-                if matches!(stmt.kind, StmtKind::ExportAsNamespace(_)) || has_with && is_with_statement(self.file, stmt) {
-                    self.statement(i);
-                }
-            }
-        }
     }
 
     fn what_the_tree_has(&mut self) {

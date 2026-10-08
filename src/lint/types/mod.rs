@@ -537,12 +537,6 @@ impl<'a> Types<'a> {
         Some(TsSymbol::new(self.file, id))
     }
 
-    /// The symbol of the program that a symbol of the file is, or is merged into.
-    pub fn symbol_of(self, symbol: crate::semantic::Symbol<'a>) -> Option<TsSymbol<'a>> {
-        let id = self.file.query(|q| q.symbol_of_local(symbol.id()))?;
-        Some(TsSymbol::new(self.file, id))
-    }
-
     // ───────────────────────────── types that always exist ─────────────────────────────
 
     intrinsic_types! {

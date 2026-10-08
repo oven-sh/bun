@@ -98,7 +98,9 @@ for (const theirs of read(expectedPath)) {
     continue;
   }
   let isSame = true;
-  for (const part of ["scopes", "variables", "references", "declared", "implicit", "nodes"]) {
+  // Where `Expr::symbol` is not the value that the reference resolves to: nowhere.
+  theirs.shortcut = [];
+  for (const part of ["scopes", "variables", "references", "declared", "implicit", "shortcut", "nodes"]) {
     if ((only && only !== part) || !ours[part]) continue;
     if (!theirs[part]) continue;
     if (part === "nodes") [theirs.nodes, ours.nodes] = commonNodes(theirs.nodes, ours.nodes);

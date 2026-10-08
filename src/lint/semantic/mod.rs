@@ -1,16 +1,12 @@
 //! Scopes, what is declared in them, and what refers to it.
 //!
-//! The symbols, their declarations and what each identifier resolves to are what the binder of the
-//! type checker has computed for the file (`bun_sema::bind`). Nothing is analyzed a second time.
-//! What is added, in three parts that are each computed the first time a rule needs them, each
-//! by passes over the vectors of the HIR:
+//! Three parts, each computed the first time a rule needs it, by passes over the vectors of the HIR
+//! and over what each node is part of (`bun_sema::bind`). Nothing else is asked of a binder.
 //! 1. `scopes.rs`: the scopes as ESLint cuts them. Needed by [`Node::scope`] and all of [`Scope`].
-//! 2. `variables.rs`: the symbols by scope and by name. Needed by [`Symbol::declarations`],
-//!    [`Symbol::scope`], [`Scope::symbols`], [`Scope::get`], [`Scope::resolve`].
-//! 3. `references.rs`: the references, with the names in types resolved. Needed by all of
-//!    [`Reference`].
-//!
-//! [`Expr::symbol`], [`Pat::symbol`], [`Symbol::name`] and [`Symbol::flags`] need none of them.
+//! 2. `variables.rs`: the symbols by scope and by name. Needed by all of [`Symbol`], [`Pat::symbol`],
+//!    [`Scope::symbols`], [`Scope::get`], [`Scope::resolve`].
+//! 3. `references.rs`: the references, and what they resolve to. Needed by all of [`Reference`] and
+//!    by [`Expr::symbol`].
 //!
 //! The model is that of `@typescript-eslint/scope-manager` for a TypeScript file, and for any file
 //! if that parser is configured. Otherwise it is that of `eslint-scope`. They differ in little.
@@ -61,10 +57,6 @@
 //!   it visits them, which also differs from the source in this: the type parameters of a function
 //!   after its parameters and its return type, the type of a variable after its initializer, the
 //!   decorators of a member after the member, the index of `a[b]` in a pattern before `a`.
-//! - Where TypeScript merges declarations that are in different scopes, there is a [`Symbol`] in
-//!   each scope, as in ESLint, and they have the same [`Symbol::id`]: the type parameters of
-//!   `interface I<T> {} interface I<T> {}`, what the bodies of `namespace N {} namespace N {}`
-//!   export under one name.
 
 use crate::ast::{
     Alias, Class, Enum, EnumMember, Expr, ExprKind, File, Func, Ident, Import, ImportEquals, ImportSpec, Interface,
@@ -73,11 +65,9 @@ use crate::ast::{
 use crate::linter::globals::GlobalVariable;
 use crate::span::{Span, Spanned};
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{self, Decl, ScopeId, SymbolId};
+use bun_sema::bind::{self, Decl, ScopeId};
 use bun_sema::hir;
 use std::cell::{OnceCell, RefCell};
-
-pub use bun_sema::bind::SymFlags;
 
 mod references;
 mod scopes;
@@ -87,112 +77,7 @@ use references::{RawReference, ReferenceSite, References};
 use scopes::{Block, ScopeTree};
 use variables::Variables;
 
-/// The parts of a `bind::Bound` that are not plain slices, for those who cannot name the lifetime
-/// of its session, in which it is invariant.
-pub(crate) trait Binding {
-    fn symbol_count(&self) -> usize;
-    fn symbol(&self, id: SymbolId) -> Option<RawSymbol>;
-    fn declarations(&self, id: SymbolId) -> &[Decl];
-    /// The symbol that stands for `id` here: of the two symbols of an exported declaration, the
-    /// one that is exported. And whether that may not be all: there are `refused_declarations`,
-    /// or nothing declares it. `None` if there is no `id`.
-    fn canonical(&self, id: SymbolId) -> Option<(SymbolId, bool)>;
-    /// Every declaration of something that a name can refer to, with its canonical symbol and the
-    /// flags of that.
-    fn declarations_in_scopes(&self, into: &mut Vec<(SymbolId, SymFlags, Decl)>);
-    /// The declarations that conflict with an earlier one of the same name. Each has a symbol of
-    /// its own.
-    fn refused_declarations(&self, into: &mut Vec<Decl>);
-    fn scopes(&self) -> &[bind::Scope];
-    /// For each of `scopes`, what makes it, where its kind does not tell. Empty if the binder has
-    /// not kept that.
-    fn scope_nodes(&self) -> &[bind::ScopeNode];
-}
-
-/// A `bind::Symbol` without its declarations.
-#[derive(Copy, Clone)]
-pub(crate) struct RawSymbol {
-    pub(crate) name: Atom,
-    pub(crate) flags: SymFlags,
-}
-
-impl<S: hir::Storage> Binding for bind::BoundIn<S> {
-    fn symbol_count(&self) -> usize {
-        self.symbols.len()
-    }
-    fn symbol(&self, id: SymbolId) -> Option<RawSymbol> {
-        self.symbols.get(id.idx()).map(|symbol| RawSymbol {
-            name: symbol.name,
-            flags: symbol.flags,
-        })
-    }
-    fn declarations(&self, id: SymbolId) -> &[Decl] {
-        self.symbols.get(id.idx()).map_or(&[], |symbol| symbol.decls.as_slice())
-    }
-    fn canonical(&self, id: SymbolId) -> Option<(SymbolId, bool)> {
-        let symbol = self.symbols.get(id.idx())?;
-        let is_special = !self.redeclarations.is_empty() || symbol.decls.is_empty();
-        Some((if symbol.export_symbol.is_some() { symbol.export_symbol } else { id }, is_special))
-    }
-    fn declarations_in_scopes(&self, into: &mut Vec<(SymbolId, SymFlags, Decl)>) {
-        let declares_a_name = |decl: Decl| {
-            matches!(
-                decl,
-                Decl::Var(_)
-                    | Decl::Param(_)
-                    | Decl::Require(_)
-                    | Decl::Fn(_)
-                    | Decl::Class(_)
-                    | Decl::Interface(_)
-                    | Decl::Alias(_)
-                    | Decl::Enum(_)
-                    | Decl::EnumMember(_)
-                    | Decl::Module(_)
-                    | Decl::TypeParam(_)
-                    | Decl::ImportDefault(_)
-                    | Decl::ImportNamespace(_)
-                    | Decl::ImportSpec(_)
-                    | Decl::ImportEquals(_)
-            )
-        };
-        // The binder has listed them, if it has worked for a linter.
-        if self.scope_node.len() == self.scopes.len() {
-            into.reserve(self.declared.len());
-            for &(id, decl, _) in self.declared.iter().filter(|it| declares_a_name(it.1)) {
-                let Some(symbol) = self.symbols.get(id.idx()) else {
-                    continue;
-                };
-                into.push(match self.symbols.get(symbol.export_symbol.idx()) {
-                    Some(exported) => (symbol.export_symbol, exported.flags, decl),
-                    None => (id, symbol.flags, decl),
-                });
-            }
-            return;
-        }
-        for (i, symbol) in self.symbols.iter().enumerate() {
-            let (id, flags) = match self.symbols.get(symbol.export_symbol.idx()) {
-                // The two symbols of what is exported have the same declarations, unless not all
-                // of them are exported.
-                Some(exported) if exported.decls.as_slice() == symbol.decls.as_slice() => continue,
-                Some(exported) => (symbol.export_symbol, exported.flags),
-                None => (SymbolId(i as u32), symbol.flags),
-            };
-            let declarations = symbol.decls.as_slice().iter();
-            into.extend(declarations.filter(|it| declares_a_name(**it)).map(|&decl| (id, flags, decl)));
-        }
-    }
-    fn refused_declarations(&self, into: &mut Vec<Decl>) {
-        into.extend(self.redeclarations.iter().map(|it| it.decl));
-    }
-    fn scopes(&self) -> &[bind::Scope] {
-        &self.scopes
-    }
-    fn scope_nodes(&self) -> &[bind::ScopeNode] {
-        &self.scope_node
-    }
-}
-
-/// What is derived from the binder's tables. Each part is computed the first time it is needed.
+/// Each part is computed the first time it is needed.
 #[derive(Default)]
 pub(crate) struct ReferenceIndex {
     scopes: OnceCell<ScopeTree>,
@@ -267,95 +152,52 @@ impl<'a> File<'a> {
 #[derive(Copy, Clone)]
 pub struct Symbol<'a> {
     file: &'a File<'a>,
-    id: SymbolId,
+    /// In `Variables::list`.
+    index: u32,
 }
 
 impl PartialEq for Symbol<'_> {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
+        self.index == other.index
     }
 }
 impl Eq for Symbol<'_> {}
 impl std::hash::Hash for Symbol<'_> {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
+        self.index.hash(state);
     }
 }
 impl std::fmt::Debug for Symbol<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Symbol({}, {:?})", self.id.0, self.name())
+        write!(f, "Symbol({}, {:?})", self.index, self.name())
     }
 }
 
 impl<'a> Symbol<'a> {
-    /// The symbol that the binder's `id` is, or is one declaration of.
-    #[inline]
-    pub(crate) fn some(file: &'a File<'a>, id: SymbolId) -> Option<Self> {
-        let (id, is_special) = file.binding.canonical(id)?;
-        if is_special {
-            if let Some(index) = file.variables().of_symbol(id) {
-                return Some(Symbol::at(file, index));
-            }
-            // In a program, a name at the top level of a script that clashes with a global of
-            // another file resolves to a symbol that stands for that global.
-            if file.binding.declarations(id).is_empty() {
-                return file.top_level_scope().get_atom(file.binding.symbol(id)?.name);
-            }
-        }
-        Some(Symbol { file, id })
-    }
-
-    /// What the declaration of the binder's `id` whose name is at `pos` declares.
-    fn declared(file: &'a File<'a>, id: SymbolId, pos: u32) -> Option<Self> {
-        let symbol = Symbol::some(file, id)?;
-        // Declarations in different scopes can have one symbol in the binder.
-        if file.binding.declarations(symbol.id).len() > 1
-            && let Some(index) = file.variables().of_declaration(file, symbol.id, pos)
-        {
-            return Some(Symbol::at(file, index));
-        }
-        Some(symbol)
+    /// What `decl` declares. `None`: nothing that a name can refer to.
+    fn declared_by(file: &'a File<'a>, decl: Decl) -> Option<Self> {
+        let (_, pos) = variables::name_of_declaration(file, decl)?;
+        Some(Symbol::at(file, file.variables().declared_at(pos)?))
     }
 
     /// The variable at `index` of `Variables::list`.
     #[inline]
     fn at(file: &'a File<'a>, index: u32) -> Self {
-        let id = file.variables().list.get(index as usize).map_or(SymbolId::NONE, |it| it.symbol);
-        Symbol { file, id }
-    }
-
-    /// Its index in `Variables::list`. `None`: no name can refer to it.
-    #[inline]
-    fn index(self) -> Option<u32> {
-        self.file.variables().of_symbol(self.id)
+        Symbol { file, index }
     }
 
     #[inline]
     fn variable(self) -> Option<&'a variables::Variable> {
-        self.file.variables().list.get(self.index()? as usize)
-    }
-
-    /// The symbol of the binder, which with the file is what the type checker takes. `NONE` for
-    /// an [implicit `arguments`](Symbol::is_implicit_arguments). Different symbols can have the
-    /// same: see the [differences from ESLint's model](self). To tell symbols apart: [`Symbol::key`].
-    #[inline]
-    pub fn id(self) -> SymbolId {
-        // Only the variables, once they are computed, have other numbers than the binder.
-        match self.file.semantic().variables.get() {
-            Some(variables) if self.id.idx() >= variables.symbol_count => {
-                self.variable().map_or(SymbolId::NONE, |it| it.binder)
-            }
-            _ => self.id,
-        }
+        self.file.variables().list.get(self.index as usize)
     }
 
     /// A number that no other symbol of the file has, to key a set or a map by. This is what `==`
-    /// compares. The numbers are not contiguous, and less than [`File::symbol_key_limit`].
+    /// compares. The numbers are less than [`File::symbol_key_limit`].
     #[inline]
     pub fn key(self) -> usize {
-        self.id.idx()
+        self.index as usize
     }
 
     #[inline]
@@ -364,59 +206,8 @@ impl<'a> Symbol<'a> {
     }
 
     #[inline]
-    fn raw(self) -> RawSymbol {
-        if let Some(variables) = self.file.semantic().variables.get()
-            && let Some(it) = variables.of_symbol(self.id).and_then(|it| variables.list.get(it as usize))
-            && it.symbol == self.id
-        {
-            return RawSymbol {
-                name: it.name,
-                flags: it.binder_flags,
-            };
-        }
-        self.raw_of_binder()
-    }
-
-    fn raw_of_binder(self) -> RawSymbol {
-        self.file.binding.symbol(self.id()).unwrap_or(RawSymbol {
-            name: known::arguments,
-            flags: SymFlags::FUNCTION_SCOPED_VARIABLE,
-        })
-    }
-
-    #[inline]
     pub fn name(self) -> Name<'a> {
-        let name = self.raw().name;
-        // What is exported as the default has that name in the binder.
-        match name == known::default {
-            true => self.file.name(self.variable().map_or(name, |it| it.name)),
-            false => self.file.name(name),
-        }
-    }
-
-    /// What kinds of things it is.
-    #[inline]
-    pub fn flags(self) -> SymFlags {
-        self.raw().flags
-    }
-
-    /// It can be used as a value: a variable, a function, a class, an enum, a namespace with
-    /// values in it. Not an import: see [`Symbol::is_value_variable`].
-    #[inline]
-    pub fn is_value(self) -> bool {
-        self.flags().intersects(SymFlags::VALUE)
-    }
-
-    /// It can be used as a type. Not an import: see [`Symbol::is_type_variable`].
-    #[inline]
-    pub fn is_type(self) -> bool {
-        self.flags().intersects(SymFlags::TYPE)
-    }
-
-    /// An import, which can be either.
-    #[inline]
-    pub fn is_import(self) -> bool {
-        self.flags().contains(SymFlags::ALIAS)
+        self.file.name(self.variable().map_or(known::arguments, |it| it.name))
     }
 
     /// typescript-eslint's `variable.isValueVariable`: everything but an interface, a type alias
@@ -436,7 +227,7 @@ impl<'a> Symbol<'a> {
     /// scope of the function.
     #[inline]
     pub fn is_implicit_arguments(self) -> bool {
-        self.id().is_none()
+        self.variable().is_some_and(Variables::is_implicit)
     }
 
     /// In the order they are written, but for the parameters of a function, which come before its
@@ -445,12 +236,7 @@ impl<'a> Symbol<'a> {
     #[inline]
     pub fn declarations(self) -> impl DoubleEndedIterator<Item = Declaration<'a>> + ExactSizeIterator + 'a {
         let file = self.file;
-        // The binder lists functions first, leaves out a declaration that it refuses, and has two
-        // symbols for what is exported.
-        let all = match self.variable() {
-            Some(it) => file.variables().declarations_of(it),
-            None => file.binding.declarations(self.id),
-        };
+        let all = self.variable().map_or(&[][..], |it| file.variables().declarations_of(it));
         all.iter().map(move |&decl| Declaration::new(file, decl))
     }
 
@@ -460,13 +246,12 @@ impl<'a> Symbol<'a> {
     /// ESLint: `let a = 1`, `function f(a = 1) {}`, `for (const a of b)`.
     #[inline]
     pub fn references(self) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
-        let references = self.index().map_or(&[][..], |it| self.file.reference_list().of_variable(it));
-        Reference::all_at(self.file, references)
+        Reference::all_at(self.file, self.file.reference_list().of_variable(self.index))
     }
 
     #[inline]
     fn has_reference_mark(self, marks: u32) -> bool {
-        self.index().is_some_and(|it| self.file.reference_list().has_mark(it, marks))
+        self.file.reference_list().has_mark(self.index, marks)
     }
 
     /// Some of its [`references`](Symbol::references) reads it. This is one load.
@@ -491,19 +276,13 @@ impl<'a> Symbol<'a> {
     /// How many [`declarations`](Symbol::declarations) it has. This is one load.
     #[inline]
     pub fn declaration_count(self) -> usize {
-        match self.variable() {
-            Some(it) => it.count as usize,
-            None => self.file.binding.declarations(self.id).len(),
-        }
+        self.variable().map_or(0, |it| it.count as usize)
     }
 
     /// The kinds of its declarations. This is one load.
     #[inline]
     pub fn declaration_kinds(self) -> DeclarationKinds {
-        match self.variable() {
-            Some(it) => DeclarationKinds::from_bits_retain(it.kinds),
-            None => self.declarations().filter_map(Declaration::kind).map(DeclarationKinds::from).collect(),
-        }
+        DeclarationKinds::from_bits_retain(self.variable().map_or(0, |it| it.kinds))
     }
 
     /// The scope it is declared in.
@@ -527,21 +306,18 @@ impl<'a> Symbol<'a> {
     }
 
     fn mark(self, mark: u8) {
-        let Some(index) = self.index() else {
-            return;
-        };
         let mut marks = self.file.semantic().marks.borrow_mut();
         if marks.is_empty() {
             marks.resize(self.file.variables().list.len(), 0);
         }
-        if let Some(slot) = marks.get_mut(index as usize) {
+        if let Some(slot) = marks.get_mut(self.index as usize) {
             *slot |= mark;
         }
     }
 
     fn has_mark(self, mark: u8) -> bool {
         let marks = self.file.semantic().marks.borrow();
-        !marks.is_empty() && self.index().and_then(|it| marks.get(it as usize).copied()).is_some_and(|it| it & mark != 0)
+        marks.get(self.index as usize).is_some_and(|it| it & mark != 0)
     }
 
     /// Sets ESLint's `variable.eslintUsed`, which `no-unused-vars` reads.
@@ -589,8 +365,7 @@ pub enum Declaration<'a> {
     ImportNamespace(Import<'a>),
     ImportSpec(ImportSpec<'a>),
     ImportEquals(ImportEquals<'a>),
-    /// What only the type checker is concerned with: a member, a property, an assignment that
-    /// declares something in JavaScript.
+    /// Nothing that a name can refer to.
     Other,
 }
 
@@ -638,7 +413,7 @@ impl<'a> Declaration<'a> {
     #[inline]
     fn new(file: &'a File<'a>, decl: Decl) -> Self {
         match decl {
-            Decl::Var(pat) | Decl::Require(pat) => Declaration::Var(Pat::new(file, pat)),
+            Decl::Var(pat) => Declaration::Var(Pat::new(file, pat)),
             Decl::Param(pat) => Declaration::Param(Pat::new(file, pat)),
             Decl::Fn(f) => Declaration::Fn(Func::new(file, f)),
             Decl::Class(c) => Declaration::Class(Class::new(file, c)),
@@ -1181,9 +956,7 @@ impl<'a> Scope<'a> {
     /// an arrow function is its [`arguments`](Symbol::is_implicit_arguments).
     pub fn symbols(self) -> impl DoubleEndedIterator<Item = Symbol<'a>> + ExactSizeIterator + 'a {
         let file = self.file;
-        let variables = file.variables();
-        let here = variables.list.get(variables.range_of_scope(self.id.0)).unwrap_or_default();
-        here.iter().map(move |it| Symbol { file, id: it.symbol })
+        file.variables().range_of_scope(self.id.0).map(move |index| Symbol::at(file, index as u32))
     }
 
     fn get_atom(self, name: Atom) -> Option<Symbol<'a>> {
@@ -1288,23 +1061,17 @@ impl<'a> File<'a> {
     /// Everything that the file declares in a scope, scope by scope. Without the
     /// [implicit `arguments`](Symbol::is_implicit_arguments) of functions.
     pub fn symbols(&'a self) -> impl Iterator<Item = Symbol<'a>> + 'a {
-        let declared = self.variables().list.iter();
-        let declared = declared.filter(|it| !Variables::is_implicit(it));
-        declared.map(move |it| Symbol {
-            file: self,
-            id: it.symbol,
-        })
+        let declared = self.variables().list.iter().enumerate();
+        let declared = declared.filter(|it| !Variables::is_implicit(it.1));
+        declared.map(move |it| Symbol::at(self, it.0 as u32))
     }
 
     /// Those of [`File::symbols`] that have a declaration of one of `kinds`. It looks at a number
     /// for each symbol of the file.
     pub fn symbols_declared_as(&'a self, kinds: DeclarationKinds) -> impl Iterator<Item = Symbol<'a>> + 'a {
-        let declared = self.variables().list.iter();
-        let declared = declared.filter(move |it| it.kinds & kinds.bits() != 0);
-        declared.map(move |it| Symbol {
-            file: self,
-            id: it.symbol,
-        })
+        let declared = self.variables().list.iter().enumerate();
+        let declared = declared.filter(move |it| it.1.kinds & kinds.bits() != 0);
+        declared.map(move |it| Symbol::at(self, it.0 as u32))
     }
 
     /// [`File::global`] for a name of the file. It remembers what it has said of late.
@@ -1328,7 +1095,7 @@ impl<'a> File<'a> {
 
     /// More than every [`Symbol::key`] of the file.
     pub fn symbol_key_limit(&'a self) -> usize {
-        self.variables().key_limit()
+        self.variables().list.len()
     }
 
     /// Every reference, in source order.
@@ -1379,19 +1146,16 @@ impl<'a> File<'a> {
 }
 
 impl<'a> Expr<'a> {
-    /// What an identifier refers to. `None` if nothing in the file declares it, or if the
-    /// expression is not an identifier.
-    ///
-    /// This is the answer of the binder, and costs no more than reading it. In rare cases
-    /// ESLint's answer is another, which [`Expr::reference`] gives: `arguments`; `module` and
-    /// `exports` in a CommonJS file; a namespace without values that is used as a value; a name
-    /// that is visible only because TypeScript merges namespaces or enums; `const a = require(..)`
-    /// in a block of a JavaScript file.
+    /// The value that an identifier refers to: what ESLint resolves a reference that reads a value
+    /// to where the identifier is written, whether ESLint makes a reference of it or not. `None` if
+    /// nothing in the file declares it, as for the [`arguments`](Symbol::is_implicit_arguments) of a
+    /// function, or if the expression is not an identifier.
     #[inline]
     pub fn symbol(self) -> Option<Symbol<'a>> {
+        self.as_ident()?;
         let file = self.file();
-        let symbol = Symbol::some(file, *file.bound.expr_symbol.get(self.id().idx())?)?;
-        (!file.is_javascript() || !symbol.flags().contains(SymFlags::MODULE_EXPORTS)).then_some(symbol)
+        let symbol = Symbol::at(file, file.reference_list().of_expr(self.id())?);
+        (!symbol.is_implicit_arguments()).then_some(symbol)
     }
 
     /// The identifier as a reference: whether it is read or written, and what it resolves to. The
@@ -1409,8 +1173,8 @@ impl<'a> Pat<'a> {
     /// What an identifier pattern declares.
     #[inline]
     pub fn symbol(self) -> Option<Symbol<'a>> {
-        let id = *self.file().bound.pat_symbol.get(self.id().idx())?;
-        Symbol::declared(self.file(), id, self.span().start)
+        // Whether it is part of a parameter makes no difference here.
+        Symbol::declared_by(self.file(), Decl::Var(self.id()))
     }
 }
 
@@ -1418,8 +1182,7 @@ impl<'a> Func<'a> {
     /// What a function declaration or a named function expression declares.
     #[inline]
     pub fn symbol(self) -> Option<Symbol<'a>> {
-        let id = *self.file().bound.fn_symbol.get(self.id().idx())?;
-        Symbol::declared(self.file(), id, self.name()?.start())
+        Symbol::declared_by(self.file(), Decl::Fn(self.id()))
     }
 
     /// The scope of its parameters and its body. `None` for an index signature.
@@ -1432,8 +1195,7 @@ impl<'a> Func<'a> {
 impl<'a> Class<'a> {
     #[inline]
     pub fn symbol(self) -> Option<Symbol<'a>> {
-        let id = *self.file().bound.class_symbol.get(self.id().idx())?;
-        Symbol::declared(self.file(), id, self.name()?.start())
+        Symbol::declared_by(self.file(), Decl::Class(self.id()))
     }
 
     /// The scope of its type parameters, its heritage and its members.
@@ -1446,8 +1208,7 @@ impl<'a> Class<'a> {
 impl<'a> TypeParam<'a> {
     #[inline]
     pub fn symbol(self) -> Option<Symbol<'a>> {
-        let id = *self.file().bound.type_param_symbol.get(self.id().idx())?;
-        Symbol::declared(self.file(), id, self.name().start())
+        Symbol::declared_by(self.file(), Decl::TypeParam(self.id()))
     }
 }
 
@@ -1520,10 +1281,7 @@ impl<'a> Node<'a> {
     pub fn declared_symbols(self) -> Vec<Symbol<'a>> {
         let file = self.file();
         let mut found: Vec<Symbol<'a>> = Vec::new();
-        let mut add = |symbol: Option<Symbol<'a>>| found.extend(symbol.filter(|it| it.index().is_some()));
-        let of = |symbols: &[SymbolId], index: usize, name: Option<Span>| {
-            Symbol::declared(file, *symbols.get(index)?, name?.start)
-        };
+        let mut add = |symbol: Option<Symbol<'a>>| found.extend(symbol);
         let function = |f: Func<'a>, add: &mut dyn FnMut(Option<Symbol<'a>>)| {
             add(f.symbol());
             for param in f.this_param().into_iter().chain(f.params()) {
@@ -1534,7 +1292,7 @@ impl<'a> Node<'a> {
             Node::Func(f) => function(f, &mut add),
             Node::Class(c) => add(c.symbol()),
             Node::VarDecl(d) => d.pat().for_each_binding(&mut |pat| add(pat.symbol())),
-            Node::EnumMember(m) => add(of(file.bound.enum_member_symbol, m.id().idx(), Some(m.span()))),
+            Node::EnumMember(m) => add(Symbol::declared_by(file, Decl::EnumMember(m.id()))),
             Node::TypeParam(p) => add(p.symbol()),
             Node::ImportSpec(s) => add(Node::ImportSpec(s).scope().get_name(s.local().name())),
             Node::Expr(e) => match e.kind() {
@@ -1556,13 +1314,10 @@ impl<'a> Node<'a> {
                 StmtKind::Try { param: Some(d), .. } => d.pat().for_each_binding(&mut |pat| add(pat.symbol())),
                 StmtKind::Fn(f) => function(f, &mut add),
                 StmtKind::Class(c) => add(c.symbol()),
-                StmtKind::Interface(it) => add(of(file.bound.interface_symbol, it.id().idx(), Some(it.name().span()))),
-                StmtKind::TypeAlias(it) => add(of(file.bound.alias_symbol, it.id().idx(), Some(it.name().span()))),
-                StmtKind::Enum(it) => add(of(file.bound.enum_symbol, it.id().idx(), Some(it.name().span()))),
-                StmtKind::Module(it) => {
-                    let name = variables::name_of_declaration(file, Decl::Module(it.id()));
-                    add(of(file.bound.module_symbol, it.id().idx(), name.map(|it| Span::empty(it.1))));
-                }
+                StmtKind::Interface(it) => add(Symbol::declared_by(file, Decl::Interface(it.id()))),
+                StmtKind::TypeAlias(it) => add(Symbol::declared_by(file, Decl::Alias(it.id()))),
+                StmtKind::Enum(it) => add(Symbol::declared_by(file, Decl::Enum(it.id()))),
+                StmtKind::Module(it) => add(Symbol::declared_by(file, Decl::Module(it.id()))),
                 StmtKind::ImportEquals(it) => add(self.scope().get_name(it.name().name())),
                 StmtKind::Import(it) => {
                     let scope = self.scope();
@@ -1576,7 +1331,7 @@ impl<'a> Node<'a> {
             _ => {}
         }
         // Each once, where it is first: `var a, a`, `function f(a, a) {}`.
-        let mut first: Vec<(SymbolId, usize)> = found.iter().enumerate().map(|(i, it)| (it.id, i)).collect();
+        let mut first: Vec<(u32, usize)> = found.iter().enumerate().map(|(i, it)| (it.index, i)).collect();
         first.sort_unstable();
         first.dedup_by_key(|it| it.0);
         if first.len() < found.len() {

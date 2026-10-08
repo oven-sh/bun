@@ -140,28 +140,18 @@ slices! {
     /// The same for the side tables of a `bind::Bound`.
     Bound of bind::BoundIn {
         ids: u32,
-        expr_symbol: bind::SymbolId,
         expr_parent: bind::Parent,
         stmt_parent: bind::Parent,
         type_scope: bind::ScopeId,
         pat_parent: bind::PatParent,
-        pat_symbol: bind::SymbolId,
         prop_owner: hir::ExprId,
         member_owner: bind::MemberOwner,
         param_fn: hir::FnId,
-        type_param_symbol: bind::SymbolId,
         type_param_scope: bind::ScopeId,
         fns: bind::FnInfo,
-        fn_symbol: bind::SymbolId,
-        class_symbol: bind::SymbolId,
         class_owner: bind::ClassOwner,
         class_scope: bind::ScopeId,
-        interface_symbol: bind::SymbolId,
-        alias_symbol: bind::SymbolId,
-        enum_symbol: bind::SymbolId,
-        enum_member_symbol: bind::SymbolId,
         enum_member_owner: hir::EnumId,
-        module_symbol: bind::SymbolId,
         var_stmt: hir::StmtId,
         case_stmt: hir::StmtId,
         stmt_flow: bind::FlowId,
@@ -211,7 +201,6 @@ pub(crate) struct Lazy {
 pub struct File<'a> {
     pub(crate) hir: Hir<'a>,
     pub(crate) bound: Bound<'a>,
-    pub(crate) binding: &'a dyn crate::semantic::Binding,
     pub(crate) atoms: &'a dyn Intern,
     pub(crate) lazy: Lazy,
     pub(crate) types: Option<crate::types::Checker<'a>>,
@@ -232,7 +221,7 @@ pub struct File<'a> {
 impl<'a> File<'a> {
     /// `path`: as it is reported. `types`: the type checker, if the file is part of a program that
     /// has been checked.
-    pub fn new<H: hir::Storage, B: hir::Storage + 'a>(
+    pub fn new<H: hir::Storage, B: hir::Storage>(
         path: &'a [u8],
         hir: &'a hir::FileIn<H>,
         bound: &'a bind::BoundIn<B>,
@@ -254,7 +243,6 @@ impl<'a> File<'a> {
             has_parse_errors: hir.has_errors || hir.has_parse_diagnostics,
             hir: Hir::new(hir),
             bound: Bound::new(bound),
-            binding: bound,
             atoms,
             lazy: Lazy::default(),
             types,

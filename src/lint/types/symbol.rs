@@ -205,13 +205,6 @@ impl<'a> TsSymbol<'a> {
         self.table(SymbolTable::Exports)
     }
 
-    /// The symbol of the file that is linted which this is, if it is declared there in a scope and
-    /// nowhere else.
-    pub fn local(self) -> Option<crate::semantic::Symbol<'a>> {
-        let local = self.file.query(|q| q.symbol_info(self.id)).local?;
-        crate::semantic::Symbol::some(self.file, local)
-    }
-
     // ───────────────────────────── ts.TypeChecker ─────────────────────────────
 
     /// `checker.getTypeOfSymbol(symbol)`

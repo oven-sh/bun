@@ -279,9 +279,3 @@ impl<'a> Func<'a> {
     }
 }
 
-impl<'a> crate::semantic::Symbol<'a> {
-    /// The symbol of the program that it is, or is merged into.
-    pub fn ts_symbol(self) -> Option<TsSymbol<'a>> {
-        self.file().type_checker().symbol_of(self)
-    }
-}

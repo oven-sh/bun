@@ -1,15 +1,14 @@
 //! Every occurrence of a name that refers to something: ESLint's `Reference`s.
 //!
-//! The binder has resolved the identifiers that are expressions. What is derived here: whether
-//! each is read or written, the scope it is in, the names in types and what they resolve to, and
-//! all of it grouped by variable and by scope.
+//! What is derived here: whether each is read or written, the scope it is in, what it resolves to,
+//! and all of it grouped by variable and by scope.
 
-use super::scopes::{self, Cursor, NONE, ScopeTree};
+use super::scopes::{self, Cursor, NONE, ScopeTree, Step};
 use super::variables::{TYPE, VALUE, Variables};
 use super::{ReferenceFlags, ScopeKind};
 use crate::ast::File;
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Parent, PatParent, SymbolId};
+use bun_sema::bind::{Parent, PatParent};
 use bun_sema::hir::{self, ExprId, ExprKind, PatKind, PropKind, StmtKind, TypeNodeKind, UnOp};
 use smallvec::SmallVec;
 use std::cell::OnceCell;
@@ -66,6 +65,9 @@ pub(crate) struct References {
     variable_starts: Vec<u32>,
     /// For each variable: `HAS_READ`, `HAS_WRITE`, `HAS_MODIFYING_WRITE`.
     marks: Vec<u32>,
+    /// For each expression that is an identifier, the index in `Variables::list` of the value that the
+    /// name stands for where it is written.
+    of_expr: Vec<u32>,
     /// Indices into `all`, scope by scope, in that order, and where those of each scope start.
     /// Computed on demand.
     by_scope: OnceCell<(Vec<u32>, Vec<u32>)>,
@@ -87,10 +89,6 @@ enum Access {
     Write(u32),
 }
 
-/// `RawReference::variable` of a reference that the binder's answer is not asked for, until it is
-/// resolved.
-const BY_NAME: u32 = NONE - 1;
-
 /// Some reference to the variable reads it.
 pub(crate) const HAS_READ: u32 = 1 << 29;
 /// Some reference writes it.
@@ -106,17 +104,80 @@ struct Collector<'f, 'a> {
     found: Vec<RawReference>,
 }
 
+/// What each name stands for at a position that goes through the file.
+struct Visible<'t> {
+    tree: &'t ScopeTree,
+    variables: &'t Variables,
+    /// For each `Variable::slot`: the variable of the innermost scope around the position that declares
+    /// the name.
+    innermost: Vec<u32>,
+    /// For each variable of a scope around the position: what `innermost` had before.
+    hidden: Vec<u32>,
+    /// For each scope: the position is in a part of it that is evaluated in the scope around it.
+    is_suspended: Vec<bool>,
+    suspended: u32,
+}
+
+impl Visible<'_> {
+    #[inline(never)]
+    fn take(&mut self, step: Step) {
+        match step {
+            // `WithScope#__close` leaves every reference to the scope around it.
+            Step::Enter(scope) | Step::Leave(scope)
+                if self.tree.scopes.get(scope as usize).is_none_or(|it| it.kind == ScopeKind::With) => {}
+            Step::Enter(scope) => {
+                let range = self.variables.range_of_scope(scope);
+                let here = self.variables.list.get(range.clone()).unwrap_or_default();
+                for ((index, variable), hidden) in range.clone().zip(here).zip(&mut self.hidden[range]) {
+                    *hidden = std::mem::replace(&mut self.innermost[variable.slot as usize], index as u32);
+                }
+            }
+            Step::Leave(scope) => {
+                let range = self.variables.range_of_scope(scope);
+                let here = self.variables.list.get(range.clone()).unwrap_or_default();
+                for (variable, &hidden) in here.iter().zip(&self.hidden[range]) {
+                    self.innermost[variable.slot as usize] = hidden;
+                }
+            }
+            Step::Suspend(scope) => {
+                self.is_suspended[scope as usize] = true;
+                self.suspended += 1;
+            }
+            Step::Resume(scope) => {
+                self.is_suspended[scope as usize] = false;
+                self.suspended -= 1;
+            }
+        }
+    }
+
+    /// `Variables::resolve` for a reference at `pos`, which is the position.
+    #[inline(always)]
+    fn resolve(&self, name: Atom, pos: u32, wants: u8) -> u32 {
+        let mut index = self.innermost[self.variables.slot_of(name)];
+        while let Some(it) = self.variables.list.get(index as usize) {
+            if it.flags & wants != 0
+                && !(pos < it.body_start && (it.first_pos >= it.body_start || Variables::is_implicit(it)))
+                && (self.suspended == 0 || !self.is_suspended[it.scope as usize])
+            {
+                break;
+            }
+            index = self.hidden[index as usize];
+        }
+        index
+    }
+}
+
 /// Takes the references in source order, and finds the scope that each is in and what it resolves
 /// to.
 struct Resolver<'t> {
-    tree: &'t ScopeTree,
     variables: &'t Variables,
-    expr_symbol: &'t [SymbolId],
-    pat_symbol: &'t [SymbolId],
+    visible: Visible<'t>,
     /// Ranges of the text in which nothing is a reference.
     unvisited: &'t [(u32, u32)],
     cursor: Cursor<'t>,
     all: Vec<RawReference>,
+    /// `References::of_expr`
+    of_expr: Vec<u32>,
     /// How many resolve to each variable, at the index after that of the variable. The last: to
     /// nothing. In the highest bits: `HAS_READ`, `HAS_WRITE`, `HAS_MODIFYING_WRITE`.
     counts: Vec<u32>,
@@ -134,13 +195,19 @@ struct Resolver<'t> {
 impl<'t> Resolver<'t> {
     fn new(file: &'t File, tree: &'t ScopeTree, variables: &'t Variables, capacity: usize) -> Resolver<'t> {
         Resolver {
-            tree,
             variables,
-            expr_symbol: file.bound.expr_symbol,
-            pat_symbol: file.bound.pat_symbol,
+            visible: Visible {
+                tree,
+                variables,
+                innermost: vec![NONE; variables.slot_count()],
+                hidden: vec![NONE; variables.list.len()],
+                is_suspended: vec![false; tree.scopes.len()],
+                suspended: 0,
+            },
             unvisited: if scopes::is_javascript_mode(file) { &[] } else { &tree.unvisited },
             cursor: tree.cursor(),
             all: Vec::with_capacity(capacity),
+            of_expr: vec![NONE; file.hir.exprs.len()],
             counts: vec![0; variables.list.len() + 2],
             moved: Vec::new(),
             last_moved_to: 0,
@@ -149,13 +216,26 @@ impl<'t> Resolver<'t> {
         }
     }
 
+    /// The scope that what is written at `pos` belongs to. `pos` is not less than in the call before.
+    #[inline(always)]
+    fn go_to(&mut self, pos: u32) -> u32 {
+        let visible = &mut self.visible;
+        self.cursor.seek_by_steps(pos, |step| visible.take(step))
+    }
+
+    /// For an identifier that is an expression and no reference.
+    fn add_name(&mut self, id: ExprId, pos: u32, name: Atom) {
+        self.go_to(pos);
+        if let Some(slot) = self.of_expr.get_mut(id.idx()) {
+            *slot = self.visible.resolve(name, pos, VALUE);
+        }
+    }
+
     /// `add` for an identifier that is an expression and is read.
     #[inline]
     fn add_read(&mut self, id: ExprId, pos: u32, name: Atom) {
-        let hazards = &self.variables.hazards;
-        if self.is_plain && (hazards.is_empty() || hazards.binary_search_by_key(&name.0, |it| it.0).is_err()) {
-            let symbol = self.expr_symbol.get(id.idx()).copied().unwrap_or(SymbolId::NONE);
-            return self.add_simple_read(id, pos, name, symbol);
+        if self.is_plain {
+            return self.add_simple_read(id, pos, name);
         }
         self.add(RawReference {
             site: ReferenceSite::Expr(id),
@@ -168,22 +248,18 @@ impl<'t> Resolver<'t> {
         });
     }
 
-    /// The same where there is nothing `unvisited`, and the name is none of `Variables::hazards`.
-    /// `symbol`: what the binder resolves it to.
+    /// The same where there is nothing `unvisited`.
     #[inline(always)]
-    fn add_simple_read(&mut self, id: ExprId, pos: u32, name: Atom, symbol: SymbolId) {
+    fn add_simple_read(&mut self, id: ExprId, pos: u32, name: Atom) {
         if pos < self.last_moved_to {
             self.is_visiting_order = false;
         }
-        let from = self.cursor.seek(pos);
-        let mut variable = self.variables.index_of_symbol(symbol);
-        match (self.variables.extents.get(variable as usize), self.counts.get_mut(variable as usize + 1)) {
-            (Some(extent), Some(count)) if extent.has(from, pos) => *count = (*count + 1) | HAS_READ,
-            _ => {
-                variable = self.variables.resolve(self.tree, from, name, pos, VALUE).unwrap_or(NONE);
-                let count = &mut self.counts[(variable as usize).min(self.variables.list.len()) + 1];
-                *count = (*count + 1) | HAS_READ;
-            }
+        let from = self.go_to(pos);
+        let variable = self.visible.resolve(name, pos, VALUE);
+        let count = &mut self.counts[(variable as usize).min(self.variables.list.len()) + 1];
+        *count = (*count + 1) | HAS_READ;
+        if let Some(slot) = self.of_expr.get_mut(id.idx()) {
+            *slot = variable;
         }
         self.all.push(RawReference {
             site: ReferenceSite::Expr(id),
@@ -209,7 +285,6 @@ impl<'t> Resolver<'t> {
     /// `it.from`: see `Collector::push_write`.
     #[inline(never)]
     fn add(&mut self, mut it: RawReference) {
-        let (tree, variables) = (self.tree, self.variables);
         if !self.unvisited.is_empty() && self.unvisited.iter().any(|range| (range.0..range.1).contains(&it.pos)) {
             return;
         }
@@ -222,39 +297,21 @@ impl<'t> Resolver<'t> {
             self.moved.push((self.all.len() as u32, it.from));
             self.last_moved_to = self.last_moved_to.max(it.from);
         }
-        it.from = self.cursor.seek(it.pos);
+        it.from = self.go_to(it.pos);
         let wants = u8::from(it.flags.contains(ReferenceFlags::VALUE)) * VALUE
             + u8::from(it.flags.contains(ReferenceFlags::TYPE)) * TYPE;
-        let bound_to = match it.site {
-            ReferenceSite::Expr(e) if wants == VALUE && it.variable != BY_NAME => self.expr_symbol.get(e.idx()).copied(),
-            ReferenceSite::Pat(p) => self.pat_symbol.get(p.idx()).copied(),
+        it.variable = match it.site {
             ReferenceSite::Declaration(index) => {
-                it.from = variables.list[index as usize].scope;
-                None
+                it.from = self.variables.list[index as usize].scope;
+                self.variables.resolve(self.visible.tree, it.from, it.name, it.pos, wants).unwrap_or(NONE)
             }
-            _ => None,
+            _ => self.visible.resolve(it.name, it.pos, wants),
         };
-        let hazards = &variables.hazards;
-        let is_hazard = !hazards.is_empty() && hazards.binary_search_by_key(&it.name.0, |it| it.0).is_ok();
-        let trusted = match bound_to.filter(|_| !is_hazard) {
-            Some(symbol) if symbol.is_some() => {
-                // What the binder found is what ESLint finds if it is declared around the
-                // reference, and not in the body of a function whose parameters refer to it.
-                variables.of_symbol(symbol).filter(|&index| {
-                    let extent = &variables.extents[index as usize];
-                    extent.has(it.from, it.pos)
-                        // `catch (e) { var e = 1 }` writes the parameter.
-                        && (!matches!(it.site, ReferenceSite::Pat(_)) || extent.first_scope == it.from)
-                })
-            }
-            // What the binder finds no value for can be the `arguments` of a function, or a
-            // namespace without values.
-            _ => None,
-        };
-        it.variable = match trusted {
-            Some(index) => index,
-            None => variables.resolve(tree, it.from, it.name, it.pos, wants).unwrap_or(NONE),
-        };
+        if let ReferenceSite::Expr(e) = it.site
+            && let Some(slot) = self.of_expr.get_mut(e.idx())
+        {
+            *slot = if wants == VALUE { it.variable } else { self.visible.resolve(it.name, it.pos, VALUE) };
+        }
         self.count(&it);
         self.all.push(it);
     }
@@ -274,12 +331,6 @@ struct Merge<'t> {
     /// Up to this expression from the last identifier none is the operand of a `typeof` in a type.
     next_operand: u32,
     values: SmallVec<[ExprId; 4]>,
-}
-
-/// The bit for `name` in a set of names that is one word, and can have more than was put in.
-#[inline(always)]
-fn bit_of_name(name: Atom) -> u64 {
-    1 << (name.0 & 63)
 }
 
 impl<'f> Collector<'f, '_> {
@@ -472,11 +523,7 @@ impl<'f> Collector<'f, '_> {
                 && name != known::empty
                 && !(file.has_synthetic_nodes() && file.is_in_jsdoc(e.pos))
             {
-                let mut read = self.make(ReferenceSite::Expr(id), (e.pos, e.pos), name, READ, ExprId::NONE);
-                // From the type parameters of a function the binder does not see its parameters,
-                // as in TypeScript. ESLint does.
-                read.variable = BY_NAME;
-                self.found.push(read);
+                self.push(ReferenceSite::Expr(id), e.pos, name, READ, ExprId::NONE);
             }
         }
     }
@@ -541,7 +588,7 @@ impl<'f> Collector<'f, '_> {
     fn identifier(&self, id: ExprId, e: &hir::Expr, name: Atom, skipped: &[ExprId], merge: &mut Merge) -> bool {
         let file = self.file;
         let (hir, bound) = (&file.hir, &file.bound);
-        let mut flags = READ;
+        let (mut flags, mut is_reference) = (READ, true);
         let access = match bound.expr_parent.get(id.idx()) {
             None | Some(Parent::None) => return true,
             Some(&Parent::Expr(parent)) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
@@ -560,9 +607,7 @@ impl<'f> Collector<'f, '_> {
                 ) => self.access(id, &mut merge.values),
                 Some(ExprKind::Jsx(jsx)) => {
                     let is_tag = hir.jsx.get(jsx.idx()).is_some_and(|it| it.tag == id || it.close_tag == id);
-                    if is_tag && !is_component_name(file.atoms.bytes(name)) {
-                        return true;
-                    }
+                    is_reference = !is_tag || is_component_name(file.atoms.bytes(name));
                     Access::Read
                 }
                 _ => Access::Read,
@@ -583,8 +628,8 @@ impl<'f> Collector<'f, '_> {
         if id.0 >= merge.next_operand {
             merge.next_operand = operands.get(operands.partition_point(|it| it.0 <= id.0)).map_or(u32::MAX, |it| it.0);
         }
+        is_reference &= skipped.is_empty() || skipped.binary_search(&id).is_err();
         if name == known::empty
-            || (!skipped.is_empty() && skipped.binary_search(&id).is_ok())
             || (!operands.is_empty() && operands.binary_search(&id).is_ok())
             || (file.has_synthetic_nodes() && file.is_in_jsdoc(e.pos))
         {
@@ -599,6 +644,10 @@ impl<'f> Collector<'f, '_> {
         }
         merge.last = e.pos;
         self.pass_on_before(e.pos, merge);
+        if !is_reference {
+            merge.into.add_name(id, e.pos, name);
+            return true;
+        }
         let (site, here) = (ReferenceSite::Expr(id), (e.pos, e.pos));
         match access {
             Access::Read if flags == READ => merge.into.add_read(id, e.pos, name),
@@ -632,11 +681,9 @@ impl<'f> Collector<'f, '_> {
         };
         let mut merge = start();
         let is_simple = merge.into.is_plain && skipped.is_empty();
-        let hazards = variables.hazards.iter().fold(0, |set, &name| set | bit_of_name(name));
         // The parser stores nearly every file in source order.
-        let bound = &self.file.bound;
-        let with_parent_and_symbol = exprs.iter().zip(bound.expr_parent).zip(bound.expr_symbol);
-        let is_in_order = with_parent_and_symbol.enumerate().all(|(i, ((e, parent), &symbol))| {
+        let with_parent = exprs.iter().zip(self.file.bound.expr_parent);
+        let is_in_order = with_parent.enumerate().all(|(i, (e, parent))| {
             let ExprKind::Ident(name) = e.kind else {
                 return true;
             };
@@ -649,19 +696,17 @@ impl<'f> Collector<'f, '_> {
                 Parent::None | Parent::Prop(_) | Parent::Stmt(_) => false,
                 _ => true,
             };
-            // Whether it is a reference, and what it resolves to, is as the binder says.
             if is_simple
                 && (merge.last..merge.next_jsdoc).contains(&e.pos)
                 && id.0 < merge.next_operand
                 && name != known::empty
-                && hazards & bit_of_name(name) == 0
                 && (is_only_read || self.is_only_read(id))
             {
                 if merge.next_found < e.pos {
                     self.pass_on_before(e.pos, &mut merge);
                 }
                 merge.last = e.pos;
-                merge.into.add_simple_read(id, e.pos, name, symbol);
+                merge.into.add_simple_read(id, e.pos, name);
                 return true;
             }
             self.identifier(id, e, name, &skipped, &mut merge)
@@ -1000,6 +1045,7 @@ impl References {
         }
         let Resolver {
             all,
+            of_expr,
             mut counts,
             moved,
             is_visiting_order,
@@ -1024,6 +1070,7 @@ impl References {
             by_variable,
             variable_starts,
             marks,
+            of_expr,
             by_scope: OnceCell::new(),
             scope_count: tree.scopes.len(),
             unresolved_by_name: OnceCell::new(),
@@ -1041,6 +1088,12 @@ impl References {
     #[inline]
     pub(crate) fn of_variable(&self, index: u32) -> &[u32] {
         Self::group(&self.by_variable, &self.variable_starts, index as usize, index as usize)
+    }
+
+    /// The index in `Variables::list` of the value that the identifier `e` stands for.
+    #[inline]
+    pub(crate) fn of_expr(&self, e: ExprId) -> Option<u32> {
+        self.of_expr.get(e.idx()).copied().filter(|it| *it != NONE)
     }
 
     /// Indices into `all` in the order ESLint makes the references. Empty if that is the order of

@@ -52,7 +52,7 @@ pub mod prelude {
     pub use crate::regex::Regex;
     pub use crate::rule::{Fixable, Kind, Listeners, Message, Meta, NodeTags, Presets, Rule};
     pub use crate::semantic::{
-        Declaration, DeclarationKind, Reference, ReferenceFlags, Scope, ScopeKind, SymFlags, Symbol,
+        Declaration, DeclarationKind, Reference, ReferenceFlags, Scope, ScopeKind, Symbol,
     };
     pub use crate::span::{Position, Span, Spanned};
     pub use crate::tokens::{Token, TokenKind, Tokens, skip_trivia, skip_trivia_back};

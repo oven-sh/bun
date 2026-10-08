@@ -11,10 +11,11 @@ const MUTABLE: Message =
 /// also finds what is not a `Symbol` of a scope here: the name of a function or class expression
 /// inside it, the `arguments` of a function, the global variables of the configuration.
 fn is_declared_around<'a>(stmt: Stmt<'a>, name: Name<'a>) -> bool {
-    let node = Node::Stmt(stmt);
+    let scope = Node::Stmt(stmt).scope();
     let is_arguments = name.is("arguments");
-    node.scope().chain().any(|scope| scope.symbols().any(|symbol| symbol.name() == name))
-        || node.ancestors().any(|it| match it {
+    // Each function and each class around a statement has a scope.
+    scope.resolve_name(name).is_some()
+        || scope.chain().any(|it| match it.node() {
             Node::Func(func) => {
                 func.name().is_some_and(|it| it.name() == name)
                     || is_arguments && !func.is_arrow() && func.kind() != FnKind::StaticBlock

@@ -209,6 +209,107 @@ const snippets = [
   "let x1 = <div>{...a,b}</div>",
   "let x1 = <div>{a}</div>",
   "let x1 = <div {...a,b} />",
+  // The syntax of TypeScript in JavaScript.
+  "function f(x: number, y: string): void {}",
+  "var a: T = 1;",
+  "const right: { a: 1 } = x;",
+  "class A { myMethod(p: any) {} }",
+  "(value: CacheValue, response: any) => {}",
+  "a as T;",
+  "a satisfies T;",
+  "<T>(x) => x;",
+  "<T,>(x) => x;",
+  "interface A {}",
+  "enum A {}",
+  "const enum A {}",
+  "declare const a;",
+  "declare function f();",
+  "declare module 'a' {}",
+  "abstract class A {}",
+  "class A implements B {}",
+  "class A { constructor(private a) {} }",
+  "function f(x?: T) {}",
+  "function f(x?) {}",
+  "f<T>();",
+  "new A<T>();",
+  "class A<T> {}",
+  "function f<T>() {}",
+  "class A extends B<T> {}",
+  "class A { a: T; }",
+  "class A { a?: T; }",
+  "class A { a!: T; }",
+  "class A { private a; }",
+  "class A { readonly a; }",
+  "class A { public m() {} }",
+  "class A { declare a; }",
+  "class A { override m() {} }",
+  "class A { abstract m(); }",
+  "class A { [k: string]: T; }",
+  "namespace A {}",
+  "module A {}",
+  "import type A from 'a';",
+  "import { type A } from 'a';",
+  "export type { A } from 'a';",
+  "export { type A };",
+  "import a = require('a');",
+  "export = a;",
+  "export as namespace A;",
+  "import type { A } from 'a';",
+  "let a = <T>b;",
+  "function f(this: T) {}",
+  "function f(): asserts a {}",
+  "let a: typeof b;",
+  "for (const a: T of b);",
+  "try {} catch (e: unknown) {}",
+  "a<b>(c);",
+  "type A = 1;",
+  "function f(a: T = 1) {}",
+  "({ m(a: T) {} });",
+  "({ m(): T {} });",
+  "({ a }: T) => {};",
+  "async (a: T) => {};",
+  "(a): T => {};",
+  "x = (a?) => {};",
+  "accessor a;",
+  "class A { accessor a; }",
+  // What looks alike and is JavaScript.
+  "a ? (b) : c => d;",
+  "a ? (b) : (c) => d;",
+  "a ? b : c;",
+  "x = a ? (b, c) : d => e;",
+  "({ a: b });",
+  "label: a;",
+  "switch (a) { case b: c; }",
+  "a < b > c;",
+  "a<b>c;",
+  "f(a < b, c > d);",
+  "type = 1;",
+  "type\nA = 1;",
+  "declare = 1;",
+  "interface = 1",
+  "namespace = 1;",
+  "module = 1;",
+  "abstract = 1;",
+  "as = 1; a = as;",
+  "satisfies(a);",
+  "var type, of, as, declare, module, namespace, abstract, readonly, override, accessor;",
+  "class A { declare() {} readonly() {} abstract() {} override() {} accessor() {} }",
+  "class A { static declare; readonly; private; public }",
+  "a::b;",
+  "::a.b;",
+  "(a, b)::c;",
+  "a ?? b;",
+  "a?.b;",
+  "a ? .5 : b;",
+  "/** @type {T} */ var a = 1;",
+  "/** @param {a!} b */ function f(b) {}",
+  "var a = /** @type {T} */ (b);",
+  "<a>b</a>;",
+  "<a b={c} />;",
+  "<T,>x</T>;",
+  "declare global {}",
+  "module\nA\n{}",
+  "declare\nmodule\n{}",
 ];
 
 const cases = snippets.map((code, i) => ({ path: `snippet ${i}: ${code}`, code, filename: "snippet.js" }));
@@ -229,7 +330,13 @@ function refusal({ code, filename }) {
   }
 }
 
+const TOLERATED = new Set([
+  "function f(x: number, y: string): void {}",
+  "var a: T = 1;",
+  "(value: CacheValue, response: any) => {}",
+]);
 const differences = [];
+const tolerant = [];
 let refused = 0;
 for (let start = 0; start < cases.length; start += 1000) {
   const batch = cases.slice(start, start + 1000);
@@ -240,8 +347,12 @@ for (let start = 0; start < cases.length; start += 1000) {
   batch.forEach((it, i) => {
     const expected = refusal(it);
     if (expected !== null) refused++;
-    const [isRefused, parser] = actual[i];
+    const [isRefused, parser, , isRefusedWithTypes] = actual[i];
     if ((expected !== null) !== isRefused) differences.push({ path: it.path, prettier: expected, parser });
+    // Where types in JavaScript are tolerated, less is refused, and never an annotation.
+    if (isRefusedWithTypes && !isRefused) tolerant.push(`refused only where types are tolerated: ${it.path}`);
+    if (isRefusedWithTypes && TOLERATED.has(it.code))
+      tolerant.push(`an annotation is refused where types are tolerated: ${it.path}`);
   });
 }
 const harmful = differences.filter(it => it.prettier === null);
@@ -255,4 +366,6 @@ console.log(
   `Prettier refuses ${refused} of ${cases.length}; refused only here: ${harmful.length}, ${harmful.filter(it => it.parser).length} of them by the parser; refused only by Prettier: ${lenient.length}`,
 );
 console.log(`prettier refusals: ${cases.length - differences.length} of ${cases.length} agree`);
-if (differences.length > 0) process.exitCode = 1;
+for (const it of tolerant) console.log(it);
+console.log(`types tolerated: ${tolerant.length} wrong`);
+if (differences.length > 0 || tolerant.length > 0) process.exitCode = 1;

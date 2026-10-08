@@ -13,11 +13,11 @@ mod order;
 mod typescript_estree;
 
 use super::message::LintMessage;
-use crate::ast::File;
+use crate::ast::{File, Stmt};
 use crate::context::Severity;
 use crate::language::{Parser, SourceType};
 use crate::options::Json;
-use bun_sema::hir::{Diagnostic, DiagnosticKind};
+use bun_sema::hir::{Diagnostic, DiagnosticKind, StmtKind};
 
 /// Why a parser throws, and where.
 struct SyntaxError {
@@ -159,7 +159,24 @@ fn goes_to_flow(file: &File) -> bool {
 /// Whether Prettier refuses to format the file, which was parsed in the dialect of Babel
 /// ([`Dialect::babel`](bun_sema::resolve::Dialect::babel)): its parser throws. That is `typescript`, which is typescript-estree, for
 /// a TypeScript file, and `babel` for a JavaScript file. What `languageOptions` of the file say about a parser does not count.
+///
+/// Types in JavaScript are [tolerated](TypesInJavaScript::Tolerated).
 pub fn refused_by_prettier<'a>(file: &'a File<'a>) -> bool {
+    refused_by_prettier_with(file, TypesInJavaScript::Tolerated)
+}
+
+/// What becomes of a JavaScript file with the syntax of TypeScript: `var a: T`, `a as T`, `interface A {}`, `class A<T> {}`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TypesInJavaScript {
+    /// `babel` throws. It is what Prettier takes for a `.js`, `.jsx`, `.mjs` or `.cjs` file and for a `js` block in Markdown.
+    Refused,
+    /// The file goes to `flow`, `babel-flow`, `typescript` or `babel-ts`, which somebody has asked for by name. So do some of
+    /// Prettier's own tests, for which `babel` is listed as failing: `js/babel-plugins/typescript.js` is `const x: number = 0;`.
+    Tolerated,
+}
+
+/// [`refused_by_prettier`], with a say about types in JavaScript.
+pub fn refused_by_prettier_with<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> bool {
     // `import a from "a" assert { .. }` passes. `typescript` accepts it. `babel` does not, but Prettier's own tests have such
     // JavaScript files formatted, by other parsers, and nobody is served by a refusal.
     let is_reported = |it: &Diagnostic| {
@@ -170,15 +187,26 @@ pub fn refused_by_prettier<'a>(file: &'a File<'a>) -> bool {
     if file.has_parse_errors() && (of_parser.clone().any(is_reported) || !says_why) {
         return true;
     }
-    // TypeScript in JavaScript that Babel stumbles over: `type A = 1`, `a!`, a function without a body, decorators on both
-    // sides of `export`. Of the rest some is Flow to it, and Prettier's own tests have the rest formatted by other parsers.
+    // Refused even where types are tolerated: `type A = 1`, `a!`, a function without a body, decorators on both sides of
+    // `export`.
+    let is_strict = types == TypesInJavaScript::Refused;
     let is_typescript = |it: &Diagnostic| {
-        matches!(it.kind, DiagnosticKind::Js | DiagnosticKind::Grammar)
-            && matches!(it.code, 1206 | 8008 | 8013 | 8017 | 8038)
+        (is_strict && it.kind == DiagnosticKind::Js
+            || matches!(it.kind, DiagnosticKind::Js | DiagnosticKind::Grammar)
+                && matches!(it.code, 1206 | 8008 | 8013 | 8017 | 8038))
             && !file.is_in_jsdoc(it.start)
     };
+    // `declare module "a" {}`, `declare global {}`, `export as namespace A`: the parser says nothing about them.
+    let is_declaration = |it: Stmt| {
+        matches!(
+            it.try_raw().map(|it| it.kind),
+            Some(StmtKind::Module(_) | StmtKind::ExportAsNamespace(_))
+        )
+    };
     match file.is_javascript() {
-        true if !goes_to_flow(file) && of_parser.clone().any(is_typescript) => true,
+        true if goes_to_flow(file) => espree::is_refused_by_babel(file),
+        true if of_parser.clone().any(is_typescript) => true,
+        true if is_strict && file.body().iter().any(is_declaration) => true,
         true => espree::is_refused_by_babel(file),
         false => typescript_estree::first_error(file, true).is_some(),
     }

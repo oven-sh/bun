@@ -25,7 +25,7 @@ use bun_lint::js_plugin::Host;
 use bun_lint::language::{Global, LanguageOptions, Parser, SourceType};
 use bun_lint::linter::{
     Config, FileConfig, LintMessage, LintOptions, Linter, RcFlavor, Registry, ResolvedConfig,
-    RuleId, Utf16Offsets, severity_of, testing,
+    RuleId, TypesInJavaScript, Utf16Offsets, severity_of, testing,
 };
 use bun_lint::options::Json;
 use bun_sema::atom::Interner;
@@ -858,7 +858,7 @@ fn diagnostics(args: &[String]) {
 }
 
 /// `prettier <cases.json>`: for each `{ code, filename }`, whether Prettier refuses it, whether the parser has reported
-/// something, and what it has left in the HIR. The file is parsed and bound as for formatting: in the dialect of Babel, as a module, without symbols.
+/// something, what it has left in the HIR, and whether Prettier refuses it if types in JavaScript are tolerated. The file is parsed and bound as for formatting: in the dialect of Babel, as a module, without symbols.
 fn prettier(args: &[String]) {
     let mut all = Vec::new();
     for case in &read_cases(args) {
@@ -889,9 +889,13 @@ fn prettier(args: &[String]) {
         let bound = bun_sema::bind::bind_for_format(&hir, bind_options, &atoms, arena);
         let file = File::new(path, &hir, &bound, &atoms, &language, None);
         all.push(Json::Array(vec![
-            Json::Bool(bun_lint::linter::refused_by_prettier(&file)),
+            Json::Bool(bun_lint::linter::refused_by_prettier_with(
+                &file,
+                TypesInJavaScript::Refused,
+            )),
             Json::Bool(file.has_parse_errors()),
             Json::Array(testing::diagnostics(&file)),
+            Json::Bool(bun_lint::linter::refused_by_prettier(&file)),
         ]));
     }
     let mut out = Vec::new();

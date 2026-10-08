@@ -19,8 +19,8 @@ pub(crate) fn write_block_statement<'a>(statement: Stmt<'a>, body: List<'a, Stmt
     });
 
     if is_empty_block(body) {
-        // `if (a) /* comment */ {}` becomes `if (a) { /* comment */ }`: comments that are before
-        // the block are written in it.
+        // `try // comment\n{}`: the comments before the block that are not written yet are written
+        // in it.
         if comments_before_catch_clause.is_some() || f.comments().has_comment_before(statement.span().end) {
             write!(
                 f,

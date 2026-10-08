@@ -1,6 +1,7 @@
 //! The statements that do not have a file of their own.
 
 use super::parameters::can_avoid_parentheses;
+use super::program::ends_before_semicolon;
 use super::semicolon::OptionalSemicolon;
 use crate::js::format::identifier;
 use crate::js::parentheses::expression::expression_needs_parentheses;
@@ -530,10 +531,14 @@ pub(crate) fn write_labeled_statement<'a>(statement: Stmt<'a>, body: Stmt<'a>, f
     let comments = f.comments().comments_before(body_start);
     let placements = comment_placements(comments, body_start, f);
     let all = || comments.iter().map(std::slice::from_ref).zip(placements.iter().copied());
-    for (comment, placement) in all() {
-        if matches!(placement, CommentPlacement::OwnLine | CommentPlacement::EndOfLine) {
-            write!(f, FormatLeadingComments::Comments(comment));
-        }
+    let before_label =
+        || all().filter(|(_, it)| matches!(it, CommentPlacement::OwnLine | CommentPlacement::EndOfLine));
+    if before_label().any(|(comment, _)| comment.first().is_some_and(|it| f.comments().is_suppression_comment(it))) {
+        let span = f.comments().without_semicolon(statement.span());
+        return write!(f, [FormatSuppressedNode(span), ends_before_semicolon(statement).then_some(OptionalSemicolon)]);
+    }
+    for (comment, _) in before_label() {
+        write!(f, FormatLeadingComments::Comments(comment));
     }
     write!(f, source_text(label.span()));
     for (comment, _) in all().filter(|(_, placement)| *placement == CommentPlacement::BeforeToken) {

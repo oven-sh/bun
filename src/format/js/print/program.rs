@@ -72,7 +72,7 @@ pub(crate) fn is_next_line_empty(source: SourceText<'_>, position: u32) -> bool 
 }
 
 /// Whether Prettier's `locEnd` of `statement` is before the `;` at its end.
-fn ends_before_semicolon(statement: Stmt<'_>) -> bool {
+pub(crate) fn ends_before_semicolon(statement: Stmt<'_>) -> bool {
     let mut statement = statement;
     loop {
         statement = match statement.kind() {
@@ -141,6 +141,15 @@ impl<'a> Format<'a> for FormatStatements<'a> {
             }
             write_semicolon_before_type_cast_comment(statement, f);
             write!(f, statement);
+        }
+
+        // `a; // comment\n;`: the comments around an empty statement at the end trail `a`.
+        if previous.is_some()
+            && !f.is_quiet()
+            && let Some(last) = self.0.last().filter(|last| matches!(last.kind(), StmtKind::Empty))
+        {
+            let end = last.ast_parent().span().end;
+            write!(f, FormatTrailingComments::Comments(f.comments().comments_before(end)));
         }
     }
 }

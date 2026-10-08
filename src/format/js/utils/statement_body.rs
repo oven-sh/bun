@@ -78,11 +78,16 @@ impl<'a> Format<'a> for FormatBodyAndItsComments<'a> {
         //     else {}
         //
         // `comment1` trails the statement, `comment2` is left for the `else`.
-        if matches!(body.kind(), StmtKind::Block(_)) || f.comments().has_trailing_suppression_comment(body.span().end) {
+        if matches!(body.kind(), StmtKind::Block(_)) {
             return write!(f, FormatNodeWithoutTrailingComments(&body));
         }
         let end = f.comments().without_semicolon(body.span()).end;
-        let previous_limit = f.comments_mut().limit_comments_up_to(end);
+        // `statement; // prettier-ignore` has to see its comment.
+        let limit = match f.comments().has_trailing_suppression_comment(body.span().end) {
+            true => f.comments().end_of_line_comments_after(body.span().end).last().map_or(end, |last| last.span.end),
+            false => end,
+        };
+        let previous_limit = f.comments_mut().limit_comments_up_to(limit);
         write!(f, body);
         f.comments_mut().restore_view_limit(previous_limit);
         let comments = comments_before_else(body, alternate, f);
@@ -92,7 +97,7 @@ impl<'a> Format<'a> for FormatBodyAndItsComments<'a> {
                 !comment.is_multiline_block() && !f.source_text().contains_newline_between(end, comment.span.start)
             })
             .count();
-        write!(f, FormatTrailingComments::Comments(&comments[..count]));
+        write!(f, FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default()));
     }
 }
 
@@ -108,5 +113,5 @@ pub(crate) fn comments_before_else<'a>(consequent: Stmt<'a>, alternate: Stmt<'a>
             !bun_core::strings::contains(gap, b"else")
         })
         .count();
-    &comments[..count]
+    comments.get(..count).unwrap_or_default()
 }

@@ -60,7 +60,7 @@ use cache::Cache;
 pub use flat::ConfigError;
 use merge::RuleSetting;
 use minimatch::{Minimatch, split_path};
-pub use rc::RcFlavor;
+pub use rc::{RcFlavor, oxlint_category};
 use std::sync::Arc;
 
 #[doc(hidden)]

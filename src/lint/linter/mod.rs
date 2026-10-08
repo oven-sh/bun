@@ -41,7 +41,7 @@ mod schema;
 mod space;
 mod syntax;
 
-pub use config::{Config, ConfigError, FileConfig, Glob, RcFlavor};
+pub use config::{Config, ConfigError, FileConfig, Glob, RcFlavor, oxlint_category};
 pub use fixer::{FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, verify_and_fix};
 pub use globals::{CommentGlobal, GlobalVariable};
 pub use levn::parse_object as parse_levn_object;

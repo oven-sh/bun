@@ -320,9 +320,9 @@ impl Input<'_, '_> {
             for &it in &mut applying {
                 let source = switches[it as usize].source;
                 let parent = &self.parents[self.directives[source as usize].parent as usize];
-                message.suppressions.push(Suppression {
-                    justification: parent.justification.into(),
-                });
+                message
+                    .suppressions
+                    .push(Suppression::directive(parent.justification));
                 last = Some(source);
             }
             if let Some(last) = last

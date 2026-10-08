@@ -366,11 +366,11 @@ impl LanguageOptions {
                 }),
             },
         };
+        let is_script = self.scope_source_type() != SourceType::Module;
         ParseOptions {
-            dialect: Dialect {
-                ecmascript: self.parser == Parser::Espree,
-                script: self.scope_source_type() != SourceType::Module,
-                ..Dialect::default()
+            dialect: match self.parser {
+                Parser::Espree => Dialect::espree(is_script),
+                Parser::TypeScript | Parser::Other => Dialect::typescript_estree(is_script),
             },
             script_kind,
             experimental_decorators: self.experimental_decorators,

@@ -29,6 +29,20 @@ pub enum RcFlavor {
     Eslint,
 }
 
+/// The category that oxlint has the rule in: `correctness`, `suspicious`, `pedantic`, `perf`, `style`, `restriction`, `nursery`.
+pub fn oxlint_category(plugin: Plugin, name: &str) -> Option<&'static str> {
+    let has = |lists: &[(&str, &str)]| {
+        (lists
+            .iter()
+            .filter(|it| Plugin::of_prefix(it.0.as_bytes()) == Some(plugin)))
+        .any(|it| strings::split(it.1.as_bytes(), b" ").any(|it| it == name.as_bytes()))
+    };
+    categories::CATEGORIES
+        .iter()
+        .find(|it| has(it.1))
+        .map(|it| it.0)
+}
+
 /// The files that are linted if nothing else says so.
 const LINTED_FILES: &[u8] = b"**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}";
 

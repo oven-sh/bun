@@ -56,6 +56,22 @@ pub struct Suppression {
     pub justification: Box<[u8]>,
 }
 
+impl Suppression {
+    /// By an `eslint-disable` comment.
+    pub fn directive(justification: &[u8]) -> Suppression {
+        Suppression {
+            justification: justification.into(),
+        }
+    }
+
+    /// By `eslint-suppressions.json`.
+    pub fn file() -> Suppression {
+        Suppression {
+            justification: Box::default(),
+        }
+    }
+}
+
 /// ESLint's `LintMessage`, and with [`LintMessage::suppressions`] its `SuppressedLintMessage`.
 #[derive(Clone, Debug)]
 pub struct LintMessage {
@@ -64,6 +80,7 @@ pub struct LintMessage {
     /// Never [`Severity::Off`].
     pub severity: Severity,
     pub message: Vec<u8>,
+    /// `None`: it is from the linter itself. Empty: from a rule whose messages have no ids.
     pub message_id: Option<&'static str>,
     /// From 1. 0 in a fatal message: it has no place, and ESLint has neither `line` nor `column`.
     pub line: u32,
@@ -284,7 +301,7 @@ impl LintMessage {
         if !self.is_fatal || self.line != 0 {
             let _ = write!(out, ",\"line\":{},\"column\":{}", self.line, self.column);
         }
-        if let Some(id) = self.message_id {
+        if let Some(id) = self.message_id.filter(|it| !it.is_empty()) {
             out.extend_from_slice(b",\"messageId\":");
             write_json_string(out, id.as_bytes());
         }
@@ -300,6 +317,15 @@ impl LintMessage {
             for (i, suggestion) in self.suggestions.iter().enumerate() {
                 if i > 0 {
                     out.push(b',');
+                }
+                // A rule that has no ids writes `desc` itself, first.
+                if suggestion.message_id.is_empty() {
+                    out.extend_from_slice(b"{\"desc\":");
+                    write_json_string(out, &suggestion.message);
+                    out.extend_from_slice(b",\"fix\":");
+                    write_fix(out, &suggestion.fix, offsets);
+                    out.push(b'}');
+                    continue;
                 }
                 out.extend_from_slice(b"{\"messageId\":");
                 write_json_string(out, suggestion.message_id.as_bytes());

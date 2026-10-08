@@ -1,8 +1,9 @@
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::is_intrinsic_error_type;
 use bun_lint::types::{Type, TypeFlags};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHasher};
 use smallvec::SmallVec;
+use std::hash::{Hash, Hasher};
 
 /// Disallow duplicate constituents of union or intersection types.
 pub struct NoDuplicateTypeConstituents {
@@ -117,12 +118,24 @@ fn is_same_tuple_elem<'a>(a: TupleElem<'a>, b: TupleElem<'a>) -> bool {
 
 /// Upstream's `isSameAstNode`: the two are written the same, but for whitespace, comments,
 /// parentheses and separators.
-fn is_same_ast_node<'a>(a: TypeNode<'a>, b: TypeNode<'a>) -> bool {
-    if a.tag() != b.tag() {
+fn is_same_ast_node<'a>(mut a: TypeNode<'a>, mut b: TypeNode<'a>) -> bool {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return false;
     }
-    if a.text() == b.text() {
-        return true;
+    // `T[][]` is as deep as it is long.
+    loop {
+        if a.tag() != b.tag() {
+            return false;
+        }
+        if a.text() == b.text() {
+            return true;
+        }
+        match (a.kind(), b.kind()) {
+            (TypeKind::Array(operand_a), TypeKind::Array(operand_b))
+            | (TypeKind::Keyof(operand_a), TypeKind::Keyof(operand_b))
+            | (TypeKind::Readonly(operand_a), TypeKind::Readonly(operand_b)) => (a, b) = (operand_a, operand_b),
+            _ => break,
+        }
     }
     match (a.kind(), b.kind()) {
         (
@@ -135,9 +148,6 @@ fn is_same_ast_node<'a>(a: TypeNode<'a>, b: TypeNode<'a>) -> bool {
             all_same(name.parts(), other_name.parts(), is_same_name)
                 && all_same(args.iter(), other_args.iter(), is_same_ast_node)
         }
-        (TypeKind::Array(a), TypeKind::Array(b))
-        | (TypeKind::Keyof(a), TypeKind::Keyof(b))
-        | (TypeKind::Readonly(a), TypeKind::Readonly(b)) => is_same_ast_node(a, b),
         (TypeKind::Union(a), TypeKind::Union(b))
         | (TypeKind::Intersection(a), TypeKind::Intersection(b)) => {
             all_same(a.iter(), b.iter(), is_same_ast_node)
@@ -198,6 +208,117 @@ fn is_same_ast_node<'a>(a: TypeNode<'a>, b: TypeNode<'a>) -> bool {
         // Keywords and literals, which are the same only if their text is.
         _ => false,
     }
+}
+
+/// Hashes `text`, of which [`is_same_source`] is asked, without its whitespace. `None` if there can be more to two such texts
+/// than that: a comment, an escape, a character that is not ASCII.
+fn hash_source(text: &[u8], hasher: &mut FxHasher) -> Option<()> {
+    let mut previous = 0;
+    for &byte in text {
+        match byte {
+            b'\\' | b'/' | 0x80.. => return None,
+            // `<!--` and `-->` can start a comment.
+            b'-' if previous == b'-' => return None,
+            b'\t'..=b'\r' | b' ' => {}
+            _ => hasher.write_u8(byte),
+        }
+        previous = byte;
+    }
+    hasher.write_u8(0xFF);
+    Some(())
+}
+
+fn hash_func(func: Func, depth: u32, hasher: &mut FxHasher) -> Option<()> {
+    for param in func.params_with_this() {
+        hasher.write_u8(0xFF);
+        if let Some(ty) = param.ty() {
+            hash_ast_node(ty, depth, hasher)?;
+        }
+    }
+    match func.return_type() {
+        Some(return_type) => hash_ast_node(return_type, depth, hasher),
+        None => Some(()),
+    }
+}
+
+/// Hashes some of what two types have in common if [`is_same_ast_node`] holds for them.
+fn hash_ast_node(mut node: TypeNode, depth: u32, hasher: &mut FxHasher) -> Option<()> {
+    while let TypeKind::Array(operand) | TypeKind::Keyof(operand) | TypeKind::Readonly(operand) = node.kind() {
+        node.tag().hash(hasher);
+        node = operand;
+    }
+    node.tag().hash(hasher);
+    if depth >= 16 {
+        return Some(());
+    }
+    let depth = depth + 1;
+    match node.kind() {
+        TypeKind::Ref { name, args } => {
+            for part in name.parts() {
+                hasher.write(part.bytes());
+                hasher.write_u8(0xFF);
+            }
+            for argument in args {
+                hash_ast_node(argument, depth, hasher)?;
+            }
+        }
+        TypeKind::Union(types) | TypeKind::Intersection(types) => {
+            for ty in types {
+                hash_ast_node(ty, depth, hasher)?;
+            }
+        }
+        TypeKind::Tuple(elements) => {
+            for element in elements {
+                hash_ast_node(element.ty(), depth, hasher)?;
+            }
+        }
+        TypeKind::Fn(func) => hash_func(func, depth, hasher)?,
+        TypeKind::Object(members) => {
+            let file = node.file();
+            for member in members {
+                if let Some(key) = member.key() {
+                    hash_source(file.slice(key.span(file)), hasher)?;
+                }
+                if let Some(ty) = member.ty() {
+                    hash_ast_node(ty, depth, hasher)?;
+                }
+                if let Some(func) = member.func() {
+                    hash_func(func, depth, hasher)?;
+                }
+            }
+        }
+        TypeKind::Cond {
+            check,
+            extends,
+            yes,
+            no,
+        } => {
+            for ty in [check, extends, yes, no] {
+                hash_ast_node(ty, depth, hasher)?;
+            }
+        }
+        TypeKind::IndexedAccess { obj, index } => {
+            hash_ast_node(obj, depth, hasher)?;
+            hash_ast_node(index, depth, hasher)?;
+        }
+        TypeKind::Template(_) | TypeKind::Typeof { .. } | TypeKind::Import { .. } => hash_source(node.text(), hasher)?,
+        // The same only if their text is.
+        TypeKind::Keyword(_)
+        | TypeKind::StringLit(_)
+        | TypeKind::NumberLit(_)
+        | TypeKind::BigIntLit { .. }
+        | TypeKind::BoolLit(_) => hasher.write(node.text()),
+        _ => {}
+    }
+    Some(())
+}
+
+/// A number that is the same for two types for which [`is_same_ast_node`] holds. `None`: whether it holds for this type and
+/// another takes a comparison.
+fn fingerprint(node: TypeNode) -> Option<u64> {
+    let mut hasher = FxHasher::default();
+    hash_ast_node(node, 0, &mut hasher)?;
+    Some(hasher.finish())
 }
 
 /// `previous`: for [`DUPLICATE`], `Union` or `Intersection` and the constituent that it repeats.
@@ -283,6 +404,9 @@ struct Index<'a> {
     by_type: FxHashMap<Type<'a>, TypeNode<'a>>,
     /// Those that are not [plain](is_plain).
     not_plain: Vec<TypeNode<'a>>,
+    /// The same, by their [`fingerprint`].
+    by_fingerprint: FxHashMap<u64, SmallVec<[TypeNode<'a>; 1]>>,
+    without_fingerprint: Vec<TypeNode<'a>>,
 }
 
 impl<'a> Index<'a> {
@@ -296,7 +420,24 @@ impl<'a> Index<'a> {
         self.by_type.insert(ty, node);
         if !is_plain(node) {
             self.not_plain.push(node);
+            match fingerprint(node) {
+                Some(fingerprint) => self.by_fingerprint.entry(fingerprint).or_default().push(node),
+                None => self.without_fingerprint.push(node),
+            }
         }
+    }
+
+    /// The one that is not [plain](is_plain) and the same as `node`. No two of them are the same.
+    fn find_not_plain(&self, node: TypeNode<'a>) -> Option<TypeNode<'a>> {
+        let is_same = |it: &TypeNode<'a>| is_same_ast_node(*it, node);
+        if is_plain(node) {
+            return None;
+        }
+        let Some(fingerprint) = fingerprint(node) else {
+            return self.not_plain.iter().copied().find(is_same);
+        };
+        let with_the_same = self.by_fingerprint.get(&fingerprint).map(|it| it.as_slice()).unwrap_or_default();
+        with_the_same.iter().chain(&self.without_fingerprint).copied().find(is_same)
     }
 }
 
@@ -319,7 +460,7 @@ impl<'a> Constituents<'a> {
             None => self.unique.iter().map(|it| it.0).find(is_same),
             Some(index) => {
                 let same_key = index.by_key.get(&Index::key(node)).copied();
-                same_key.or_else(|| index.not_plain.iter().copied().find(is_same))
+                same_key.or_else(|| index.find_not_plain(node))
             }
         }
     }

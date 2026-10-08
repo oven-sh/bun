@@ -1636,9 +1636,7 @@ where
         object: JSValue,
         optional: Option<JSValue>,
     ) -> JsResult<JSValue> {
-        use super::node_http_response::Flags as NodeHTTPResponseFlags;
         use bun_core::Utf8Bytes;
-        use bun_jsc::HTTPHeaderName;
 
         if self.config.websocket.is_none() {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -1662,122 +1660,6 @@ where
             .is_some_and(|ws| ws.handler.server.is_none())
         {
             return Ok(JSValue::FALSE);
-        }
-
-        if let Some(node_http_response) = <NodeHTTPResponse as bun_jsc::JsClass>::from_js(object) {
-            // SAFETY: from_js returns a live *mut NodeHTTPResponse; shared —
-            // its mutable state is `Cell`/`JsCell` and `upgrade` takes `&self`.
-            let node_http_response = unsafe { &*node_http_response };
-            let is_ended_or_closed = || {
-                node_http_response
-                    .flags
-                    .get()
-                    .intersects(NodeHTTPResponseFlags::ENDED | NodeHTTPResponseFlags::SOCKET_CLOSED)
-            };
-            if is_ended_or_closed() {
-                return Ok(JSValue::FALSE);
-            }
-
-            let mut data_value = JSValue::ZERO;
-
-            // if we converted a HeadersInit to a Headers object, we need to free it
-            let fetch_headers_to_deref: core::cell::Cell<Option<*mut FetchHeaders>> =
-                core::cell::Cell::new(None);
-            let _fh_guard = scopeguard::guard(&fetch_headers_to_deref, |cell| {
-                if let Some(fh) = cell.get() {
-                    // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-                    bun_opaque::opaque_deref_mut(fh).deref();
-                }
-            });
-
-            // Copied out of `options.headers` because `fast_remove` frees the
-            // entry they would otherwise borrow.
-            let mut sec_websocket_protocol = Utf8Bytes::EMPTY;
-            let mut sec_websocket_extensions = Utf8Bytes::EMPTY;
-
-            if let Some(opts) = optional {
-                'getter: {
-                    if opts.is_empty_or_undefined_or_null() {
-                        break 'getter;
-                    }
-
-                    if !opts.is_object() {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "upgrade options must be an object"
-                        )));
-                    }
-
-                    if let Some(headers_value) = opts.fast_get(global, jsc::BuiltinName::data)? {
-                        data_value = headers_value;
-                    }
-
-                    if let Some(headers_value) = opts.fast_get(global, jsc::BuiltinName::headers)? {
-                        if headers_value.is_empty_or_undefined_or_null() {
-                            break 'getter;
-                        }
-
-                        let fetch_headers_to_use: *mut FetchHeaders =
-                            match fetch_headers_from_js(headers_value, global) {
-                                Some(h) => h,
-                                None => 'brk: {
-                                    if headers_value.is_object() {
-                                        if let Some(fetch_headers) =
-                                            FetchHeaders::create_from_js(global, headers_value)?
-                                        {
-                                            fetch_headers_to_deref
-                                                .set(Some(fetch_headers.as_ptr()));
-                                            break 'brk fetch_headers.as_ptr();
-                                        }
-                                    }
-                                    return Err(global.throw_invalid_arguments(format_args!(
-                                        "upgrade options.headers must be a Headers or an object"
-                                    )));
-                                }
-                            };
-                        // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-                        let fetch_headers_to_use =
-                            bun_opaque::opaque_deref_mut(fetch_headers_to_use);
-
-                        if let Some(protocol) =
-                            fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketProtocol)
-                        {
-                            sec_websocket_protocol = protocol.to_utf8().into_owned();
-                            // Remove from headers so it's not written twice (once here and once by upgrade())
-                            fetch_headers_to_use.fast_remove(HTTPHeaderName::SecWebSocketProtocol);
-                        }
-
-                        if let Some(extensions) =
-                            fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketExtensions)
-                        {
-                            sec_websocket_extensions = extensions.to_utf8().into_owned();
-                            // Remove from headers so it's not written twice (once here and once by upgrade())
-                            fetch_headers_to_use
-                                .fast_remove(HTTPHeaderName::SecWebSocketExtensions);
-                        }
-                        // Option getters and the headers conversion may have ended the response.
-                        if is_ended_or_closed() {
-                            return Ok(JSValue::FALSE);
-                        }
-                        if let Some(raw_response) = node_http_response.writer() {
-                            // we must write the status first so that 200 OK isn't written
-                            raw_response.write_status(b"101 Switching Protocols");
-                            fetch_headers_to_use.to_uws_response(
-                                if SSL {
-                                    ResponseKind::Ssl
-                                } else {
-                                    ResponseKind::Tcp
-                                },
-                                raw_response.socket().cast::<c_void>(),
-                            );
-                        }
-                    }
-                }
-            }
-            return Ok(JSValue::from(node_http_response.upgrade(
-                data_value,
-                sec_websocket_protocol.slice(),
-                sec_websocket_extensions.slice(),
-            )));
         }
 
         let Some(request_ptr) = <Request as bun_jsc::JsClass>::from_js(object) else {

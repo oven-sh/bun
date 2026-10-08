@@ -3599,7 +3599,8 @@ class ServerHttp2Stream extends Http2Stream {
       const headersObject = { __proto__: null };
       for (let i = 0; i < rawHeadersList.length; i += 2) {
         const key = rawHeadersList[i];
-        const value = rawHeadersList[i + 1];
+        let value = rawHeadersList[i + 1];
+        if (typeof value === "object" && $isArray(value)) value = copyHeaderValueArray(value);
         const existing = headersObject[key];
         if (existing === undefined) headersObject[key] = value;
         else if ($isArray(existing)) existing.push(value);
@@ -3912,6 +3913,17 @@ function buildSensitiveNames(headers, sensitives): Record<string, boolean> {
     }
   }
   return map;
+}
+
+// The fold of a raw header list into sentHeaders pushes a later duplicate of a name into the
+// name's array. The list is encoded after the fold, so that array is a copy of the caller's.
+// node pushes into the caller's array, on a read of sentHeaders:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2173
+function copyHeaderValueArray(values: any[]): any[] {
+  const length = values.length;
+  const copy = $newArrayWithSize(length);
+  for (let i = 0; i < length; i++) $putByValDirect(copy, i, values[i]);
+  return copy;
 }
 
 function toHeaderObject(headers, sensitiveHeadersValue) {
@@ -6039,7 +6051,8 @@ class ClientHttp2Session extends Http2Session {
         const headersObject = { __proto__: null };
         for (let i = 0; i < rawHeadersList.length; i += 2) {
           const key = rawHeadersList[i];
-          const value = rawHeadersList[i + 1];
+          let value = rawHeadersList[i + 1];
+          if (typeof value === "object" && $isArray(value)) value = copyHeaderValueArray(value);
           const existing = headersObject[key];
           if (existing === undefined) headersObject[key] = value;
           else if ($isArray(existing)) existing.push(value);

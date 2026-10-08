@@ -95,6 +95,8 @@ fn format_embedded(
         return Some(Vec::new());
     }
     let parser = infer_parser(language)?;
+    // To the parsers of Prettier it is white space.
+    let code = code.strip_prefix(BOM).unwrap_or(code);
     let options = FormatOptions {
         line_width: LineWidth(width.clamp(1, usize::from(u16::MAX)) as u16),
         line_ending: LineEnding::Lf,
@@ -237,6 +239,7 @@ fn with_document<R>(
     let root = block::parse(text, tree).ok_or(FormatError::NestedTooDeeply)?;
     let mut preprocessor = preprocess::Preprocessor {
         text,
+        wraps_lines: options.prose_wrap == crate::options::ProseWrap::Always,
         tree,
         tab_width: usize::from(options.indent_width.value()),
         stack_check: bun_core::StackCheck::init(),

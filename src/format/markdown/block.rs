@@ -1644,6 +1644,7 @@ impl<'t> Parser<'t> {
     fn parse_pending(&mut self) {
         let mut content = std::mem::take(&mut self.content);
         let max_definition_len = self.definitions.iter().map(Vec::len).max().unwrap_or(0);
+        let mut spare_items = Vec::new();
         for pending in std::mem::take(&mut self.pending) {
             let segments = &self.segments[pending.first_segment..pending.first_segment + pending.segment_count];
             content.fill(self.text, segments);
@@ -1657,9 +1658,11 @@ impl<'t> Parser<'t> {
                 footnotes: &self.footnotes,
                 stack_check: self.stack_check,
                 is_nested_too_deeply: false,
+                spare_items,
             };
             context.parse(pending.node);
             self.is_nested_too_deeply |= context.is_nested_too_deeply;
+            spare_items = context.spare_items;
         }
     }
 }

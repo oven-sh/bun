@@ -478,7 +478,7 @@ fn parse_protocol_literal(bytes: &[u8], start: usize) -> Option<usize> {
 // ───────────────────────────── items ─────────────────────────────
 
 #[derive(Copy, Clone, Debug)]
-enum Item {
+pub(crate) enum Item {
     /// Characters that stand for themselves.
     Data { start: usize, end: usize },
     /// `\*`, `&amp;`
@@ -514,6 +514,8 @@ pub(crate) struct Context<'c> {
     pub(crate) footnotes: &'c FxHashSet<Vec<u8>>,
     pub(crate) stack_check: bun_core::StackCheck,
     pub(crate) is_nested_too_deeply: bool,
+    /// A vector to be used again.
+    pub(crate) spare_items: Vec<Item>,
 }
 
 impl Context<'_> {
@@ -559,8 +561,13 @@ impl Context<'_> {
     pub(crate) fn parse(&mut self, parent: NodeId) {
         let is_first_in_item = self.is_first_content_of_item(parent);
         let (items, first_resolver) = self.tokenize(parent, is_first_in_item);
-        let items = self.resolve_all(items, first_resolver);
+        let mut items = match first_resolver {
+            Some(first_resolver) => self.resolve_all(items, first_resolver),
+            None => items,
+        };
         self.append_items(parent, &items);
+        items.clear();
+        self.spare_items = items;
         if is_first_in_item {
             self.strip_space_after_check(parent);
         }
@@ -574,6 +581,42 @@ fn push_without_nul(bytes: &[u8], out: &mut Vec<u8>) {
         }
         out.extend_from_slice(part);
     }
+}
+
+const fn special_bytes(with_atext: bool) -> [bool; 256] {
+    let mut table = [false; 256];
+    let special = b"\n\\&`$<*_~![]{";
+    let mut index = 0;
+    while index < special.len() {
+        table[special[index] as usize] = true;
+        index += 1;
+    }
+    let mut byte = 0;
+    while with_atext && byte < 128 {
+        if (byte as u8).is_ascii_alphanumeric() || matches!(byte as u8, b'+' | b'-' | b'.') {
+            table[byte] = true;
+        }
+        byte += 1;
+    }
+    table
+}
+
+/// The bytes at which something other than text can start.
+static IS_SPECIAL: [bool; 256] = special_bytes(false);
+/// The same with what an address or a URL can start with.
+static IS_SPECIAL_OR_ATEXT: [bool; 256] = special_bytes(true);
+
+/// Whether `www.` is in `bytes`, in any case.
+fn has_www(bytes: &[u8]) -> bool {
+    let mut from = 0;
+    while let Some(at) = bun_core::strings::index_of_char_usize(&bytes[from..], b'.') {
+        let dot = from + at;
+        if dot >= 3 && bytes[dot - 3..dot].eq_ignore_ascii_case(b"www") {
+            return true;
+        }
+        from = dot + 1;
+    }
+    false
 }
 
 /// Which of the two is resolved first: the one that is seen first.
@@ -605,12 +648,16 @@ impl Context<'_> {
         true
     }
 
-    fn tokenize(&mut self, parent: NodeId, is_first_in_item: bool) -> (Vec<Item>, FirstResolver) {
+    fn tokenize(&mut self, parent: NodeId, is_first_in_item: bool) -> (Vec<Item>, Option<FirstResolver>) {
         let content = self.content;
         let bytes = &content.bytes[..];
-        let mut items: Vec<Item> = Vec::new();
+        let mut items: Vec<Item> = std::mem::take(&mut self.spare_items);
         // The indices of the label starts that can still be matched.
-        let mut label_starts: Vec<usize> = Vec::new();
+        let mut label_starts: smallvec::SmallVec<[usize; 8]> = smallvec::SmallVec::new();
+        // Letters and digits only matter where a link can start that is not marked as one.
+        let can_have_email = !self.is_plain && bun_core::strings::contains_char(bytes, b'@');
+        let can_have_url = !self.is_plain && (bun_core::strings::contains(bytes, b"://") || has_www(bytes));
+        let is_special = if can_have_email || can_have_url { &IS_SPECIAL_OR_ATEXT } else { &IS_SPECIAL };
         let mut first_resolver = None;
         let mut next_wiki_link_end = 0;
         let mut has_no_liquid_end = [false; 2];
@@ -642,7 +689,12 @@ impl Context<'_> {
             (index, data_start) = (3, 3);
         }
 
-        while let Some(&byte) = bytes.get(index) {
+        loop {
+            let rest = &bytes[index.min(bytes.len())..];
+            index += rest.iter().take_while(|&&byte| !is_special[usize::from(byte)]).count();
+            let Some(&byte) = bytes.get(index) else {
+                break;
+            };
             match byte {
                 b'\n' => {
                     // The white space before it is not part of the text. Two spaces or more are a break.
@@ -746,7 +798,7 @@ impl Context<'_> {
                 // An address can start with an underscore.
                 b'*' | b'_'
                     if byte == b'*'
-                        || self.is_plain
+                        || !can_have_email
                         || !label_starts.is_empty()
                         || index.checked_sub(1).is_some_and(|before| bytes[before] == b'/' || is_gfm_atext(bytes[before]))
                         || parse_email_literal(bytes, index).is_none() =>
@@ -884,17 +936,18 @@ impl Context<'_> {
                     None => index += 1,
                 },
                 // No literal autolinks in what can still become the text of a link.
-                _ if is_gfm_atext(byte) && label_starts.is_empty() && !self.is_plain => {
+                _ if is_gfm_atext(byte) && label_starts.is_empty() => {
                     let previous = index.checked_sub(1).map(|before| bytes[before]);
-                    let end = (previous.is_none_or(|it| it != b'/' && !is_gfm_atext(it)))
+                    let end = (can_have_email && previous.is_none_or(|it| it != b'/' && !is_gfm_atext(it)))
                         .then(|| parse_email_literal(bytes, index).map(|end| (end, &b"mailto:"[..])))
                         .flatten()
                         .or_else(|| match byte {
-                            b'h' | b'H' if previous.is_none_or(|it| !it.is_ascii_alphabetic()) => {
+                            b'h' | b'H' if can_have_url && previous.is_none_or(|it| !it.is_ascii_alphabetic()) => {
                                 parse_protocol_literal(bytes, index).map(|end| (end, &b""[..]))
                             }
                             b'w' | b'W'
-                                if previous
+                                if can_have_url
+                                    && previous
                                     .is_none_or(|it| matches!(it, b'(' | b'*' | b'_' | b'[' | b']' | b'~' | b' ' | b'\t' | b'\n')) =>
                             {
                                 parse_www_literal(bytes, index).map(|end| (end, &b"http://"[..]))
@@ -928,7 +981,7 @@ impl Context<'_> {
         // White space at the end is not part of the text.
         let blanks = bytes[data_start..].iter().rev().take_while(|&&byte| is_space(byte)).count();
         flush!(bytes.len() - blanks);
-        (items, first_resolver.unwrap_or(FirstResolver::Strikethrough))
+        (items, first_resolver)
     }
 
     fn text_node(&mut self, start: usize, end: usize) -> NodeId {
@@ -1237,6 +1290,9 @@ impl Context<'_> {
 
     /// micromark's `resolveAll` of what can be in a span.
     fn resolve_all(&mut self, items: Vec<Item>, first: FirstResolver) -> Vec<Item> {
+        if !items.iter().any(|item| matches!(item, Item::Sequence { .. })) {
+            return items;
+        }
         match first {
             FirstResolver::Strikethrough => {
                 let items = self.resolve_strikethrough(items);

@@ -113,17 +113,29 @@ fn is_commonmark_whitespace(c: char) -> bool {
 }
 
 /// Collects the parts of a `fill`: content and separators take turns.
+///
+/// Where lines are not wrapped, every separator is a forced line break, and a `fill` writes the same as its parts
+/// one after the other. So that is what is made then, which is less work for everybody.
 struct FillParts<'a> {
+    is_fill: bool,
     parts: Vec<Doc<'a>>,
-    /// The content that is being put together.
+    /// The content that is being put together, of a `fill`.
     content: Vec<Doc<'a>>,
 }
 
 impl<'a> FillParts<'a> {
-    fn new() -> Self {
+    fn new(is_fill: bool) -> Self {
         FillParts {
+            is_fill,
             parts: Vec::new(),
             content: Vec::new(),
+        }
+    }
+
+    fn content(&mut self, doc: Doc<'a>) {
+        match self.is_fill {
+            true => self.content.push(doc),
+            false => self.parts.push(doc),
         }
     }
 
@@ -137,27 +149,43 @@ impl<'a> FillParts<'a> {
     }
 
     fn separator(&mut self, separator: Doc<'a>) {
-        self.end_content();
+        if self.is_fill {
+            self.end_content();
+        }
         self.parts.push(separator);
+    }
+
+    fn hardline(&mut self) {
+        match self.is_fill {
+            true => self.separator(hardline()),
+            false => self.parts.extend([Doc::Line(Line::Hard), Doc::BreakParent]),
+        }
     }
 
     /// Prettier's `flattenFill`: the parts of a `fill` in `doc` become parts of this one.
     fn flatten(&mut self, doc: Doc<'a>) {
         match doc {
+            Doc::Array(mut docs) if !self.is_fill => match self.parts.is_empty() {
+                true => self.parts = docs,
+                false => self.parts.append(&mut docs),
+            },
             Doc::Array(docs) => docs.into_iter().for_each(|doc| self.flatten(doc)),
             Doc::Fill(parts) => {
                 for (index, part) in parts.into_iter().enumerate() {
                     match index % 2 {
-                        0 => self.content.push(part),
+                        0 => self.content(part),
                         _ => self.separator(part),
                     }
                 }
             }
-            doc => self.content.push(doc),
+            doc => self.content(doc),
         }
     }
 
     fn finish(mut self) -> Doc<'a> {
+        if !self.is_fill {
+            return Doc::Array(self.parts);
+        }
         self.end_content();
         fill(self.parts)
     }
@@ -356,9 +384,9 @@ impl<'a> Printer<'a, '_> {
         while let Some(node) = self.node(child) {
             if let Some(result) = processor(self, child) {
                 if !parts.is_empty() && self.should_pre_print_hardline(node) {
-                    parts.push(hardline());
+                    parts.extend([Doc::Line(Line::Hard), Doc::BreakParent]);
                     if self.should_pre_print_double_hardline(node) {
-                        parts.push(hardline());
+                        parts.extend([Doc::Line(Line::Hard), Doc::BreakParent]);
                     }
                 }
                 parts.push(result);
@@ -520,23 +548,87 @@ impl<'a> Printer<'a, '_> {
 
     fn add_whitespace(parts: &mut FillParts<'a>, whitespace: &Whitespace) {
         match *whitespace {
-            Whitespace::Text(text) => parts.content.push(Doc::from(text)),
+            Whitespace::Text(text) => parts.content(Doc::from(text)),
             Whitespace::Line => parts.separator(Doc::LINE),
             Whitespace::Softline => parts.separator(Doc::SOFTLINE),
-            Whitespace::Hardline => parts.separator(hardline()),
+            Whitespace::Hardline => parts.hardline(),
         }
+    }
+
+    /// The same for a sentence that has not been split into words: it is ASCII, and lines are not wrapped. What is
+    /// written as it is in the text is one text here.
+    fn print_plain_sentence(&self, node: &Node) -> Doc<'a> {
+        let text = self.str(node.value);
+        let is_white = |byte: u8| matches!(byte, b'\t' | b'\n' | b' ');
+        let is_preserved = self.options.prose_wrap == ProseWrap::Preserve;
+        let mut parts = FillParts::new(false);
+        // Where what has not been written yet starts.
+        let mut start = 0;
+        let mut index = 0;
+        while index < text.len() {
+            // The next white space that is not a single space.
+            let rest = &text[index..];
+            let line_len = bun_core::strings::index_of_any(rest, b"\n\t").unwrap_or(rest.len());
+            let len = bun_core::strings::index_of(&rest[..line_len], b"  ").unwrap_or(line_len);
+            // A space before a line break or a tab belongs to the same white space.
+            index += len - usize::from(len == line_len && len > 0 && rest[len - 1] == b' ');
+            let blanks = text[index..].iter().take_while(|&&byte| is_white(byte)).count();
+            if blanks == 0 {
+                break;
+            }
+            let (white_start, white_end) = (index, index + blanks);
+            index = white_end;
+            if blanks == 1 && text[white_start] == b' ' {
+                continue;
+            }
+            if start < white_start {
+                parts.content(Doc::from(&text[start..white_start]));
+            }
+            start = white_end;
+            let has_newline = bun_core::strings::contains_char(&text[white_start..white_end], b'\n');
+            if !has_newline || !is_preserved {
+                parts.content(Doc::from(" "));
+                continue;
+            }
+            // The word at the start of the next line, and whether it is all of that line.
+            let word = &text[white_end..];
+            let word = &word[..word.iter().take_while(|&&byte| !is_white(byte)).count()];
+            let after = &text[white_end + word.len()..];
+            let after = &after[..after.iter().take_while(|&&byte| is_white(byte)).count()];
+            let is_whole_line = white_end + word.len() == text.len() || bun_core::strings::contains_char(after, b'\n');
+            if Self::may_start_block(word) && !(word == b"-" && is_whole_line) {
+                parts.content(Doc::from(" "));
+                continue;
+            }
+            parts.hardline();
+            // What looks like the line under a heading is escaped.
+            let is_fake_setext_line = !word.is_empty()
+                && is_whole_line
+                && (word.iter().all(|&byte| byte == b'=') || word.iter().all(|&byte| byte == b'-'))
+                && !node.is_aligned;
+            if is_fake_setext_line {
+                parts.content(Doc::from("\\"));
+            }
+        }
+        if start < text.len() {
+            parts.content(Doc::from(&text[start..]));
+        }
+        parts.finish()
     }
 
     /// Prettier's `printSentence`
     fn print_sentence(&mut self, id: NodeId, node: &Node) -> Doc<'a> {
+        if node.number == preprocess::PLAIN {
+            return self.print_plain_sentence(node);
+        }
         let tokens = self.tokens(node);
         let can_break = self.options.prose_wrap == ProseWrap::Always && !self.is_on_single_line(id);
         let emphasis = self.find_ancestor(id, |it| matches!(it.kind, Kind::Emphasis | Kind::Strong));
         let is_newline = |token: Option<&Token>| token.is_some_and(|it| it.kind == TokenKind::Newline);
-        let mut parts = FillParts::new();
+        let mut parts = FillParts::new(self.options.prose_wrap == ProseWrap::Always);
         for (index, token) in tokens.iter().enumerate() {
             if token.is_word() {
-                parts.content.push(self.print_word(node, tokens, index, emphasis));
+                parts.content(self.print_word(node, tokens, index, emphasis));
                 continue;
             }
             let next = tokens.get(index + 1);
@@ -605,10 +697,10 @@ impl<'a> Printer<'a, '_> {
         let start = node.start;
         preprocess::split_text(source, |from, to| Str::source(start + from as u32, start + to as u32), &mut tokens);
         let can_break = self.options.prose_wrap == ProseWrap::Always && !self.is_on_single_line(id);
-        let mut parts = FillParts::new();
+        let mut parts = FillParts::new(self.options.prose_wrap == ProseWrap::Always);
         for (index, token) in tokens.iter().enumerate() {
             match token.is_word() {
-                true => parts.content.push(Doc::from(self.str(token.value))),
+                true => parts.content(Doc::from(self.str(token.value))),
                 false => Self::add_whitespace(
                     &mut parts,
                     &self.print_whitespace(&tokens, index, self.options.prose_wrap, true, can_break),
@@ -620,16 +712,24 @@ impl<'a> Printer<'a, '_> {
 
     /// Prettier's `prevOrNextWord`: whether a word is right before or behind `node`.
     fn has_word_next_to(&self, node: &Node) -> bool {
-        let word = |sibling: NodeId, is_last: bool| {
+        // Whether the word at that end of the sentence `sibling` has punctuation there, and the character.
+        let word = |sibling: NodeId, is_last: bool| -> Option<(bool, char)> {
             let sentence = self.node(sibling).filter(|it| it.kind == Kind::Sentence)?;
+            if sentence.number == preprocess::PLAIN {
+                let text = self.str(sentence.value);
+                let byte = *if is_last { text.last() } else { text.first() }?;
+                return (!matches!(byte, b'\t' | b'\n' | b' ')).then_some((byte.is_ascii_punctuation(), byte as char));
+            }
             let tokens = self.tokens(sentence);
-            if is_last { tokens.last() } else { tokens.first() }.filter(|token| token.is_word())
+            let word = if is_last { tokens.last() } else { tokens.first() }.filter(|token| token.is_word())?;
+            let value = self.str(word.value);
+            match is_last {
+                true => Some((word.has_trailing_punctuation, last_char(value)?.0)),
+                false => Some((word.has_leading_punctuation, first_char(value)?.0)),
+            }
         };
-        word(node.previous, true).is_some_and(|word| {
-            !word.has_trailing_punctuation && !last_char(self.str(word.value)).is_some_and(|it| is_commonmark_whitespace(it.0))
-        }) || word(node.next, false).is_some_and(|word| {
-            !word.has_leading_punctuation && !first_char(self.str(word.value)).is_some_and(|it| is_commonmark_whitespace(it.0))
-        })
+        let is_word = |it: (bool, char)| !it.0 && !is_commonmark_whitespace(it.1);
+        word(node.previous, true).is_some_and(is_word) || word(node.next, false).is_some_and(is_word)
     }
 
     // ───────────────────────────── strings ─────────────────────────────
@@ -763,7 +863,7 @@ impl<'a> Printer<'a, '_> {
             },
             Kind::FrontMatter => self.print_front_matter(node),
             Kind::Paragraph => {
-                let mut parts = FillParts::new();
+                let mut parts = FillParts::new(self.options.prose_wrap == ProseWrap::Always);
                 let mut child = node.first_child;
                 while let Some(next) = self.node(child).map(|it| it.next) {
                     let doc = self.print(child);

@@ -286,8 +286,14 @@ pub(crate) fn is_indented_code(text: &[u8], tree: &Tree, code: NodeId) -> bool {
     source.starts_with(b"    ") || source.starts_with(b"\t")
 }
 
+/// `Node::number` of a sentence that has not been split into words. Its text is its `value`. `is_aligned` says
+/// that it is in emphasis.
+pub(crate) const PLAIN: u32 = u32::MAX;
+
 pub(crate) struct Preprocessor<'x> {
     pub(crate) text: &'x [u8],
+    /// Lines are wrapped: `proseWrap: "always"`.
+    pub(crate) wraps_lines: bool,
     pub(crate) tree: &'x mut Tree,
     pub(crate) tab_width: usize,
     pub(crate) stack_check: bun_core::StackCheck,
@@ -302,6 +308,7 @@ struct Around {
     /// The paragraph or heading that it is in, and whether that is in a block quote.
     paragraph: Option<(NodeId, bool)>,
     is_in_blockquote: bool,
+    is_in_emphasis: bool,
 }
 
 impl Preprocessor<'_> {
@@ -311,6 +318,7 @@ impl Preprocessor<'_> {
             is_in_aligned_lists: true,
             paragraph: None,
             is_in_blockquote: false,
+            is_in_emphasis: false,
         };
         self.visit(root, around);
     }
@@ -386,6 +394,7 @@ impl Preprocessor<'_> {
                 around.paragraph = Some((id, around.is_in_blockquote));
             }
             Kind::Blockquote => around.is_in_blockquote = true,
+            Kind::Emphasis | Kind::Strong => around.is_in_emphasis = true,
             _ => {}
         }
         let mut child = node.first_child;
@@ -464,6 +473,17 @@ impl Preprocessor<'_> {
         if is_risky {
             if let Some(node) = self.tree.get_mut(id) {
                 node.value = base;
+            }
+            return;
+        }
+        // Without wrapping, words only matter where there is more to them than ASCII, and where they can get
+        // escapes.
+        if !self.wraps_lines
+            && text.is_ascii()
+            && !(around.is_in_emphasis && bun_core::strings::index_of_any(text, b"*_").is_some())
+        {
+            if let Some(node) = self.tree.get_mut(id) {
+                (node.kind, node.value, node.number, node.is_aligned) = (Kind::Sentence, base, PLAIN, around.is_in_emphasis);
             }
             return;
         }

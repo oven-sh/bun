@@ -179,12 +179,16 @@ pub(crate) fn write_template<'a>(e: Expr<'a>, template: Template<'a>, f: &mut Fo
     let raw = template.raw(0);
     let mut text = Vec::with_capacity(raw.len());
     let mut backslashes = 0usize;
-    for &byte in raw {
-        match byte {
-            b'`' => text.truncate(text.len() - backslashes.div_ceil(2)),
-            b'\r' => continue,
-            _ => {}
-        }
+    for (index, &byte) in raw.iter().enumerate() {
+        let byte = match byte {
+            b'`' => {
+                text.truncate(text.len() - backslashes.div_ceil(2));
+                byte
+            }
+            b'\r' if raw.get(index + 1) == Some(&b'\n') => continue,
+            b'\r' => b'\n',
+            _ => byte,
+        };
         backslashes = if byte == b'\\' { backslashes + 1 } else { 0 };
         text.push(byte);
     }

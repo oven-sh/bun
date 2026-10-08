@@ -26,7 +26,7 @@ fn lines_before(comment: &Comment, f: &Formatter<'_>) -> usize {
             _ => None,
         }
     }
-    let before = f.source_text().slice_range(0, comment.span.start);
+    let before = f.source_text().text_for(&Span::before(0, comment.span));
     match without_line_break(without_blanks(before)) {
         None => 0,
         Some(before) => 1 + usize::from(without_line_break(without_blanks(before)).is_some()),
@@ -162,7 +162,7 @@ fn write_trailing_comments<'a>(comments: &'a [Comment], f: &mut Formatter<'a>) {
         } else {
             // Nothing but a byte order mark is before it.
             let is_first_in_file =
-                f.source_text().slice_range(0, comment.span.start) == b"\xEF\xBB\xBF";
+                f.source_text().text_for(&Span::before(0, comment.span)) == b"\xEF\xBB\xBF";
             let content = format_with(|f| write!(f, [maybe_space(!is_first_in_file), comment]));
             if comment.is_line() {
                 write!(f, [line_suffix(&content), expand_parent()]);

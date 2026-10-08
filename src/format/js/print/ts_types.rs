@@ -86,10 +86,10 @@ pub(crate) fn write_ts_type_reference<'a>(
         if let Some(last) = name.get(name.len().wrapping_sub(1))
             && ty.text().ends_with(b">")
         {
-            let brackets = Span::new(last.span().end, ty.span().end);
+            let brackets = Span::after(last.span(), ty.span().end);
             let has_line_comment = f
                 .comments()
-                .comments_in_range(brackets.start, brackets.end)
+                .comments_in(brackets)
                 .iter()
                 .any(|it| it.is_line());
             match name.len() {

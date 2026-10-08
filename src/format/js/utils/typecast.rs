@@ -78,8 +78,12 @@ impl<'a> Format<'a> for FormatParenthesizedExpression<'a, '_> {
         let target = self.target.span();
         let hugs = inner.is_empty()
             && matches!(self.target.kind(), ExprKind::Object(_) | ExprKind::Array(_))
-            && !f.comments().has_comment_in_range(span.start, target.start)
-            && !f.comments().has_comment_in_range(target.end, span.end);
+            && !f
+                .comments()
+                .has_comment_in_span(Span::before(span.start, target))
+            && !f
+                .comments()
+                .has_comment_in_span(Span::after(target, span.end));
         let content = format_with(|f| {
             if let Some(&next) = inner.first() {
                 write!(f, format_leading_comments(next));

@@ -356,7 +356,7 @@ fn attach_between_sides_of_assignment<'a>(
     }
     let source = SourceText::new(nodes.file.text());
     let is_on_same_line = |a: &Comment, b: &Comment| {
-        source.all_bytes_match(a.span.end, b.span.start, |b| {
+        source.all_bytes(a.span.between(b.span), |b| {
             matches!(b, b' ' | b'\t' | 0x0B | 0x0C)
         })
     };
@@ -408,7 +408,7 @@ fn attach_between_sides_of_assignment<'a>(
             }
         } else {
             is_tie_broken = is_tie_broken
-                || !source.all_bytes_match(comment.span.end, leading_start, |b| {
+                || !source.all_bytes(Span::after(comment.span, leading_start), |b| {
                     b.is_ascii_whitespace() || b == b'('
                 });
             if !is_tie_broken {
@@ -884,10 +884,11 @@ impl<'a> Comments<'a> {
         span: Span,
     ) -> u32 {
         let content_end = self.without_semicolon(span).end;
-        let comments = self.comments_in_range(value_end.unwrap_or(content_end), span.end);
-        let is_on_same_line = |end: u32, start: u32| {
-            self.source_text
-                .all_bytes_match(end, start, |b| matches!(b, b' ' | b'\t' | b')' | b';'))
+        let comments = self.comments_in(Span::new(value_end.unwrap_or(content_end), span.end));
+        let is_on_same_line = |from: u32, to: u32| {
+            self.source_text.all_bytes(Span::new(from, to), |b| {
+                matches!(b, b' ' | b'\t' | b')' | b';')
+            })
         };
         let mut first = comments.len();
         while first > 0
@@ -995,7 +996,7 @@ impl<'a> Comments<'a> {
         key_end: u32,
         value_start: u32,
     ) -> &'a [Comment] {
-        let comments = self.comments_in_range(key_end, value_start);
+        let comments = self.comments_in(Span::new(key_end, value_start));
         // One that starts its line leads the value, and so does a type comment: Prettier's
         // `handleClosureTypeCastComments` comes first.
         let count = (comments.iter())
@@ -1014,7 +1015,7 @@ impl<'a> Comments<'a> {
                 && (comment.followed_by_newline()
                     || comments.get(index + 1).is_some_and(|next| {
                         self.source_text
-                            .all_bytes_match(comment.end(), next.start(), |b| {
+                            .all_bytes(Span::new(comment.end(), next.start()), |b| {
                                 matches!(b, b' ' | b'\t')
                             })
                     }))
@@ -1034,7 +1035,7 @@ impl<'a> Comments<'a> {
         for (index, comment) in comments.iter().enumerate() {
             if !self
                 .source_text
-                .all_bytes_match(pos, comment.start(), &can_be_between)
+                .all_bytes(Span::new(pos, comment.start()), &can_be_between)
             {
                 break;
             }
@@ -1058,11 +1059,6 @@ impl<'a> Comments<'a> {
         &comments[..count_that_end_before(comments, span.end.saturating_add(1))]
     }
 
-    /// The same as [`Comments::comments_in`].
-    pub(crate) fn comments_in_range(&self, start: u32, end: u32) -> &'a [Comment] {
-        self.comments_in(Span::new(start, end))
-    }
-
     /// The comments after `start` that are before the first `character` outside of a comment.
     pub(crate) fn comments_before_character(&self, mut start: u32, character: u8) -> &'a [Comment] {
         let comments = self.comments_after(start);
@@ -1077,7 +1073,7 @@ impl<'a> Comments<'a> {
         for comment in &printed[first..] {
             if self
                 .source_text
-                .bytes_contain(start, comment.span.start, character)
+                .contains_byte(Span::before(start, comment.span), character)
             {
                 return &[];
             }
@@ -1086,7 +1082,7 @@ impl<'a> Comments<'a> {
         for (index, comment) in comments.iter().enumerate() {
             if self
                 .source_text
-                .bytes_contain(start, comment.start(), character)
+                .contains_byte(Span::new(start, comment.start()), character)
             {
                 return &comments[..index];
             }
@@ -1148,7 +1144,7 @@ impl<'a> Comments<'a> {
                 if start > comment.start() {
                     continue;
                 }
-                let is_adjacent = source_text.all_bytes_match(start, comment.start(), |b| {
+                let is_adjacent = source_text.all_bytes(Span::new(start, comment.start()), |b| {
                     b.is_ascii_whitespace() || matches!(b, b')' | b',' | b';')
                 });
                 if !is_adjacent {
@@ -1197,7 +1193,7 @@ impl<'a> Comments<'a> {
             .skip(trailing_count)
             .rev()
         {
-            let is_adjacent = source_text.all_bytes_match(comment.end(), gap_end, |b| {
+            let is_adjacent = source_text.all_bytes(Span::new(comment.end(), gap_end), |b| {
                 b.is_ascii_whitespace() || b == b'('
             });
             if !is_adjacent {
@@ -1262,9 +1258,8 @@ impl<'a> Comments<'a> {
             .map(|comment| comment.span)
             .chain([Span::new(u32::MAX, u32::MAX)])
         {
-            let gap = self
-                .source_text
-                .slice_range(from, to.start.min(self.source_text.as_bytes().len() as u32));
+            let gap_end = to.start.min(self.source_text.as_bytes().len() as u32);
+            let gap = self.source_text.text_for(&Span::new(from, gap_end));
             if let Some(at) = bun_core::strings::index_of_char_usize(gap, character) {
                 return from + at as u32 + 1;
             }
@@ -1289,22 +1284,23 @@ impl<'a> Comments<'a> {
         {
             return true;
         }
-        let (mut end, mut is_suppressed) = (pos, false);
+        let (mut reached, mut is_suppressed) = (pos, false);
         for comment in self.comments_after(pos) {
-            let is_adjacent = self.source_text.all_bytes_match(end, comment.start(), |b| {
-                b.is_ascii_whitespace() || matches!(b, b',' | b';')
-            });
+            let gap = Span::new(reached, comment.start());
+            let is_adjacent = self
+                .source_text
+                .all_bytes(gap, |b| b.is_ascii_whitespace() || matches!(b, b',' | b';'));
             if !is_adjacent {
                 break;
             }
             is_suppressed |= self.is_suppression_comment(comment);
-            end = comment.end();
+            reached = comment.end();
         }
         is_suppressed
             && matches!(
                 self.source_text
                     .as_bytes()
-                    .get(end as usize..)
+                    .get(reached as usize..)
                     .unwrap_or_default()
                     .trim_ascii_start()
                     .first(),
@@ -1354,7 +1350,7 @@ impl<'a> Comments<'a> {
                 self.is_type_cast_comment(comment)
                     && self
                         .source_text
-                        .all_bytes_match(comment.span.end, open, |b| b.is_ascii_whitespace())
+                        .all_bytes(Span::after(comment.span, open), |b| b.is_ascii_whitespace())
             })
     }
 

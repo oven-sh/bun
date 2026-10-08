@@ -289,7 +289,11 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
         N::TSAsExpression(e) | N::TSSatisfiesExpression(e) | N::TypeCastExpression(e) => {
             match e.kind() {
                 ExprKind::As { expr, ty } | ExprKind::Satisfies { expr, ty } => {
-                    f.one(span_of(expr)).one(Some(ty.span()));
+                    // Flow's `(a: T)`: Prettier's `TypeAnnotation` starts at the `:`.
+                    f.one(span_of(expr)).one(Some(match parent {
+                        N::TypeCastExpression(_) => ty.annotation_span(),
+                        _ => ty.span(),
+                    }));
                 }
                 ExprKind::AsConst(expr) => {
                     f.one(span_of(expr)).one(e.const_keyword_span());
@@ -653,8 +657,14 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
             }
         }
         N::TSTypeParameter(param) => {
+            // Flow's `<T: U>`: as above.
+            let is_annotation =
+                Node::TypeParam(param).file().is_flow() && param.flow_token_after_name() == b":";
             f.one(Some(param.name().span()))
-                .one(param.constraint().map(|it| it.span()))
+                .one(param.constraint().map(|it| match is_annotation {
+                    true => it.annotation_span(),
+                    false => it.span(),
+                }))
                 .one(param.default().map(|it| it.span()));
         }
         N::TSTypeLiteral(ty) => {

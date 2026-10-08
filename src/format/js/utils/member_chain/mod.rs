@@ -7,7 +7,7 @@ pub(crate) mod chain_member;
 pub(crate) mod groups;
 pub(crate) mod simple_argument;
 
-use self::chain_member::{CallExpressionPosition, ChainMember, call_of_callee};
+use self::chain_member::{CallExpressionPosition, ChainMember, call_of_callee, comments_lead_a_later_link};
 use self::groups::{MemberChainGroup, MemberChainGroupsBuilder, TailChainGroups};
 use self::simple_argument::SimpleArgument;
 use super::call_expression::{callee_trailing_comments, is_call_expression, is_member_expression};
@@ -208,6 +208,9 @@ impl<'a> Format<'a> for MemberChain<'a> {
 /// Whether a comment leads `member`: it is on a line of its own before the `.`, or before the `[` of
 /// `[name]`. Prettier's `handleMemberExpressionComments`.
 fn has_leading_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool {
+    if matches!(member, ChainMember::Node(node) if comments_lead_a_later_link(*node, f)) {
+        return true;
+    }
     let (object, character) = match member.expr().kind() {
         ExprKind::Dot { obj, .. } if matches!(member, ChainMember::StaticMember(_)) => (obj, b'.'),
         ExprKind::Index { obj, index, .. }

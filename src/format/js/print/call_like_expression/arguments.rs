@@ -396,8 +396,10 @@ fn write_grouped_arguments<'a>(
 ) {
     let last_index = node.len().saturating_sub(1);
     // Prettier's `shouldExpandParameters` in `printFunction`. Not for `new A(function () {})`.
+    let overlooks_this_parameter = overlooks_this_parameter(f);
     let expands_parameters_of = |function: Func<'a>| {
-        matches!(node.parent, AstNodes::CallExpression(_)) && (last_index != 0 || has_only_names_as_parameters(function))
+        matches!(node.parent, AstNodes::CallExpression(_))
+            && (last_index != 0 || has_only_names_as_parameters(function, overlooks_this_parameter))
     };
     let mut non_grouped_breaks = false;
     let mut grouped_breaks = false;
@@ -480,21 +482,16 @@ fn write_grouped_arguments<'a>(
             if !has_signature_without_soft_lines(function) {
                 continue;
             }
-            let params = FormatFormalParameters(function);
-            let Some(cached_element) = f.context().get_cached_element(&params) else {
-                debug_assert!(false, "the parameters have been formatted and cached");
-                return format_all_elements_broken_out(node, &grouped, true, f);
-            };
-
             // If the signature breaks even without soft line breaks, grouping is not a good fit.
-            let interned = f.intern(&format_with(|f| {
-                f.write_without_soft_lines(&format_with(|f| f.write_element(cached_element)));
-            }));
-            if let Some(interned) = interned {
-                if interned.will_break(f) {
-                    return format_all_elements_broken_out(node, &grouped, true, f);
-                }
-                f.context_mut().cache_element(&params, interned);
+            let params = FormatFormalParameters(function).span();
+            let has_parameters = !function.params().is_empty() || function.this_param().is_some();
+            if !remove_soft_lines_of_cached_element(params, f)
+                || (!has_parameters
+                    && flattens_type_parameters_without_parameters(f)
+                    // What an arrow function keeps its `<T>()` under.
+                    && !remove_soft_lines_of_cached_element(Span::new(params.start, params.start + 1), f))
+            {
+                return format_all_elements_broken_out(node, &grouped, true, f);
             }
         }
 
@@ -561,9 +558,48 @@ fn write_grouped_arguments<'a>(
     f.write_element(element);
 }
 
+/// Takes the soft line breaks out of what is cached under `key`. Returns whether it is on one line
+/// then.
+fn remove_soft_lines_of_cached_element(key: Span, f: &mut Formatter<'_>) -> bool {
+    let Some(cached_element) = f.context().get_cached_element(&key) else {
+        return true;
+    };
+    let interned = f.intern(&format_with(|f| {
+        f.write_without_soft_lines(&format_with(|f| f.write_element(cached_element)));
+    }));
+    let Some(interned) = interned else {
+        return true;
+    };
+    if interned.will_break(f) {
+        return false;
+    }
+    f.context_mut().cache_element(&key, interned);
+    true
+}
+
 /// All parameters are names without types. `this` has a type.
-fn has_only_names_as_parameters(function: Func<'_>) -> bool {
-    function.this_param().is_none() && has_only_simple_parameters(function, false)
+fn has_only_names_as_parameters(function: Func<'_>, overlooks_this_parameter: bool) -> bool {
+    match overlooks_this_parameter {
+        true => function.params().iter().all(|parameter| {
+            !parameter.is_rest()
+                && matches!(parameter.pat().kind(), PatKind::Ident(_))
+                && parameter.default().is_none()
+                && parameter.ty().is_none()
+        }),
+        false => has_only_simple_parameters(function, false),
+    }
+}
+
+/// oxfmt does not count `this: A` as a parameter, so `a(function (this: A) {})` does not break in
+/// the parameters while it is hugged.
+fn overlooks_this_parameter(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// oxfmt, like Prettier 3.8, keeps the type parameters of `a(<T>() => {})` on one line while it is
+/// hugged, as it does if there are parameters.
+fn flattens_type_parameters_without_parameters(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// Whether the signature of a function that is a grouped argument is kept on one line. Prettier's
@@ -662,11 +698,12 @@ fn is_react_hook_with_deps_array<'a>(arguments: &FormatArguments<'a>, comments: 
     {
         return false;
     }
-    // Not if there is a comment that is not in the callback or the array.
-    !comments
-        .comments_before(arguments.parent.span().end)
-        .iter()
-        .any(|comment| !callback.span().contains(comment.span) && !deps.span().contains(comment.span))
+    // Not if there is a comment that is not in the callback or the array. One in an empty array is
+    // a comment of the array.
+    let is_empty = matches!(deps.kind(), ExprKind::Array(elements) if elements.is_empty());
+    !comments.comments_before(arguments.parent.span().end).iter().any(|comment| {
+        !callback.span().contains(comment.span) && (is_empty || !deps.span().contains(comment.span))
+    })
 }
 
 /// Prettier's `isDecoratedFunction`:

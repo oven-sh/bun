@@ -7,7 +7,7 @@ use super::arrow_function_expression::is_multiline_template_starting_on_same_lin
 use super::type_parameters::type_arguments;
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::utils::call_expression::{
-    callee_trailing_comments, is_call_expression, is_member_expression, is_test_call_expression,
+    callee_trailing_comments, is_call_expression, is_member_expression, is_test_call_expression_in_flavor,
     type_arguments_trailing_comments,
 };
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
@@ -27,7 +27,7 @@ pub(crate) fn write_call_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut For
     if is_template_on_its_own_line_only_argument(call.args(), f)
         || is_simple_module_import(e, call, f)
         || is_commonjs_or_amd_module_definition(e, call, f)
-        || is_test_call_expression(e)
+        || is_test_call_expression_in_flavor(e, f)
     {
         return write!(f, [head, FormatArgumentsOnOneLine(call.args())]);
     }

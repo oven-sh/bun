@@ -89,8 +89,44 @@ fn write_call_without_callee<'a>(expression: Expr<'a>, f: &mut Formatter<'a>) {
     );
 }
 
+/// `(// comment\n a.b()).c()`: whether the next comment is in the parentheses of a later link than
+/// `link`, which starts at the same place. It leads that one, and is written before its `()`.
+pub(super) fn comments_lead_a_later_link<'a>(link: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let Some(first) = f.comments().comments_before(link.span().start).first() else {
+        return false;
+    };
+    let mut e = link;
+    loop {
+        if let Some(parentheses) = e.parens().next() {
+            return e != link && first.span.start > parentheses.start;
+        }
+        e = match e.parent() {
+            Node::Expr(parent)
+                if parent.object() == Some(e)
+                    || matches!(parent.kind(), ExprKind::Call(call) if call.callee() == e)
+                    || matches!(parent.kind(), ExprKind::NonNull(it) if it == e) =>
+            {
+                parent
+            }
+            _ => return false,
+        };
+    }
+}
+
 impl<'a> Format<'a> for ChainMember<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
+        if f.is_quiet() || !comments_lead_a_later_link(self.expr(), f) {
+            return self.write(f);
+        }
+        // No comment is seen while this link is written.
+        let previous_limit = f.comments_mut().limit_comments_up_to(0);
+        self.write(f);
+        f.comments_mut().restore_view_limit(previous_limit);
+    }
+}
+
+impl<'a> ChainMember<'a> {
+    fn write(&self, f: &mut Formatter<'a>) {
         match *self {
             Self::StaticMember(member) => {
                 let ExprKind::Dot { obj, name, .. } = member.kind() else {

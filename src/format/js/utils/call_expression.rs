@@ -122,6 +122,46 @@ fn trailing_prefix<'a>(comments: &'a [Comment], f: &Formatter<'a>) -> &'a [Comme
 ///   function with at most one parameter, the third, if any, a number.
 /// - `beforeEach(inject(() => {}))`
 pub(crate) fn is_test_call_expression(e: Expr<'_>) -> bool {
+    is_test_call(e, contains_a_test_pattern)
+}
+
+/// The same, with the callees that the flavor knows.
+pub(crate) fn is_test_call_expression_in_flavor<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    match knows_test_callees_of_vitest_and_deno(f) {
+        true => is_test_call(e, contains_a_test_pattern_of_oxfmt),
+        false => is_test_call_expression(e),
+    }
+}
+
+/// oxfmt has a longer list than Prettier: `it.todo("name", () => {})`, `Deno.test("name", () => {})`.
+fn knows_test_callees_of_vitest_and_deno(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// oxfmt's `contains_a_test_pattern`: Prettier's `testCallCalleePatterns` and some more.
+fn contains_a_test_pattern_of_oxfmt(e: Expr<'_>) -> bool {
+    if contains_a_test_pattern(e) {
+        return true;
+    }
+    let Some(mut names) = callee_name_iterator(e) else {
+        return false;
+    };
+    let (first, second, third) = (names.next(), names.next(), names.next());
+    third.is_none()
+        && match (first, second) {
+            (Some(b"it"), Some(b"skipIf" | b"runIf" | b"concurrent" | b"sequential" | b"todo" | b"fails"))
+            | (Some(b"describe"), Some(b"skipIf" | b"runIf" | b"concurrent" | b"sequential" | b"shuffle" | b"todo"))
+            | (
+                Some(b"test"),
+                Some(b"skipIf" | b"runIf" | b"concurrent" | b"sequential" | b"todo" | b"fails" | b"extend"),
+            )
+            | (Some(b"bench"), None | Some(b"only" | b"skip" | b"todo"))
+            | (Some(b"Deno"), Some(b"test")) => true,
+            _ => false,
+        }
+}
+
+fn is_test_call(e: Expr<'_>, is_test_callee: fn(Expr<'_>) -> bool) -> bool {
     let ExprKind::Call(call) = e.kind() else {
         return false;
     };
@@ -135,7 +175,7 @@ pub(crate) fn is_test_call_expression(e: Expr<'_>) -> bool {
     match (args.next(), args.next(), args.next()) {
         (Some(argument), None, None) => {
             if is_angular_test_wrapper(e)
-                && matches!(e.as_chain_element().parent(), AstNodes::CallExpression(parent) if is_test_call_expression(parent))
+                && matches!(e.as_chain_element().parent(), AstNodes::CallExpression(parent) if is_test_call(parent, is_test_callee))
             {
                 return argument.as_fn().is_some();
             }
@@ -144,7 +184,7 @@ pub(crate) fn is_test_call_expression(e: Expr<'_>) -> bool {
         (Some(first), Some(second), third)
             if arguments.len() <= 3
                 && matches!(first.kind(), ExprKind::String(_) | ExprKind::Template(_))
-                && contains_a_test_pattern(callee) =>
+                && is_test_callee(callee) =>
         {
             if !third.is_none_or(|third| matches!(third.kind(), ExprKind::Number(_))) {
                 return false;
@@ -218,7 +258,7 @@ pub(crate) fn callee_name_iterator<'a>(e: Expr<'a>) -> Option<impl Iterator<Item
 /// │     └─ .serial[.only]
 /// └─ skip|xit|xdescribe|xtest|fit|fdescribe|ftest
 /// ```
-pub(crate) fn contains_a_test_pattern(e: Expr<'_>) -> bool {
+fn contains_a_test_pattern(e: Expr<'_>) -> bool {
     let Some(mut names) = callee_name_iterator(e) else {
         return false;
     };

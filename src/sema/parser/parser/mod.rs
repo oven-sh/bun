@@ -217,6 +217,7 @@ impl<'a> Parser<'a> {
             stack_check: bun_core::StackCheck::init(),
         };
         this.source_file();
+        this.report_what_the_scanner_flagged();
         let refusal = this.lx.refusal;
         let refused_at = this.lx.refused_at;
         let comment_directives = std::mem::take(&mut this.lx.comment_directives);
@@ -411,6 +412,31 @@ impl<'a> Parser<'a> {
         match self.is_ecmascript {
             true => ctx::DISALLOW_IN,
             false => 0,
+        }
+    }
+
+    /// `Lexer::flagged` as diagnostics.
+    fn report_what_the_scanner_flagged(&mut self) {
+        for (code, start, end) in std::mem::take(&mut self.lx.flagged) {
+            let written = self.lx.src.get(start as usize..end as usize).unwrap_or_default();
+            let digits = |from: usize| core::str::from_utf8(written.get(from..).unwrap_or_default());
+            let octal = |from: usize| digits(from).ok().and_then(|it| u64::from_str_radix(it, 8).ok());
+            let argument = match code {
+                // `\1`
+                1487 => format!("\\x{:02x}", octal(1).unwrap_or(0)).into_bytes(),
+                // `\8`
+                1488 => written.to_vec(),
+                // `010`, `-010`
+                1121 => match written.first() {
+                    Some(b'-') => format!("-0o{:o}", octal(1).unwrap_or(0)).into_bytes(),
+                    _ => format!("0o{:o}", octal(0).unwrap_or(0)).into_bytes(),
+                },
+                _ => Vec::new(),
+            };
+            match argument.is_empty() {
+                true => self.flag(DiagnosticKind::Grammar, code, (start, end), &[]),
+                false => self.flag(DiagnosticKind::Grammar, code, (start, end), &[&argument]),
+            }
         }
     }
 

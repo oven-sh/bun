@@ -48,6 +48,9 @@ pub(crate) struct Lexer<'a> {
     pub(crate) leading_comments: Vec<(u32, u32)>,
     /// `hir::File::comments`
     pub(crate) comments: Vec<(u32, u32)>,
+    /// What TypeScript's scanner reports and ECMAScript allows outside strict code: the code of the
+    /// message, and from where to where. Only with `is_ecmascript`: otherwise the text is refused.
+    pub(crate) flagged: Vec<(u32, u32, u32)>,
     /// Where values with escapes are decoded.
     buffer: Vec<u8>,
 }
@@ -133,6 +136,7 @@ impl<'a> Lexer<'a> {
             comment_directives: Vec::new(),
             leading_comments: Vec::new(),
             comments: Vec::new(),
+            flagged: Vec::new(),
             buffer: Vec::new(),
         }
     }
@@ -164,6 +168,25 @@ impl<'a> Lexer<'a> {
         if self.comments.last().is_some_and(|last| last.0 >= mark.end) {
             self.forget_comments_from(mark.end);
         }
+        if self.flagged.last().is_some_and(|last| last.1 >= mark.end) {
+            self.forget_flagged_from(mark.end);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn forget_flagged_from(&mut self, pos: u32) {
+        let kept = self.flagged.partition_point(|it| it.1 < pos);
+        self.flagged.truncate(kept);
+    }
+
+    /// Notes what is in `flagged`, or refuses the text.
+    #[cold]
+    fn flag(&mut self, code: u32, start: usize, end: usize) -> bool {
+        if self.is_ecmascript {
+            self.flagged.push((code, start as u32, end as u32));
+        }
+        self.is_ecmascript
     }
 
     /// What follows `pos` is scanned again, maybe as something else.
@@ -869,6 +892,22 @@ impl<'a> Lexer<'a> {
 
     /// Decodes the escape whose backslash is at `pos` and appends what it stands for to `text`.
     /// Returns its end. `None`: TypeScript reports an error for it.
+    /// `\1` to `\377`, `\8` or `\9` at `pos` in a string. Returns its end.
+    fn legacy_escape(&mut self, pos: usize, text: &mut Vec<u8>) -> Option<usize> {
+        let end = self.end_of_invalid_escape(pos);
+        let digits = self.src.get(pos + 1..end)?;
+        let (code, c) = match digits.first()? {
+            b'0'..=b'7' => (1487, u32::from_str_radix(core::str::from_utf8(digits).ok()?, 8).ok()?),
+            &c @ (b'8' | b'9') => (1488, u32::from(c)),
+            _ => return None,
+        };
+        if !self.flag(code, pos, end) {
+            return None;
+        }
+        Self::push_code_point(text, c);
+        Some(end)
+    }
+
     /// `scanEscapeSequence`: how far the invalid escape at `pos` goes.
     fn end_of_invalid_escape(&self, pos: usize) -> usize {
         let is_octal = |at: usize| matches!(self.at(at), b'0'..=b'7');
@@ -958,7 +997,10 @@ impl<'a> Lexer<'a> {
                 Some(&c) if c == quote => break None,
                 Some(b'\\') => match self.escape(pos, &mut text) {
                     Some(end) => pos = end,
-                    None => break Some(Refusal::InvalidEscape),
+                    None => match self.legacy_escape(pos, &mut text) {
+                        Some(end) => pos = end,
+                        None => break Some(Refusal::InvalidEscape),
+                    },
                 },
                 Some(&c) => {
                     is_ascii &= c < 0x80;
@@ -1102,14 +1144,58 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// `010`, which is 8, or `08` and `08.5`, which are decimal.
+    fn number_with_leading_zero(&mut self, start: usize) -> Option<(T, usize)> {
+        let src = self.src;
+        let mut end = start;
+        while src.get(end).is_some_and(u8::is_ascii_digit) {
+            end += 1;
+        }
+        let is_octal = src[start..end].iter().all(|c| matches!(c, b'0'..=b'7'));
+        if is_octal {
+            // The message is about `-010` as a whole.
+            let from = start - usize::from(self.token == T::Minus && self.end as usize == start);
+            if !self.flag(1121, from, end) {
+                return None;
+            }
+            self.number = number_from_digits(&src[start..end], 8);
+        } else {
+            if src.get(end) == Some(&b'.') {
+                end += 1;
+                if src.get(end).is_some_and(u8::is_ascii_digit) {
+                    end = self.digits(end, 10)?;
+                } else if src.get(end) == Some(&b'_') {
+                    return None;
+                }
+            }
+            if let Some(b'e' | b'E') = src.get(end) {
+                end += 1;
+                if let Some(b'+' | b'-') = src.get(end) {
+                    end += 1;
+                }
+                end = self.digits(end, 10)?;
+            }
+            if !self.flag(1489, start, end) {
+                return None;
+            }
+            let text: Vec<u8> = src[start..end].iter().copied().filter(|&c| c != b'_').collect();
+            self.number = core::str::from_utf8(&text).ok()?.parse().ok()?;
+        }
+        // A name cannot follow a number directly.
+        if matches!(src.get(end), Some(&c) if is_name_byte(c) || c == b'\\' || c >= 0x80) {
+            return None;
+        }
+        Some((T::Number, end))
+    }
+
     fn unusual_number(&mut self, start: usize) -> Option<(T, usize)> {
         let src = self.src;
         let radix = match (src[start], src.get(start + 1)) {
             (b'0', Some(b'x' | b'X')) => 16,
             (b'0', Some(b'o' | b'O')) => 8,
             (b'0', Some(b'b' | b'B')) => 2,
-            // A legacy octal number, or a decimal number with a leading zero.
-            (b'0', Some(b'0'..=b'9' | b'_')) => return None,
+            (b'0', Some(b'_')) => return None,
+            (b'0', Some(b'0'..=b'9')) => return self.number_with_leading_zero(start),
             _ => 10,
         };
         let mut is_integer = true;

@@ -1,6 +1,7 @@
 //! Breaking text into lines, and tables.
 
 use super::line_buffer::LineBuffer;
+use super::markers::is_block_marker_token;
 use super::text::{lines, push_spaces, str_width, trim, trim_end_matches, trim_start_matches};
 use bun_core::strings;
 
@@ -175,7 +176,7 @@ pub(super) fn wrap_paragraph(
             current_line.extend_from_slice(word);
             current_width = word_width;
             current_line_tag_count = tag_count;
-        } else if current_width + 1 + word_width <= capacity + current_line_tag_count + tag_count {
+        } else if current_width + 1 + word_width <= capacity + current_line_tag_count + tag_count || is_block_marker_token(word) {
             current_line.push(b' ');
             current_line.extend_from_slice(word);
             current_width += 1 + word_width;
@@ -196,6 +197,7 @@ pub(super) fn wrap_paragraph(
     if !is_first_line
         && current_width == effective_max
         && let Some(last_space) = find_last_breakable_space(&current_line)
+        && !is_block_marker_token(&current_line[last_space + 1..])
     {
         push_line(&current_line[..last_space], false);
         push_line(&current_line[last_space + 1..], false);

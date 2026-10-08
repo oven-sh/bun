@@ -83,7 +83,7 @@ impl JsdocFormatter<'_> {
         }
 
         reorder_param_tags(&mut effective_tags, after);
-        let (import_lines, parsed_import_indices) = process_import_tags(&effective_tags);
+        let (import_lines, parsed_import_indices) = process_import_tags(&effective_tags, self.quote_style());
         let mut import_lines = Some(import_lines).filter(|lines| !lines.is_empty());
         let mut imports_emitted = false;
         let mut prev_normalized_kind: Option<&[u8]> = None;

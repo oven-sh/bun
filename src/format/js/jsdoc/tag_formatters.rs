@@ -302,10 +302,13 @@ impl JsdocFormatter<'_> {
             self.push_wrapped_desc(desc_raw);
             return;
         }
-        let (first_text_line, rest_of_desc) = match strings::split_once_char(desc_raw, b'\n') {
-            Some((first, rest)) => (trim(first), Some(rest)),
-            None => (trim(desc_raw), None),
+        let (first_line, rest_of_desc) = match strings::split_once_char(desc_raw, b'\n') {
+            Some((first, rest)) => (first, Some(rest)),
+            None => (desc_raw, None),
         };
+        let first_text_line = trim(first_line);
+        // Two spaces at the end of a line are a line break in Markdown.
+        let first_hard_break = rest_of_desc.is_some() && first_line.ends_with(b"  ");
         if first_text_line.starts_with(b"```") {
             self.content_lines.push(tag_line);
             self.content_lines.push_empty();
@@ -352,6 +355,9 @@ impl JsdocFormatter<'_> {
         }
         let mut full_desc = first_text.into_owned();
         if has_remaining {
+            if first_hard_break {
+                full_desc.extend_from_slice(b"  ");
+            }
             full_desc.push(b'\n');
             full_desc.extend_from_slice(&remaining_desc);
         }
@@ -538,9 +544,11 @@ impl JsdocFormatter<'_> {
             return;
         }
         let fits_on_one_line = prefix_len + str_width(&desc_text) <= self.wrap_width;
+        // Anything else is broken into lines, which makes one space of line breaks and of several spaces.
+        let is_plain_one_liner = fits_on_one_line && !strings::contains_char(&desc_text, b'\n') && !strings::contains(&desc_text, b"  ");
         if skip_wrapping && is_raw_multiline {
             self.content_lines.push([&prefix[..], raw_desc].concat());
-        } else if fits_on_one_line {
+        } else if is_plain_one_liner || (skip_wrapping && fits_on_one_line) {
             self.content_lines.push([&prefix[..], &desc_text].concat());
         } else if should_preserve_description_verbatim(normalized_kind) || is_unknown {
             self.content_lines.push([&prefix[..], raw_desc].concat());

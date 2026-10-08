@@ -3,6 +3,7 @@
 use super::line_buffer::LineBuffer;
 use super::parser::Tag;
 use super::text::{join, lines, split_whitespace, trim, trim_end_matches};
+use crate::options::QuoteStyle;
 use bun_core::strings;
 use std::cmp::Ordering;
 
@@ -86,7 +87,7 @@ fn merge_and_sort_imports(imports: Vec<ImportInfo>) -> Vec<ImportInfo> {
     groups
 }
 
-fn format_import_lines(import: &ImportInfo, content_lines: &mut LineBuffer) {
+fn format_import_lines(import: &ImportInfo, quote: u8, content_lines: &mut LineBuffer) {
     if import.default_import.is_none() && import.named_imports.is_empty() {
         return;
     }
@@ -117,13 +118,17 @@ fn format_import_lines(import: &ImportInfo, content_lines: &mut LineBuffer) {
             out.extend_from_slice(b"\n}");
         }
     }
-    out.extend_from_slice(b" from \"");
+    out.extend_from_slice(b" from ");
+    out.push(quote);
     out.extend_from_slice(&import.module_path);
-    out.push(b'"');
+    out.push(quote);
 }
 
 /// The lines for all `@import` tags of `tags` that can be parsed, and which of `tags` those are.
-pub(super) fn process_import_tags(tags: &[(&Tag<'_>, &[u8])]) -> (LineBuffer, smallvec::SmallVec<[usize; 4]>) {
+pub(super) fn process_import_tags(
+    tags: &[(&Tag<'_>, &[u8])],
+    quote_style: QuoteStyle,
+) -> (LineBuffer, smallvec::SmallVec<[usize; 4]>) {
     let mut imports = Vec::new();
     let mut parsed_indices = smallvec::SmallVec::new();
     for (index, (tag, kind)) in tags.iter().enumerate() {
@@ -136,7 +141,7 @@ pub(super) fn process_import_tags(tags: &[(&Tag<'_>, &[u8])]) -> (LineBuffer, sm
     }
     let mut lines = LineBuffer::new();
     for import in &merge_and_sort_imports(imports) {
-        format_import_lines(import, &mut lines);
+        format_import_lines(import, if quote_style == QuoteStyle::Single { b'\'' } else { b'"' }, &mut lines);
     }
     (lines, parsed_indices)
 }

@@ -1,6 +1,7 @@
 //! Lines in one buffer, with `\n` between them.
 
-use super::text::{trim_start, trim_start_matches};
+use super::markers::list_marker;
+use super::text::trim_start;
 use bun_core::strings;
 
 #[derive(Default)]
@@ -63,14 +64,7 @@ impl LineBuffer {
                 _ => break line,
             }
         };
-        let trimmed = trim_start(last);
-        if [&b"- "[..], b"+ ", b"* ", b"```"].iter().any(|marker| trimmed.starts_with(marker)) {
-            return true;
-        }
-        if trimmed.first().is_some_and(u8::is_ascii_digit) && trim_start_matches(trimmed, |c| c.is_ascii_digit()).starts_with(b". ") {
-            return true;
-        }
-        last.starts_with(b"    ")
+        list_marker(last).is_some() || trim_start(last).starts_with(b"```") || last.starts_with(b"    ")
     }
 
     pub(super) fn into_bytes(self) -> Vec<u8> {

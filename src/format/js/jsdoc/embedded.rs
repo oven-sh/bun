@@ -1,7 +1,7 @@
 //! Code and types in comments, which are formatted as what they are.
 
 use super::text::{trim, trim_end, trim_end_matches, trim_start};
-use crate::options::{FormatOptions, LineWidth, TrailingCommas};
+use crate::options::{EmbeddedLanguageFormatting, FormatOptions, LineWidth, TrailingCommas};
 use bun_core::strings;
 
 /// The widest line that oxfmt knows.
@@ -42,7 +42,32 @@ const TSX: &[u8] = b"dummy.tsx";
 const JSX: &[u8] = b"dummy.jsx";
 
 pub(super) fn is_js_ts_lang(lang: &[u8]) -> bool {
-    matches!(lang, b"js" | b"javascript" | b"jsx" | b"ts" | b"typescript" | b"tsx")
+    [&b"js"[..], b"javascript", b"jsx", b"ts", b"typescript", b"tsx"].iter().any(|name| lang.eq_ignore_ascii_case(name))
+}
+
+/// Code in a description in one of the languages that prettier-plugin-jsdoc formats and that is neither JavaScript
+/// nor TypeScript. `None`: it stays as it is.
+pub(super) fn format_embedded_language(lang: &[u8], code: &[u8], print_width: usize, options: &FormatOptions) -> Option<Vec<u8>> {
+    if matches!(options.embedded_language_formatting, EmbeddedLanguageFormatting::Off) {
+        return None;
+    }
+    let options = FormatOptions {
+        line_width: LineWidth(u16::try_from(print_width).unwrap_or(u16::MAX)),
+        ..embedded_options(options, print_width)
+    };
+    let mut out = Vec::new();
+    let css = |parser, out: &mut Vec<u8>| crate::css::format(code, parser, &options, &mut Default::default(), out);
+    match &lang.to_ascii_lowercase()[..] {
+        b"css" => css(crate::css::Parser::Css, &mut out),
+        b"less" => css(crate::css::Parser::Less, &mut out),
+        b"scss" => css(crate::css::Parser::Scss, &mut out),
+        b"json" => crate::json::format(code, crate::json::Parser::Json, &options, &mut Default::default(), &mut out),
+        b"yaml" => crate::yaml::format(code, &options, &mut Default::default(), &mut out),
+        _ => return None,
+    }
+    .ok()?;
+    out.truncate(trim_end(&out).len());
+    Some(out)
 }
 
 /// How deep in template literals the end of `line` is, if its start is `depth` deep.

@@ -285,7 +285,7 @@ impl<'a> Format<'a> for Comment {
         }
         if self.is_indentable_block() {
             // In Markdown, two spaces at the end of a line are a line break.
-            let is_jsdoc = content.starts_with(b"/**") && content.get(3) != Some(&b'*');
+            let is_jsdoc = content.starts_with(b"/**") && (content.get(3) != Some(&b'*') || f.options().flavor.is_oxfmt());
             let mut lines = lines(content).peekable();
             write!(f, text(lines.next().unwrap_or_default().trim_ascii_end()));
             while let Some(line) = lines.next() {

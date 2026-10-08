@@ -26,10 +26,15 @@ impl CommentPart<'_> {
                 result.push(b'\n');
             }
             let trimmed = trim(line);
-            result.extend_from_slice(match without_star(trimmed) {
+            let content = match without_star(trimmed) {
                 Some(rest) => rest.strip_prefix(b" ").unwrap_or(rest),
                 None => trimmed,
-            });
+            };
+            result.extend_from_slice(content);
+            // Two spaces at the end of a line are a line break in Markdown.
+            if line.ends_with(b"  ") && !content.is_empty() {
+                result.extend_from_slice(b"  ");
+            }
         }
         result
     }

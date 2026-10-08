@@ -1,7 +1,8 @@
 //! Descriptions, which are Markdown. They are parsed as that, and written the way prettier-plugin-jsdoc does.
 
-use super::embedded::{format_embedded_js, is_js_ts_lang};
+use super::embedded::{format_embedded_js, format_embedded_language, is_js_ts_lang};
 use super::line_buffer::LineBuffer;
+use super::markers::{ListMarker, list_marker};
 use super::normalize::{append_trailing_dot, capitalize_first};
 use super::text::{
     first_char, is_blank, lines, parse_index, push_number, push_spaces, split_lines, str_width, trim, trim_start, trim_start_matches,
@@ -18,6 +19,10 @@ type Bytes<'a> = Cow<'a, [u8]>;
 
 /// Whether there is anything in `text` but paragraphs of plain text.
 fn needs_markdown_parsing(text: &[u8]) -> bool {
+    // A hard line break.
+    if strings::contains(text, b"  \n") {
+        return true;
+    }
     let len = text.len();
     let at = |i: usize| text.get(i).copied();
     for (i, &byte) in text.iter().enumerate() {
@@ -28,7 +33,10 @@ fn needs_markdown_parsing(text: &[u8]) -> bool {
                 let next = at(i + 1).unwrap_or(b' ');
                 let prev = if i > 0 { text[i - 1] } else { b' ' };
                 // With spaces on both sides it is a product, unless it starts a line: then it can start an item.
-                if !next.is_ascii_whitespace() || !prev.is_ascii_whitespace() || (byte == b'*' && next == b' ' && is_line_start) {
+                if !next.is_ascii_whitespace()
+                    || !prev.is_ascii_whitespace()
+                    || (byte == b'*' && is_line_start && list_marker(&text[i..]) == Some(ListMarker::Unordered))
+                {
                     return true;
                 }
             }
@@ -49,7 +57,7 @@ fn needs_markdown_parsing(text: &[u8]) -> bool {
                 }
             }
             b' ' | b'#' | b'>' | b'-' | b'0'..=b'9' | b'|' | b'+' if is_line_start => {
-                // After an empty line or at the start. The line after another one goes on with its paragraph.
+                // After an empty line or at the start. Only there can code start, or a list with another number than 1.
                 let is_block_start = i == 0 || (i >= 2 && text[i - 2] == b'\n') || (i >= 3 && text[i - 2] == b' ' && text[i - 3] == b'\n');
                 let spaces = text[i..].iter().take_while(|&&byte| byte == b' ').count();
                 if spaces >= 4 && is_block_start {
@@ -58,12 +66,11 @@ fn needs_markdown_parsing(text: &[u8]) -> bool {
                 let start = i + spaces;
                 match at(start) {
                     Some(b'#' | b'>') => return true,
-                    Some(b'0'..=b'9') => {
-                        let j = start + text[start..].iter().take_while(|byte| byte.is_ascii_digit()).count();
-                        if at(j + 1) == Some(b' ') && (at(j) == Some(b'-') || (matches!(at(j), Some(b'.' | b')')) && is_block_start)) {
-                            return true;
-                        }
-                    }
+                    Some(b'0'..=b'9') => match list_marker(&text[start..]) {
+                        Some(ListMarker::LegacyOrdered) => return true,
+                        Some(ListMarker::Ordered { starts_at_one }) if is_block_start || starts_at_one => return true,
+                        _ => {}
+                    },
                     Some(b'|') => {
                         // The row of a table starts and ends with a pipe.
                         let line_end = strings::index_of_char_usize(&text[start..], b'\n').map_or(len, |at| start + at);
@@ -72,7 +79,7 @@ fn needs_markdown_parsing(text: &[u8]) -> bool {
                             return true;
                         }
                     }
-                    Some(b'-' | b'+' | b'*') if is_block_start && at(start + 1) == Some(b' ') => return true,
+                    Some(b'-' | b'+' | b'*') if list_marker(&text[start..]) == Some(ListMarker::Unordered) => return true,
                     _ => {}
                 }
             }
@@ -123,7 +130,7 @@ fn normalize_legacy_ordered_list_markers(text: &[u8]) -> Bytes<'_> {
     })
 }
 
-/// `* ` at the start of a line becomes `- `: after a paragraph it would be emphasis.
+/// `* ` at the start of a line becomes `- `, which cannot be emphasis.
 fn convert_star_list_markers(text: &[u8]) -> Bytes<'_> {
     if !strings::contains(text, b"* ") {
         return Cow::Borrowed(text);
@@ -136,31 +143,6 @@ fn convert_star_list_markers(text: &[u8]) -> Bytes<'_> {
         out.extend_from_slice(&line[..line.len() - trimmed.len()]);
         out.extend_from_slice(b"- ");
         out.extend_from_slice(after_star);
-        true
-    })
-}
-
-/// A `+ ` at the start of a line that goes on with a paragraph is a sum, not an item: it is escaped.
-fn escape_false_list_markers(text: &[u8]) -> Bytes<'_> {
-    if !strings::contains(text, b"+ ") {
-        return Cow::Borrowed(text);
-    }
-    let mut prev: Option<&[u8]> = None;
-    map_lines(text, |_, line, out| {
-        let before = prev.replace(line);
-        let trimmed = trim_start(line);
-        let (Some(rest), Some(before)) = (trimmed.strip_prefix(b"+ "), before) else {
-            return false;
-        };
-        let before = trim_start(before);
-        let is_item = [&b"+ "[..], b"- ", b"* "].iter().any(|marker| before.starts_with(marker))
-            || (before.first().is_some_and(u8::is_ascii_digit) && trim_start_matches(before, |c| c.is_ascii_digit()).starts_with(b". "));
-        if before.is_empty() || is_item {
-            return false;
-        }
-        out.extend_from_slice(&line[..line.len() - trimmed.len()]);
-        out.extend_from_slice(b"\\+ ");
-        out.extend_from_slice(rest);
         true
     })
 }
@@ -687,11 +669,12 @@ impl<'a> Serializer<'a> {
         }
         let value = self.str(code.value);
         let lang = (!code.second.is_null()).then(|| self.str(code.second));
-        // Code in another language stays as it is.
+        let width = self.max_width.saturating_sub(4);
         let formatted: Bytes<'_> = match lang {
-            Some(lang) if !is_js_ts_lang(lang) => Cow::Borrowed(value),
-            _ => format_embedded_js(value, self.max_width.saturating_sub(4), self.format_options).map_or(Cow::Borrowed(value), Cow::Owned),
-        };
+            Some(lang) if !is_js_ts_lang(lang) => format_embedded_language(lang, value, width, self.format_options),
+            _ => format_embedded_js(value, width, self.format_options),
+        }
+        .map_or(Cow::Borrowed(value), Cow::Owned);
         if lang.is_some_and(|lang| !lang.is_empty()) || self.prefer_code_fences {
             lines.push([b"```", lang.unwrap_or_default()].concat());
             for line in super::text::lines(&formatted) {
@@ -787,7 +770,6 @@ pub(super) fn format_description(
 
     let text = normalize_legacy_ordered_list_markers(text);
     let text = convert_star_list_markers(&text);
-    let text = escape_false_list_markers(&text);
     let (protected, placeholders) = protect_jsdoc_links(&text);
     let mut tree = Tree::default();
     let Some(root) = crate::markdown::parse_plain(&protected, &mut tree) else {

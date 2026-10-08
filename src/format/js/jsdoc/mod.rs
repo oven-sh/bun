@@ -8,6 +8,7 @@ mod embedded;
 mod imports;
 mod line_buffer;
 mod markdown;
+mod markers;
 mod normalize;
 mod param_order;
 mod parser;
@@ -22,66 +23,6 @@ use crate::prelude::*;
 use crate::write;
 use bun_core::strings;
 
-fn has_line_terminator(text: &[u8]) -> bool {
-    strings::index_of_any(text, b"\n\r").is_some() || strings::contains(text, b"\xE2\x80\xA8") || strings::contains(text, b"\xE2\x80\xA9")
-}
-
-/// Whether oxc's parser takes `comment`, a block comment, for one that leads what follows it. It trails what is
-/// before it if that is on its line and nothing follows on its line.
-fn is_leading(comment: &Comment, f: &Formatter<'_>) -> bool {
-    let text = f.file().text();
-    let slice = |start: u32, end: u32| text.get(start as usize..end as usize).unwrap_or_default();
-    // A line break between the token before it and the comment?
-    let mut first_start = comment.span.start;
-    for before in f.file().comments_before(comment.span).collect::<Vec<_>>().into_iter().rev() {
-        let span = before.span();
-        if text.get(span.start as usize..).is_some_and(|it| it.starts_with(b"//")) || has_line_terminator(slice(span.end, first_start)) {
-            return true;
-        }
-        first_start = span.start;
-    }
-    let before = slice(0, first_start);
-    let token_end = crate::css::text::trim_end(before).len();
-    if token_end == 0 || has_line_terminator(&before[token_end..]) {
-        return true;
-    }
-    // Something on its line behind it?
-    let mut rest = text.get(comment.span.end as usize..).unwrap_or_default();
-    loop {
-        rest = match rest {
-            [b' ' | b'\t', tail @ ..] => tail,
-            // Behind `=` and `(`, a line comment is not taken for one that trails.
-            [b'/', b'/', ..] => return matches!(before[..token_end], [.., b'(']) || is_assignment_operator(&before[..token_end]),
-            [b'/', b'*', tail @ ..] => tail.get(strings::index_of(tail, b"*/").map_or(tail.len(), |at| at + 2)..).unwrap_or_default(),
-            [b'\n' | b'\r', ..] | [0xE2, 0x80, 0xA8 | 0xA9, ..] => return false,
-            _ => return true,
-        };
-    }
-}
-
-/// Whether `text` ends with the token `=`.
-fn is_assignment_operator(text: &[u8]) -> bool {
-    match text {
-        [.., before, b'='] => !matches!(before, b'=' | b'!' | b'<' | b'>' | b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|' | b'^' | b'?'),
-        [b'='] => true,
-        _ => false,
-    }
-}
-
-/// `@license` or `@preserve` in `content`, with something behind it.
-fn is_legal(content: &[u8]) -> bool {
-    [&b"@license"[..], b"@preserve"].iter().any(|word| {
-        let mut from = 0;
-        while let Some(at) = strings::index_of(&content[from..], word) {
-            if from + at + 8 < content.len() {
-                return true;
-            }
-            from += at + 1;
-        }
-        false
-    })
-}
-
 /// Writes `comment` formatted, if the `jsdoc` option is set and it is a JSDoc comment that formatting changes.
 /// Returns whether it has been written.
 pub(crate) fn write_comment<'a>(comment: &Comment, f: &mut Formatter<'a>) -> bool {
@@ -93,7 +34,7 @@ pub(crate) fn write_comment<'a>(comment: &Comment, f: &mut Formatter<'a>) -> boo
         return false;
     };
     // `/*****/` is none.
-    if inner.iter().all(|&byte| byte == b'*') || is_legal(&content[2..content.len() - 2]) || !is_leading(comment, f) {
+    if inner.iter().all(|&byte| byte == b'*') {
         return false;
     }
     let before = f.source_text().slice_range(0, comment.span.start);

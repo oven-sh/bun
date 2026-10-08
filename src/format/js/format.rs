@@ -19,7 +19,7 @@ use super::parentheses;
 use super::print;
 use super::siblings::following_span_start_in;
 use super::utils::suppressed::FormatSuppressedNode;
-use super::utils::typecast::format_type_cast_comment_node;
+use super::utils::typecast::write_type_casts;
 use crate::prelude::*;
 use crate::write;
 
@@ -344,11 +344,19 @@ impl<'a> FormatExpr<'a> {
 
     #[cold]
     fn fmt_with_comments(self, is_chain_expression: bool, f: &mut Formatter<'a>) {
-        let (expr, span) = (self.expr, self.expr.span());
         let node = match is_chain_expression {
-            true => AstNodes::ChainExpression(expr),
-            false => expr.as_chain_element(),
+            true => AstNodes::ChainExpression(self.expr),
+            false => self.expr.as_chain_element(),
         };
+        let write_target = |f: &mut Formatter<'a>| self.fmt_in_type_casts(node, is_chain_expression, f);
+        if self.is_in_chain_expression || !write_type_casts(self.expr, node, f, &write_target) {
+            write_target(f);
+        }
+    }
+
+    /// The expression with its comments, in the parentheses of type casts if there are any.
+    fn fmt_in_type_casts(self, node: AstNodes<'a>, is_chain_expression: bool, f: &mut Formatter<'a>) {
+        let (expr, span) = (self.expr, self.expr.span());
 
         // ESTree's `Expression`, as opposed to the `ChainElement` in a `ChainExpression`.
         if !self.is_in_chain_expression
@@ -364,30 +372,10 @@ impl<'a> FormatExpr<'a> {
 
         // The comments of a JSX element are written with its parentheses.
         if matches!(node, AstNodes::JSXElement(_) | AstNodes::JSXFragment(_)) {
-            if !format_type_cast_comment_node(&self, false, f) {
-                f.around_cursor(span, |f| self.write_in_parentheses(false, f));
-            }
-            return;
+            return f.around_cursor(span, |f| self.write_in_parentheses(false, f));
         }
 
         let is_suppressed = f.comments().is_suppressed(span.start);
-        let is_object_or_array = matches!(node, AstNodes::ObjectExpression(_) | AstNodes::ArrayExpression(_));
-        let can_be_type_cast = !matches!(
-            node,
-            AstNodes::SpreadElement(_)
-                | AstNodes::Elision(_)
-                | AstNodes::PrivateIdentifier(_)
-                | AstNodes::ArrayAssignmentTarget(_)
-                | AstNodes::ObjectAssignmentTarget(_)
-                | AstNodes::AssignmentTargetRest(_)
-                | AstNodes::AssignmentTargetWithDefault(_)
-                | AstNodes::JSXText(_)
-                | AstNodes::JSXEmptyExpression(_)
-                | AstNodes::JSXSpreadChild(_)
-        );
-        if !is_suppressed && can_be_type_cast && format_type_cast_comment_node(&self, is_object_or_array, f) {
-            return;
-        }
         if print::function::write_called_function_with_comments(expr, self.options, f) {
             return;
         }

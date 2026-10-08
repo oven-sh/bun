@@ -12,7 +12,7 @@ use self::groups::{FormatMemberChainGroup, should_insert_empty_line_after};
 use self::simple_argument::SimpleArgument;
 use super::call_expression::{callee_trailing_comments, is_call_expression, is_member_expression};
 use super::is_long_curried_call;
-use super::typecast::is_type_cast_node;
+use super::typecast::is_cast_target;
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::prelude::*;
 use crate::{best_fitting, write};
@@ -419,7 +419,7 @@ fn push_chain_members<'a>(root: Expr<'a>, members: &mut Members<'a>, f: &Formatt
         let is_link = matches!(tag, ExprTag::Call | ExprTag::Dot | ExprTag::Index | ExprTag::NonNull);
         // A link is in a link: nothing that it would need parentheses in, unless an optional chain
         // ends with it.
-        if (has_type_casts && is_type_cast_node(expression.span(), f).is_some())
+        if (has_type_casts && is_cast_target(expression, f))
             || ((!is_link || ((tag == ExprTag::NonNull || expression.chain() != Chain::No) && is_chain_root(expression)))
                 && expression_needs_parentheses(expression, f))
         {

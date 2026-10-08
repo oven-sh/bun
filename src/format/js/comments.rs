@@ -174,6 +174,8 @@ struct NodeFinder<'a> {
     /// The statement of the file that the last position was in. The next one is likely to be in it
     /// too, and a file can have many statements.
     statement: Option<Node<'a>>,
+    /// Where the `(` are that follow a type cast comment.
+    cast_parentheses: Vec<u32>,
 }
 
 impl<'a> NodeFinder<'a> {
@@ -185,6 +187,14 @@ impl<'a> NodeFinder<'a> {
             }
         });
         found
+    }
+
+    /// Whether `comment` is in parentheses around `e` that follow a type cast comment. For Prettier
+    /// they are a node, which the comment is in.
+    fn is_in_cast_parentheses_of(&self, e: Expr<'a>, comment: Comment) -> bool {
+        !self.cast_parentheses.is_empty()
+            && e.is_parenthesized()
+            && e.parens().any(|it| it.end >= comment.span.end && self.cast_parentheses.binary_search(&it.start).is_ok())
     }
 
     /// The innermost node that `offset` is in.
@@ -219,7 +229,10 @@ fn moved_out_of_member_expression<'a>(nodes: &mut NodeFinder<'a>, comment: Comme
         ExprKind::Index { obj, index, .. } if matches!(index.kind(), ExprKind::Ident(_)) => (obj, index.span().start),
         _ => return None,
     };
-    if comment.span.start < object.span().end || property_start < comment.span.end {
+    if comment.span.start < object.span().end
+        || property_start < comment.span.end
+        || nodes.is_in_cast_parentheses_of(object, comment)
+    {
         return None;
     }
     let mut top: Expr<'a> = member;
@@ -249,8 +262,11 @@ fn moved_out_of_property(nodes: &mut NodeFinder<'_>, comment: Comment) -> Option
     };
     let is_in_object = matches!(property.parent(), Node::Expr(object) if matches!(object.kind(), ExprKind::Object(_)));
     let value = property.value()?;
-    (is_in_object && property.kind() == PropKind::Init && value.span().end <= comment.span.start)
-        .then(|| property.span().start)
+    (is_in_object
+        && property.kind() == PropKind::Init
+        && value.span().end <= comment.span.start
+        && !nodes.is_in_cast_parentheses_of(value, comment))
+    .then(|| property.span().start)
 }
 
 /// A comment before the `(` of the parameters at `open_paren`.
@@ -299,6 +315,13 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
         file,
         flavor,
         statement: None,
+        cast_parentheses: (comments.iter())
+            .filter(|comment| comment.flags & TYPE_CAST != 0)
+            .filter_map(|comment| {
+                let after = text.get(comment.span.end as usize..)?.trim_ascii_start();
+                after.starts_with(b"(").then(|| (text.len() - after.len()) as u32)
+            })
+            .collect(),
     };
     let is_blank = |start: u32, end: u32| text.get(start as usize..end as usize).is_some_and(|it| it.trim_ascii().is_empty());
     let mut has_moved = false;
@@ -322,7 +345,7 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
                     between.unwrap_or_default().iter().all(|b| matches!(b, b' ' | b'\t'))
                 }));
         is_after_own_line_comment = is_own_line;
-        if !is_own_line && !is_typescript && !comment.followed_by_newline() {
+        if (!is_own_line && !is_typescript && !comment.followed_by_newline()) || comment.flags & TYPE_CAST != 0 {
             continue;
         }
 
@@ -427,8 +450,6 @@ fn is_type_cast_text(content: &[u8]) -> bool {
 #[derive(Clone, Copy)]
 pub(crate) struct CommentSnapshot {
     printed_count: usize,
-    last_handled_type_cast_comment: usize,
-    type_cast_node_span: Span,
     view_limit: Option<usize>,
 }
 
@@ -438,8 +459,6 @@ pub(crate) struct Comments<'a> {
     /// `inner[..printed_count]` are printed.
     printed_count: usize,
     /// `printed_count` when the last type cast was printed.
-    last_handled_type_cast_comment: usize,
-    type_cast_node_span: Span,
     /// The comments from this index on are hidden.
     view_limit: Option<usize>,
     /// Some comment is a type cast: `/** @type {T} */ (e)`.
@@ -467,8 +486,6 @@ impl<'a> Comments<'a> {
             source_text,
             inner: comments,
             printed_count: 0,
-            last_handled_type_cast_comment: 0,
-            type_cast_node_span: Span::default(),
             view_limit: None,
             has_type_cast_comments: flags & TYPE_CAST != 0,
             has_suppression_comments: flags & SUPPRESSION != 0,
@@ -764,31 +781,23 @@ impl<'a> Comments<'a> {
         })
     }
 
-    /// The same question for a range, whether or not the comments are printed.
-    pub(crate) fn has_type_cast_comment_in_range(&self, start: u32, end: u32) -> bool {
-        if !self.has_type_cast_comments {
-            return false;
-        }
-        let first = self.inner.partition_point(|c| c.end() < start);
-        self.inner[first..].iter().take_while(|c| c.end() <= end).any(|comment| {
+    /// Whether the `(` at `open` follows a type cast comment with nothing but white space in between.
+    /// If it is around an expression, Prettier keeps the `ParenthesizedExpression`.
+    pub(crate) fn is_cast_parenthesis(&self, open: u32) -> bool {
+        let before = self.inner.partition_point(|comment| comment.start() < open);
+        // The text of a moved comment is somewhere else.
+        self.inner[..before].iter().rev().find(|comment| !comment.is_moved()).is_some_and(|comment| {
             self.is_type_cast_comment(comment)
-                && self.source_text.next_non_whitespace_byte_is(comment.end(), b'(')
+                && self.source_text.all_bytes_match(comment.span.end, open, |b| b.is_ascii_whitespace())
         })
     }
 
-    pub(crate) fn mark_as_type_cast_node(&mut self, node: &impl Spanned) {
-        self.type_cast_node_span = node.span();
-        self.last_handled_type_cast_comment = self.printed_count;
-    }
-
-    /// Whether the comment that was printed last has been dealt with as a type cast.
-    pub(crate) fn is_handled_type_cast_comment(&self) -> bool {
-        self.printed_count == self.last_handled_type_cast_comment
-    }
-
-    #[inline]
-    pub(crate) fn is_type_cast_node(&self, node: &impl Spanned) -> bool {
-        self.has_type_cast_comments && self.type_cast_node_span == node.span()
+    /// Shows the comments that start before `end_pos`, hidden or not, and hides the others. Returns
+    /// what to pass to [`Comments::restore_view_limit`].
+    pub(crate) fn show_comments_up_to(&mut self, end_pos: u32) -> Option<usize> {
+        let rest = self.inner.get(self.printed_count..).unwrap_or_default();
+        let limit = self.printed_count + rest.partition_point(|c| c.start() < end_pos);
+        self.view_limit.replace(limit)
     }
 
     /// Hides the comments that start at or after `end_pos`. Returns what to pass to
@@ -811,16 +820,12 @@ impl<'a> Comments<'a> {
     pub(crate) fn snapshot(&self) -> CommentSnapshot {
         CommentSnapshot {
             printed_count: self.printed_count,
-            last_handled_type_cast_comment: self.last_handled_type_cast_comment,
-            type_cast_node_span: self.type_cast_node_span,
             view_limit: self.view_limit,
         }
     }
 
     pub(crate) fn restore(&mut self, snapshot: CommentSnapshot) {
         self.printed_count = snapshot.printed_count;
-        self.last_handled_type_cast_comment = snapshot.last_handled_type_cast_comment;
-        self.type_cast_node_span = snapshot.type_cast_node_span;
         self.view_limit = snapshot.view_limit;
     }
 

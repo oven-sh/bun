@@ -6,6 +6,7 @@ use crate::js::utils::assignment_like::AssignmentLikeLayout;
 use crate::js::utils::expression::ExpressionLeftSide;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::suppressed::FormatSuppressedNode;
+use crate::js::utils::typecast::is_cast_target;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -114,8 +115,11 @@ fn write_arrow<'a>(
     }
 
     let has_own_line_comment = has_leading_own_line_comment(tail, options.cache_mode, f);
-    let add_parens_if_not_break = should_add_parens_if_not_break(tail);
+    // For Prettier the body is a `ParenthesizedExpression` then, whatever is in it.
+    let is_body_type_cast = get_expression(tail).is_some_and(|body| is_cast_target(body, f));
+    let add_parens_if_not_break = !is_body_type_cast && should_add_parens_if_not_break(tail);
     let is_body_on_same_line = (!has_own_line_comment
+        && !is_body_type_cast
         && (get_expression(tail).is_none_or(|body| is_sequence(body) || may_break_after_short_prefix(body, f))
             || (!should_break_chain && add_parens_if_not_break)))
         || (add_parens_if_not_break && expand_last_arg && counts_space_before_commented_conditional(f));
@@ -491,7 +495,7 @@ impl<'a> Format<'a> for FormatArrowBody<'a> {
 }
 
 fn write_expression_body<'a>(body: Expr<'a>, f: &mut Formatter<'a>) {
-    let is_sequence = is_sequence(body);
+    let is_sequence = is_sequence(body) && !is_cast_target(body, f);
     if f.is_quiet() {
         return write!(f, [is_sequence.then_some("("), body, is_sequence.then_some(")")]);
     }

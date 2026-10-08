@@ -10,6 +10,7 @@ use crate::js::print::parameters::{FormatFormalParameters, has_only_simple_param
 use crate::js::utils::call_expression::{is_call_expression, is_next_line_empty, strip_chain_element_wrappers};
 use crate::js::utils::is_long_curried_call;
 use crate::js::utils::member_chain::simple_argument::SimpleArgument;
+use crate::js::utils::typecast::is_cast_target;
 use crate::prelude::*;
 use crate::{format_args, write};
 use smallvec::SmallVec;
@@ -428,6 +429,9 @@ fn is_hopefully_short_call_argument<'a>(argument: Expr<'a>, f: &Formatter<'a>) -
 
 /// Prettier's `couldExpandArg`.
 fn can_group_expression_argument<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> bool {
+    if is_cast_target(argument, f) {
+        return false;
+    }
     match argument.kind() {
         ExprKind::Object(props) => !props.is_empty() || f.comments().has_comment_in_span(argument.span()),
         ExprKind::Array(elements) => !elements.is_empty() || f.comments().has_comment_in_span(argument.span()),
@@ -449,17 +453,14 @@ fn can_group_arrow_function_expression_argument<'a>(
         return true;
     };
     // The parentheses of a type cast are a node for Prettier, which is not one of these.
-    let has_type_cast =
-        || f.comments().has_type_cast_comment_in_range(arrow_function.span().start, expression.span().start);
+    if is_cast_target(expression, f) {
+        return false;
+    }
     match expression.kind() {
         ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Jsx(_) => true,
         ExprKind::Fn(inner) if inner.is_arrow() => can_group_arrow_function_expression_argument(inner, true, f),
-        ExprKind::Cond { .. } => !is_arrow_recursion && !has_type_cast(),
-        _ => {
-            !is_arrow_recursion
-                && matches!(strip_chain_element_wrappers(expression).kind(), ExprKind::Call(_))
-                && !has_type_cast()
-        }
+        ExprKind::Cond { .. } => !is_arrow_recursion,
+        _ => !is_arrow_recursion && matches!(strip_chain_element_wrappers(expression).kind(), ExprKind::Call(_)),
     }
 }
 

@@ -6,6 +6,7 @@ use super::member_chain::is_member_call_chain;
 use super::object::{FormatKey, format_computed_or_property_key, write_member_name};
 use super::operators::assign_op_text;
 use super::string::{FormatLiteralStringToken, StringLiteralParentKind};
+use super::typecast::is_cast_target;
 use crate::js::format::{ExprOptions, FormatExpr, FormatTypeAnnotation};
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::print::arrow_function_expression::FormatJsArrowFunctionExpressionOptions;
@@ -378,7 +379,7 @@ impl<'a> AssignmentLike<'a> {
                             && right.tag() == ExprTag::Cond
                             && layout != AssignmentLikeLayout::BreakAfterOperator
                             && !matches!(self, Self::AccessorProperty(_))
-                            && !f.comments().is_type_cast_node(&right) =>
+                            && !is_cast_target(right, f) =>
                     {
                         match super::experimental_ternary::should_break(right, f) {
                             true => write!(f, indent(&right)),
@@ -401,7 +402,9 @@ impl<'a> AssignmentLike<'a> {
                             }
                         }
                     }
-                    Some(right) if right.tag() == ExprTag::Fn => write!(f, with_assignment_layout(right, Some(layout))),
+                    Some(right) if right.tag() == ExprTag::Fn && !is_cast_target(right, f) => {
+                        write!(f, with_assignment_layout(right, Some(layout)));
+                    }
                     Some(right) => write!(f, right),
                     None => {}
                 }
@@ -422,25 +425,28 @@ impl<'a> AssignmentLike<'a> {
         left_may_break: bool,
         f: &mut Formatter<'a>,
     ) -> AssignmentLikeLayout {
-        let (mut is_type_cast, mut starts_with_type_cast) = (false, false);
+        // For Prettier the right side is a `ParenthesizedExpression` then, whatever is in it.
+        let is_type_cast = right_expression.is_some_and(|e| is_cast_target(e, f));
+        let mut starts_with_type_cast = false;
         if let Some(e) = right_expression {
-            if let Some(layout) = self.chain_formatting_layout(e) {
+            if let Some(layout) = self.chain_formatting_layout(e, is_type_cast, f) {
                 return layout;
             }
             // `a = b = c = d`
             if e.tag() == ExprTag::Assign
+                && !is_type_cast
                 && matches!(e.as_ast_nodes(), AstNodes::AssignmentExpression(_))
-                && e.right().is_some_and(|value| value.tag() == ExprTag::Assign)
+                && e.right().is_some_and(|value| value.tag() == ExprTag::Assign && !is_cast_target(value, f))
             {
                 return AssignmentLikeLayout::BreakAfterOperator;
             }
             match leading_comments_of_right_side(e, f) {
-                LeadingComments::None => {}
+                LeadingComments::None | LeadingComments::TypeCast => {}
                 LeadingComments::Break => return AssignmentLikeLayout::BreakAfterOperator,
-                LeadingComments::TypeCast => is_type_cast = true,
                 LeadingComments::TypeCastOfLeftEdge => starts_with_type_cast = true,
             }
             if e.tag() == ExprTag::Call
+                && !is_type_cast
                 && let AstNodes::CallExpression(call) = e.as_ast_nodes()
                 && call.callee().is_some_and(|callee| callee.tag() == ExprTag::Ident && callee.text() == b"require")
             {
@@ -456,7 +462,7 @@ impl<'a> AssignmentLike<'a> {
             return AssignmentLikeLayout::BreakAfterOperator;
         }
 
-        if self.should_break_left_hand_side(left_may_break) {
+        if self.should_break_left_hand_side(left_may_break && !is_type_cast) {
             return AssignmentLikeLayout::BreakLeftHandSide;
         }
         if !is_type_cast && right_expression
@@ -466,7 +472,7 @@ impl<'a> AssignmentLike<'a> {
         if !left_may_break
             && (is_left_short
                 || right_expression.is_some_and(|e| {
-                    matches!(
+                    !is_type_cast && matches!(
                         e.tag(),
                         ExprTag::Class
                             | ExprTag::Template
@@ -505,17 +511,27 @@ impl<'a> AssignmentLike<'a> {
     }
 
     /// Prettier's `isAssignment` chains: `a = b = c`.
-    fn chain_formatting_layout(&self, right_expression: Expr<'a>) -> Option<AssignmentLikeLayout> {
+    ///
+    /// `is_type_cast`: whether `right_expression` is in the parentheses of a type cast.
+    fn chain_formatting_layout(
+        &self,
+        right_expression: Expr<'a>,
+        is_type_cast: bool,
+        f: &Formatter<'a>,
+    ) -> Option<AssignmentLikeLayout> {
         let Self::AssignmentExpression(assignment) = *self else {
             return None;
         };
+        if is_cast_target(assignment, f) {
+            return None;
+        }
         // Anything else is in neither a declarator nor an assignment.
         match assignment.parent() {
             Node::VarDecl(_) => {}
             Node::Expr(parent) if parent.tag() == ExprTag::Assign => {}
             _ => return None,
         }
-        let right_is_tail = right_expression.tag() != ExprTag::Assign;
+        let right_is_tail = is_type_cast || right_expression.tag() != ExprTag::Assign;
         let parent = assignment.ast_parent();
         let upper_chain_is_eligible = match parent {
             AstNodes::VariableDeclarator(_) => !right_is_tail,
@@ -531,9 +547,10 @@ impl<'a> AssignmentLike<'a> {
         if !right_is_tail {
             return Some(AssignmentLikeLayout::Chain);
         }
-        let is_arrow_chain = right_expression.arrow_function().is_some_and(
-            |arrow| matches!(arrow.body(), FnBody::Expr(body) if body.arrow_function().is_some()),
-        );
+        let is_arrow_chain = !is_type_cast
+            && right_expression.arrow_function().is_some_and(|arrow| {
+                matches!(arrow.body(), FnBody::Expr(body) if body.arrow_function().is_some() && !is_cast_target(body, f))
+            });
         Some(match is_arrow_chain {
             true => AssignmentLikeLayout::ChainTailArrowFunction,
             false => AssignmentLikeLayout::ChainTail,
@@ -659,13 +676,13 @@ fn should_break_after_operator<'a>(
             matches!(right.kind(), ExprKind::Cond { yes, no, .. } if yes.tag() == ExprTag::Cond || no.tag() == ExprTag::Cond)
         }
         // `/** @type {T} */ (a || b) ? c : d`: the test is in parentheses.
-        ExprTag::Cond if starts_with_type_cast && right.test().is_some_and(Expr::is_parenthesized) => false,
+        ExprTag::Cond if starts_with_type_cast && right.test().is_some_and(|test| is_cast_target(test, f)) => false,
         ExprTag::Cond => right.test().and_then(breaks_as_binary_expression).unwrap_or(false),
         ExprTag::Class => right.as_class().is_some_and(|class| class.decorators().next().is_some()),
         _ if is_left_short => false,
         _ => {
-            let inner_expression = get_innermost_expression(right);
-            inner_expression.tag() == ExprTag::String
+            let inner_expression = get_innermost_expression(right, f);
+            (inner_expression.tag() == ExprTag::String && !is_cast_target(inner_expression, f))
                 || (!starts_with_type_cast && is_poorly_breakable_member_or_call_chain(inner_expression, f))
         }
     }
@@ -673,9 +690,10 @@ fn should_break_after_operator<'a>(
 
 /// The `a()` of `void !!(await a())`.
 #[inline]
-fn get_innermost_expression(mut current: Expr<'_>) -> Expr<'_> {
+fn get_innermost_expression<'a>(mut current: Expr<'a>, f: &Formatter<'a>) -> Expr<'a> {
     loop {
         let inner = match current.tag() {
+            _ if is_cast_target(current, f) => None,
             ExprTag::Unary if current.unary_op().is_some_and(|op| op.is_update()) => None,
             ExprTag::Unary | ExprTag::Await | ExprTag::Yield => current.argument(),
             // All of `a?.b!` is a `ChainExpression`.

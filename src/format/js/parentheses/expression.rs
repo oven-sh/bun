@@ -3,6 +3,7 @@
 use crate::js::ast_nodes::ExpressionStatement;
 use crate::js::print::binary_like_expression::should_flatten;
 use crate::js::print::expressions::unary_argument_has_comments;
+use crate::js::utils::typecast::is_cast_target;
 use crate::prelude::*;
 use AstNodes as N;
 
@@ -18,7 +19,7 @@ pub(crate) fn expression_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -
 /// Whether the `ChainExpression` around `e`, which is the whole of an optional chain, needs
 /// parentheses.
 pub(crate) fn chain_expression_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
-    if f.comments().is_type_cast_node(&e) {
+    if is_cast_target(e, f) {
         return false;
     }
     let parent = N::ChainExpression(e).parent();
@@ -116,7 +117,7 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         | ExprKind::Regex(_)
         | ExprKind::Template(_)
         | ExprKind::ImportMeta
-        | ExprKind::NewTarget => return is_for_in_statement_init(e) && !f.comments().is_type_cast_node(&e),
+        | ExprKind::NewTarget => return is_for_in_statement_init(e) && !is_cast_target(e, f),
         // A pattern is not an expression.
         ExprKind::Array(_) | ExprKind::Object(_) if is_assignment_target(e) => return false,
         // The function of a method is not an expression of its own.
@@ -127,7 +128,7 @@ fn needs_parentheses_where_it_is<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         }
         _ => {}
     }
-    if f.comments().is_type_cast_node(&e) {
+    if is_cast_target(e, f) {
         return false;
     }
 
@@ -388,7 +389,7 @@ fn is_name_that_may_need_parentheses(name: &[u8]) -> bool {
 /// Prettier's `shouldAddParenthesesToIdentifier`.
 fn identifier_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let name = e.text();
-    if !is_name_that_may_need_parentheses(name) || f.comments().is_type_cast_node(&e) {
+    if !is_name_that_may_need_parentheses(name) || is_cast_target(e, f) {
         return false;
     }
     let is_left_of = |statement: Stmt<'a>, left: Expr<'a>| {

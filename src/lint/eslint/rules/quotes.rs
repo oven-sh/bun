@@ -97,17 +97,14 @@ fn is_directive(statement: Stmt) -> bool {
         if e.tag() == ExprTag::String && !ast_utils::is_parenthesised(e))
 }
 
-/// Where the first of `statements` starts that does not look like a directive. `None` if it is not
-/// among the first `limit`.
-fn end_of_directives<'a>(statements: List<'a, Stmt<'a>>, limit: usize) -> Option<u32> {
-    let mut statements = statements.iter();
-    match statements.by_ref().take(limit).find(|it| !is_directive(*it)) {
-        Some(first) => Some(first.span().start),
-        None => statements.next().is_none().then_some(u32::MAX),
-    }
+/// Where the first of `statements` starts that does not look like a directive.
+fn end_of_directives<'a>(statements: List<'a, Stmt<'a>>) -> u32 {
+    statements.iter().find(|it| !is_directive(*it)).map_or(u32::MAX, |first| first.span().start)
 }
 
-/// [`end_of_directives`] of the bodies that start with many, by what they are the body of.
+/// [`end_of_directives`] of the bodies that have a string as a statement, by what they are the body
+/// of. To tell whether a statement looks like a directive takes a look at what is before it, which
+/// can be long: each is looked at once.
 type State<'a> = FxHashMap<Node<'a>, u32>;
 
 /// ESLint's `isExpressionInOrJustAfterDirectivePrologue`, for the statement that the expression is.
@@ -126,11 +123,7 @@ fn is_in_or_just_after_directive_prologue<'a>(statement: Stmt<'a>, state: &mut S
         _ => None,
     };
     siblings.is_some_and(|siblings| {
-        let end = end_of_directives(siblings, 8).unwrap_or_else(|| {
-            let all = || end_of_directives(siblings, usize::MAX).unwrap_or(u32::MAX);
-            *state.entry(parent).or_insert_with(all)
-        });
-        statement.span().start <= end
+        statement.span().start <= *state.entry(parent).or_insert_with(|| end_of_directives(siblings))
     })
 }
 

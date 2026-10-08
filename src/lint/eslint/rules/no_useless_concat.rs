@@ -1,0 +1,50 @@
+use bun_lint::prelude::*;
+
+/// Disallow unnecessary concatenation of literals or template literals.
+pub struct NoUselessConcat;
+
+const UNEXPECTED_CONCAT: Message =
+    Message::new("unexpectedConcat", "Unexpected string concatenation of literals.");
+
+/// The operands, if `e` is a `+`.
+fn as_concatenation(e: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
+    match e.kind() {
+        ExprKind::Binary {
+            op: BinOp::Add,
+            left,
+            right,
+        } => Some((left, right)),
+        _ => None,
+    }
+}
+
+impl Rule for NoUselessConcat {
+    const META: Meta = Meta::eslint("no-useless-concat", Kind::Suggestion);
+    type State<'a> = ();
+
+    fn new(_: &Options) -> Self {
+        NoUselessConcat
+    }
+
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+        on.exprs([ExprTag::Binary], |_, e, cx| {
+            let Some((mut left, mut right)) = as_concatenation(e) else {
+                return;
+            };
+            // `foo + "a" + "b"`
+            while let Some((_, inner)) = as_concatenation(left) {
+                left = inner;
+            }
+            while let Some((inner, _)) = as_concatenation(right) {
+                right = inner;
+            }
+            if ast_utils::is_string_literal(left)
+                && ast_utils::is_string_literal(right)
+                && ast_utils::is_token_on_same_line(cx.file(), left, right)
+                && let Some(operator) = e.operator_span()
+            {
+                cx.report(operator, UNEXPECTED_CONCAT);
+            }
+        });
+    }
+}

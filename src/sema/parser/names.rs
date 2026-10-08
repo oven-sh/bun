@@ -654,43 +654,49 @@ struct Late {
     texts: Chunk,
 }
 
-const CHUNK: usize = 64;
-
-/// A list that grows while its elements are borrowed.
+/// A list that grows while its elements are borrowed. Each chunk has twice the room of the one
+/// before it, so that few are passed on the way to an element.
 struct Chunk {
-    texts: [OnceLock<Box<[u8]>>; CHUNK],
+    texts: Box<[OnceLock<Box<[u8]>>]>,
     next: OnceLock<Box<Chunk>>,
 }
 
-impl Default for Chunk {
-    fn default() -> Self {
+impl Chunk {
+    fn with_room(room: usize) -> Self {
         Chunk {
-            texts: [const { OnceLock::new() }; CHUNK],
+            texts: (0..room).map(|_| OnceLock::new()).collect(),
             next: OnceLock::new(),
         }
     }
 }
 
+impl Default for Chunk {
+    fn default() -> Self {
+        Chunk::with_room(64)
+    }
+}
+
 impl Late {
-    fn place(&self, mut number: u32) -> &OnceLock<Box<[u8]>> {
-        let mut chunk = &self.texts;
-        while number as usize >= CHUNK {
-            chunk = chunk.next.get_or_init(Default::default);
-            number -= CHUNK as u32;
+    fn place(&self, number: u32) -> &OnceLock<Box<[u8]>> {
+        let (mut chunk, mut number) = (&self.texts, number as usize);
+        while number >= chunk.texts.len() {
+            let room = chunk.texts.len();
+            number -= room;
+            chunk = chunk.next.get_or_init(|| Box::new(Chunk::with_room(room * 2)));
         }
-        &chunk.texts[number as usize]
+        &chunk.texts[number]
     }
 
-    fn bytes(&self, mut number: u32) -> &[u8] {
-        let mut chunk = &self.texts;
-        while number as usize >= CHUNK {
+    fn bytes(&self, number: u32) -> &[u8] {
+        let (mut chunk, mut number) = (&self.texts, number as usize);
+        while number >= chunk.texts.len() {
+            number -= chunk.texts.len();
             match chunk.next.get() {
                 Some(next) => chunk = next,
                 None => return b"",
             }
-            number -= CHUNK as u32;
         }
-        chunk.texts[number as usize].get().map_or(b"", |text| text)
+        chunk.texts[number].get().map_or(b"", |text| text)
     }
 
     fn intern(&self, text: &[u8]) -> u32 {

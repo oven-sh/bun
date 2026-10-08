@@ -101,7 +101,12 @@ pub(crate) fn write_ts_union_type_in<'a>(
     if is_indented_by_parent || !should_indent_union_type(ty, parent) {
         return write!(f, printed);
     }
-    write!(f, group(&indent(&format_args!(soft_line_break(), printed))));
+    // With `experimentalTernaries` the type after `extends` is in parentheses that start with a line break. This is a second
+    // one, and Prettier writes both.
+    let is_after_line_break = f.options().experimental_ternaries
+        && matches!(parent, AstNodes::TSConditionalType(it) if matches!(it.kind(), TypeKind::Cond { extends, .. } if extends.span().contains(ty.span())));
+    let line = if is_after_line_break { soft_empty_line() } else { soft_line_break() };
+    write!(f, group(&indent(&format_args!(line, printed))));
 }
 
 /// oxfmt follows Prettier 3.8: a union that does not fit where it is has each type on a line of its

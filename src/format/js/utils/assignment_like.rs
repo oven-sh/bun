@@ -815,32 +815,47 @@ fn is_poorly_breakable_member_or_call_chain<'a>(expression: Expr<'a>, f: &mut Fo
     let mut current = expression;
 
     loop {
-        current = match current.kind() {
-            ExprKind::NonNull(inner) => inner,
-            ExprKind::Call(call) => {
+        let next = match current.tag() {
+            ExprTag::NonNull => current.operand(),
+            ExprTag::Call => {
+                // One call that can break is all it takes, and most can.
+                let arguments = current.as_call().map(Call::args);
+                match arguments.map(|it| (it.len(), it.first())) {
+                    Some((0, _) | (_, None)) => {}
+                    Some((1, Some(only))) if only.tag() != ExprTag::Spread && is_short_argument(only, threshold, f) => {}
+                    _ => return false,
+                }
                 is_chain = true;
                 call_expressions.push(current);
-                call.callee()
+                current.callee()
             }
-            ExprKind::Dot { obj, name, .. } => {
+            ExprTag::Dot => {
                 is_chain = true;
                 // `a./* comment */ b()`: that one leads the name, which is not a link.
-                has_comment_between_links |= !call_expressions.is_empty()
+                if !call_expressions.is_empty()
                     && !f.is_quiet()
-                    && (f.comments().comments_in_range(obj.outer_span().end, name.span().start).iter()).any(|comment| {
+                    && let ExprKind::Dot { obj, name, .. } = current.kind()
+                {
+                    let comments = f.comments().comments_in_range(obj.outer_span().end, name.span().start);
+                    has_comment_between_links |= comments.iter().any(|comment| {
                         comment.preceded_by_newline()
                             || comment.followed_by_newline()
                             || f.source_text().bytes_contain(comment.span.end, name.span().start, b'.')
                     });
-                obj
+                }
+                current.object()
             }
-            ExprKind::Index { obj, .. } => {
+            ExprTag::Index => {
                 is_chain = true;
-                obj
+                current.object()
             }
-            ExprKind::Ident(_) | ExprKind::This => break,
-            _ => return false,
+            ExprTag::Ident | ExprTag::This => break,
+            _ => None,
         };
+        match next {
+            Some(next) => current = next,
+            None => return false,
+        }
     }
     if !is_chain {
         return false;
@@ -857,16 +872,9 @@ fn is_poorly_breakable_member_or_call_chain<'a>(expression: Expr<'a>, f: &mut Fo
         let Some(call) = call_expression.call() else {
             continue;
         };
-        let is_breakable_call = match (call.args().len(), call.args().first()) {
-            (0, _) | (_, None) => false,
-            (1, Some(first)) => {
-                matches!(first.kind(), ExprKind::Spread(_))
-                    || !is_short_argument(first, threshold, f)
-                    || f.comments().has_comment_in_range(call.callee().span().end, call_expression.span().end)
-            }
-            _ => true,
-        };
-        if is_breakable_call || is_complex_type_arguments(call_expression, call.type_args(), f) {
+        let has_comment_around_argument = !call.args().is_empty()
+            && f.comments().has_comment_in_range(call.callee().span().end, call_expression.span().end);
+        if has_comment_around_argument || is_complex_type_arguments(call_expression, call.type_args(), f) {
             return false;
         }
     }

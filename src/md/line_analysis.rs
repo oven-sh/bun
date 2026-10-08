@@ -293,10 +293,16 @@ impl Parser<'_> {
                         && pos + 1 < self.size
                         && ch(self.text, pos + 1) == b'/'
                     {
-                        if self.match_html_tag(pos, b"script")
-                            || self.match_html_tag(pos, b"pre")
-                            || self.match_html_tag(pos, b"style")
-                            || self.match_html_tag(pos, b"textarea")
+                        let rest = &self.text[pos as usize + 2..];
+                        let is_end_tag = |name: &[u8]| {
+                            rest.len() > name.len()
+                                && rest[name.len()] == b'>'
+                                && helpers::ascii_case_eql(&rest[..name.len()], name)
+                        };
+                        if is_end_tag(b"script")
+                            || is_end_tag(b"pre")
+                            || is_end_tag(b"style")
+                            || is_end_tag(b"textarea")
                         {
                             return true;
                         }

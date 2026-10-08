@@ -1859,3 +1859,9 @@ describe("white space behind the marker of a block quote", () => {
     expect(Markdown.html(">   <div>\n")).toBe("<blockquote>\n  <div>\n</blockquote>\n");
   });
 });
+
+describe("the end of a script", () => {
+  test("an end tag without its > does not end the HTML", () => {
+    expect(Markdown.html("<script>\na\n</script\n>\nb\n")).toBe("<script>\na\n</script\n>\nb\n");
+  });
+});

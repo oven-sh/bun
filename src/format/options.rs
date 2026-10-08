@@ -765,4 +765,3 @@ pub enum EmbeddedLanguageFormatting {
     Auto,
     Off,
 }
-

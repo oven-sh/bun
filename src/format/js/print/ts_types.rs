@@ -13,7 +13,7 @@ use crate::js::utils::number::format_number_token;
 use crate::js::utils::object::{format_computed_or_property_key, key_requires_quotes};
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::js::utils::suppressed::FormatSuppressedNode;
-use crate::js::utils::typescript::without_lone_operator;
+use crate::js::utils::typescript::{end_of_line_comments, without_lone_operator};
 use crate::prelude::*;
 use crate::{best_fitting, format_args, write};
 use std::cell::Cell;
@@ -230,20 +230,33 @@ pub(crate) fn write_ts_signature<'a>(member: Member<'a>, f: &mut Formatter<'a>) 
             if let Some(key) = member.key() {
                 format_computed_or_property_key(key, node, f);
             }
-            // The comments before the `:` trail the name. So does one at the end of the line of the
-            // `:`, unless a union or an intersection follows (Prettier's
-            // `handlePropertySignatureComments`).
-            if !f.is_quiet()
-                && let Some(ty) = member.ty()
-            {
-                let colon = ty.annotation_span().start;
-                write!(f, FormatTrailingComments::Comments(f.comments().comments_before(colon)));
-                if !matches!(without_lone_operator(ty).kind(), TypeKind::Union(_) | TypeKind::Intersection(_)) {
-                    write!(f, FormatTrailingComments::Comments(f.comments().end_of_line_comments_after(colon)));
-                }
+            let Some(ty) = member.ty() else {
+                return write!(f, member.flags().contains(Flags::OPTIONAL).then_some("?"));
+            };
+            // Prettier does not attach comments to the `: T` of a property signature, only to the
+            // name and the type.
+            if !f.is_quiet() {
+                write!(f, FormatTrailingComments::Comments(comments_after_property_name(ty, f)));
             }
-            write!(f, [member.flags().contains(Flags::OPTIONAL).then_some("?"), member.ty().map(FormatTypeAnnotation)]);
+            write!(f, [member.flags().contains(Flags::OPTIONAL).then_some("?"), ":", space(), ty]);
+            write_trailing_comments_of(AstNodes::TSTypeAnnotation(ty), f);
         }
+    }
+}
+
+/// Of the comments between the name of a property signature and its type `ty`, those that trail
+/// the name: those on its line that are before the `:`, or at the end of the line, unless a union
+/// or an intersection follows (Prettier's `handlePropertySignatureComments`).
+fn comments_after_property_name<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> &'a [Comment] {
+    let comments = f.comments().comments_before(ty.span().start);
+    let colon = ty.annotation_span().start;
+    let before_colon =
+        comments.iter().take_while(|comment| comment.span.start < colon && !comment.preceded_by_newline()).count();
+    let (_, rest) = comments.split_at(before_colon);
+    let takes_comments = matches!(without_lone_operator(ty).kind(), TypeKind::Union(_) | TypeKind::Intersection(_));
+    match takes_comments {
+        true => &comments[..before_colon],
+        false => &comments[..before_colon + end_of_line_comments(rest).len()],
     }
 }
 
@@ -299,22 +312,36 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
     write!(f, type_arguments(args, Node::Type(ty)));
 }
 
-/// The module specifier of an import type that has options after it.
-struct FormatImportTypeSource<'a>(TypeNode<'a>, Span);
+/// The module specifier in `import("a")` or `require("a")`. Only the comments before the `)` trail it.
+pub(crate) struct FormatModuleSpecifier<'a> {
+    pub(crate) span: Span,
+    pub(crate) parent: AstNodes<'a>,
+    /// From `import` or `require` to the `)`.
+    pub(crate) call_span: Span,
+}
 
-impl Spanned for FormatImportTypeSource<'_> {
+struct FormatModuleSpecifierWithoutComments<'a>(Span, AstNodes<'a>);
+
+impl Spanned for FormatModuleSpecifierWithoutComments<'_> {
     fn span(&self) -> Span {
-        self.1
+        self.0
     }
 }
 
-impl<'a> Format<'a> for FormatImportTypeSource<'a> {
+impl<'a> Format<'a> for FormatModuleSpecifierWithoutComments<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         FormatStringLiteral {
-            span: self.1,
-            parent: AstNodes::TSImportType(self.0),
+            span: self.0,
+            parent: self.1,
         }
         .fmt(f);
+    }
+}
+
+impl<'a> Format<'a> for FormatModuleSpecifier<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        let specifier = FormatModuleSpecifierWithoutComments(self.span, self.parent);
+        write!(f, [FormatNodeWithoutTrailingComments(&specifier), format_trailing_comments(self.call_span, self.span, 0)]);
     }
 }
 
@@ -327,7 +354,7 @@ fn write_import_type_arguments<'a>(
 ) {
     let span = options.options_span();
     let format_source = format_with(|f| {
-        let source = FormatImportTypeSource(ty, source);
+        let source = FormatModuleSpecifierWithoutComments(source, AstNodes::TSImportType(ty));
         write!(f, [FormatNodeWithoutTrailingComments(&source), format_trailing_comments(ty.span(), source.span(), span.start)]);
     })
     .memoized();
@@ -416,10 +443,16 @@ pub(crate) fn write_ts_type_predicate<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a
     else {
         return;
     };
-    write!(f, [asserts.then_some("asserts "), ty.predicate_param().map(|it| identifier(it, AstNodes::TSTypePredicate(ty)))]);
-    if let Some(type_annotation) = type_annotation {
-        write!(f, [space(), "is", space(), FormatTypeAnnotation(type_annotation)]);
+    let parameter = ty.predicate_param().map(|it| identifier(it, AstNodes::TSTypePredicate(ty)));
+    write!(f, asserts.then_some("asserts "));
+    let Some(type_annotation) = type_annotation else {
+        return write!(f, parameter);
+    };
+    write!(f, parameter.as_ref().map(FormatNodeWithoutTrailingComments));
+    if let Some(parameter) = parameter {
+        write!(f, format_trailing_comments(ty.span(), parameter.span(), type_annotation.span().start));
     }
+    write!(f, [space(), "is", space(), FormatTypeAnnotation(type_annotation)]);
 }
 
 /// The `: T` around `ty`. For the return type of a function type, `=> T`.

@@ -5,7 +5,7 @@ use super::class::FormatClassImplements;
 use super::import_declaration::FormatStringLiteral;
 use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
-use super::ts_types::{entity_name, write_ts_interface_signatures};
+use super::ts_types::{FormatModuleSpecifier, entity_name, write_ts_interface_signatures};
 use super::type_parameters::{FormatTSTypeParametersOptions, type_parameters};
 use super::union_type::write_ts_union_type_in;
 use crate::js::format::{format_node, identifier, write_trailing_comments_of};
@@ -127,16 +127,14 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(statement: Stmt<'a>, alias: Al
     let left_group = f.reserve_tag();
     write!(f, [is_declared(statement).then_some("declare "), "type "]);
     let id = identifier(alias.name(), node);
-    let left_end = if let Some(span) = alias.type_params().angle_brackets_span() {
+    if alias.type_params().angle_brackets_span().is_some() {
         let type_parameters = type_parameters(alias.type_params(), Node::Stmt(statement));
         write!(f, [id, FormatNodeWithoutTrailingComments(&type_parameters)]);
-        span.end
     } else {
         write!(f, FormatNodeWithoutTrailingComments(&id));
-        id.span().end
-    };
+    }
     if !f.is_quiet() {
-        write!(f, FormatTrailingComments::Comments(comments_before_type_alias_operator(left_end, ty, f)));
+        write!(f, FormatTrailingComments::Comments(comments_before_type_alias_operator(id.span().end, ty, f)));
     }
 
     let layout = type_alias_layout(alias, ty, f);
@@ -180,9 +178,9 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(statement: Stmt<'a>, alias: Al
     }
 }
 
-/// Of the comments between the left side of a type alias, which ends at `start`, and the `=`, those
-/// that trail the left side. All others, and those after the `=`, lead the type (Prettier's
-/// `handleAssignmentLikeComments`).
+/// Of the comments that are left between the name of a type alias, which ends at `start`, and the
+/// first `=` after it, those that trail the left side. All others lead the type (Prettier's
+/// `handleAssignmentLikeComments`, for which the `=` of a default type is as good as any).
 fn comments_before_type_alias_operator<'a>(start: u32, ty: TypeNode<'a>, f: &Formatter<'a>) -> &'a [Comment] {
     let comments = f.comments().comments_before_character(start, b'=');
     let is_object = matches!(ty.kind(), TypeKind::Object(_));
@@ -237,6 +235,7 @@ pub(crate) fn write_ts_enum_declaration<'a>(statement: Stmt<'a>, declaration: En
             space(),
             identifier(declaration.name(), node),
             space(),
+            format_leading_comments(declaration.body_span()),
             "{"
         ]
     );
@@ -281,8 +280,13 @@ pub(crate) fn write_ts_enum_member<'a>(member: EnumMember<'a>, f: &mut Formatter
 /// `namespace A.B { .. }`, `declare module "a" { .. }`, `declare global { .. }`
 pub(crate) fn write_ts_module_declaration<'a>(statement: Stmt<'a>, module: Module<'a>, f: &mut Formatter<'a>) {
     let node = statement.as_ast_nodes();
+    let innermost = module.innermost();
+    let body_span = innermost.body_span();
     write!(f, is_declared(statement).then_some("declare "));
 
+    // Which of the comments after the name trail it depends on the body.
+    let name_end = innermost.name_span().end;
+    let view_limit = (!f.is_quiet()).then(|| f.comments_mut().limit_comments_up_to(name_end));
     match module.name() {
         ModuleName::Global => {
             let comments_before_global = f.comments().comments_before(module.name_span().start);
@@ -304,16 +308,20 @@ pub(crate) fn write_ts_module_declaration<'a>(statement: Stmt<'a>, module: Modul
             write!(f, [keyword, space(), identifier(name, node)]);
         }
     }
-
-    let mut innermost = module;
-    while let Some(nested) = innermost.nested() {
+    let mut current = module;
+    while let Some(nested) = current.nested() {
         if let ModuleName::Ident(name) = nested.name() {
             write!(f, [".", identifier(name, node)]);
         }
-        innermost = nested;
+        current = nested;
+    }
+    if let Some(view_limit) = view_limit {
+        f.comments_mut().restore_view_limit(view_limit);
+        let following = body_span.map_or(0, |it| it.start);
+        write!(f, format_trailing_comments(statement.span(), innermost.name_span(), following));
     }
 
-    let Some(span) = innermost.body_span() else {
+    let Some(span) = body_span else {
         return write!(f, OptionalSemicolon);
     };
     write!(f, space());
@@ -350,7 +358,11 @@ pub(crate) fn write_ts_import_equals_declaration<'a>(
         (ImportEqualsTarget::Entity(name), ..) => write!(f, entity_name(name, node)),
         (ImportEqualsTarget::Require(_), Some(require_span), Some(span)) => {
             format_node(require_span, || node, f, |f| {
-                let expression = FormatStringLiteral { span, parent: node };
+                let expression = FormatModuleSpecifier {
+                    span,
+                    parent: node,
+                    call_span: require_span,
+                };
                 match f.comments().has_comment_in_span(require_span) {
                     true => write!(f, group(&format_args!("require(", soft_block_indent(&expression), ")"))),
                     false => write!(f, ["require(", expression, ")"]),

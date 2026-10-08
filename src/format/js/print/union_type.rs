@@ -1,6 +1,7 @@
 use crate::js::format::write_trailing_comments_of;
 use crate::js::parentheses::ts_type::{effective_parent, needs_parentheses};
 use crate::js::siblings::following_span_start_in;
+use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::js::utils::typescript::{end_of_line_comments, should_hug_type, union_leading_comments};
 use crate::prelude::*;
@@ -65,7 +66,7 @@ pub(crate) fn write_ts_union_type_in<'a>(
     };
     let printed = format_with(|f| {
         write!(f, [prints_own_comments.then_some(format_leading_comments), group(&format_args!(if_group_breaks(&"| "), members))]);
-        if prints_own_comments && !f.is_quiet() {
+        if prints_own_comments {
             write_trailing_comments_of(AstNodes::TSUnionType(ty), f);
         }
     });
@@ -141,7 +142,11 @@ impl<'a> Format<'a> for UnionMembers<'a> {
                         is_suppressed.set(comments.iter().any(|comment| f.comments().is_suppression_comment(comment)));
                         &comments[..comments.len() - count_leading_comments(comments, start, f)]
                     }
-                    None => self.comments_after_last_member(f),
+                    None => {
+                        // `A | (B /* comment */)`
+                        write!(f, FormatTrailingComments::Comments(f.comments().comments_before(self.ty.span().end)));
+                        self.comments_after_last_member(f)
+                    }
                 };
                 write!(f, FormatTrailingComments::Comments(comments));
             });
@@ -218,11 +223,15 @@ fn count_leading_comments(comments: &[Comment], start: u32, f: &Formatter<'_>) -
     count
 }
 
-/// A type of a union. The comments before it are written.
+/// A type of a union. The comments before it are written, those after it are not.
 fn write_member<'a>(member: TypeNode<'a>, is_suppressed: bool, f: &mut Formatter<'a>) {
     let span = member.span();
     if !is_suppressed && !f.comments().has_trailing_suppression_comment(span.end) {
-        return write!(f, member);
+        return match member.kind() {
+            // It takes some of the comments after it: see `comments_after_last_member`.
+            TypeKind::Union(types) if types.len() > 1 => write!(f, member),
+            _ => write!(f, FormatNodeWithoutTrailingComments(&member)),
+        };
     }
     let needs_parentheses = needs_parentheses(member, f);
     write!(f, [needs_parentheses.then_some("("), FormatSuppressedNode(span), needs_parentheses.then_some(")")]);

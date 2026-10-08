@@ -105,10 +105,14 @@ fn key_span<'a>(key: Option<Key<'a>>, node: Node<'a>) -> Option<Span> {
 /// The fields of everything that has parameters: type parameters, `this`, parameters, return type
 /// and body.
 fn function_fields(finder: &mut Finder, func: Func<'_>) {
+    let first_parameter = func.params().first().map(|it| it.span().start);
+    finder.one(func.type_params().angle_brackets_span()).one(func.this_param().map(|it| it.span()));
+    // `this` is in the parentheses. If it is the only parameter, nothing follows it there.
+    if finder.is_found && finder.following.is_none() && func.this_param().is_some_and(|it| it.span().contains(finder.me)) {
+        finder.following = Some(first_parameter.unwrap_or(0));
+    }
     finder
-        .one(func.type_params().angle_brackets_span())
-        .one(func.this_param().map(|it| it.span()))
-        .transparent(func.params_span(), func.params().first().map(|it| it.span().start))
+        .transparent(func.params_span(), first_parameter)
         .one(func.return_type().map(|it| it.annotation_span()))
         .one(match func.body() {
             FnBody::None => None,

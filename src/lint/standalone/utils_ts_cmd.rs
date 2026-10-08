@@ -349,7 +349,7 @@ fn dump(case: Object<'_>, rules: &[Enabled]) -> String {
 
 fn unhex(text: &[u8]) -> Vec<u8> {
     let digit = |c: u8| (c as char).to_digit(16).unwrap_or(0) as u8;
-    text.chunks_exact(2).map(|pair| digit(pair[0]) << 4 | digit(pair[1])).collect()
+    text.chunks_exact(2).map(|pair| (digit(pair[0]) << 4) | digit(pair[1])).collect()
 }
 
 /// The precedence whose number upstream is `text`.
@@ -365,7 +365,7 @@ fn precedence(text: &[u8]) -> OperatorPrecedence {
 }
 
 fn call(line: &[u8]) -> String {
-    let mut fields = line.split(|&c| c == b'\t');
+    let mut fields = bun_core::strings::split(line, b"\t");
     let name = fields.next().unwrap_or_default();
     let args: Vec<Vec<u8>> = fields.map(unhex).collect();
     let first = args.first().map_or(&b""[..], |it| it);
@@ -391,7 +391,7 @@ pub(crate) fn run(args: &[String]) {
         return;
     };
     if command == "text" {
-        for line in input.split(|&c| c == b'\n').filter(|line| !line.is_empty()) {
+        for line in bun_core::strings::split(&input, b"\n").filter(|line| !line.is_empty()) {
             println!("{}", call(line));
         }
         return;
@@ -401,7 +401,7 @@ pub(crate) fn run(args: &[String]) {
         rule: &*rule,
         severity: Severity::Error,
     }];
-    for line in input.split(|&c| c == b'\n').filter(|line| !line.is_empty()) {
+    for line in bun_core::strings::split(&input, b"\n").filter(|line| !line.is_empty()) {
         match bun_lint::json::parse(line) {
             Some(case) => println!("{}", dump(Object::of(Some(&case)), &rules)),
             None => println!("{{\"error\":true}}"),

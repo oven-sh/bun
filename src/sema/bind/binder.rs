@@ -254,6 +254,8 @@ pub(super) struct Binder<'f, 's, const LINT: bool> {
     associated_declaration: (PatId, FnId),
     /// By `ModuleId`: see `Binder::module_instance_state`.
     instance_states: Vec<InstanceState>,
+    /// See `Binder::answer_along_chain`.
+    chain_answers: std::cell::RefCell<Vec<u8>>,
     stack_check: bun_core::StackCheck,
 }
 
@@ -417,6 +419,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             scope_change_of: FnId::NONE,
             associated_declaration: (PatId::NONE, FnId::NONE),
             instance_states: Vec::new(),
+            chain_answers: Default::default(),
             stack_check: bun_core::StackCheck::init(),
         };
         this.file();
@@ -1119,12 +1122,69 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         !self.label_edges[self.edges_of(label)].edges.is_empty()
     }
 
+    /// The answer to a question that `step` answers for an expression or passes on to the next
+    /// one down a chain such as `a.b.c`. The binder asks at every link. So that a chain of n links
+    /// does not take n * n steps, an answer that was found many links down is written at each link
+    /// on the way, in a table by `ExprId` that only a file with such a chain has.
+    /// `question`: 0 or 1, for its two bits of an entry: the answer is known, and it is yes.
+    /// `is_lasting`: asked after the walk, whether `step` says the same for ever.
+    fn answer_along_chain(
+        &self,
+        question: u8,
+        e: ExprId,
+        step: impl Fn(&Self, ExprId) -> Result<bool, ExprId>,
+        is_lasting: impl FnOnce() -> bool,
+    ) -> bool {
+        let (is_known, is_yes) = (1 << (2 * question), 2 << (2 * question));
+        let mut at = e;
+        let mut links = 0;
+        let answer = loop {
+            let written = self.chain_answers.borrow().get(at.idx()).copied();
+            if let Some(entry) = written
+                && entry & is_known != 0
+            {
+                break entry & is_yes != 0;
+            }
+            match step(self, at) {
+                Ok(answer) => break answer,
+                Err(next) => at = next,
+            }
+            links += 1;
+        };
+        if links > 32 && is_lasting() {
+            let entry = is_known | if answer { is_yes } else { 0 };
+            self.chain_answers.borrow_mut().resize(self.f.exprs.len(), 0);
+            let last = at;
+            at = e;
+            while at != last {
+                self.chain_answers.borrow_mut()[at.idx()] |= entry;
+                let Err(next) = step(self, at) else { break };
+                at = next;
+            }
+        }
+        answer
+    }
+
+    /// `isNarrowableReference`
+    fn is_narrowable_reference(&self, e: ExprId) -> bool {
+        let step = |binder: &Self, e| narrowable_reference_step(binder.f, e);
+        self.answer_along_chain(0, e, step, || true)
+    }
+
     /// `containsNarrowableReference`
     fn contains_narrowable_reference(&self, e: ExprId) -> bool {
-        is_narrowable_reference(self.f, e)
-            || self
-                .chain_of(e)
-                .is_some_and(|(inner, _)| self.contains_narrowable_reference(inner))
+        // `chain_of` looks at the parent of `x!`, which is known once the binder has been there.
+        let has_non_null = std::cell::Cell::new(false);
+        let step = |binder: &Self, e: ExprId| {
+            if binder.is_narrowable_reference(e) {
+                return Ok(true);
+            }
+            if matches!(binder.f[e].kind, ExprKind::NonNull(_)) {
+                has_non_null.set(true);
+            }
+            binder.chain_of(e).map_or(Ok(false), |(inner, _)| Err(inner))
+        };
+        self.answer_along_chain(1, e, step, || !has_non_null.get())
     }
 
     /// `isNarrowingExpression`: `x as T` and `x satisfies T` are not narrowing expressions.
@@ -1418,7 +1478,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
             // `isNarrowableReference` are concerned.
             _ => {}
         }
-        if is_bound && !self.is_past_flow_effects() && is_narrowable_reference(self.f, e) {
+        if is_bound && !self.is_past_flow_effects() && self.is_narrowable_reference(e) {
             self.flow_mutation(Flow::Assign {
                 before: self.flow,
                 target: FlowTarget::Expr(e),
@@ -4613,7 +4673,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
     /// `bind` for `a.b` and `a[b]`: only a narrowable reference gets a flow node. Any other has its
     /// declared type.
     fn access_flow(&mut self, id: ExprId) {
-        if !LINT && is_narrowable_reference(self.f, id) {
+        if !LINT && self.is_narrowable_reference(id) {
             self.b.expr_flow[id.idx()] = self.flow;
         }
     }

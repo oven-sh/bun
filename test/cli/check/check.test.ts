@@ -2930,6 +2930,17 @@ export const alsoWrong = wrong.nope;
       expect(exitCode).toBe(1);
     });
 
+    // The binder asks at every link whether what is below it can be narrowed. The chain is too deep to be checked.
+    test("100,000 optional property accesses in a row", async () => {
+      using dir = project({
+        "a.ts": `declare const a: any;\nexport const r = a${repeat("?.b", 100_000)};\n`,
+        "b.ts": `export const wrong: number = "";\n`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(`b.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
+      expect(exitCode).toBe(1);
+    });
+
     const isolatedDeclarations = ["--declaration", "true", "--isolatedDeclarations", "true"];
 
     test("isolatedDeclarations: every property of `export default {} satisfies T` is reported", async () => {

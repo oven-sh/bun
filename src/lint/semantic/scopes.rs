@@ -492,7 +492,8 @@ fn collect(file: &File) -> Vec<Proto> {
         let block = Block::Fn(hir::FnId(i as u32));
         // After the name.
         let from_params = match hir.type_params.get(func.type_params.start as usize) {
-            Some(first) if !func.type_params.is_empty() => first.start,
+            // In JavaScript they are from a `@template` tag.
+            Some(first) if !func.type_params.is_empty() && !is_javascript => first.start,
             _ => func.anchor,
         };
         let owner = protos.len() as u32;
@@ -588,7 +589,12 @@ fn collect(file: &File) -> Vec<Proto> {
             && let Some(init) = hir.exprs.get(member.init.idx())
         {
             let block = Block::Expr(member.init);
-            protos.push(scope(ScopeKind::ClassFieldInitializer, block, init.pos, init.end));
+            // The HIR positions a class expression after its decorators.
+            let start = match init.kind {
+                hir::ExprKind::Class(c) => hir.classes.get(c.idx()).map_or(init.pos, |it| it.start.min(init.pos)),
+                _ => init.pos,
+            };
+            protos.push(scope(ScopeKind::ClassFieldInitializer, block, start, init.end));
         }
     }
 

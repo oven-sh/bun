@@ -13,6 +13,7 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Parent, PatParent};
 use bun_sema::hir::{self, ExprId, ExprKind, PatKind, PropKind, StmtKind, TypeNodeKind, UnOp};
 use smallvec::SmallVec;
+use std::cell::OnceCell;
 
 /// Where a reference is written.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -31,6 +32,8 @@ pub(crate) enum ReferenceSite {
     ExportSpec(hir::ExportSpecId),
     /// The `N` of `export as namespace N`.
     ExportAsNamespace(hir::StmtId),
+    /// The tag `A-b`, or a part of the tag `a:b`, which the HIR stores as a string.
+    JsxName(ExprId),
     /// The name of the first declaration of the variable at this index, for the use that JSX makes
     /// of `React`.
     Declaration(u32),
@@ -62,6 +65,8 @@ pub(crate) struct References {
     /// Indices into `all`, scope by scope, in source order.
     by_scope: Vec<u32>,
     scope_starts: Vec<u32>,
+    /// What resolves to nothing, by name and then in source order. Computed on demand.
+    unresolved_by_name: OnceCell<Vec<u32>>,
 }
 
 const READ: ReferenceFlags = ReferenceFlags::READ.union(ReferenceFlags::VALUE);
@@ -357,7 +362,7 @@ impl Collector<'_, '_> {
     }
 
     /// `TypeVisitor`
-    fn types(&mut self) {
+    fn types(&mut self, top_level: impl Iterator<Item = hir::StmtId>) {
         let file = self.file;
         let (hir, bound) = (&file.hir, &file.bound);
         let start = self.found.len();
@@ -384,16 +389,15 @@ impl Collector<'_, '_> {
         }
         // A type is stored after its parts.
         self.found[start..].sort_unstable_by_key(|it| it.pos);
-        let statements = hir.stmts.iter().enumerate();
-        for (i, stmt) in statements.filter(|_| file.is_declaration_file()) {
-            if let StmtKind::ExportAsNamespace(name) = stmt.kind
-                && !matches!(bound.stmt_parent.get(i), None | Some(Parent::None))
+        for id in top_level {
+            if let Some(stmt) = hir.stmts.get(id.idx())
+                && let StmtKind::ExportAsNamespace(name) = stmt.kind
             {
                 let mut pos = stmt.start;
                 for keyword in ["export", "as", "namespace"] {
                     pos = crate::tokens::skip_trivia(hir.text, pos + keyword.len() as u32);
                 }
-                self.push(ReferenceSite::ExportAsNamespace(hir::StmtId(i as u32)), pos, name, READ, ExprId::NONE);
+                self.push(ReferenceSite::ExportAsNamespace(id), pos, name, READ, ExprId::NONE);
             }
         }
         for (i, import) in hir.import_equals.iter().enumerate() {
@@ -404,6 +408,43 @@ impl Collector<'_, '_> {
                 self.push(site, first.pos(), first.text, READ, ExprId::NONE);
             }
         }
+    }
+
+    /// `visitJSXElement`, for the tags that are not expressions outside JSX.
+    fn jsx_names(&mut self) {
+        let file = self.file;
+        let start = self.found.len();
+        for jsx in file.hir.jsx {
+            // `eslint-scope` does not visit closing elements.
+            let tags = [Some(jsx.tag), (!self.is_javascript).then_some(jsx.close_tag)];
+            for tag in tags.into_iter().flatten() {
+                let Some(hir::Expr {
+                    kind: ExprKind::String(name),
+                    pos,
+                    ..
+                }) = file.hir.exprs.get(tag.idx())
+                else {
+                    continue;
+                };
+                let text = file.atoms.bytes(*name);
+                match bun_core::strings::index_of_char_usize(text, b':') {
+                    // `eslint-scope` takes a name with a namespace for no component.
+                    Some(_) if self.is_javascript => {}
+                    Some(colon) => {
+                        let parts = [(0, &text[..colon]), (colon + 1, &text[colon + 1..])];
+                        for (offset, part) in parts {
+                            let part = file.atoms.intern(part);
+                            self.push(ReferenceSite::JsxName(tag), pos + offset as u32, part, READ, ExprId::NONE);
+                        }
+                    }
+                    None if is_component_name(text) => {
+                        self.push(ReferenceSite::JsxName(tag), *pos, *name, READ, ExprId::NONE);
+                    }
+                    None => {}
+                }
+            }
+        }
+        self.found[start..].sort_unstable_by_key(|it| it.pos);
     }
 
     /// `ExportVisitor`
@@ -518,8 +559,11 @@ impl References {
         collector.expressions();
         collector.patterns(tree);
         collector.export_specifiers();
+        if !hir.jsx.is_empty() {
+            collector.jsx_names();
+        }
         if !is_javascript {
-            collector.types();
+            collector.types(file.body().iter().map(|it| it.id()));
             if !hir.jsx.is_empty() {
                 collector.jsx_pragmas(tree, variables);
             }
@@ -577,6 +621,7 @@ impl References {
             variable_starts,
             by_scope,
             scope_starts,
+            unresolved_by_name: OnceCell::new(),
         }
     }
 
@@ -597,6 +642,18 @@ impl References {
     pub(crate) fn unresolved(&self) -> &[u32] {
         let last = self.variable_starts.len().saturating_sub(2);
         Self::group(&self.by_variable, &self.variable_starts, last, last)
+    }
+
+    /// The references to `name` that resolve to nothing.
+    pub(crate) fn unresolved_named(&self, name: Atom) -> &[u32] {
+        let sorted = self.unresolved_by_name.get_or_init(|| {
+            let mut sorted = self.unresolved().to_vec();
+            sorted.sort_by_key(|&it| self.all[it as usize].name.0);
+            sorted
+        });
+        let start = sorted.partition_point(|&it| self.all[it as usize].name.0 < name.0);
+        let len = sorted[start..].partition_point(|&it| self.all[it as usize].name == name);
+        &sorted[start..start + len]
     }
 
     /// The references that are written in the scopes `first..=last`.

@@ -31,6 +31,7 @@
 //! | `scopeManager.globalScope`, `sourceCode.getScope(program)` | [`File::scope`] |
 //! | `globalScope.childScopes[0]` of a module or of CommonJS | [`File::top_level_scope`] |
 //! | `globalScope.through` | [`File::unresolved_references`] |
+//! | `globalScope.set.get(name).references` of a global | [`File::unresolved_references_to`] |
 //! | `globalScope.implicit.variables` | [`File::implicit_globals`] |
 //! | `scope.type`, `scope.block`, `scope.isStrict` | [`Scope::kind`], [`Scope::node`], [`Scope::is_strict`] |
 //! | `scope.variables`, `scope.set.get(name)` | [`Scope::symbols`], [`Scope::get`] |
@@ -48,7 +49,7 @@
 //!   resolve to. The name of a class *expression* is a symbol of the scope of the class, as in
 //!   ESLint.
 //! - `x as const` has no reference to a type `const`.
-//! - The tags `<this />` and `<a:b />` are not references.
+//! - The tag `<this />` is not a reference.
 //! - Where TypeScript merges declarations that are in different scopes, there is a [`Symbol`] in
 //!   each scope, as in ESLint, and they have the same [`Symbol::id`]: the type parameters of
 //!   `interface I<T> {} interface I<T> {}`, what the bodies of `namespace N {} namespace N {}`
@@ -713,6 +714,8 @@ impl<'a> Reference<'a> {
     /// - the `Type` that is a `TypeKind::Ref` or a `TypeKind::Predicate`
     /// - the `Stmt` of `import x = a.b` or of `export as namespace a`
     /// - the `ExportSpec` of `export { a }`
+    /// - the `Expr` that is the tag `<A-b>` or `<a:b>`, an `ExprKind::String`. The latter is two
+    ///   references in TypeScript, to `a` and to `b`.
     pub fn node(self) -> Node<'a> {
         let file = self.file;
         match self.raw().site {
@@ -721,6 +724,7 @@ impl<'a> Reference<'a> {
             ReferenceSite::TypeName(t) | ReferenceSite::Predicate(t) => Node::Type(TypeNode::new(file, t)),
             ReferenceSite::ImportEquals(i) => Node::Stmt(ImportEquals::new(file, i).stmt()),
             ReferenceSite::ExportAsNamespace(s) => Node::Stmt(Stmt::new(file, s)),
+            ReferenceSite::JsxName(e) => Node::Expr(Expr::new(file, e)),
             ReferenceSite::ExportSpec(s) => Node::ExportSpec(crate::ast::ExportSpec::new(file, s)),
             ReferenceSite::Declaration(index) => {
                 let first = Symbol::at(file, index).declarations().next();
@@ -1094,6 +1098,16 @@ impl<'a> File<'a> {
         references.map(move |&index| Reference { file: self, index })
     }
 
+    /// The references to `name` among [`File::unresolved_references`], in source order: ESLint's
+    /// `globalScope.set.get(name).references` for a global that the file does not declare.
+    pub fn unresolved_references_to(
+        &'a self,
+        name: &[u8],
+    ) -> impl DoubleEndedIterator<Item = Reference<'a>> + ExactSizeIterator + 'a {
+        let references = self.reference_list().unresolved_named(self.atoms.intern(name)).iter();
+        references.map(move |&index| Reference { file: self, index })
+    }
+
     /// The assignments outside strict mode to what nothing declares, each of which creates a
     /// global variable: the definitions of ESLint's `globalScope.implicit.variables`, before the
     /// globals of the configuration are taken out.
@@ -1283,7 +1297,8 @@ impl<'a> Node<'a> {
                 StmtKind::TypeAlias(it) => add(of(file.bound.alias_symbol, it.id().idx(), Some(it.name().span()))),
                 StmtKind::Enum(it) => add(of(file.bound.enum_symbol, it.id().idx(), Some(it.name().span()))),
                 StmtKind::Module(it) => {
-                    add(of(file.bound.module_symbol, it.id().idx(), Declaration::Module(it).name_span()));
+                    let name = variables::name_of_declaration(file, Decl::Module(it.id()));
+                    add(of(file.bound.module_symbol, it.id().idx(), name.map(|it| Span::empty(it.1))));
                 }
                 StmtKind::ImportEquals(it) => add(self.scope().get_name(it.name().name())),
                 StmtKind::Import(it) => {

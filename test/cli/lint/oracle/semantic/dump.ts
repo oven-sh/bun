@@ -118,7 +118,9 @@ function dump(it: Case) {
   const { ast, scopeManager, keys } = analyze(it);
   const declared: unknown[] = [];
   setParents(ast, keys, node => {
-    const variables = scopeManager.getDeclaredVariables(node).filter((v: any) => !isInnerClassName(v));
+    const variables = scopeManager
+      .getDeclaredVariables(node)
+      .filter((v: any) => !isInnerClassName(v) && v.defs[0].type !== "ImplicitGlobalVariable");
     // There are no nodes for these two.
     if (variables.length > 0 && node.type !== "ImportDefaultSpecifier" && node.type !== "ImportNamespaceSpecifier") {
       declared.push([startOf(node), variables.map(variableKey).sort().join()]);
@@ -164,7 +166,10 @@ function dump(it: Case) {
       ]);
     }
   }
-  return { scopes, variables, references, declared };
+  const implicit = scopeManager.scopes[0].implicit.variables.flatMap((variable: any) =>
+    variable.defs.map((def: any) => [variable.name, def.name.range[0]]),
+  );
+  return { scopes, variables, references, declared, implicit };
 }
 
 for (const line of readFileSync(process.argv[2], "utf8").split("\n")) {

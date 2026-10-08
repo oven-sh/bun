@@ -1,6 +1,6 @@
 // Compares what `dump.ts` printed with what `bun-lint semantic dump --batch` printed for the same cases.
 //
-//   bun compare.ts cases.jsonl expected.jsonl actual.jsonl [--show=n] [--only=scopes|variables|references|declared] [--grep=text]
+//   bun compare.ts cases.jsonl expected.jsonl actual.jsonl [--show=n] [--only=scopes|variables|references|declared|implicit] [--grep=text]
 //
 // Prints a summary ranked by the kind of difference, and the first `n` cases of each kind.
 
@@ -80,7 +80,7 @@ for (const theirs of read(expectedPath)) {
     continue;
   }
   let isSame = true;
-  for (const part of ["scopes", "variables", "references", "declared"]) {
+  for (const part of ["scopes", "variables", "references", "declared", "implicit"]) {
     if ((only && only !== part) || !ours[part]) continue;
     const [a, b] = [normalize(part, theirs[part]), normalize(part, ours[part])];
     if (a.join("\n") === b.join("\n")) continue;

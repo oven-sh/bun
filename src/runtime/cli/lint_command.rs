@@ -82,6 +82,112 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     }
 }
 
+/// A process that runs a script, and our ends of the pipes to it.
+struct Worker {
+    /// Closed first: the script ends when there is nothing more to read.
+    input: Option<bun_sys::Fd>,
+    output: bun_sys::Fd,
+}
+
+impl bun_lint_driver::Channel for Worker {
+    fn send(&mut self, mut bytes: &[u8]) -> Result<(), Vec<u8>> {
+        let input = self.input.ok_or(&b"The pipe is closed."[..])?;
+        while !bytes.is_empty() {
+            match bun_sys::write(input, bytes) {
+                Ok(0) => return Err(b"The process does not read.".to_vec()),
+                Ok(count) => bytes = &bytes[count..],
+                Err(err) if err.get_errno() == bun_sys::E::INTR => {}
+                Err(err) => return Err(err.name().to_vec()),
+            }
+        }
+        Ok(())
+    }
+
+    fn receive(&mut self, mut into: &mut [u8]) -> Result<(), Vec<u8>> {
+        while !into.is_empty() {
+            match bun_sys::read(self.output, into) {
+                Ok(0) => return Err(b"The process has ended.".to_vec()),
+                Ok(count) => into = &mut into[count..],
+                Err(err) if err.get_errno() == bun_sys::E::INTR => {}
+                Err(err) => return Err(err.name().to_vec()),
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Worker {
+    fn drop(&mut self) {
+        if let Some(input) = self.input.take() {
+            input.close();
+        }
+        // Until it has ended, so that what it prints for the user comes before what follows.
+        let mut rest = [0; 4096];
+        while bun_sys::read(self.output, &mut rest).is_ok_and(|count| count > 0) {}
+        self.output.close();
+    }
+}
+
+/// Starts `script` with this executable.
+fn spawn_worker(script: &Script) -> Result<Box<dyn bun_lint_driver::Channel>, Vec<u8>> {
+    use crate::api::bun::process::{SpawnEnv, SpawnOptions, Stdio, spawn_process_cstr};
+    let failed = |name: &[u8]| [&b"Could not start a process: "[..], name].concat();
+    let Ok(exe) = bun_core::self_exe_path() else {
+        return Err(b"Could not find the path of the running executable.".to_vec());
+    };
+    let argv = [exe.as_bytes(), b"-e", script.source.as_bytes()];
+    let argv: Vec<std::ffi::CString> = (argv.iter().chain(script.arguments))
+        .map(|it| std::ffi::CString::new(*it).map_err(|_| failed(b"an argument has a NUL in it")))
+        .collect::<Result<_, _>>()?;
+    let argv: Vec<&std::ffi::CStr> = argv.iter().map(|it| it.as_c_str()).collect();
+    // [read, write]
+    let to_worker = bun_sys::pipe().map_err(|err| failed(err.name()))?;
+    let from_worker = bun_sys::pipe().map_err(|err| {
+        to_worker.iter().for_each(|it| it.close());
+        failed(err.name())
+    })?;
+    let spawned = spawn_process_cstr(
+        &SpawnOptions {
+            stdin: Stdio::Pipe(to_worker[0]),
+            stdout: Stdio::Pipe(from_worker[1]),
+            stderr: Stdio::Inherit,
+            cwd: Box::<[u8]>::from(script.cwd),
+            #[cfg(windows)]
+            windows: crate::api::bun::process::WindowsOptions {
+                loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
+                    None, None,
+                )),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+        &argv,
+        SpawnEnv::Inherit,
+    );
+    // The ends of the process are its own now.
+    to_worker[0].close();
+    from_worker[1].close();
+    let close_ours = || {
+        to_worker[1].close();
+        from_worker[0].close();
+    };
+    match spawned {
+        Ok(Ok(_)) => {}
+        Ok(Err(err)) => {
+            close_ours();
+            return Err(failed(err.name()));
+        }
+        Err(err) => {
+            close_ours();
+            return Err(failed(err.name().as_bytes()));
+        }
+    }
+    Ok(Box::new(Worker {
+        input: Some(to_worker[1]),
+        output: from_worker[0],
+    }))
+}
+
 /// Reports that the command line of `bun <command>` cannot be used.
 pub(crate) fn usage_error(command: &str, message: &[u8]) -> ! {
     Output::err_generic("{}", (BStr::new(message),));
@@ -123,6 +229,10 @@ pub(crate) fn run_and_exit(
         is_github_action: Output::is_github_action(),
         libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
         run_script: &run_script,
+        spawn_worker: &|script: &Script| {
+            let _turn = turn.lock();
+            spawn_worker(script)
+        },
         version: Global::package_json_version.as_bytes(),
     };
     let outcome = run(&environment);

@@ -11,6 +11,7 @@ use crate::typed::{self, Typed};
 use crate::{fs, paths};
 use bstr::BStr;
 use bun_lint::context::Severity;
+use bun_lint::js_plugin::Channel;
 use bun_lint::linter::{FileConfig, Linter, Registry};
 use bun_threading::Guarded;
 use std::io::Write;
@@ -56,6 +57,9 @@ pub struct Environment<'e> {
     /// Runs a script to its end. `Ok`: what it has printed on standard output. `Err`: it failed, and
     /// this is why.
     pub run_script: &'e (dyn Fn(&Script) -> Result<Vec<u8>, Vec<u8>> + Sync),
+    /// Starts a script, with pipes for its standard input and output. It is talked to through what
+    /// is returned. What it prints on standard error is for the user.
+    pub spawn_worker: &'e (dyn Fn(&Script) -> Result<Box<dyn Channel>, Vec<u8>> + Sync),
     /// The version of Bun.
     pub version: &'e [u8],
 }

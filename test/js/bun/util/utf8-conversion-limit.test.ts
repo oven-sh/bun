@@ -101,7 +101,8 @@ test.skipIf(totalmem() < 8 * 1024 ** 3)(
         "Module._resolveLookupPaths: returned an array",
         "Database#run: RangeError: Out of memory",
         "Database#prepare: RangeError: Out of memory",
-        "Statement#get parameter: RangeError: Out of memory",
+        // SQLite's length limit is checked before the conversion, and 2 GiB of UTF-8 is over it in each SQLite.
+        "Statement#get parameter: Error: string or blob too big",
         "decodeURIComponentSIMD: RangeError: Out of memory",
         "new Bun.CookieMap: RangeError: Out of memory",
         "ASCII parameter: SQLite got the string",

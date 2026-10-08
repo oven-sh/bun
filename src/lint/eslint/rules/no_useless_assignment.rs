@@ -356,9 +356,16 @@ impl<'a> Uses<'a> {
     }
 
     fn within(&self, span: Span) -> &[Use] {
-        let first = self.all.partition_point(|it| it.span.start < span.start);
-        let end = first + self.all[first..].partition_point(|it| it.span.start < span.end);
-        &self.all[first..end]
+        let all = &self.all[..];
+        // Most variables are used a few times.
+        if all.len() <= 8 {
+            let first = all.iter().take_while(|it| it.span.start < span.start).count();
+            let count = all[first..].iter().take_while(|it| it.span.start < span.end).count();
+            return &all[first..first + count];
+        }
+        let first = all.partition_point(|it| it.span.start < span.start);
+        let end = first + all[first..].partition_point(|it| it.span.start < span.end);
+        &all[first..end]
     }
 
     /// Whether `written` and what it evaluates first are the only uses in `span`.
@@ -764,7 +771,7 @@ impl<'a> Uses<'a> {
 impl NoUselessAssignment {
     /// Finds out whether the code path that `variable` is declared in has to be analyzed.
     fn check_variable<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {
-        if !variable.references().any(|it| it.is_write()) || !variable.references().any(|it| it.is_read()) {
+        if !variable.has_writes() || !variable.has_reads() {
             return;
         }
         let mut uses = Uses::of(variable);

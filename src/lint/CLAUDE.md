@@ -30,7 +30,7 @@ The HIR keeps the nodes of a file in one vector per sort. So:
 
 - `on.exprs([ExprTag::Call], f)`, `on.stmts(..)`, `on.types(..)`, `on.pats(..)`, `on.funcs(f)`, `on.classes(f)`, `on.members(f)`, `on.props(f)`, `on.params(f)`, `on.var_decls(f)`, `on.cases(f)`, `on.symbols(f)`, ..: `f` runs in a tight loop over exactly those nodes, **in no particular order**. No tree walk. **This is the default. Use it unless the rule cannot work without order.**
 - `on.enter(tags, f)` / `on.exit(tags, f)`: source order, around the children. The nodes of the listened kinds are collected and sorted by span, so it costs in proportion to how many there are: fine for functions, classes, loops and blocks, wasteful for identifiers. Use it for rules that are inherently about nesting order.
-- Code path listeners (`on.code_path_start(..)`, ..) make the linter walk and analyze the whole file. Register them only if the file can have something to report: `file.has_stmts([StmtTag::Switch])`, `file.has_exprs(..)`, `file.has_classes()`.
+- Code path listeners (`on.code_path_start(..)`, ..) make the linter walk and analyze the whole file (about a quarter of what parsing costs). Register them only if the file can have something to report: `file.has_stmts([StmtTag::Switch])`, `file.has_exprs(..)`, `file.has_classes()`. If all the rule wants to know is whether the end of a function can be reached, `func.is_end_reachable()` needs no listener. That walk skips the expressions and types in which nothing forks and nobody listens: with code paths, `on.enter`/`on.exit` for statements and functions are cheap, for `Ident`, `Dot` or `Call` they make it visit everything.
 - `on.string_literals(f)` / `on.number_literals(f)`: every ESTree `Literal` that is a string / a number, as a `Literal` (`span()`, `text()`, `owner()`). Only some are expressions here: the others are keys, literal types, module specifiers, names in quotes of imports and exports. Use these instead of listing the places by hand.
 - In `register`, `file.has_exprs(..)`, `file.has_stmts(..)`, `file.exprs_of_kind(tag)`, `file.stmts_of_kind(tag)`, `file.funcs()` tell whether there is anything to listen for.
 - `on.finish(f)`: once at the end. Collect in `cx.state` from unordered listeners, decide here.
@@ -148,7 +148,7 @@ ESLint's rules, docs and tests speak ESTree (TSESTree for TypeScript). The mappi
 | `context.languageOptions`, `context.settings`, `context.filename` | `file.language()`, `file.settings()`, `file.path()` |
 | tokens and comments | table in `tokens/mod.rs` |
 | scopes, variables, references | table in `semantic/mod.rs` |
-| code paths | `code_path.rs`, `on.code_path_start(..)` etc. |
+| code paths | tables in `code_path/mod.rs`. `on.code_path_start(..)` etc., `path.current_segments()`, `path.is_current_reachable()`, `path.traverse_segments(..)`. Without any listener: `func.is_end_reachable()`, `file.is_end_reachable()` analyze one function |
 | `ast-utils.js`, `@eslint-community/eslint-utils`, typescript-eslint's `util/` | `bun_lint::utils`, same names in snake_case |
 
 ### Report locations must match ESLint's

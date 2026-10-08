@@ -40,7 +40,7 @@ pub mod estree_for_tests {
 /// What a rule imports.
 pub mod prelude {
     pub use crate::ast::*;
-    pub use crate::code_path::{CodePath, Origin, Segment};
+    pub use crate::code_path::{CodePath, CurrentSegments, Origin, Segment, Traversal};
     pub use crate::context::{Cx, IntoText, Report};
     pub use crate::fix::{Fix, Fixer};
     pub use crate::language::{Global, LanguageOptions, SourceType};

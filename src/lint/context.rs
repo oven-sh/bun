@@ -39,6 +39,8 @@ pub struct Diagnostic {
 pub struct Suggestion {
     pub message_id: &'static str,
     pub message: Vec<u8>,
+    /// What the placeholders of the message stand for, which ESLint passes on with a suggestion.
+    pub data: Vec<(&'static str, Vec<u8>)>,
     pub fix: Fix,
 }
 
@@ -185,6 +187,7 @@ impl<'a> Report<'a> {
                 message: interpolate(message.text, |name| {
                     data.iter().find(|it| it.0 == name).map(|it| it.1)
                 }),
+                data: data.iter().map(|it| (it.0, it.1.to_vec())).collect(),
                 fix,
             });
         }

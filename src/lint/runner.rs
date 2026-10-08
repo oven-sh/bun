@@ -155,6 +155,11 @@ impl<'a> File<'a> {
         (0..self.hir.fns.len()).map(|i| Func::from_raw(self, i as u32)).filter(|it| it.is_in_tree())
     }
 
+    /// The same for classes: what [`Listeners::classes`] is called with.
+    pub fn classes(&'a self) -> impl Iterator<Item = Class<'a>> {
+        (0..self.hir.classes.len()).map(|i| Class::from_raw(self, i as u32)).filter(|it| it.is_in_tree())
+    }
+
     pub(crate) fn every_expr_of(&'a self, tags: &[ExprTag], mut visit: impl FnMut(Expr<'a>)) {
         for &tag in tags {
             self.exprs_of(tag).iter().for_each(|&id| visit(Expr::from_raw(self, id)));

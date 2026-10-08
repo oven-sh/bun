@@ -8,7 +8,7 @@
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
-pub enum State {
+pub(crate) enum State {
     Idle = 1,
     Open = 2,
     ReservedLocal = 3,
@@ -20,7 +20,7 @@ pub enum State {
 
 /// A transition-driving event. `send_*` = we initiated; `recv_*` = peer initiated.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Event {
+pub(crate) enum Event {
     SendHeaders,
     RecvHeaders,
     SendHeadersEndStream,
@@ -34,7 +34,7 @@ pub enum Event {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum TransitionError {
+pub(crate) enum TransitionError {
     /// §5.1: a frame for a stream where it is not allowed.
     Protocol,
     /// §5.1: a frame (other than PRIORITY) on a fully closed stream.
@@ -42,7 +42,7 @@ pub enum TransitionError {
 }
 
 /// Apply `ev` to `state`, returning the new state per §5.1, or an error the caller raises.
-pub fn transition(state: State, ev: Event) -> Result<State, TransitionError> {
+pub(crate) fn transition(state: State, ev: Event) -> Result<State, TransitionError> {
     use Event::*;
     use State::*;
     Ok(match state {
@@ -106,7 +106,7 @@ pub fn transition(state: State, ev: Event) -> Result<State, TransitionError> {
 /// promised stream still in `reserved (remote)` must not be handed DATA before its response
 /// HEADERS arrive. (Locally-opened streams the engine never saw are shimmed to `Open` by the
 /// caller before this check.)
-pub fn can_receive_data(state: State) -> bool {
+pub(crate) fn can_receive_data(state: State) -> bool {
     matches!(state, State::Open | State::HalfClosedLocal)
 }
 

@@ -8,7 +8,7 @@ import { bunEnv, bunExe } from "harness";
 
 test("long comma expression does not blow up memory with target: bun", async () => {
   const fixture = `
-    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+    const rss = process.memoryUsage.rss;
     const n = 4000;
     const input = Array(n).fill("a").join(",");
     const expected = Array(n).fill("a").join(", ") + ";\\n";

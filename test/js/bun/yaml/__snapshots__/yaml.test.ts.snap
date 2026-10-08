@@ -169,3 +169,5810 @@ exports[`Bun.YAML parse issue 22286 2`] = `
   },
 }
 `;
+
+exports[`Bun.YAML stringify round-trip coverage empty string flow: stringify 1`] = `""""`;
+
+exports[`Bun.YAML stringify round-trip coverage empty string flow: parse 1`] = `""`;
+
+exports[`Bun.YAML stringify round-trip coverage empty string indent 2: stringify 1`] = `""""`;
+
+exports[`Bun.YAML stringify round-trip coverage empty string indent 2: parse 1`] = `""`;
+
+exports[`Bun.YAML stringify round-trip coverage empty string indent 4: stringify 1`] = `""""`;
+
+exports[`Bun.YAML stringify round-trip coverage empty string indent 4: parse 1`] = `""`;
+
+exports[`Bun.YAML stringify round-trip coverage plain word flow: stringify 1`] = `"hello"`;
+
+exports[`Bun.YAML stringify round-trip coverage plain word flow: parse 1`] = `"hello"`;
+
+exports[`Bun.YAML stringify round-trip coverage plain word indent 2: stringify 1`] = `"hello"`;
+
+exports[`Bun.YAML stringify round-trip coverage plain word indent 2: parse 1`] = `"hello"`;
+
+exports[`Bun.YAML stringify round-trip coverage plain word indent 4: stringify 1`] = `"hello"`;
+
+exports[`Bun.YAML stringify round-trip coverage plain word indent 4: parse 1`] = `"hello"`;
+
+exports[`Bun.YAML stringify round-trip coverage words with spaces flow: stringify 1`] = `"hello world"`;
+
+exports[`Bun.YAML stringify round-trip coverage words with spaces flow: parse 1`] = `"hello world"`;
+
+exports[`Bun.YAML stringify round-trip coverage words with spaces indent 2: stringify 1`] = `"hello world"`;
+
+exports[`Bun.YAML stringify round-trip coverage words with spaces indent 2: parse 1`] = `"hello world"`;
+
+exports[`Bun.YAML stringify round-trip coverage words with spaces indent 4: stringify 1`] = `"hello world"`;
+
+exports[`Bun.YAML stringify round-trip coverage words with spaces indent 4: parse 1`] = `"hello world"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading space flow: stringify 1`] = `"" lead""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading space flow: parse 1`] = `" lead"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading space indent 2: stringify 1`] = `"" lead""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading space indent 2: parse 1`] = `" lead"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading space indent 4: stringify 1`] = `"" lead""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading space indent 4: parse 1`] = `" lead"`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing space flow: stringify 1`] = `""trail ""`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing space flow: parse 1`] = `"trail "`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing space indent 2: stringify 1`] = `""trail ""`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing space indent 2: parse 1`] = `"trail "`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing space indent 4: stringify 1`] = `""trail ""`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing space indent 4: parse 1`] = `"trail "`;
+
+exports[`Bun.YAML stringify round-trip coverage only spaces flow: stringify 1`] = `""   ""`;
+
+exports[`Bun.YAML stringify round-trip coverage only spaces flow: parse 1`] = `"   "`;
+
+exports[`Bun.YAML stringify round-trip coverage only spaces indent 2: stringify 1`] = `""   ""`;
+
+exports[`Bun.YAML stringify round-trip coverage only spaces indent 2: parse 1`] = `"   "`;
+
+exports[`Bun.YAML stringify round-trip coverage only spaces indent 4: stringify 1`] = `""   ""`;
+
+exports[`Bun.YAML stringify round-trip coverage only spaces indent 4: parse 1`] = `"   "`;
+
+exports[`Bun.YAML stringify round-trip coverage long plain string flow: stringify 1`] = `""abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc ""`;
+
+exports[`Bun.YAML stringify round-trip coverage long plain string flow: parse 1`] = `"abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc "`;
+
+exports[`Bun.YAML stringify round-trip coverage long plain string indent 2: stringify 1`] = `""abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc ""`;
+
+exports[`Bun.YAML stringify round-trip coverage long plain string indent 2: parse 1`] = `"abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc "`;
+
+exports[`Bun.YAML stringify round-trip coverage long plain string indent 4: stringify 1`] = `""abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc ""`;
+
+exports[`Bun.YAML stringify round-trip coverage long plain string indent 4: parse 1`] = `"abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc abc "`;
+
+exports[`Bun.YAML stringify round-trip coverage long string without spaces flow: stringify 1`] = `"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`;
+
+exports[`Bun.YAML stringify round-trip coverage long string without spaces flow: parse 1`] = `"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`;
+
+exports[`Bun.YAML stringify round-trip coverage long string without spaces indent 2: stringify 1`] = `"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`;
+
+exports[`Bun.YAML stringify round-trip coverage long string without spaces indent 2: parse 1`] = `"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`;
+
+exports[`Bun.YAML stringify round-trip coverage long string without spaces indent 4: stringify 1`] = `"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`;
+
+exports[`Bun.YAML stringify round-trip coverage long string without spaces indent 4: parse 1`] = `"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"`;
+
+exports[`Bun.YAML stringify round-trip coverage string true flow: stringify 1`] = `""true""`;
+
+exports[`Bun.YAML stringify round-trip coverage string true flow: parse 1`] = `"true"`;
+
+exports[`Bun.YAML stringify round-trip coverage string true indent 2: stringify 1`] = `""true""`;
+
+exports[`Bun.YAML stringify round-trip coverage string true indent 2: parse 1`] = `"true"`;
+
+exports[`Bun.YAML stringify round-trip coverage string true indent 4: stringify 1`] = `""true""`;
+
+exports[`Bun.YAML stringify round-trip coverage string true indent 4: parse 1`] = `"true"`;
+
+exports[`Bun.YAML stringify round-trip coverage string False flow: stringify 1`] = `""False""`;
+
+exports[`Bun.YAML stringify round-trip coverage string False flow: parse 1`] = `"False"`;
+
+exports[`Bun.YAML stringify round-trip coverage string False indent 2: stringify 1`] = `""False""`;
+
+exports[`Bun.YAML stringify round-trip coverage string False indent 2: parse 1`] = `"False"`;
+
+exports[`Bun.YAML stringify round-trip coverage string False indent 4: stringify 1`] = `""False""`;
+
+exports[`Bun.YAML stringify round-trip coverage string False indent 4: parse 1`] = `"False"`;
+
+exports[`Bun.YAML stringify round-trip coverage string TRUE flow: stringify 1`] = `""TRUE""`;
+
+exports[`Bun.YAML stringify round-trip coverage string TRUE flow: parse 1`] = `"TRUE"`;
+
+exports[`Bun.YAML stringify round-trip coverage string TRUE indent 2: stringify 1`] = `""TRUE""`;
+
+exports[`Bun.YAML stringify round-trip coverage string TRUE indent 2: parse 1`] = `"TRUE"`;
+
+exports[`Bun.YAML stringify round-trip coverage string TRUE indent 4: stringify 1`] = `""TRUE""`;
+
+exports[`Bun.YAML stringify round-trip coverage string TRUE indent 4: parse 1`] = `"TRUE"`;
+
+exports[`Bun.YAML stringify round-trip coverage string yes flow: stringify 1`] = `""yes""`;
+
+exports[`Bun.YAML stringify round-trip coverage string yes flow: parse 1`] = `"yes"`;
+
+exports[`Bun.YAML stringify round-trip coverage string yes indent 2: stringify 1`] = `""yes""`;
+
+exports[`Bun.YAML stringify round-trip coverage string yes indent 2: parse 1`] = `"yes"`;
+
+exports[`Bun.YAML stringify round-trip coverage string yes indent 4: stringify 1`] = `""yes""`;
+
+exports[`Bun.YAML stringify round-trip coverage string yes indent 4: parse 1`] = `"yes"`;
+
+exports[`Bun.YAML stringify round-trip coverage string no flow: stringify 1`] = `""no""`;
+
+exports[`Bun.YAML stringify round-trip coverage string no flow: parse 1`] = `"no"`;
+
+exports[`Bun.YAML stringify round-trip coverage string no indent 2: stringify 1`] = `""no""`;
+
+exports[`Bun.YAML stringify round-trip coverage string no indent 2: parse 1`] = `"no"`;
+
+exports[`Bun.YAML stringify round-trip coverage string no indent 4: stringify 1`] = `""no""`;
+
+exports[`Bun.YAML stringify round-trip coverage string no indent 4: parse 1`] = `"no"`;
+
+exports[`Bun.YAML stringify round-trip coverage string on flow: stringify 1`] = `""on""`;
+
+exports[`Bun.YAML stringify round-trip coverage string on flow: parse 1`] = `"on"`;
+
+exports[`Bun.YAML stringify round-trip coverage string on indent 2: stringify 1`] = `""on""`;
+
+exports[`Bun.YAML stringify round-trip coverage string on indent 2: parse 1`] = `"on"`;
+
+exports[`Bun.YAML stringify round-trip coverage string on indent 4: stringify 1`] = `""on""`;
+
+exports[`Bun.YAML stringify round-trip coverage string on indent 4: parse 1`] = `"on"`;
+
+exports[`Bun.YAML stringify round-trip coverage string off flow: stringify 1`] = `""off""`;
+
+exports[`Bun.YAML stringify round-trip coverage string off flow: parse 1`] = `"off"`;
+
+exports[`Bun.YAML stringify round-trip coverage string off indent 2: stringify 1`] = `""off""`;
+
+exports[`Bun.YAML stringify round-trip coverage string off indent 2: parse 1`] = `"off"`;
+
+exports[`Bun.YAML stringify round-trip coverage string off indent 4: stringify 1`] = `""off""`;
+
+exports[`Bun.YAML stringify round-trip coverage string off indent 4: parse 1`] = `"off"`;
+
+exports[`Bun.YAML stringify round-trip coverage string y flow: stringify 1`] = `""y""`;
+
+exports[`Bun.YAML stringify round-trip coverage string y flow: parse 1`] = `"y"`;
+
+exports[`Bun.YAML stringify round-trip coverage string y indent 2: stringify 1`] = `""y""`;
+
+exports[`Bun.YAML stringify round-trip coverage string y indent 2: parse 1`] = `"y"`;
+
+exports[`Bun.YAML stringify round-trip coverage string y indent 4: stringify 1`] = `""y""`;
+
+exports[`Bun.YAML stringify round-trip coverage string y indent 4: parse 1`] = `"y"`;
+
+exports[`Bun.YAML stringify round-trip coverage string n flow: stringify 1`] = `""n""`;
+
+exports[`Bun.YAML stringify round-trip coverage string n flow: parse 1`] = `"n"`;
+
+exports[`Bun.YAML stringify round-trip coverage string n indent 2: stringify 1`] = `""n""`;
+
+exports[`Bun.YAML stringify round-trip coverage string n indent 2: parse 1`] = `"n"`;
+
+exports[`Bun.YAML stringify round-trip coverage string n indent 4: stringify 1`] = `""n""`;
+
+exports[`Bun.YAML stringify round-trip coverage string n indent 4: parse 1`] = `"n"`;
+
+exports[`Bun.YAML stringify round-trip coverage string null flow: stringify 1`] = `""null""`;
+
+exports[`Bun.YAML stringify round-trip coverage string null flow: parse 1`] = `"null"`;
+
+exports[`Bun.YAML stringify round-trip coverage string null indent 2: stringify 1`] = `""null""`;
+
+exports[`Bun.YAML stringify round-trip coverage string null indent 2: parse 1`] = `"null"`;
+
+exports[`Bun.YAML stringify round-trip coverage string null indent 4: stringify 1`] = `""null""`;
+
+exports[`Bun.YAML stringify round-trip coverage string null indent 4: parse 1`] = `"null"`;
+
+exports[`Bun.YAML stringify round-trip coverage string Null flow: stringify 1`] = `""Null""`;
+
+exports[`Bun.YAML stringify round-trip coverage string Null flow: parse 1`] = `"Null"`;
+
+exports[`Bun.YAML stringify round-trip coverage string Null indent 2: stringify 1`] = `""Null""`;
+
+exports[`Bun.YAML stringify round-trip coverage string Null indent 2: parse 1`] = `"Null"`;
+
+exports[`Bun.YAML stringify round-trip coverage string Null indent 4: stringify 1`] = `""Null""`;
+
+exports[`Bun.YAML stringify round-trip coverage string Null indent 4: parse 1`] = `"Null"`;
+
+exports[`Bun.YAML stringify round-trip coverage string tilde flow: stringify 1`] = `""~""`;
+
+exports[`Bun.YAML stringify round-trip coverage string tilde flow: parse 1`] = `"~"`;
+
+exports[`Bun.YAML stringify round-trip coverage string tilde indent 2: stringify 1`] = `""~""`;
+
+exports[`Bun.YAML stringify round-trip coverage string tilde indent 2: parse 1`] = `"~"`;
+
+exports[`Bun.YAML stringify round-trip coverage string tilde indent 4: stringify 1`] = `""~""`;
+
+exports[`Bun.YAML stringify round-trip coverage string tilde indent 4: parse 1`] = `"~"`;
+
+exports[`Bun.YAML stringify round-trip coverage string int flow: stringify 1`] = `""123""`;
+
+exports[`Bun.YAML stringify round-trip coverage string int flow: parse 1`] = `"123"`;
+
+exports[`Bun.YAML stringify round-trip coverage string int indent 2: stringify 1`] = `""123""`;
+
+exports[`Bun.YAML stringify round-trip coverage string int indent 2: parse 1`] = `"123"`;
+
+exports[`Bun.YAML stringify round-trip coverage string int indent 4: stringify 1`] = `""123""`;
+
+exports[`Bun.YAML stringify round-trip coverage string int indent 4: parse 1`] = `"123"`;
+
+exports[`Bun.YAML stringify round-trip coverage string negative int flow: stringify 1`] = `""-1""`;
+
+exports[`Bun.YAML stringify round-trip coverage string negative int flow: parse 1`] = `"-1"`;
+
+exports[`Bun.YAML stringify round-trip coverage string negative int indent 2: stringify 1`] = `""-1""`;
+
+exports[`Bun.YAML stringify round-trip coverage string negative int indent 2: parse 1`] = `"-1"`;
+
+exports[`Bun.YAML stringify round-trip coverage string negative int indent 4: stringify 1`] = `""-1""`;
+
+exports[`Bun.YAML stringify round-trip coverage string negative int indent 4: parse 1`] = `"-1"`;
+
+exports[`Bun.YAML stringify round-trip coverage string plus int flow: stringify 1`] = `""+7""`;
+
+exports[`Bun.YAML stringify round-trip coverage string plus int flow: parse 1`] = `"+7"`;
+
+exports[`Bun.YAML stringify round-trip coverage string plus int indent 2: stringify 1`] = `""+7""`;
+
+exports[`Bun.YAML stringify round-trip coverage string plus int indent 2: parse 1`] = `"+7"`;
+
+exports[`Bun.YAML stringify round-trip coverage string plus int indent 4: stringify 1`] = `""+7""`;
+
+exports[`Bun.YAML stringify round-trip coverage string plus int indent 4: parse 1`] = `"+7"`;
+
+exports[`Bun.YAML stringify round-trip coverage string float flow: stringify 1`] = `""3.14""`;
+
+exports[`Bun.YAML stringify round-trip coverage string float flow: parse 1`] = `"3.14"`;
+
+exports[`Bun.YAML stringify round-trip coverage string float indent 2: stringify 1`] = `""3.14""`;
+
+exports[`Bun.YAML stringify round-trip coverage string float indent 2: parse 1`] = `"3.14"`;
+
+exports[`Bun.YAML stringify round-trip coverage string float indent 4: stringify 1`] = `""3.14""`;
+
+exports[`Bun.YAML stringify round-trip coverage string float indent 4: parse 1`] = `"3.14"`;
+
+exports[`Bun.YAML stringify round-trip coverage string leading dot float flow: stringify 1`] = `"".5""`;
+
+exports[`Bun.YAML stringify round-trip coverage string leading dot float flow: parse 1`] = `".5"`;
+
+exports[`Bun.YAML stringify round-trip coverage string leading dot float indent 2: stringify 1`] = `"".5""`;
+
+exports[`Bun.YAML stringify round-trip coverage string leading dot float indent 2: parse 1`] = `".5"`;
+
+exports[`Bun.YAML stringify round-trip coverage string leading dot float indent 4: stringify 1`] = `"".5""`;
+
+exports[`Bun.YAML stringify round-trip coverage string leading dot float indent 4: parse 1`] = `".5"`;
+
+exports[`Bun.YAML stringify round-trip coverage string trailing dot flow: stringify 1`] = `""5.""`;
+
+exports[`Bun.YAML stringify round-trip coverage string trailing dot flow: parse 1`] = `"5."`;
+
+exports[`Bun.YAML stringify round-trip coverage string trailing dot indent 2: stringify 1`] = `""5.""`;
+
+exports[`Bun.YAML stringify round-trip coverage string trailing dot indent 2: parse 1`] = `"5."`;
+
+exports[`Bun.YAML stringify round-trip coverage string trailing dot indent 4: stringify 1`] = `""5.""`;
+
+exports[`Bun.YAML stringify round-trip coverage string trailing dot indent 4: parse 1`] = `"5."`;
+
+exports[`Bun.YAML stringify round-trip coverage string exponent flow: stringify 1`] = `""1e3""`;
+
+exports[`Bun.YAML stringify round-trip coverage string exponent flow: parse 1`] = `"1e3"`;
+
+exports[`Bun.YAML stringify round-trip coverage string exponent indent 2: stringify 1`] = `""1e3""`;
+
+exports[`Bun.YAML stringify round-trip coverage string exponent indent 2: parse 1`] = `"1e3"`;
+
+exports[`Bun.YAML stringify round-trip coverage string exponent indent 4: stringify 1`] = `""1e3""`;
+
+exports[`Bun.YAML stringify round-trip coverage string exponent indent 4: parse 1`] = `"1e3"`;
+
+exports[`Bun.YAML stringify round-trip coverage string hex flow: stringify 1`] = `""0x1F""`;
+
+exports[`Bun.YAML stringify round-trip coverage string hex flow: parse 1`] = `"0x1F"`;
+
+exports[`Bun.YAML stringify round-trip coverage string hex indent 2: stringify 1`] = `""0x1F""`;
+
+exports[`Bun.YAML stringify round-trip coverage string hex indent 2: parse 1`] = `"0x1F"`;
+
+exports[`Bun.YAML stringify round-trip coverage string hex indent 4: stringify 1`] = `""0x1F""`;
+
+exports[`Bun.YAML stringify round-trip coverage string hex indent 4: parse 1`] = `"0x1F"`;
+
+exports[`Bun.YAML stringify round-trip coverage string octal flow: stringify 1`] = `""0o17""`;
+
+exports[`Bun.YAML stringify round-trip coverage string octal flow: parse 1`] = `"0o17"`;
+
+exports[`Bun.YAML stringify round-trip coverage string octal indent 2: stringify 1`] = `""0o17""`;
+
+exports[`Bun.YAML stringify round-trip coverage string octal indent 2: parse 1`] = `"0o17"`;
+
+exports[`Bun.YAML stringify round-trip coverage string octal indent 4: stringify 1`] = `""0o17""`;
+
+exports[`Bun.YAML stringify round-trip coverage string octal indent 4: parse 1`] = `"0o17"`;
+
+exports[`Bun.YAML stringify round-trip coverage string binary flow: stringify 1`] = `"0b101"`;
+
+exports[`Bun.YAML stringify round-trip coverage string binary flow: parse 1`] = `"0b101"`;
+
+exports[`Bun.YAML stringify round-trip coverage string binary indent 2: stringify 1`] = `"0b101"`;
+
+exports[`Bun.YAML stringify round-trip coverage string binary indent 2: parse 1`] = `"0b101"`;
+
+exports[`Bun.YAML stringify round-trip coverage string binary indent 4: stringify 1`] = `"0b101"`;
+
+exports[`Bun.YAML stringify round-trip coverage string binary indent 4: parse 1`] = `"0b101"`;
+
+exports[`Bun.YAML stringify round-trip coverage string underscore number flow: stringify 1`] = `"1_000"`;
+
+exports[`Bun.YAML stringify round-trip coverage string underscore number flow: parse 1`] = `"1_000"`;
+
+exports[`Bun.YAML stringify round-trip coverage string underscore number indent 2: stringify 1`] = `"1_000"`;
+
+exports[`Bun.YAML stringify round-trip coverage string underscore number indent 2: parse 1`] = `"1_000"`;
+
+exports[`Bun.YAML stringify round-trip coverage string underscore number indent 4: stringify 1`] = `"1_000"`;
+
+exports[`Bun.YAML stringify round-trip coverage string underscore number indent 4: parse 1`] = `"1_000"`;
+
+exports[`Bun.YAML stringify round-trip coverage string inf flow: stringify 1`] = `"".inf""`;
+
+exports[`Bun.YAML stringify round-trip coverage string inf flow: parse 1`] = `".inf"`;
+
+exports[`Bun.YAML stringify round-trip coverage string inf indent 2: stringify 1`] = `"".inf""`;
+
+exports[`Bun.YAML stringify round-trip coverage string inf indent 2: parse 1`] = `".inf"`;
+
+exports[`Bun.YAML stringify round-trip coverage string inf indent 4: stringify 1`] = `"".inf""`;
+
+exports[`Bun.YAML stringify round-trip coverage string inf indent 4: parse 1`] = `".inf"`;
+
+exports[`Bun.YAML stringify round-trip coverage string negative inf flow: stringify 1`] = `""-.inf""`;
+
+exports[`Bun.YAML stringify round-trip coverage string negative inf flow: parse 1`] = `"-.inf"`;
+
+exports[`Bun.YAML stringify round-trip coverage string negative inf indent 2: stringify 1`] = `""-.inf""`;
+
+exports[`Bun.YAML stringify round-trip coverage string negative inf indent 2: parse 1`] = `"-.inf"`;
+
+exports[`Bun.YAML stringify round-trip coverage string negative inf indent 4: stringify 1`] = `""-.inf""`;
+
+exports[`Bun.YAML stringify round-trip coverage string negative inf indent 4: parse 1`] = `"-.inf"`;
+
+exports[`Bun.YAML stringify round-trip coverage string nan flow: stringify 1`] = `"".NaN""`;
+
+exports[`Bun.YAML stringify round-trip coverage string nan flow: parse 1`] = `".NaN"`;
+
+exports[`Bun.YAML stringify round-trip coverage string nan indent 2: stringify 1`] = `"".NaN""`;
+
+exports[`Bun.YAML stringify round-trip coverage string nan indent 2: parse 1`] = `".NaN"`;
+
+exports[`Bun.YAML stringify round-trip coverage string nan indent 4: stringify 1`] = `"".NaN""`;
+
+exports[`Bun.YAML stringify round-trip coverage string nan indent 4: parse 1`] = `".NaN"`;
+
+exports[`Bun.YAML stringify round-trip coverage string zero flow: stringify 1`] = `""0""`;
+
+exports[`Bun.YAML stringify round-trip coverage string zero flow: parse 1`] = `"0"`;
+
+exports[`Bun.YAML stringify round-trip coverage string zero indent 2: stringify 1`] = `""0""`;
+
+exports[`Bun.YAML stringify round-trip coverage string zero indent 2: parse 1`] = `"0"`;
+
+exports[`Bun.YAML stringify round-trip coverage string zero indent 4: stringify 1`] = `""0""`;
+
+exports[`Bun.YAML stringify round-trip coverage string zero indent 4: parse 1`] = `"0"`;
+
+exports[`Bun.YAML stringify round-trip coverage string negative zero flow: stringify 1`] = `""-0""`;
+
+exports[`Bun.YAML stringify round-trip coverage string negative zero flow: parse 1`] = `"-0"`;
+
+exports[`Bun.YAML stringify round-trip coverage string negative zero indent 2: stringify 1`] = `""-0""`;
+
+exports[`Bun.YAML stringify round-trip coverage string negative zero indent 2: parse 1`] = `"-0"`;
+
+exports[`Bun.YAML stringify round-trip coverage string negative zero indent 4: stringify 1`] = `""-0""`;
+
+exports[`Bun.YAML stringify round-trip coverage string negative zero indent 4: parse 1`] = `"-0"`;
+
+exports[`Bun.YAML stringify round-trip coverage string date flow: stringify 1`] = `"2024-01-15"`;
+
+exports[`Bun.YAML stringify round-trip coverage string date flow: parse 1`] = `"2024-01-15"`;
+
+exports[`Bun.YAML stringify round-trip coverage string date indent 2: stringify 1`] = `"2024-01-15"`;
+
+exports[`Bun.YAML stringify round-trip coverage string date indent 2: parse 1`] = `"2024-01-15"`;
+
+exports[`Bun.YAML stringify round-trip coverage string date indent 4: stringify 1`] = `"2024-01-15"`;
+
+exports[`Bun.YAML stringify round-trip coverage string date indent 4: parse 1`] = `"2024-01-15"`;
+
+exports[`Bun.YAML stringify round-trip coverage string timestamp flow: stringify 1`] = `"2024-01-15T10:30:00Z"`;
+
+exports[`Bun.YAML stringify round-trip coverage string timestamp flow: parse 1`] = `"2024-01-15T10:30:00Z"`;
+
+exports[`Bun.YAML stringify round-trip coverage string timestamp indent 2: stringify 1`] = `"2024-01-15T10:30:00Z"`;
+
+exports[`Bun.YAML stringify round-trip coverage string timestamp indent 2: parse 1`] = `"2024-01-15T10:30:00Z"`;
+
+exports[`Bun.YAML stringify round-trip coverage string timestamp indent 4: stringify 1`] = `"2024-01-15T10:30:00Z"`;
+
+exports[`Bun.YAML stringify round-trip coverage string timestamp indent 4: parse 1`] = `"2024-01-15T10:30:00Z"`;
+
+exports[`Bun.YAML stringify round-trip coverage string time flow: stringify 1`] = `"12:30"`;
+
+exports[`Bun.YAML stringify round-trip coverage string time flow: parse 1`] = `"12:30"`;
+
+exports[`Bun.YAML stringify round-trip coverage string time indent 2: stringify 1`] = `"12:30"`;
+
+exports[`Bun.YAML stringify round-trip coverage string time indent 2: parse 1`] = `"12:30"`;
+
+exports[`Bun.YAML stringify round-trip coverage string time indent 4: stringify 1`] = `"12:30"`;
+
+exports[`Bun.YAML stringify round-trip coverage string time indent 4: parse 1`] = `"12:30"`;
+
+exports[`Bun.YAML stringify round-trip coverage string sexagesimal flow: stringify 1`] = `"1:30:00"`;
+
+exports[`Bun.YAML stringify round-trip coverage string sexagesimal flow: parse 1`] = `"1:30:00"`;
+
+exports[`Bun.YAML stringify round-trip coverage string sexagesimal indent 2: stringify 1`] = `"1:30:00"`;
+
+exports[`Bun.YAML stringify round-trip coverage string sexagesimal indent 2: parse 1`] = `"1:30:00"`;
+
+exports[`Bun.YAML stringify round-trip coverage string sexagesimal indent 4: stringify 1`] = `"1:30:00"`;
+
+exports[`Bun.YAML stringify round-trip coverage string sexagesimal indent 4: parse 1`] = `"1:30:00"`;
+
+exports[`Bun.YAML stringify round-trip coverage string version flow: stringify 1`] = `"1.2.3"`;
+
+exports[`Bun.YAML stringify round-trip coverage string version flow: parse 1`] = `"1.2.3"`;
+
+exports[`Bun.YAML stringify round-trip coverage string version indent 2: stringify 1`] = `"1.2.3"`;
+
+exports[`Bun.YAML stringify round-trip coverage string version indent 2: parse 1`] = `"1.2.3"`;
+
+exports[`Bun.YAML stringify round-trip coverage string version indent 4: stringify 1`] = `"1.2.3"`;
+
+exports[`Bun.YAML stringify round-trip coverage string version indent 4: parse 1`] = `"1.2.3"`;
+
+exports[`Bun.YAML stringify round-trip coverage string ip flow: stringify 1`] = `"10.0.0.1"`;
+
+exports[`Bun.YAML stringify round-trip coverage string ip flow: parse 1`] = `"10.0.0.1"`;
+
+exports[`Bun.YAML stringify round-trip coverage string ip indent 2: stringify 1`] = `"10.0.0.1"`;
+
+exports[`Bun.YAML stringify round-trip coverage string ip indent 2: parse 1`] = `"10.0.0.1"`;
+
+exports[`Bun.YAML stringify round-trip coverage string ip indent 4: stringify 1`] = `"10.0.0.1"`;
+
+exports[`Bun.YAML stringify round-trip coverage string ip indent 4: parse 1`] = `"10.0.0.1"`;
+
+exports[`Bun.YAML stringify round-trip coverage colon space inside flow: stringify 1`] = `""key: value""`;
+
+exports[`Bun.YAML stringify round-trip coverage colon space inside flow: parse 1`] = `"key: value"`;
+
+exports[`Bun.YAML stringify round-trip coverage colon space inside indent 2: stringify 1`] = `""key: value""`;
+
+exports[`Bun.YAML stringify round-trip coverage colon space inside indent 2: parse 1`] = `"key: value"`;
+
+exports[`Bun.YAML stringify round-trip coverage colon space inside indent 4: stringify 1`] = `""key: value""`;
+
+exports[`Bun.YAML stringify round-trip coverage colon space inside indent 4: parse 1`] = `"key: value"`;
+
+exports[`Bun.YAML stringify round-trip coverage colon at end flow: stringify 1`] = `""ends:""`;
+
+exports[`Bun.YAML stringify round-trip coverage colon at end flow: parse 1`] = `"ends:"`;
+
+exports[`Bun.YAML stringify round-trip coverage colon at end indent 2: stringify 1`] = `""ends:""`;
+
+exports[`Bun.YAML stringify round-trip coverage colon at end indent 2: parse 1`] = `"ends:"`;
+
+exports[`Bun.YAML stringify round-trip coverage colon at end indent 4: stringify 1`] = `""ends:""`;
+
+exports[`Bun.YAML stringify round-trip coverage colon at end indent 4: parse 1`] = `"ends:"`;
+
+exports[`Bun.YAML stringify round-trip coverage colon no space flow: stringify 1`] = `"a:b"`;
+
+exports[`Bun.YAML stringify round-trip coverage colon no space flow: parse 1`] = `"a:b"`;
+
+exports[`Bun.YAML stringify round-trip coverage colon no space indent 2: stringify 1`] = `"a:b"`;
+
+exports[`Bun.YAML stringify round-trip coverage colon no space indent 2: parse 1`] = `"a:b"`;
+
+exports[`Bun.YAML stringify round-trip coverage colon no space indent 4: stringify 1`] = `"a:b"`;
+
+exports[`Bun.YAML stringify round-trip coverage colon no space indent 4: parse 1`] = `"a:b"`;
+
+exports[`Bun.YAML stringify round-trip coverage hash after space flow: stringify 1`] = `""a #comment""`;
+
+exports[`Bun.YAML stringify round-trip coverage hash after space flow: parse 1`] = `"a #comment"`;
+
+exports[`Bun.YAML stringify round-trip coverage hash after space indent 2: stringify 1`] = `""a #comment""`;
+
+exports[`Bun.YAML stringify round-trip coverage hash after space indent 2: parse 1`] = `"a #comment"`;
+
+exports[`Bun.YAML stringify round-trip coverage hash after space indent 4: stringify 1`] = `""a #comment""`;
+
+exports[`Bun.YAML stringify round-trip coverage hash after space indent 4: parse 1`] = `"a #comment"`;
+
+exports[`Bun.YAML stringify round-trip coverage hash no space flow: stringify 1`] = `""a#b""`;
+
+exports[`Bun.YAML stringify round-trip coverage hash no space flow: parse 1`] = `"a#b"`;
+
+exports[`Bun.YAML stringify round-trip coverage hash no space indent 2: stringify 1`] = `""a#b""`;
+
+exports[`Bun.YAML stringify round-trip coverage hash no space indent 2: parse 1`] = `"a#b"`;
+
+exports[`Bun.YAML stringify round-trip coverage hash no space indent 4: stringify 1`] = `""a#b""`;
+
+exports[`Bun.YAML stringify round-trip coverage hash no space indent 4: parse 1`] = `"a#b"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading hash flow: stringify 1`] = `""#hash""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading hash flow: parse 1`] = `"#hash"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading hash indent 2: stringify 1`] = `""#hash""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading hash indent 2: parse 1`] = `"#hash"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading hash indent 4: stringify 1`] = `""#hash""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading hash indent 4: parse 1`] = `"#hash"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading dash space flow: stringify 1`] = `""- item""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading dash space flow: parse 1`] = `"- item"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading dash space indent 2: stringify 1`] = `""- item""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading dash space indent 2: parse 1`] = `"- item"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading dash space indent 4: stringify 1`] = `""- item""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading dash space indent 4: parse 1`] = `"- item"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading dash flow: stringify 1`] = `""-dash""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading dash flow: parse 1`] = `"-dash"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading dash indent 2: stringify 1`] = `""-dash""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading dash indent 2: parse 1`] = `"-dash"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading dash indent 4: stringify 1`] = `""-dash""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading dash indent 4: parse 1`] = `"-dash"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading question flow: stringify 1`] = `""? q""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading question flow: parse 1`] = `"? q"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading question indent 2: stringify 1`] = `""? q""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading question indent 2: parse 1`] = `"? q"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading question indent 4: stringify 1`] = `""? q""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading question indent 4: parse 1`] = `"? q"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading ampersand flow: stringify 1`] = `""&anchor""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading ampersand flow: parse 1`] = `"&anchor"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading ampersand indent 2: stringify 1`] = `""&anchor""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading ampersand indent 2: parse 1`] = `"&anchor"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading ampersand indent 4: stringify 1`] = `""&anchor""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading ampersand indent 4: parse 1`] = `"&anchor"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading asterisk flow: stringify 1`] = `""*alias""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading asterisk flow: parse 1`] = `"*alias"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading asterisk indent 2: stringify 1`] = `""*alias""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading asterisk indent 2: parse 1`] = `"*alias"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading asterisk indent 4: stringify 1`] = `""*alias""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading asterisk indent 4: parse 1`] = `"*alias"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading bang flow: stringify 1`] = `""!tag""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading bang flow: parse 1`] = `"!tag"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading bang indent 2: stringify 1`] = `""!tag""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading bang indent 2: parse 1`] = `"!tag"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading bang indent 4: stringify 1`] = `""!tag""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading bang indent 4: parse 1`] = `"!tag"`;
+
+exports[`Bun.YAML stringify round-trip coverage pipe flow: stringify 1`] = `""|""`;
+
+exports[`Bun.YAML stringify round-trip coverage pipe flow: parse 1`] = `"|"`;
+
+exports[`Bun.YAML stringify round-trip coverage pipe indent 2: stringify 1`] = `""|""`;
+
+exports[`Bun.YAML stringify round-trip coverage pipe indent 2: parse 1`] = `"|"`;
+
+exports[`Bun.YAML stringify round-trip coverage pipe indent 4: stringify 1`] = `""|""`;
+
+exports[`Bun.YAML stringify round-trip coverage pipe indent 4: parse 1`] = `"|"`;
+
+exports[`Bun.YAML stringify round-trip coverage greater than flow: stringify 1`] = `"">""`;
+
+exports[`Bun.YAML stringify round-trip coverage greater than flow: parse 1`] = `">"`;
+
+exports[`Bun.YAML stringify round-trip coverage greater than indent 2: stringify 1`] = `"">""`;
+
+exports[`Bun.YAML stringify round-trip coverage greater than indent 2: parse 1`] = `">"`;
+
+exports[`Bun.YAML stringify round-trip coverage greater than indent 4: stringify 1`] = `"">""`;
+
+exports[`Bun.YAML stringify round-trip coverage greater than indent 4: parse 1`] = `">"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading percent flow: stringify 1`] = `""%YAML 1.2""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading percent flow: parse 1`] = `"%YAML 1.2"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading percent indent 2: stringify 1`] = `""%YAML 1.2""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading percent indent 2: parse 1`] = `"%YAML 1.2"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading percent indent 4: stringify 1`] = `""%YAML 1.2""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading percent indent 4: parse 1`] = `"%YAML 1.2"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading at flow: stringify 1`] = `""@at""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading at flow: parse 1`] = `"@at"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading at indent 2: stringify 1`] = `""@at""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading at indent 2: parse 1`] = `"@at"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading at indent 4: stringify 1`] = `""@at""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading at indent 4: parse 1`] = `"@at"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading backtick flow: stringify 1`] = `""\`bt""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading backtick flow: parse 1`] = `"\`bt"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading backtick indent 2: stringify 1`] = `""\`bt""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading backtick indent 2: parse 1`] = `"\`bt"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading backtick indent 4: stringify 1`] = `""\`bt""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading backtick indent 4: parse 1`] = `"\`bt"`;
+
+exports[`Bun.YAML stringify round-trip coverage flow sequence text flow: stringify 1`] = `""[a, b]""`;
+
+exports[`Bun.YAML stringify round-trip coverage flow sequence text flow: parse 1`] = `"[a, b]"`;
+
+exports[`Bun.YAML stringify round-trip coverage flow sequence text indent 2: stringify 1`] = `""[a, b]""`;
+
+exports[`Bun.YAML stringify round-trip coverage flow sequence text indent 2: parse 1`] = `"[a, b]"`;
+
+exports[`Bun.YAML stringify round-trip coverage flow sequence text indent 4: stringify 1`] = `""[a, b]""`;
+
+exports[`Bun.YAML stringify round-trip coverage flow sequence text indent 4: parse 1`] = `"[a, b]"`;
+
+exports[`Bun.YAML stringify round-trip coverage flow mapping text flow: stringify 1`] = `""{a: b}""`;
+
+exports[`Bun.YAML stringify round-trip coverage flow mapping text flow: parse 1`] = `"{a: b}"`;
+
+exports[`Bun.YAML stringify round-trip coverage flow mapping text indent 2: stringify 1`] = `""{a: b}""`;
+
+exports[`Bun.YAML stringify round-trip coverage flow mapping text indent 2: parse 1`] = `"{a: b}"`;
+
+exports[`Bun.YAML stringify round-trip coverage flow mapping text indent 4: stringify 1`] = `""{a: b}""`;
+
+exports[`Bun.YAML stringify round-trip coverage flow mapping text indent 4: parse 1`] = `"{a: b}"`;
+
+exports[`Bun.YAML stringify round-trip coverage comma flow: stringify 1`] = `""a, b""`;
+
+exports[`Bun.YAML stringify round-trip coverage comma flow: parse 1`] = `"a, b"`;
+
+exports[`Bun.YAML stringify round-trip coverage comma indent 2: stringify 1`] = `""a, b""`;
+
+exports[`Bun.YAML stringify round-trip coverage comma indent 2: parse 1`] = `"a, b"`;
+
+exports[`Bun.YAML stringify round-trip coverage comma indent 4: stringify 1`] = `""a, b""`;
+
+exports[`Bun.YAML stringify round-trip coverage comma indent 4: parse 1`] = `"a, b"`;
+
+exports[`Bun.YAML stringify round-trip coverage single quote inside flow: stringify 1`] = `""it's""`;
+
+exports[`Bun.YAML stringify round-trip coverage single quote inside flow: parse 1`] = `"it's"`;
+
+exports[`Bun.YAML stringify round-trip coverage single quote inside indent 2: stringify 1`] = `""it's""`;
+
+exports[`Bun.YAML stringify round-trip coverage single quote inside indent 2: parse 1`] = `"it's"`;
+
+exports[`Bun.YAML stringify round-trip coverage single quote inside indent 4: stringify 1`] = `""it's""`;
+
+exports[`Bun.YAML stringify round-trip coverage single quote inside indent 4: parse 1`] = `"it's"`;
+
+exports[`Bun.YAML stringify round-trip coverage double quote inside flow: stringify 1`] = `""say \\"hi\\"""`;
+
+exports[`Bun.YAML stringify round-trip coverage double quote inside flow: parse 1`] = `"say "hi""`;
+
+exports[`Bun.YAML stringify round-trip coverage double quote inside indent 2: stringify 1`] = `""say \\"hi\\"""`;
+
+exports[`Bun.YAML stringify round-trip coverage double quote inside indent 2: parse 1`] = `"say "hi""`;
+
+exports[`Bun.YAML stringify round-trip coverage double quote inside indent 4: stringify 1`] = `""say \\"hi\\"""`;
+
+exports[`Bun.YAML stringify round-trip coverage double quote inside indent 4: parse 1`] = `"say "hi""`;
+
+exports[`Bun.YAML stringify round-trip coverage both quotes flow: stringify 1`] = `""'\\"""`;
+
+exports[`Bun.YAML stringify round-trip coverage both quotes flow: parse 1`] = `"'""`;
+
+exports[`Bun.YAML stringify round-trip coverage both quotes indent 2: stringify 1`] = `""'\\"""`;
+
+exports[`Bun.YAML stringify round-trip coverage both quotes indent 2: parse 1`] = `"'""`;
+
+exports[`Bun.YAML stringify round-trip coverage both quotes indent 4: stringify 1`] = `""'\\"""`;
+
+exports[`Bun.YAML stringify round-trip coverage both quotes indent 4: parse 1`] = `"'""`;
+
+exports[`Bun.YAML stringify round-trip coverage only single quote flow: stringify 1`] = `""'""`;
+
+exports[`Bun.YAML stringify round-trip coverage only single quote flow: parse 1`] = `"'"`;
+
+exports[`Bun.YAML stringify round-trip coverage only single quote indent 2: stringify 1`] = `""'""`;
+
+exports[`Bun.YAML stringify round-trip coverage only single quote indent 2: parse 1`] = `"'"`;
+
+exports[`Bun.YAML stringify round-trip coverage only single quote indent 4: stringify 1`] = `""'""`;
+
+exports[`Bun.YAML stringify round-trip coverage only single quote indent 4: parse 1`] = `"'"`;
+
+exports[`Bun.YAML stringify round-trip coverage only double quote flow: stringify 1`] = `""\\"""`;
+
+exports[`Bun.YAML stringify round-trip coverage only double quote flow: parse 1`] = `"""`;
+
+exports[`Bun.YAML stringify round-trip coverage only double quote indent 2: stringify 1`] = `""\\"""`;
+
+exports[`Bun.YAML stringify round-trip coverage only double quote indent 2: parse 1`] = `"""`;
+
+exports[`Bun.YAML stringify round-trip coverage only double quote indent 4: stringify 1`] = `""\\"""`;
+
+exports[`Bun.YAML stringify round-trip coverage only double quote indent 4: parse 1`] = `"""`;
+
+exports[`Bun.YAML stringify round-trip coverage backslash flow: stringify 1`] = `"C:\\path\\to"`;
+
+exports[`Bun.YAML stringify round-trip coverage backslash flow: parse 1`] = `"C:\\path\\to"`;
+
+exports[`Bun.YAML stringify round-trip coverage backslash indent 2: stringify 1`] = `"C:\\path\\to"`;
+
+exports[`Bun.YAML stringify round-trip coverage backslash indent 2: parse 1`] = `"C:\\path\\to"`;
+
+exports[`Bun.YAML stringify round-trip coverage backslash indent 4: stringify 1`] = `"C:\\path\\to"`;
+
+exports[`Bun.YAML stringify round-trip coverage backslash indent 4: parse 1`] = `"C:\\path\\to"`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing backslash flow: stringify 1`] = `"end\\"`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing backslash flow: parse 1`] = `"end\\"`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing backslash indent 2: stringify 1`] = `"end\\"`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing backslash indent 2: parse 1`] = `"end\\"`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing backslash indent 4: stringify 1`] = `"end\\"`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing backslash indent 4: parse 1`] = `"end\\"`;
+
+exports[`Bun.YAML stringify round-trip coverage document start flow: stringify 1`] = `""---""`;
+
+exports[`Bun.YAML stringify round-trip coverage document start flow: parse 1`] = `"---"`;
+
+exports[`Bun.YAML stringify round-trip coverage document start indent 2: stringify 1`] = `""---""`;
+
+exports[`Bun.YAML stringify round-trip coverage document start indent 2: parse 1`] = `"---"`;
+
+exports[`Bun.YAML stringify round-trip coverage document start indent 4: stringify 1`] = `""---""`;
+
+exports[`Bun.YAML stringify round-trip coverage document start indent 4: parse 1`] = `"---"`;
+
+exports[`Bun.YAML stringify round-trip coverage document start with text flow: stringify 1`] = `""--- text""`;
+
+exports[`Bun.YAML stringify round-trip coverage document start with text flow: parse 1`] = `"--- text"`;
+
+exports[`Bun.YAML stringify round-trip coverage document start with text indent 2: stringify 1`] = `""--- text""`;
+
+exports[`Bun.YAML stringify round-trip coverage document start with text indent 2: parse 1`] = `"--- text"`;
+
+exports[`Bun.YAML stringify round-trip coverage document start with text indent 4: stringify 1`] = `""--- text""`;
+
+exports[`Bun.YAML stringify round-trip coverage document start with text indent 4: parse 1`] = `"--- text"`;
+
+exports[`Bun.YAML stringify round-trip coverage document end flow: stringify 1`] = `""...""`;
+
+exports[`Bun.YAML stringify round-trip coverage document end flow: parse 1`] = `"..."`;
+
+exports[`Bun.YAML stringify round-trip coverage document end indent 2: stringify 1`] = `""...""`;
+
+exports[`Bun.YAML stringify round-trip coverage document end indent 2: parse 1`] = `"..."`;
+
+exports[`Bun.YAML stringify round-trip coverage document end indent 4: stringify 1`] = `""...""`;
+
+exports[`Bun.YAML stringify round-trip coverage document end indent 4: parse 1`] = `"..."`;
+
+exports[`Bun.YAML stringify round-trip coverage merge key text flow: stringify 1`] = `""<<""`;
+
+exports[`Bun.YAML stringify round-trip coverage merge key text flow: parse 1`] = `"<<"`;
+
+exports[`Bun.YAML stringify round-trip coverage merge key text indent 2: stringify 1`] = `""<<""`;
+
+exports[`Bun.YAML stringify round-trip coverage merge key text indent 2: parse 1`] = `"<<"`;
+
+exports[`Bun.YAML stringify round-trip coverage merge key text indent 4: stringify 1`] = `""<<""`;
+
+exports[`Bun.YAML stringify round-trip coverage merge key text indent 4: parse 1`] = `"<<"`;
+
+exports[`Bun.YAML stringify round-trip coverage equals flow: stringify 1`] = `"="`;
+
+exports[`Bun.YAML stringify round-trip coverage equals flow: parse 1`] = `"="`;
+
+exports[`Bun.YAML stringify round-trip coverage equals indent 2: stringify 1`] = `"="`;
+
+exports[`Bun.YAML stringify round-trip coverage equals indent 2: parse 1`] = `"="`;
+
+exports[`Bun.YAML stringify round-trip coverage equals indent 4: stringify 1`] = `"="`;
+
+exports[`Bun.YAML stringify round-trip coverage equals indent 4: parse 1`] = `"="`;
+
+exports[`Bun.YAML stringify round-trip coverage newline inside flow: stringify 1`] = `""line1\\nline2""`;
+
+exports[`Bun.YAML stringify round-trip coverage newline inside flow: parse 1`] = `
+"line1
+line2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage newline inside indent 2: stringify 1`] = `""line1\\nline2""`;
+
+exports[`Bun.YAML stringify round-trip coverage newline inside indent 2: parse 1`] = `
+"line1
+line2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage newline inside indent 4: stringify 1`] = `""line1\\nline2""`;
+
+exports[`Bun.YAML stringify round-trip coverage newline inside indent 4: parse 1`] = `
+"line1
+line2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing newline flow: stringify 1`] = `""text\\n""`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing newline flow: parse 1`] = `
+"text
+"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing newline indent 2: stringify 1`] = `""text\\n""`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing newline indent 2: parse 1`] = `
+"text
+"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing newline indent 4: stringify 1`] = `""text\\n""`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing newline indent 4: parse 1`] = `
+"text
+"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage leading newline flow: stringify 1`] = `""\\ntext""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading newline flow: parse 1`] = `
+"
+text"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage leading newline indent 2: stringify 1`] = `""\\ntext""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading newline indent 2: parse 1`] = `
+"
+text"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage leading newline indent 4: stringify 1`] = `""\\ntext""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading newline indent 4: parse 1`] = `
+"
+text"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage only newline flow: stringify 1`] = `""\\n""`;
+
+exports[`Bun.YAML stringify round-trip coverage only newline flow: parse 1`] = `
+"
+"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage only newline indent 2: stringify 1`] = `""\\n""`;
+
+exports[`Bun.YAML stringify round-trip coverage only newline indent 2: parse 1`] = `
+"
+"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage only newline indent 4: stringify 1`] = `""\\n""`;
+
+exports[`Bun.YAML stringify round-trip coverage only newline indent 4: parse 1`] = `
+"
+"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage blank lines inside flow: stringify 1`] = `""a\\n\\n\\nb""`;
+
+exports[`Bun.YAML stringify round-trip coverage blank lines inside flow: parse 1`] = `
+"a
+
+
+b"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage blank lines inside indent 2: stringify 1`] = `""a\\n\\n\\nb""`;
+
+exports[`Bun.YAML stringify round-trip coverage blank lines inside indent 2: parse 1`] = `
+"a
+
+
+b"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage blank lines inside indent 4: stringify 1`] = `""a\\n\\n\\nb""`;
+
+exports[`Bun.YAML stringify round-trip coverage blank lines inside indent 4: parse 1`] = `
+"a
+
+
+b"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage crlf flow: stringify 1`] = `""a\\r\\nb""`;
+
+exports[`Bun.YAML stringify round-trip coverage crlf flow: parse 1`] = `
+"a
+b"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage crlf indent 2: stringify 1`] = `""a\\r\\nb""`;
+
+exports[`Bun.YAML stringify round-trip coverage crlf indent 2: parse 1`] = `
+"a
+b"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage crlf indent 4: stringify 1`] = `""a\\r\\nb""`;
+
+exports[`Bun.YAML stringify round-trip coverage crlf indent 4: parse 1`] = `
+"a
+b"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage lone cr flow: stringify 1`] = `""a\\rb""`;
+
+exports[`Bun.YAML stringify round-trip coverage lone cr flow: parse 1`] = `
+"a
+b"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage lone cr indent 2: stringify 1`] = `""a\\rb""`;
+
+exports[`Bun.YAML stringify round-trip coverage lone cr indent 2: parse 1`] = `
+"a
+b"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage lone cr indent 4: stringify 1`] = `""a\\rb""`;
+
+exports[`Bun.YAML stringify round-trip coverage lone cr indent 4: parse 1`] = `
+"a
+b"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage tab inside flow: stringify 1`] = `""a\\tb""`;
+
+exports[`Bun.YAML stringify round-trip coverage tab inside flow: parse 1`] = `"a	b"`;
+
+exports[`Bun.YAML stringify round-trip coverage tab inside indent 2: stringify 1`] = `""a\\tb""`;
+
+exports[`Bun.YAML stringify round-trip coverage tab inside indent 2: parse 1`] = `"a	b"`;
+
+exports[`Bun.YAML stringify round-trip coverage tab inside indent 4: stringify 1`] = `""a\\tb""`;
+
+exports[`Bun.YAML stringify round-trip coverage tab inside indent 4: parse 1`] = `"a	b"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading tab flow: stringify 1`] = `""\\tx""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading tab flow: parse 1`] = `"	x"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading tab indent 2: stringify 1`] = `""\\tx""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading tab indent 2: parse 1`] = `"	x"`;
+
+exports[`Bun.YAML stringify round-trip coverage leading tab indent 4: stringify 1`] = `""\\tx""`;
+
+exports[`Bun.YAML stringify round-trip coverage leading tab indent 4: parse 1`] = `"	x"`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing tab flow: stringify 1`] = `""x\\t""`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing tab flow: parse 1`] = `"x	"`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing tab indent 2: stringify 1`] = `""x\\t""`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing tab indent 2: parse 1`] = `"x	"`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing tab indent 4: stringify 1`] = `""x\\t""`;
+
+exports[`Bun.YAML stringify round-trip coverage trailing tab indent 4: parse 1`] = `"x	"`;
+
+exports[`Bun.YAML stringify round-trip coverage null byte flow: stringify 1`] = `""a\\0b""`;
+
+exports[`Bun.YAML stringify round-trip coverage null byte flow: parse 1`] = `"a\x00b"`;
+
+exports[`Bun.YAML stringify round-trip coverage null byte indent 2: stringify 1`] = `""a\\0b""`;
+
+exports[`Bun.YAML stringify round-trip coverage null byte indent 2: parse 1`] = `"a\x00b"`;
+
+exports[`Bun.YAML stringify round-trip coverage null byte indent 4: stringify 1`] = `""a\\0b""`;
+
+exports[`Bun.YAML stringify round-trip coverage null byte indent 4: parse 1`] = `"a\x00b"`;
+
+exports[`Bun.YAML stringify round-trip coverage control characters flow: stringify 1`] = `""\\x01\\x02\\x1f\\x7f""`;
+
+exports[`Bun.YAML stringify round-trip coverage control characters flow: parse 1`] = `"\x01\x02\x1F"`;
+
+exports[`Bun.YAML stringify round-trip coverage control characters indent 2: stringify 1`] = `""\\x01\\x02\\x1f\\x7f""`;
+
+exports[`Bun.YAML stringify round-trip coverage control characters indent 2: parse 1`] = `"\x01\x02\x1F"`;
+
+exports[`Bun.YAML stringify round-trip coverage control characters indent 4: stringify 1`] = `""\\x01\\x02\\x1f\\x7f""`;
+
+exports[`Bun.YAML stringify round-trip coverage control characters indent 4: parse 1`] = `"\x01\x02\x1F"`;
+
+exports[`Bun.YAML stringify round-trip coverage bell backspace formfeed vtab flow: stringify 1`] = `""\\a\\b\\f\\v""`;
+
+exports[`Bun.YAML stringify round-trip coverage bell backspace formfeed vtab flow: parse 1`] = `"\x07\b\f\v"`;
+
+exports[`Bun.YAML stringify round-trip coverage bell backspace formfeed vtab indent 2: stringify 1`] = `""\\a\\b\\f\\v""`;
+
+exports[`Bun.YAML stringify round-trip coverage bell backspace formfeed vtab indent 2: parse 1`] = `"\x07\b\f\v"`;
+
+exports[`Bun.YAML stringify round-trip coverage bell backspace formfeed vtab indent 4: stringify 1`] = `""\\a\\b\\f\\v""`;
+
+exports[`Bun.YAML stringify round-trip coverage bell backspace formfeed vtab indent 4: parse 1`] = `"\x07\b\f\v"`;
+
+exports[`Bun.YAML stringify round-trip coverage ansi escape flow: stringify 1`] = `""\\e[0m""`;
+
+exports[`Bun.YAML stringify round-trip coverage ansi escape flow: parse 1`] = `"\x1B[0m"`;
+
+exports[`Bun.YAML stringify round-trip coverage ansi escape indent 2: stringify 1`] = `""\\e[0m""`;
+
+exports[`Bun.YAML stringify round-trip coverage ansi escape indent 2: parse 1`] = `"\x1B[0m"`;
+
+exports[`Bun.YAML stringify round-trip coverage ansi escape indent 4: stringify 1`] = `""\\e[0m""`;
+
+exports[`Bun.YAML stringify round-trip coverage ansi escape indent 4: parse 1`] = `"\x1B[0m"`;
+
+exports[`Bun.YAML stringify round-trip coverage latin1 flow: stringify 1`] = `"héllo wörld"`;
+
+exports[`Bun.YAML stringify round-trip coverage latin1 flow: parse 1`] = `"héllo wörld"`;
+
+exports[`Bun.YAML stringify round-trip coverage latin1 indent 2: stringify 1`] = `"héllo wörld"`;
+
+exports[`Bun.YAML stringify round-trip coverage latin1 indent 2: parse 1`] = `"héllo wörld"`;
+
+exports[`Bun.YAML stringify round-trip coverage latin1 indent 4: stringify 1`] = `"héllo wörld"`;
+
+exports[`Bun.YAML stringify round-trip coverage latin1 indent 4: parse 1`] = `"héllo wörld"`;
+
+exports[`Bun.YAML stringify round-trip coverage cjk flow: stringify 1`] = `"日本語"`;
+
+exports[`Bun.YAML stringify round-trip coverage cjk flow: parse 1`] = `"日本語"`;
+
+exports[`Bun.YAML stringify round-trip coverage cjk indent 2: stringify 1`] = `"日本語"`;
+
+exports[`Bun.YAML stringify round-trip coverage cjk indent 2: parse 1`] = `"日本語"`;
+
+exports[`Bun.YAML stringify round-trip coverage cjk indent 4: stringify 1`] = `"日本語"`;
+
+exports[`Bun.YAML stringify round-trip coverage cjk indent 4: parse 1`] = `"日本語"`;
+
+exports[`Bun.YAML stringify round-trip coverage emoji flow: stringify 1`] = `"😀🎉"`;
+
+exports[`Bun.YAML stringify round-trip coverage emoji flow: parse 1`] = `"😀🎉"`;
+
+exports[`Bun.YAML stringify round-trip coverage emoji indent 2: stringify 1`] = `"😀🎉"`;
+
+exports[`Bun.YAML stringify round-trip coverage emoji indent 2: parse 1`] = `"😀🎉"`;
+
+exports[`Bun.YAML stringify round-trip coverage emoji indent 4: stringify 1`] = `"😀🎉"`;
+
+exports[`Bun.YAML stringify round-trip coverage emoji indent 4: parse 1`] = `"😀🎉"`;
+
+exports[`Bun.YAML stringify round-trip coverage surrogate pair flow: stringify 1`] = `"😀"`;
+
+exports[`Bun.YAML stringify round-trip coverage surrogate pair flow: parse 1`] = `"😀"`;
+
+exports[`Bun.YAML stringify round-trip coverage surrogate pair indent 2: stringify 1`] = `"😀"`;
+
+exports[`Bun.YAML stringify round-trip coverage surrogate pair indent 2: parse 1`] = `"😀"`;
+
+exports[`Bun.YAML stringify round-trip coverage surrogate pair indent 4: stringify 1`] = `"😀"`;
+
+exports[`Bun.YAML stringify round-trip coverage surrogate pair indent 4: parse 1`] = `"😀"`;
+
+exports[`Bun.YAML stringify round-trip coverage zero width space flow: stringify 1`] = `"a​b"`;
+
+exports[`Bun.YAML stringify round-trip coverage zero width space flow: parse 1`] = `"a​b"`;
+
+exports[`Bun.YAML stringify round-trip coverage zero width space indent 2: stringify 1`] = `"a​b"`;
+
+exports[`Bun.YAML stringify round-trip coverage zero width space indent 2: parse 1`] = `"a​b"`;
+
+exports[`Bun.YAML stringify round-trip coverage zero width space indent 4: stringify 1`] = `"a​b"`;
+
+exports[`Bun.YAML stringify round-trip coverage zero width space indent 4: parse 1`] = `"a​b"`;
+
+exports[`Bun.YAML stringify round-trip coverage bom flow: stringify 1`] = `""\uFEFFx""`;
+
+exports[`Bun.YAML stringify round-trip coverage bom flow: parse 1`] = `"\uFEFFx"`;
+
+exports[`Bun.YAML stringify round-trip coverage bom indent 2: stringify 1`] = `""\uFEFFx""`;
+
+exports[`Bun.YAML stringify round-trip coverage bom indent 2: parse 1`] = `"\uFEFFx"`;
+
+exports[`Bun.YAML stringify round-trip coverage bom indent 4: stringify 1`] = `""\uFEFFx""`;
+
+exports[`Bun.YAML stringify round-trip coverage bom indent 4: parse 1`] = `"\uFEFFx"`;
+
+exports[`Bun.YAML stringify round-trip coverage nbsp flow: stringify 1`] = `""a\\_b""`;
+
+exports[`Bun.YAML stringify round-trip coverage nbsp flow: parse 1`] = `"a b"`;
+
+exports[`Bun.YAML stringify round-trip coverage nbsp indent 2: stringify 1`] = `""a\\_b""`;
+
+exports[`Bun.YAML stringify round-trip coverage nbsp indent 2: parse 1`] = `"a b"`;
+
+exports[`Bun.YAML stringify round-trip coverage nbsp indent 4: stringify 1`] = `""a\\_b""`;
+
+exports[`Bun.YAML stringify round-trip coverage nbsp indent 4: parse 1`] = `"a b"`;
+
+exports[`Bun.YAML stringify round-trip coverage nel flow: stringify 1`] = `""a\\Nb""`;
+
+exports[`Bun.YAML stringify round-trip coverage nel flow: parse 1`] = `"ab"`;
+
+exports[`Bun.YAML stringify round-trip coverage nel indent 2: stringify 1`] = `""a\\Nb""`;
+
+exports[`Bun.YAML stringify round-trip coverage nel indent 2: parse 1`] = `"ab"`;
+
+exports[`Bun.YAML stringify round-trip coverage nel indent 4: stringify 1`] = `""a\\Nb""`;
+
+exports[`Bun.YAML stringify round-trip coverage nel indent 4: parse 1`] = `"ab"`;
+
+exports[`Bun.YAML stringify round-trip coverage line separator flow: stringify 1`] = `""a\\Lb""`;
+
+exports[`Bun.YAML stringify round-trip coverage line separator flow: parse 1`] = `"a\u2028b"`;
+
+exports[`Bun.YAML stringify round-trip coverage line separator indent 2: stringify 1`] = `""a\\Lb""`;
+
+exports[`Bun.YAML stringify round-trip coverage line separator indent 2: parse 1`] = `"a\u2028b"`;
+
+exports[`Bun.YAML stringify round-trip coverage line separator indent 4: stringify 1`] = `""a\\Lb""`;
+
+exports[`Bun.YAML stringify round-trip coverage line separator indent 4: parse 1`] = `"a\u2028b"`;
+
+exports[`Bun.YAML stringify round-trip coverage paragraph separator flow: stringify 1`] = `""a\\Pb""`;
+
+exports[`Bun.YAML stringify round-trip coverage paragraph separator flow: parse 1`] = `"a\u2029b"`;
+
+exports[`Bun.YAML stringify round-trip coverage paragraph separator indent 2: stringify 1`] = `""a\\Pb""`;
+
+exports[`Bun.YAML stringify round-trip coverage paragraph separator indent 2: parse 1`] = `"a\u2029b"`;
+
+exports[`Bun.YAML stringify round-trip coverage paragraph separator indent 4: stringify 1`] = `""a\\Pb""`;
+
+exports[`Bun.YAML stringify round-trip coverage paragraph separator indent 4: parse 1`] = `"a\u2029b"`;
+
+exports[`Bun.YAML stringify round-trip coverage rtl override flow: stringify 1`] = `"a‮b"`;
+
+exports[`Bun.YAML stringify round-trip coverage rtl override flow: parse 1`] = `"a‮b"`;
+
+exports[`Bun.YAML stringify round-trip coverage rtl override indent 2: stringify 1`] = `"a‮b"`;
+
+exports[`Bun.YAML stringify round-trip coverage rtl override indent 2: parse 1`] = `"a‮b"`;
+
+exports[`Bun.YAML stringify round-trip coverage rtl override indent 4: stringify 1`] = `"a‮b"`;
+
+exports[`Bun.YAML stringify round-trip coverage rtl override indent 4: parse 1`] = `"a‮b"`;
+
+exports[`Bun.YAML stringify round-trip coverage combining mark flow: stringify 1`] = `"é"`;
+
+exports[`Bun.YAML stringify round-trip coverage combining mark flow: parse 1`] = `"é"`;
+
+exports[`Bun.YAML stringify round-trip coverage combining mark indent 2: stringify 1`] = `"é"`;
+
+exports[`Bun.YAML stringify round-trip coverage combining mark indent 2: parse 1`] = `"é"`;
+
+exports[`Bun.YAML stringify round-trip coverage combining mark indent 4: stringify 1`] = `"é"`;
+
+exports[`Bun.YAML stringify round-trip coverage combining mark indent 4: parse 1`] = `"é"`;
+
+exports[`Bun.YAML stringify round-trip coverage zero flow: stringify 1`] = `"0"`;
+
+exports[`Bun.YAML stringify round-trip coverage zero flow: parse 1`] = `0`;
+
+exports[`Bun.YAML stringify round-trip coverage zero indent 2: stringify 1`] = `"0"`;
+
+exports[`Bun.YAML stringify round-trip coverage zero indent 2: parse 1`] = `0`;
+
+exports[`Bun.YAML stringify round-trip coverage zero indent 4: stringify 1`] = `"0"`;
+
+exports[`Bun.YAML stringify round-trip coverage zero indent 4: parse 1`] = `0`;
+
+exports[`Bun.YAML stringify round-trip coverage negative zero flow: stringify 1`] = `"-0"`;
+
+exports[`Bun.YAML stringify round-trip coverage negative zero flow: parse 1`] = `-0`;
+
+exports[`Bun.YAML stringify round-trip coverage negative zero indent 2: stringify 1`] = `"-0"`;
+
+exports[`Bun.YAML stringify round-trip coverage negative zero indent 2: parse 1`] = `-0`;
+
+exports[`Bun.YAML stringify round-trip coverage negative zero indent 4: stringify 1`] = `"-0"`;
+
+exports[`Bun.YAML stringify round-trip coverage negative zero indent 4: parse 1`] = `-0`;
+
+exports[`Bun.YAML stringify round-trip coverage one flow: stringify 1`] = `"1"`;
+
+exports[`Bun.YAML stringify round-trip coverage one flow: parse 1`] = `1`;
+
+exports[`Bun.YAML stringify round-trip coverage one indent 2: stringify 1`] = `"1"`;
+
+exports[`Bun.YAML stringify round-trip coverage one indent 2: parse 1`] = `1`;
+
+exports[`Bun.YAML stringify round-trip coverage one indent 4: stringify 1`] = `"1"`;
+
+exports[`Bun.YAML stringify round-trip coverage one indent 4: parse 1`] = `1`;
+
+exports[`Bun.YAML stringify round-trip coverage negative one flow: stringify 1`] = `"-1"`;
+
+exports[`Bun.YAML stringify round-trip coverage negative one flow: parse 1`] = `-1`;
+
+exports[`Bun.YAML stringify round-trip coverage negative one indent 2: stringify 1`] = `"-1"`;
+
+exports[`Bun.YAML stringify round-trip coverage negative one indent 2: parse 1`] = `-1`;
+
+exports[`Bun.YAML stringify round-trip coverage negative one indent 4: stringify 1`] = `"-1"`;
+
+exports[`Bun.YAML stringify round-trip coverage negative one indent 4: parse 1`] = `-1`;
+
+exports[`Bun.YAML stringify round-trip coverage int flow: stringify 1`] = `"42"`;
+
+exports[`Bun.YAML stringify round-trip coverage int flow: parse 1`] = `42`;
+
+exports[`Bun.YAML stringify round-trip coverage int indent 2: stringify 1`] = `"42"`;
+
+exports[`Bun.YAML stringify round-trip coverage int indent 2: parse 1`] = `42`;
+
+exports[`Bun.YAML stringify round-trip coverage int indent 4: stringify 1`] = `"42"`;
+
+exports[`Bun.YAML stringify round-trip coverage int indent 4: parse 1`] = `42`;
+
+exports[`Bun.YAML stringify round-trip coverage float flow: stringify 1`] = `"3.14"`;
+
+exports[`Bun.YAML stringify round-trip coverage float flow: parse 1`] = `3.14`;
+
+exports[`Bun.YAML stringify round-trip coverage float indent 2: stringify 1`] = `"3.14"`;
+
+exports[`Bun.YAML stringify round-trip coverage float indent 2: parse 1`] = `3.14`;
+
+exports[`Bun.YAML stringify round-trip coverage float indent 4: stringify 1`] = `"3.14"`;
+
+exports[`Bun.YAML stringify round-trip coverage float indent 4: parse 1`] = `3.14`;
+
+exports[`Bun.YAML stringify round-trip coverage negative float flow: stringify 1`] = `"-2.5"`;
+
+exports[`Bun.YAML stringify round-trip coverage negative float flow: parse 1`] = `-2.5`;
+
+exports[`Bun.YAML stringify round-trip coverage negative float indent 2: stringify 1`] = `"-2.5"`;
+
+exports[`Bun.YAML stringify round-trip coverage negative float indent 2: parse 1`] = `-2.5`;
+
+exports[`Bun.YAML stringify round-trip coverage negative float indent 4: stringify 1`] = `"-2.5"`;
+
+exports[`Bun.YAML stringify round-trip coverage negative float indent 4: parse 1`] = `-2.5`;
+
+exports[`Bun.YAML stringify round-trip coverage half flow: stringify 1`] = `"0.5"`;
+
+exports[`Bun.YAML stringify round-trip coverage half flow: parse 1`] = `0.5`;
+
+exports[`Bun.YAML stringify round-trip coverage half indent 2: stringify 1`] = `"0.5"`;
+
+exports[`Bun.YAML stringify round-trip coverage half indent 2: parse 1`] = `0.5`;
+
+exports[`Bun.YAML stringify round-trip coverage half indent 4: stringify 1`] = `"0.5"`;
+
+exports[`Bun.YAML stringify round-trip coverage half indent 4: parse 1`] = `0.5`;
+
+exports[`Bun.YAML stringify round-trip coverage float sum flow: stringify 1`] = `"0.30000000000000004"`;
+
+exports[`Bun.YAML stringify round-trip coverage float sum flow: parse 1`] = `0.30000000000000004`;
+
+exports[`Bun.YAML stringify round-trip coverage float sum indent 2: stringify 1`] = `"0.30000000000000004"`;
+
+exports[`Bun.YAML stringify round-trip coverage float sum indent 2: parse 1`] = `0.30000000000000004`;
+
+exports[`Bun.YAML stringify round-trip coverage float sum indent 4: stringify 1`] = `"0.30000000000000004"`;
+
+exports[`Bun.YAML stringify round-trip coverage float sum indent 4: parse 1`] = `0.30000000000000004`;
+
+exports[`Bun.YAML stringify round-trip coverage thousand flow: stringify 1`] = `"1000"`;
+
+exports[`Bun.YAML stringify round-trip coverage thousand flow: parse 1`] = `1000`;
+
+exports[`Bun.YAML stringify round-trip coverage thousand indent 2: stringify 1`] = `"1000"`;
+
+exports[`Bun.YAML stringify round-trip coverage thousand indent 2: parse 1`] = `1000`;
+
+exports[`Bun.YAML stringify round-trip coverage thousand indent 4: stringify 1`] = `"1000"`;
+
+exports[`Bun.YAML stringify round-trip coverage thousand indent 4: parse 1`] = `1000`;
+
+exports[`Bun.YAML stringify round-trip coverage large exponent flow: stringify 1`] = `"1e+21"`;
+
+exports[`Bun.YAML stringify round-trip coverage large exponent flow: parse 1`] = `1e+21`;
+
+exports[`Bun.YAML stringify round-trip coverage large exponent indent 2: stringify 1`] = `"1e+21"`;
+
+exports[`Bun.YAML stringify round-trip coverage large exponent indent 2: parse 1`] = `1e+21`;
+
+exports[`Bun.YAML stringify round-trip coverage large exponent indent 4: stringify 1`] = `"1e+21"`;
+
+exports[`Bun.YAML stringify round-trip coverage large exponent indent 4: parse 1`] = `1e+21`;
+
+exports[`Bun.YAML stringify round-trip coverage small exponent flow: stringify 1`] = `"1e-7"`;
+
+exports[`Bun.YAML stringify round-trip coverage small exponent flow: parse 1`] = `1e-7`;
+
+exports[`Bun.YAML stringify round-trip coverage small exponent indent 2: stringify 1`] = `"1e-7"`;
+
+exports[`Bun.YAML stringify round-trip coverage small exponent indent 2: parse 1`] = `1e-7`;
+
+exports[`Bun.YAML stringify round-trip coverage small exponent indent 4: stringify 1`] = `"1e-7"`;
+
+exports[`Bun.YAML stringify round-trip coverage small exponent indent 4: parse 1`] = `1e-7`;
+
+exports[`Bun.YAML stringify round-trip coverage max safe integer flow: stringify 1`] = `"9007199254740991"`;
+
+exports[`Bun.YAML stringify round-trip coverage max safe integer flow: parse 1`] = `9007199254740991`;
+
+exports[`Bun.YAML stringify round-trip coverage max safe integer indent 2: stringify 1`] = `"9007199254740991"`;
+
+exports[`Bun.YAML stringify round-trip coverage max safe integer indent 2: parse 1`] = `9007199254740991`;
+
+exports[`Bun.YAML stringify round-trip coverage max safe integer indent 4: stringify 1`] = `"9007199254740991"`;
+
+exports[`Bun.YAML stringify round-trip coverage max safe integer indent 4: parse 1`] = `9007199254740991`;
+
+exports[`Bun.YAML stringify round-trip coverage min safe integer flow: stringify 1`] = `"-9007199254740991"`;
+
+exports[`Bun.YAML stringify round-trip coverage min safe integer flow: parse 1`] = `-9007199254740991`;
+
+exports[`Bun.YAML stringify round-trip coverage min safe integer indent 2: stringify 1`] = `"-9007199254740991"`;
+
+exports[`Bun.YAML stringify round-trip coverage min safe integer indent 2: parse 1`] = `-9007199254740991`;
+
+exports[`Bun.YAML stringify round-trip coverage min safe integer indent 4: stringify 1`] = `"-9007199254740991"`;
+
+exports[`Bun.YAML stringify round-trip coverage min safe integer indent 4: parse 1`] = `-9007199254740991`;
+
+exports[`Bun.YAML stringify round-trip coverage two to the 53 flow: stringify 1`] = `"9007199254740992"`;
+
+exports[`Bun.YAML stringify round-trip coverage two to the 53 flow: parse 1`] = `9007199254740992`;
+
+exports[`Bun.YAML stringify round-trip coverage two to the 53 indent 2: stringify 1`] = `"9007199254740992"`;
+
+exports[`Bun.YAML stringify round-trip coverage two to the 53 indent 2: parse 1`] = `9007199254740992`;
+
+exports[`Bun.YAML stringify round-trip coverage two to the 53 indent 4: stringify 1`] = `"9007199254740992"`;
+
+exports[`Bun.YAML stringify round-trip coverage two to the 53 indent 4: parse 1`] = `9007199254740992`;
+
+exports[`Bun.YAML stringify round-trip coverage int32 max flow: stringify 1`] = `"2147483647"`;
+
+exports[`Bun.YAML stringify round-trip coverage int32 max flow: parse 1`] = `2147483647`;
+
+exports[`Bun.YAML stringify round-trip coverage int32 max indent 2: stringify 1`] = `"2147483647"`;
+
+exports[`Bun.YAML stringify round-trip coverage int32 max indent 2: parse 1`] = `2147483647`;
+
+exports[`Bun.YAML stringify round-trip coverage int32 max indent 4: stringify 1`] = `"2147483647"`;
+
+exports[`Bun.YAML stringify round-trip coverage int32 max indent 4: parse 1`] = `2147483647`;
+
+exports[`Bun.YAML stringify round-trip coverage int32 min flow: stringify 1`] = `"-2147483648"`;
+
+exports[`Bun.YAML stringify round-trip coverage int32 min flow: parse 1`] = `-2147483648`;
+
+exports[`Bun.YAML stringify round-trip coverage int32 min indent 2: stringify 1`] = `"-2147483648"`;
+
+exports[`Bun.YAML stringify round-trip coverage int32 min indent 2: parse 1`] = `-2147483648`;
+
+exports[`Bun.YAML stringify round-trip coverage int32 min indent 4: stringify 1`] = `"-2147483648"`;
+
+exports[`Bun.YAML stringify round-trip coverage int32 min indent 4: parse 1`] = `-2147483648`;
+
+exports[`Bun.YAML stringify round-trip coverage uint32 max flow: stringify 1`] = `"4294967295"`;
+
+exports[`Bun.YAML stringify round-trip coverage uint32 max flow: parse 1`] = `4294967295`;
+
+exports[`Bun.YAML stringify round-trip coverage uint32 max indent 2: stringify 1`] = `"4294967295"`;
+
+exports[`Bun.YAML stringify round-trip coverage uint32 max indent 2: parse 1`] = `4294967295`;
+
+exports[`Bun.YAML stringify round-trip coverage uint32 max indent 4: stringify 1`] = `"4294967295"`;
+
+exports[`Bun.YAML stringify round-trip coverage uint32 max indent 4: parse 1`] = `4294967295`;
+
+exports[`Bun.YAML stringify round-trip coverage max value flow: stringify 1`] = `"1.7976931348623157e+308"`;
+
+exports[`Bun.YAML stringify round-trip coverage max value flow: parse 1`] = `1.7976931348623157e+308`;
+
+exports[`Bun.YAML stringify round-trip coverage max value indent 2: stringify 1`] = `"1.7976931348623157e+308"`;
+
+exports[`Bun.YAML stringify round-trip coverage max value indent 2: parse 1`] = `1.7976931348623157e+308`;
+
+exports[`Bun.YAML stringify round-trip coverage max value indent 4: stringify 1`] = `"1.7976931348623157e+308"`;
+
+exports[`Bun.YAML stringify round-trip coverage max value indent 4: parse 1`] = `1.7976931348623157e+308`;
+
+exports[`Bun.YAML stringify round-trip coverage min value flow: stringify 1`] = `"5e-324"`;
+
+exports[`Bun.YAML stringify round-trip coverage min value flow: parse 1`] = `5e-324`;
+
+exports[`Bun.YAML stringify round-trip coverage min value indent 2: stringify 1`] = `"5e-324"`;
+
+exports[`Bun.YAML stringify round-trip coverage min value indent 2: parse 1`] = `5e-324`;
+
+exports[`Bun.YAML stringify round-trip coverage min value indent 4: stringify 1`] = `"5e-324"`;
+
+exports[`Bun.YAML stringify round-trip coverage min value indent 4: parse 1`] = `5e-324`;
+
+exports[`Bun.YAML stringify round-trip coverage epsilon flow: stringify 1`] = `"2.220446049250313e-16"`;
+
+exports[`Bun.YAML stringify round-trip coverage epsilon flow: parse 1`] = `2.220446049250313e-16`;
+
+exports[`Bun.YAML stringify round-trip coverage epsilon indent 2: stringify 1`] = `"2.220446049250313e-16"`;
+
+exports[`Bun.YAML stringify round-trip coverage epsilon indent 2: parse 1`] = `2.220446049250313e-16`;
+
+exports[`Bun.YAML stringify round-trip coverage epsilon indent 4: stringify 1`] = `"2.220446049250313e-16"`;
+
+exports[`Bun.YAML stringify round-trip coverage epsilon indent 4: parse 1`] = `2.220446049250313e-16`;
+
+exports[`Bun.YAML stringify round-trip coverage nan flow: stringify 1`] = `".nan"`;
+
+exports[`Bun.YAML stringify round-trip coverage nan flow: parse 1`] = `NaN`;
+
+exports[`Bun.YAML stringify round-trip coverage nan indent 2: stringify 1`] = `".nan"`;
+
+exports[`Bun.YAML stringify round-trip coverage nan indent 2: parse 1`] = `NaN`;
+
+exports[`Bun.YAML stringify round-trip coverage nan indent 4: stringify 1`] = `".nan"`;
+
+exports[`Bun.YAML stringify round-trip coverage nan indent 4: parse 1`] = `NaN`;
+
+exports[`Bun.YAML stringify round-trip coverage infinity flow: stringify 1`] = `".inf"`;
+
+exports[`Bun.YAML stringify round-trip coverage infinity flow: parse 1`] = `Infinity`;
+
+exports[`Bun.YAML stringify round-trip coverage infinity indent 2: stringify 1`] = `".inf"`;
+
+exports[`Bun.YAML stringify round-trip coverage infinity indent 2: parse 1`] = `Infinity`;
+
+exports[`Bun.YAML stringify round-trip coverage infinity indent 4: stringify 1`] = `".inf"`;
+
+exports[`Bun.YAML stringify round-trip coverage infinity indent 4: parse 1`] = `Infinity`;
+
+exports[`Bun.YAML stringify round-trip coverage negative infinity flow: stringify 1`] = `"-.inf"`;
+
+exports[`Bun.YAML stringify round-trip coverage negative infinity flow: parse 1`] = `-Infinity`;
+
+exports[`Bun.YAML stringify round-trip coverage negative infinity indent 2: stringify 1`] = `"-.inf"`;
+
+exports[`Bun.YAML stringify round-trip coverage negative infinity indent 2: parse 1`] = `-Infinity`;
+
+exports[`Bun.YAML stringify round-trip coverage negative infinity indent 4: stringify 1`] = `"-.inf"`;
+
+exports[`Bun.YAML stringify round-trip coverage negative infinity indent 4: parse 1`] = `-Infinity`;
+
+exports[`Bun.YAML stringify round-trip coverage precise float flow: stringify 1`] = `"123456789.12345679"`;
+
+exports[`Bun.YAML stringify round-trip coverage precise float flow: parse 1`] = `123456789.12345679`;
+
+exports[`Bun.YAML stringify round-trip coverage precise float indent 2: stringify 1`] = `"123456789.12345679"`;
+
+exports[`Bun.YAML stringify round-trip coverage precise float indent 2: parse 1`] = `123456789.12345679`;
+
+exports[`Bun.YAML stringify round-trip coverage precise float indent 4: stringify 1`] = `"123456789.12345679"`;
+
+exports[`Bun.YAML stringify round-trip coverage precise float indent 4: parse 1`] = `123456789.12345679`;
+
+exports[`Bun.YAML stringify round-trip coverage true flow: stringify 1`] = `"true"`;
+
+exports[`Bun.YAML stringify round-trip coverage true flow: parse 1`] = `true`;
+
+exports[`Bun.YAML stringify round-trip coverage true indent 2: stringify 1`] = `"true"`;
+
+exports[`Bun.YAML stringify round-trip coverage true indent 2: parse 1`] = `true`;
+
+exports[`Bun.YAML stringify round-trip coverage true indent 4: stringify 1`] = `"true"`;
+
+exports[`Bun.YAML stringify round-trip coverage true indent 4: parse 1`] = `true`;
+
+exports[`Bun.YAML stringify round-trip coverage false flow: stringify 1`] = `"false"`;
+
+exports[`Bun.YAML stringify round-trip coverage false flow: parse 1`] = `false`;
+
+exports[`Bun.YAML stringify round-trip coverage false indent 2: stringify 1`] = `"false"`;
+
+exports[`Bun.YAML stringify round-trip coverage false indent 2: parse 1`] = `false`;
+
+exports[`Bun.YAML stringify round-trip coverage false indent 4: stringify 1`] = `"false"`;
+
+exports[`Bun.YAML stringify round-trip coverage false indent 4: parse 1`] = `false`;
+
+exports[`Bun.YAML stringify round-trip coverage null flow: stringify 1`] = `"null"`;
+
+exports[`Bun.YAML stringify round-trip coverage null flow: parse 1`] = `null`;
+
+exports[`Bun.YAML stringify round-trip coverage null indent 2: stringify 1`] = `"null"`;
+
+exports[`Bun.YAML stringify round-trip coverage null indent 2: parse 1`] = `null`;
+
+exports[`Bun.YAML stringify round-trip coverage null indent 4: stringify 1`] = `"null"`;
+
+exports[`Bun.YAML stringify round-trip coverage null indent 4: parse 1`] = `null`;
+
+exports[`Bun.YAML stringify round-trip coverage empty array flow: stringify 1`] = `"[]"`;
+
+exports[`Bun.YAML stringify round-trip coverage empty array flow: parse 1`] = `[]`;
+
+exports[`Bun.YAML stringify round-trip coverage empty array indent 2: stringify 1`] = `"[]"`;
+
+exports[`Bun.YAML stringify round-trip coverage empty array indent 2: parse 1`] = `[]`;
+
+exports[`Bun.YAML stringify round-trip coverage empty array indent 4: stringify 1`] = `"[]"`;
+
+exports[`Bun.YAML stringify round-trip coverage empty array indent 4: parse 1`] = `[]`;
+
+exports[`Bun.YAML stringify round-trip coverage empty object flow: stringify 1`] = `"{}"`;
+
+exports[`Bun.YAML stringify round-trip coverage empty object flow: parse 1`] = `{}`;
+
+exports[`Bun.YAML stringify round-trip coverage empty object indent 2: stringify 1`] = `"{}"`;
+
+exports[`Bun.YAML stringify round-trip coverage empty object indent 2: parse 1`] = `{}`;
+
+exports[`Bun.YAML stringify round-trip coverage empty object indent 4: stringify 1`] = `"{}"`;
+
+exports[`Bun.YAML stringify round-trip coverage empty object indent 4: parse 1`] = `{}`;
+
+exports[`Bun.YAML stringify round-trip coverage array of ints flow: stringify 1`] = `"[1,2,3]"`;
+
+exports[`Bun.YAML stringify round-trip coverage array of ints flow: parse 1`] = `
+[
+  1,
+  2,
+  3,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of ints indent 2: stringify 1`] = `
+"- 1
+- 2
+- 3"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of ints indent 2: parse 1`] = `
+[
+  1,
+  2,
+  3,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of ints indent 4: stringify 1`] = `
+"- 1
+- 2
+- 3"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of ints indent 4: parse 1`] = `
+[
+  1,
+  2,
+  3,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of strings flow: stringify 1`] = `"[a,b c,""]"`;
+
+exports[`Bun.YAML stringify round-trip coverage array of strings flow: parse 1`] = `
+[
+  "a",
+  "b c",
+  "",
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of strings indent 2: stringify 1`] = `
+"- a
+- b c
+- """
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of strings indent 2: parse 1`] = `
+[
+  "a",
+  "b c",
+  "",
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of strings indent 4: stringify 1`] = `
+"- a
+- b c
+- """
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of strings indent 4: parse 1`] = `
+[
+  "a",
+  "b c",
+  "",
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of quoted strings flow: stringify 1`] = `"["true","null","1","- x","a: b","#c"]"`;
+
+exports[`Bun.YAML stringify round-trip coverage array of quoted strings flow: parse 1`] = `
+[
+  "true",
+  "null",
+  "1",
+  "- x",
+  "a: b",
+  "#c",
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of quoted strings indent 2: stringify 1`] = `
+"- "true"
+- "null"
+- "1"
+- "- x"
+- "a: b"
+- "#c""
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of quoted strings indent 2: parse 1`] = `
+[
+  "true",
+  "null",
+  "1",
+  "- x",
+  "a: b",
+  "#c",
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of quoted strings indent 4: stringify 1`] = `
+"- "true"
+- "null"
+- "1"
+- "- x"
+- "a: b"
+- "#c""
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of quoted strings indent 4: parse 1`] = `
+[
+  "true",
+  "null",
+  "1",
+  "- x",
+  "a: b",
+  "#c",
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of nulls flow: stringify 1`] = `"[null,null]"`;
+
+exports[`Bun.YAML stringify round-trip coverage array of nulls flow: parse 1`] = `
+[
+  null,
+  null,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of nulls indent 2: stringify 1`] = `
+"- null
+- null"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of nulls indent 2: parse 1`] = `
+[
+  null,
+  null,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of nulls indent 4: stringify 1`] = `
+"- null
+- null"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of nulls indent 4: parse 1`] = `
+[
+  null,
+  null,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of booleans flow: stringify 1`] = `"[true,false]"`;
+
+exports[`Bun.YAML stringify round-trip coverage array of booleans flow: parse 1`] = `
+[
+  true,
+  false,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of booleans indent 2: stringify 1`] = `
+"- true
+- false"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of booleans indent 2: parse 1`] = `
+[
+  true,
+  false,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of booleans indent 4: stringify 1`] = `
+"- true
+- false"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of booleans indent 4: parse 1`] = `
+[
+  true,
+  false,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of mixed scalars flow: stringify 1`] = `"[1,two,true,null,4.5]"`;
+
+exports[`Bun.YAML stringify round-trip coverage array of mixed scalars flow: parse 1`] = `
+[
+  1,
+  "two",
+  true,
+  null,
+  4.5,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of mixed scalars indent 2: stringify 1`] = `
+"- 1
+- two
+- true
+- null
+- 4.5"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of mixed scalars indent 2: parse 1`] = `
+[
+  1,
+  "two",
+  true,
+  null,
+  4.5,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of mixed scalars indent 4: stringify 1`] = `
+"- 1
+- two
+- true
+- null
+- 4.5"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of mixed scalars indent 4: parse 1`] = `
+[
+  1,
+  "two",
+  true,
+  null,
+  4.5,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of empty arrays flow: stringify 1`] = `"[[],[]]"`;
+
+exports[`Bun.YAML stringify round-trip coverage array of empty arrays flow: parse 1`] = `
+[
+  [],
+  [],
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of empty arrays indent 2: stringify 1`] = `
+"- []
+- []"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of empty arrays indent 2: parse 1`] = `
+[
+  [],
+  [],
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of empty arrays indent 4: stringify 1`] = `
+"- []
+- []"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of empty arrays indent 4: parse 1`] = `
+[
+  [],
+  [],
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of empty objects flow: stringify 1`] = `"[{},{}]"`;
+
+exports[`Bun.YAML stringify round-trip coverage array of empty objects flow: parse 1`] = `
+[
+  {},
+  {},
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of empty objects indent 2: stringify 1`] = `
+"- {}
+- {}"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of empty objects indent 2: parse 1`] = `
+[
+  {},
+  {},
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of empty objects indent 4: stringify 1`] = `
+"- {}
+- {}"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of empty objects indent 4: parse 1`] = `
+[
+  {},
+  {},
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of empty mixed flow: stringify 1`] = `"[[],{},[],{}]"`;
+
+exports[`Bun.YAML stringify round-trip coverage array of empty mixed flow: parse 1`] = `
+[
+  [],
+  {},
+  [],
+  {},
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of empty mixed indent 2: stringify 1`] = `
+"- []
+- {}
+- []
+- {}"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of empty mixed indent 2: parse 1`] = `
+[
+  [],
+  {},
+  [],
+  {},
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of empty mixed indent 4: stringify 1`] = `
+"- []
+- {}
+- []
+- {}"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of empty mixed indent 4: parse 1`] = `
+[
+  [],
+  {},
+  [],
+  {},
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object of scalars flow: stringify 1`] = `"{"n": 1,s: str,b: true,z: null,f: 1.5}"`;
+
+exports[`Bun.YAML stringify round-trip coverage object of scalars flow: parse 1`] = `
+{
+  "b": true,
+  "f": 1.5,
+  "n": 1,
+  "s": "str",
+  "z": null,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object of scalars indent 2: stringify 1`] = `
+""n": 1
+s: str
+b: true
+z: null
+f: 1.5"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object of scalars indent 2: parse 1`] = `
+{
+  "b": true,
+  "f": 1.5,
+  "n": 1,
+  "s": "str",
+  "z": null,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object of scalars indent 4: stringify 1`] = `
+""n": 1
+s: str
+b: true
+z: null
+f: 1.5"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object of scalars indent 4: parse 1`] = `
+{
+  "b": true,
+  "f": 1.5,
+  "n": 1,
+  "s": "str",
+  "z": null,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object of empty collections flow: stringify 1`] = `"{arr: [],obj: {}}"`;
+
+exports[`Bun.YAML stringify round-trip coverage object of empty collections flow: parse 1`] = `
+{
+  "arr": [],
+  "obj": {},
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object of empty collections indent 2: stringify 1`] = `
+"arr: []
+obj: {}"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object of empty collections indent 2: parse 1`] = `
+{
+  "arr": [],
+  "obj": {},
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object of empty collections indent 4: stringify 1`] = `
+"arr: []
+obj: {}"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object of empty collections indent 4: parse 1`] = `
+{
+  "arr": [],
+  "obj": {},
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with quoted values flow: stringify 1`] = `"{a: "true",b: "null",c: "123",d: "",e: "- x",f: "a: b"}"`;
+
+exports[`Bun.YAML stringify round-trip coverage object with quoted values flow: parse 1`] = `
+{
+  "a": "true",
+  "b": "null",
+  "c": "123",
+  "d": "",
+  "e": "- x",
+  "f": "a: b",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with quoted values indent 2: stringify 1`] = `
+"a: "true"
+b: "null"
+c: "123"
+d: ""
+e: "- x"
+f: "a: b""
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with quoted values indent 2: parse 1`] = `
+{
+  "a": "true",
+  "b": "null",
+  "c": "123",
+  "d": "",
+  "e": "- x",
+  "f": "a: b",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with quoted values indent 4: stringify 1`] = `
+"a: "true"
+b: "null"
+c: "123"
+d: ""
+e: "- x"
+f: "a: b""
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with quoted values indent 4: parse 1`] = `
+{
+  "a": "true",
+  "b": "null",
+  "c": "123",
+  "d": "",
+  "e": "- x",
+  "f": "a: b",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage empty key flow: stringify 1`] = `"{"": 1}"`;
+
+exports[`Bun.YAML stringify round-trip coverage empty key flow: parse 1`] = `
+{
+  "": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage empty key indent 2: stringify 1`] = `""": 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage empty key indent 2: parse 1`] = `
+{
+  "": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage empty key indent 4: stringify 1`] = `""": 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage empty key indent 4: parse 1`] = `
+{
+  "": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with space flow: stringify 1`] = `"{a b: 1}"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with space flow: parse 1`] = `
+{
+  "a b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with space indent 2: stringify 1`] = `"a b: 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with space indent 2: parse 1`] = `
+{
+  "a b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with space indent 4: stringify 1`] = `"a b: 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with space indent 4: parse 1`] = `
+{
+  "a b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with colon flow: stringify 1`] = `"{"a: b": 1}"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with colon flow: parse 1`] = `
+{
+  "a: b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with colon indent 2: stringify 1`] = `""a: b": 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with colon indent 2: parse 1`] = `
+{
+  "a: b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with colon indent 4: stringify 1`] = `""a: b": 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with colon indent 4: parse 1`] = `
+{
+  "a: b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with hash flow: stringify 1`] = `"{"a #b": 1,"#c": 2}"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with hash flow: parse 1`] = `
+{
+  "#c": 2,
+  "a #b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with hash indent 2: stringify 1`] = `
+""a #b": 1
+"#c": 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with hash indent 2: parse 1`] = `
+{
+  "#c": 2,
+  "a #b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with hash indent 4: stringify 1`] = `
+""a #b": 1
+"#c": 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with hash indent 4: parse 1`] = `
+{
+  "#c": 2,
+  "a #b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage numeric key flow: stringify 1`] = `"{"123": x}"`;
+
+exports[`Bun.YAML stringify round-trip coverage numeric key flow: parse 1`] = `
+{
+  "123": "x",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage numeric key indent 2: stringify 1`] = `""123": x"`;
+
+exports[`Bun.YAML stringify round-trip coverage numeric key indent 2: parse 1`] = `
+{
+  "123": "x",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage numeric key indent 4: stringify 1`] = `""123": x"`;
+
+exports[`Bun.YAML stringify round-trip coverage numeric key indent 4: parse 1`] = `
+{
+  "123": "x",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage float key flow: stringify 1`] = `"{"1.5": x}"`;
+
+exports[`Bun.YAML stringify round-trip coverage float key flow: parse 1`] = `
+{
+  "1.5": "x",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage float key indent 2: stringify 1`] = `""1.5": x"`;
+
+exports[`Bun.YAML stringify round-trip coverage float key indent 2: parse 1`] = `
+{
+  "1.5": "x",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage float key indent 4: stringify 1`] = `""1.5": x"`;
+
+exports[`Bun.YAML stringify round-trip coverage float key indent 4: parse 1`] = `
+{
+  "1.5": "x",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage negative key flow: stringify 1`] = `"{"-1": x}"`;
+
+exports[`Bun.YAML stringify round-trip coverage negative key flow: parse 1`] = `
+{
+  "-1": "x",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage negative key indent 2: stringify 1`] = `""-1": x"`;
+
+exports[`Bun.YAML stringify round-trip coverage negative key indent 2: parse 1`] = `
+{
+  "-1": "x",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage negative key indent 4: stringify 1`] = `""-1": x"`;
+
+exports[`Bun.YAML stringify round-trip coverage negative key indent 4: parse 1`] = `
+{
+  "-1": "x",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage boolean key flow: stringify 1`] = `"{"true": x,"false": "y"}"`;
+
+exports[`Bun.YAML stringify round-trip coverage boolean key flow: parse 1`] = `
+{
+  "false": "y",
+  "true": "x",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage boolean key indent 2: stringify 1`] = `
+""true": x
+"false": "y""
+`;
+
+exports[`Bun.YAML stringify round-trip coverage boolean key indent 2: parse 1`] = `
+{
+  "false": "y",
+  "true": "x",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage boolean key indent 4: stringify 1`] = `
+""true": x
+"false": "y""
+`;
+
+exports[`Bun.YAML stringify round-trip coverage boolean key indent 4: parse 1`] = `
+{
+  "false": "y",
+  "true": "x",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage null key flow: stringify 1`] = `"{"null": x,"~": "y"}"`;
+
+exports[`Bun.YAML stringify round-trip coverage null key flow: parse 1`] = `
+{
+  "null": "x",
+  "~": "y",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage null key indent 2: stringify 1`] = `
+""null": x
+"~": "y""
+`;
+
+exports[`Bun.YAML stringify round-trip coverage null key indent 2: parse 1`] = `
+{
+  "null": "x",
+  "~": "y",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage null key indent 4: stringify 1`] = `
+""null": x
+"~": "y""
+`;
+
+exports[`Bun.YAML stringify round-trip coverage null key indent 4: parse 1`] = `
+{
+  "null": "x",
+  "~": "y",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage dash key flow: stringify 1`] = `"{"-": x,"- y": z}"`;
+
+exports[`Bun.YAML stringify round-trip coverage dash key flow: parse 1`] = `
+{
+  "-": "x",
+  "- y": "z",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage dash key indent 2: stringify 1`] = `
+""-": x
+"- y": z"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage dash key indent 2: parse 1`] = `
+{
+  "-": "x",
+  "- y": "z",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage dash key indent 4: stringify 1`] = `
+""-": x
+"- y": z"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage dash key indent 4: parse 1`] = `
+{
+  "-": "x",
+  "- y": "z",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage question key flow: stringify 1`] = `"{"?": x,"? y": z}"`;
+
+exports[`Bun.YAML stringify round-trip coverage question key flow: parse 1`] = `
+{
+  "?": "x",
+  "? y": "z",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage question key indent 2: stringify 1`] = `
+""?": x
+"? y": z"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage question key indent 2: parse 1`] = `
+{
+  "?": "x",
+  "? y": "z",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage question key indent 4: stringify 1`] = `
+""?": x
+"? y": z"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage question key indent 4: parse 1`] = `
+{
+  "?": "x",
+  "? y": "z",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with newline flow: stringify 1`] = `"{"a\\nb": 1}"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with newline flow: parse 1`] = `
+{
+  "a\\nb": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with newline indent 2: stringify 1`] = `""a\\nb": 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with newline indent 2: parse 1`] = `
+{
+  "a\\nb": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with newline indent 4: stringify 1`] = `""a\\nb": 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with newline indent 4: parse 1`] = `
+{
+  "a\\nb": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with tab flow: stringify 1`] = `"{"a\\tb": 1}"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with tab flow: parse 1`] = `
+{
+  "a\\tb": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with tab indent 2: stringify 1`] = `""a\\tb": 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with tab indent 2: parse 1`] = `
+{
+  "a\\tb": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with tab indent 4: stringify 1`] = `""a\\tb": 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with tab indent 4: parse 1`] = `
+{
+  "a\\tb": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with quotes flow: stringify 1`] = `"{"it's": 1,"say \\"hi\\"": 2}"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with quotes flow: parse 1`] = `
+{
+  "it's": 1,
+  "say \\"hi\\"": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with quotes indent 2: stringify 1`] = `
+""it's": 1
+"say \\"hi\\"": 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with quotes indent 2: parse 1`] = `
+{
+  "it's": 1,
+  "say \\"hi\\"": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with quotes indent 4: stringify 1`] = `
+""it's": 1
+"say \\"hi\\"": 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with quotes indent 4: parse 1`] = `
+{
+  "it's": 1,
+  "say \\"hi\\"": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage unicode key flow: stringify 1`] = `"{ключ: 1,日本: 2,😀: 3}"`;
+
+exports[`Bun.YAML stringify round-trip coverage unicode key flow: parse 1`] = `
+{
+  "ключ": 1,
+  "日本": 2,
+  "😀": 3,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage unicode key indent 2: stringify 1`] = `
+"ключ: 1
+日本: 2
+😀: 3"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage unicode key indent 2: parse 1`] = `
+{
+  "ключ": 1,
+  "日本": 2,
+  "😀": 3,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage unicode key indent 4: stringify 1`] = `
+"ключ: 1
+日本: 2
+😀: 3"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage unicode key indent 4: parse 1`] = `
+{
+  "ключ": 1,
+  "日本": 2,
+  "😀": 3,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with indicator chars flow: stringify 1`] = `"{"[a]": 1,"{b}": 2,"&c": 3,"*d": 4,"!e": 5,"|f": 6,">g": 7,"%h": 8,"@i": 9,"\`j": 10}"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with indicator chars flow: parse 1`] = `
+{
+  "!e": 5,
+  "%h": 8,
+  "&c": 3,
+  "*d": 4,
+  ">g": 7,
+  "@i": 9,
+  "[a]": 1,
+  "\`j": 10,
+  "{b}": 2,
+  "|f": 6,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with indicator chars indent 2: stringify 1`] = `
+""[a]": 1
+"{b}": 2
+"&c": 3
+"*d": 4
+"!e": 5
+"|f": 6
+">g": 7
+"%h": 8
+"@i": 9
+"\`j": 10"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with indicator chars indent 2: parse 1`] = `
+{
+  "!e": 5,
+  "%h": 8,
+  "&c": 3,
+  "*d": 4,
+  ">g": 7,
+  "@i": 9,
+  "[a]": 1,
+  "\`j": 10,
+  "{b}": 2,
+  "|f": 6,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with indicator chars indent 4: stringify 1`] = `
+""[a]": 1
+"{b}": 2
+"&c": 3
+"*d": 4
+"!e": 5
+"|f": 6
+">g": 7
+"%h": 8
+"@i": 9
+"\`j": 10"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with indicator chars indent 4: parse 1`] = `
+{
+  "!e": 5,
+  "%h": 8,
+  "&c": 3,
+  "*d": 4,
+  ">g": 7,
+  "@i": 9,
+  "[a]": 1,
+  "\`j": 10,
+  "{b}": 2,
+  "|f": 6,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage merge key flow: stringify 1`] = `"{"<<": 1}"`;
+
+exports[`Bun.YAML stringify round-trip coverage merge key flow: parse 1`] = `
+{
+  "<<": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage merge key indent 2: stringify 1`] = `""<<": 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage merge key indent 2: parse 1`] = `
+{
+  "<<": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage merge key indent 4: stringify 1`] = `""<<": 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage merge key indent 4: parse 1`] = `
+{
+  "<<": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage integer keys order first flow: stringify 1`] = `"{"1": 4,"2": 2,b: 1,a: 3}"`;
+
+exports[`Bun.YAML stringify round-trip coverage integer keys order first flow: parse 1`] = `
+{
+  "1": 4,
+  "2": 2,
+  "a": 3,
+  "b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage integer keys order first indent 2: stringify 1`] = `
+""1": 4
+"2": 2
+b: 1
+a: 3"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage integer keys order first indent 2: parse 1`] = `
+{
+  "1": 4,
+  "2": 2,
+  "a": 3,
+  "b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage integer keys order first indent 4: stringify 1`] = `
+""1": 4
+"2": 2
+b: 1
+a: 3"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage integer keys order first indent 4: parse 1`] = `
+{
+  "1": 4,
+  "2": 2,
+  "a": 3,
+  "b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage long key flow: stringify 1`] = `"{xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: 1}"`;
+
+exports[`Bun.YAML stringify round-trip coverage long key flow: parse 1`] = `
+{
+  "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage long key indent 2: stringify 1`] = `"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage long key indent 2: parse 1`] = `
+{
+  "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage long key indent 4: stringify 1`] = `"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage long key indent 4: parse 1`] = `
+{
+  "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with dots flow: stringify 1`] = `"{a.b.c: 1}"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with dots flow: parse 1`] = `
+{
+  "a.b.c": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with dots indent 2: stringify 1`] = `"a.b.c: 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with dots indent 2: parse 1`] = `
+{
+  "a.b.c": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with dots indent 4: stringify 1`] = `"a.b.c: 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with dots indent 4: parse 1`] = `
+{
+  "a.b.c": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with slash flow: stringify 1`] = `"{a/b: 1,/: 2}"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with slash flow: parse 1`] = `
+{
+  "/": 2,
+  "a/b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with slash indent 2: stringify 1`] = `
+"a/b: 1
+/: 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with slash indent 2: parse 1`] = `
+{
+  "/": 2,
+  "a/b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with slash indent 4: stringify 1`] = `
+"a/b: 1
+/: 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with slash indent 4: parse 1`] = `
+{
+  "/": 2,
+  "a/b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with equals flow: stringify 1`] = `"{a=b: 1}"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with equals flow: parse 1`] = `
+{
+  "a=b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with equals indent 2: stringify 1`] = `"a=b: 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with equals indent 2: parse 1`] = `
+{
+  "a=b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with equals indent 4: stringify 1`] = `"a=b: 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with equals indent 4: parse 1`] = `
+{
+  "a=b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with comma flow: stringify 1`] = `"{"a,b": 1}"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with comma flow: parse 1`] = `
+{
+  "a,b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with comma indent 2: stringify 1`] = `""a,b": 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with comma indent 2: parse 1`] = `
+{
+  "a,b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with comma indent 4: stringify 1`] = `""a,b": 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with comma indent 4: parse 1`] = `
+{
+  "a,b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with leading space flow: stringify 1`] = `"{" a": 1,"b ": 2}"`;
+
+exports[`Bun.YAML stringify round-trip coverage key with leading space flow: parse 1`] = `
+{
+  " a": 1,
+  "b ": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with leading space indent 2: stringify 1`] = `
+"" a": 1
+"b ": 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with leading space indent 2: parse 1`] = `
+{
+  " a": 1,
+  "b ": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with leading space indent 4: stringify 1`] = `
+"" a": 1
+"b ": 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage key with leading space indent 4: parse 1`] = `
+{
+  " a": 1,
+  "b ": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage nested object flow: stringify 1`] = `"{a: {b: {c: {d: 1}}}}"`;
+
+exports[`Bun.YAML stringify round-trip coverage nested object flow: parse 1`] = `
+{
+  "a": {
+    "b": {
+      "c": {
+        "d": 1,
+      },
+    },
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage nested object indent 2: stringify 1`] = `
+"a:
+  b:
+    c:
+      d: 1"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage nested object indent 2: parse 1`] = `
+{
+  "a": {
+    "b": {
+      "c": {
+        "d": 1,
+      },
+    },
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage nested object indent 4: stringify 1`] = `
+"a:
+    b:
+        c:
+            d: 1"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage nested object indent 4: parse 1`] = `
+{
+  "a": {
+    "b": {
+      "c": {
+        "d": 1,
+      },
+    },
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage nested arrays flow: stringify 1`] = `"[[[[1]]]]"`;
+
+exports[`Bun.YAML stringify round-trip coverage nested arrays flow: parse 1`] = `
+[
+  [
+    [
+      [
+        1,
+      ],
+    ],
+  ],
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage nested arrays indent 2: stringify 1`] = `"- - - - 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage nested arrays indent 2: parse 1`] = `
+[
+  [
+    [
+      [
+        1,
+      ],
+    ],
+  ],
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage nested arrays indent 4: stringify 1`] = `"- - - - 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage nested arrays indent 4: parse 1`] = `
+[
+  [
+    [
+      [
+        1,
+      ],
+    ],
+  ],
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of objects flow: stringify 1`] = `"[{a: 1},{b: 2}]"`;
+
+exports[`Bun.YAML stringify round-trip coverage array of objects flow: parse 1`] = `
+[
+  {
+    "a": 1,
+  },
+  {
+    "b": 2,
+  },
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of objects indent 2: stringify 1`] = `
+"- a: 1
+- b: 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of objects indent 2: parse 1`] = `
+[
+  {
+    "a": 1,
+  },
+  {
+    "b": 2,
+  },
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of objects indent 4: stringify 1`] = `
+"- a: 1
+- b: 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of objects indent 4: parse 1`] = `
+[
+  {
+    "a": 1,
+  },
+  {
+    "b": 2,
+  },
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of objects with nested empties flow: stringify 1`] = `"[{a: []},{b: {}},{c: [{}]}]"`;
+
+exports[`Bun.YAML stringify round-trip coverage array of objects with nested empties flow: parse 1`] = `
+[
+  {
+    "a": [],
+  },
+  {
+    "b": {},
+  },
+  {
+    "c": [
+      {},
+    ],
+  },
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of objects with nested empties indent 2: stringify 1`] = `
+"- a: []
+- b: {}
+- c:
+    - {}"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of objects with nested empties indent 2: parse 1`] = `
+[
+  {
+    "a": [],
+  },
+  {
+    "b": {},
+  },
+  {
+    "c": [
+      {},
+    ],
+  },
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of objects with nested empties indent 4: stringify 1`] = `
+"- a: []
+- b: {}
+- c:
+      - {}"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of objects with nested empties indent 4: parse 1`] = `
+[
+  {
+    "a": [],
+  },
+  {
+    "b": {},
+  },
+  {
+    "c": [
+      {},
+    ],
+  },
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of arrays of objects flow: stringify 1`] = `"[[{a: 1}],[{b: [2]}]]"`;
+
+exports[`Bun.YAML stringify round-trip coverage array of arrays of objects flow: parse 1`] = `
+[
+  [
+    {
+      "a": 1,
+    },
+  ],
+  [
+    {
+      "b": [
+        2,
+      ],
+    },
+  ],
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of arrays of objects indent 2: stringify 1`] = `
+"- - a: 1
+- - b:
+      - 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of arrays of objects indent 2: parse 1`] = `
+[
+  [
+    {
+      "a": 1,
+    },
+  ],
+  [
+    {
+      "b": [
+        2,
+      ],
+    },
+  ],
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of arrays of objects indent 4: stringify 1`] = `
+"- - a: 1
+- - b:
+        - 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array of arrays of objects indent 4: parse 1`] = `
+[
+  [
+    {
+      "a": 1,
+    },
+  ],
+  [
+    {
+      "b": [
+        2,
+      ],
+    },
+  ],
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with array of arrays flow: stringify 1`] = `"{m: [[1,2],[3,4]]}"`;
+
+exports[`Bun.YAML stringify round-trip coverage object with array of arrays flow: parse 1`] = `
+{
+  "m": [
+    [
+      1,
+      2,
+    ],
+    [
+      3,
+      4,
+    ],
+  ],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with array of arrays indent 2: stringify 1`] = `
+"m:
+  - - 1
+    - 2
+  - - 3
+    - 4"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with array of arrays indent 2: parse 1`] = `
+{
+  "m": [
+    [
+      1,
+      2,
+    ],
+    [
+      3,
+      4,
+    ],
+  ],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with array of arrays indent 4: stringify 1`] = `
+"m:
+    - - 1
+      - 2
+    - - 3
+      - 4"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with array of arrays indent 4: parse 1`] = `
+{
+  "m": [
+    [
+      1,
+      2,
+    ],
+    [
+      3,
+      4,
+    ],
+  ],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with nested empty object chain flow: stringify 1`] = `"{a: {b: {c: {}}}}"`;
+
+exports[`Bun.YAML stringify round-trip coverage object with nested empty object chain flow: parse 1`] = `
+{
+  "a": {
+    "b": {
+      "c": {},
+    },
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with nested empty object chain indent 2: stringify 1`] = `
+"a:
+  b:
+    c: {}"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with nested empty object chain indent 2: parse 1`] = `
+{
+  "a": {
+    "b": {
+      "c": {},
+    },
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with nested empty object chain indent 4: stringify 1`] = `
+"a:
+    b:
+        c: {}"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with nested empty object chain indent 4: parse 1`] = `
+{
+  "a": {
+    "b": {
+      "c": {},
+    },
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with nested empty array chain flow: stringify 1`] = `"{a: {b: {c: []}}}"`;
+
+exports[`Bun.YAML stringify round-trip coverage object with nested empty array chain flow: parse 1`] = `
+{
+  "a": {
+    "b": {
+      "c": [],
+    },
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with nested empty array chain indent 2: stringify 1`] = `
+"a:
+  b:
+    c: []"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with nested empty array chain indent 2: parse 1`] = `
+{
+  "a": {
+    "b": {
+      "c": [],
+    },
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with nested empty array chain indent 4: stringify 1`] = `
+"a:
+    b:
+        c: []"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with nested empty array chain indent 4: parse 1`] = `
+{
+  "a": {
+    "b": {
+      "c": [],
+    },
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage first key is collection flow: stringify 1`] = `"{a: {b: 1},c: 2}"`;
+
+exports[`Bun.YAML stringify round-trip coverage first key is collection flow: parse 1`] = `
+{
+  "a": {
+    "b": 1,
+  },
+  "c": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage first key is collection indent 2: stringify 1`] = `
+"a:
+  b: 1
+c: 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage first key is collection indent 2: parse 1`] = `
+{
+  "a": {
+    "b": 1,
+  },
+  "c": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage first key is collection indent 4: stringify 1`] = `
+"a:
+    b: 1
+c: 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage first key is collection indent 4: parse 1`] = `
+{
+  "a": {
+    "b": 1,
+  },
+  "c": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage last key is collection flow: stringify 1`] = `"{a: 1,b: {c: 2}}"`;
+
+exports[`Bun.YAML stringify round-trip coverage last key is collection flow: parse 1`] = `
+{
+  "a": 1,
+  "b": {
+    "c": 2,
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage last key is collection indent 2: stringify 1`] = `
+"a: 1
+b:
+  c: 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage last key is collection indent 2: parse 1`] = `
+{
+  "a": 1,
+  "b": {
+    "c": 2,
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage last key is collection indent 4: stringify 1`] = `
+"a: 1
+b:
+    c: 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage last key is collection indent 4: parse 1`] = `
+{
+  "a": 1,
+  "b": {
+    "c": 2,
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage multi-line string in object flow: stringify 1`] = `"{text: "line1\\nline2\\n",other: 1}"`;
+
+exports[`Bun.YAML stringify round-trip coverage multi-line string in object flow: parse 1`] = `
+{
+  "other": 1,
+  "text": 
+"line1
+line2
+"
+,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage multi-line string in object indent 2: stringify 1`] = `
+"text: "line1\\nline2\\n"
+other: 1"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage multi-line string in object indent 2: parse 1`] = `
+{
+  "other": 1,
+  "text": 
+"line1
+line2
+"
+,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage multi-line string in object indent 4: stringify 1`] = `
+"text: "line1\\nline2\\n"
+other: 1"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage multi-line string in object indent 4: parse 1`] = `
+{
+  "other": 1,
+  "text": 
+"line1
+line2
+"
+,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage multi-line strings in array flow: stringify 1`] = `"["a\\nb","c\\n","\\nd"]"`;
+
+exports[`Bun.YAML stringify round-trip coverage multi-line strings in array flow: parse 1`] = `
+[
+  
+"a
+b"
+,
+  
+"c
+"
+,
+  
+"
+d"
+,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage multi-line strings in array indent 2: stringify 1`] = `
+"- "a\\nb"
+- "c\\n"
+- "\\nd""
+`;
+
+exports[`Bun.YAML stringify round-trip coverage multi-line strings in array indent 2: parse 1`] = `
+[
+  
+"a
+b"
+,
+  
+"c
+"
+,
+  
+"
+d"
+,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage multi-line strings in array indent 4: stringify 1`] = `
+"- "a\\nb"
+- "c\\n"
+- "\\nd""
+`;
+
+exports[`Bun.YAML stringify round-trip coverage multi-line strings in array indent 4: parse 1`] = `
+[
+  
+"a
+b"
+,
+  
+"c
+"
+,
+  
+"
+d"
+,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage quoted strings in nested array flow: stringify 1`] = `"{list: [": x","- y","# z","[w]"]}"`;
+
+exports[`Bun.YAML stringify round-trip coverage quoted strings in nested array flow: parse 1`] = `
+{
+  "list": [
+    ": x",
+    "- y",
+    "# z",
+    "[w]",
+  ],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage quoted strings in nested array indent 2: stringify 1`] = `
+"list:
+  - ": x"
+  - "- y"
+  - "# z"
+  - "[w]""
+`;
+
+exports[`Bun.YAML stringify round-trip coverage quoted strings in nested array indent 2: parse 1`] = `
+{
+  "list": [
+    ": x",
+    "- y",
+    "# z",
+    "[w]",
+  ],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage quoted strings in nested array indent 4: stringify 1`] = `
+"list:
+    - ": x"
+    - "- y"
+    - "# z"
+    - "[w]""
+`;
+
+exports[`Bun.YAML stringify round-trip coverage quoted strings in nested array indent 4: parse 1`] = `
+{
+  "list": [
+    ": x",
+    "- y",
+    "# z",
+    "[w]",
+  ],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage alternating nesting flow: stringify 1`] = `"{a: [{b: [{c: [1]}]}]}"`;
+
+exports[`Bun.YAML stringify round-trip coverage alternating nesting flow: parse 1`] = `
+{
+  "a": [
+    {
+      "b": [
+        {
+          "c": [
+            1,
+          ],
+        },
+      ],
+    },
+  ],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage alternating nesting indent 2: stringify 1`] = `
+"a:
+  - b:
+      - c:
+          - 1"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage alternating nesting indent 2: parse 1`] = `
+{
+  "a": [
+    {
+      "b": [
+        {
+          "c": [
+            1,
+          ],
+        },
+      ],
+    },
+  ],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage alternating nesting indent 4: stringify 1`] = `
+"a:
+    - b:
+          - c:
+                - 1"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage alternating nesting indent 4: parse 1`] = `
+{
+  "a": [
+    {
+      "b": [
+        {
+          "c": [
+            1,
+          ],
+        },
+      ],
+    },
+  ],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage empty collections at every depth flow: stringify 1`] = `"{a: {},b: [],c: {d: {},e: []},f: [{},[],{g: {}}]}"`;
+
+exports[`Bun.YAML stringify round-trip coverage empty collections at every depth flow: parse 1`] = `
+{
+  "a": {},
+  "b": [],
+  "c": {
+    "d": {},
+    "e": [],
+  },
+  "f": [
+    {},
+    [],
+    {
+      "g": {},
+    },
+  ],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage empty collections at every depth indent 2: stringify 1`] = `
+"a: {}
+b: []
+c:
+  d: {}
+  e: []
+f:
+  - {}
+  - []
+  - g: {}"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage empty collections at every depth indent 2: parse 1`] = `
+{
+  "a": {},
+  "b": [],
+  "c": {
+    "d": {},
+    "e": [],
+  },
+  "f": [
+    {},
+    [],
+    {
+      "g": {},
+    },
+  ],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage empty collections at every depth indent 4: stringify 1`] = `
+"a: {}
+b: []
+c:
+    d: {}
+    e: []
+f:
+    - {}
+    - []
+    - g: {}"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage empty collections at every depth indent 4: parse 1`] = `
+{
+  "a": {},
+  "b": [],
+  "c": {
+    "d": {},
+    "e": [],
+  },
+  "f": [
+    {},
+    [],
+    {
+      "g": {},
+    },
+  ],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage wide object flow: stringify 1`] = `"{k0: 0,k1: 1,k2: 2,k3: 3,k4: 4,k5: 5,k6: 6,k7: 7,k8: 8,k9: 9,k10: 10,k11: 11,k12: 12,k13: 13,k14: 14,k15: 15,k16: 16,k17: 17,k18: 18,k19: 19,k20: 20,k21: 21,k22: 22,k23: 23,k24: 24,k25: 25,k26: 26,k27: 27,k28: 28,k29: 29}"`;
+
+exports[`Bun.YAML stringify round-trip coverage wide object flow: parse 1`] = `
+{
+  "k0": 0,
+  "k1": 1,
+  "k10": 10,
+  "k11": 11,
+  "k12": 12,
+  "k13": 13,
+  "k14": 14,
+  "k15": 15,
+  "k16": 16,
+  "k17": 17,
+  "k18": 18,
+  "k19": 19,
+  "k2": 2,
+  "k20": 20,
+  "k21": 21,
+  "k22": 22,
+  "k23": 23,
+  "k24": 24,
+  "k25": 25,
+  "k26": 26,
+  "k27": 27,
+  "k28": 28,
+  "k29": 29,
+  "k3": 3,
+  "k4": 4,
+  "k5": 5,
+  "k6": 6,
+  "k7": 7,
+  "k8": 8,
+  "k9": 9,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage wide object indent 2: stringify 1`] = `
+"k0: 0
+k1: 1
+k2: 2
+k3: 3
+k4: 4
+k5: 5
+k6: 6
+k7: 7
+k8: 8
+k9: 9
+k10: 10
+k11: 11
+k12: 12
+k13: 13
+k14: 14
+k15: 15
+k16: 16
+k17: 17
+k18: 18
+k19: 19
+k20: 20
+k21: 21
+k22: 22
+k23: 23
+k24: 24
+k25: 25
+k26: 26
+k27: 27
+k28: 28
+k29: 29"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage wide object indent 2: parse 1`] = `
+{
+  "k0": 0,
+  "k1": 1,
+  "k10": 10,
+  "k11": 11,
+  "k12": 12,
+  "k13": 13,
+  "k14": 14,
+  "k15": 15,
+  "k16": 16,
+  "k17": 17,
+  "k18": 18,
+  "k19": 19,
+  "k2": 2,
+  "k20": 20,
+  "k21": 21,
+  "k22": 22,
+  "k23": 23,
+  "k24": 24,
+  "k25": 25,
+  "k26": 26,
+  "k27": 27,
+  "k28": 28,
+  "k29": 29,
+  "k3": 3,
+  "k4": 4,
+  "k5": 5,
+  "k6": 6,
+  "k7": 7,
+  "k8": 8,
+  "k9": 9,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage wide object indent 4: stringify 1`] = `
+"k0: 0
+k1: 1
+k2: 2
+k3: 3
+k4: 4
+k5: 5
+k6: 6
+k7: 7
+k8: 8
+k9: 9
+k10: 10
+k11: 11
+k12: 12
+k13: 13
+k14: 14
+k15: 15
+k16: 16
+k17: 17
+k18: 18
+k19: 19
+k20: 20
+k21: 21
+k22: 22
+k23: 23
+k24: 24
+k25: 25
+k26: 26
+k27: 27
+k28: 28
+k29: 29"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage wide object indent 4: parse 1`] = `
+{
+  "k0": 0,
+  "k1": 1,
+  "k10": 10,
+  "k11": 11,
+  "k12": 12,
+  "k13": 13,
+  "k14": 14,
+  "k15": 15,
+  "k16": 16,
+  "k17": 17,
+  "k18": 18,
+  "k19": 19,
+  "k2": 2,
+  "k20": 20,
+  "k21": 21,
+  "k22": 22,
+  "k23": 23,
+  "k24": 24,
+  "k25": 25,
+  "k26": 26,
+  "k27": 27,
+  "k28": 28,
+  "k29": 29,
+  "k3": 3,
+  "k4": 4,
+  "k5": 5,
+  "k6": 6,
+  "k7": 7,
+  "k8": 8,
+  "k9": 9,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage long array flow: stringify 1`] = `"[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29]"`;
+
+exports[`Bun.YAML stringify round-trip coverage long array flow: parse 1`] = `
+[
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  11,
+  12,
+  13,
+  14,
+  15,
+  16,
+  17,
+  18,
+  19,
+  20,
+  21,
+  22,
+  23,
+  24,
+  25,
+  26,
+  27,
+  28,
+  29,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage long array indent 2: stringify 1`] = `
+"- 0
+- 1
+- 2
+- 3
+- 4
+- 5
+- 6
+- 7
+- 8
+- 9
+- 10
+- 11
+- 12
+- 13
+- 14
+- 15
+- 16
+- 17
+- 18
+- 19
+- 20
+- 21
+- 22
+- 23
+- 24
+- 25
+- 26
+- 27
+- 28
+- 29"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage long array indent 2: parse 1`] = `
+[
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  11,
+  12,
+  13,
+  14,
+  15,
+  16,
+  17,
+  18,
+  19,
+  20,
+  21,
+  22,
+  23,
+  24,
+  25,
+  26,
+  27,
+  28,
+  29,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage long array indent 4: stringify 1`] = `
+"- 0
+- 1
+- 2
+- 3
+- 4
+- 5
+- 6
+- 7
+- 8
+- 9
+- 10
+- 11
+- 12
+- 13
+- 14
+- 15
+- 16
+- 17
+- 18
+- 19
+- 20
+- 21
+- 22
+- 23
+- 24
+- 25
+- 26
+- 27
+- 28
+- 29"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage long array indent 4: parse 1`] = `
+[
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  11,
+  12,
+  13,
+  14,
+  15,
+  16,
+  17,
+  18,
+  19,
+  20,
+  21,
+  22,
+  23,
+  24,
+  25,
+  26,
+  27,
+  28,
+  29,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage config document flow: stringify 1`] = `"{version: "1.0",services: {web: {image: nginx:latest,ports: [80:80,443:443],env: {NODE_ENV: production,DEBUG: false}},db: {image: postgres:13,volumes: [./data:/var/lib/postgresql/data],replicas: 0}},networks: {default: {driver: bridge}},tags: [],meta: {}}"`;
+
+exports[`Bun.YAML stringify round-trip coverage config document flow: parse 1`] = `
+{
+  "meta": {},
+  "networks": {
+    "default": {
+      "driver": "bridge",
+    },
+  },
+  "services": {
+    "db": {
+      "image": "postgres:13",
+      "replicas": 0,
+      "volumes": [
+        "./data:/var/lib/postgresql/data",
+      ],
+    },
+    "web": {
+      "env": {
+        "DEBUG": false,
+        "NODE_ENV": "production",
+      },
+      "image": "nginx:latest",
+      "ports": [
+        "80:80",
+        "443:443",
+      ],
+    },
+  },
+  "tags": [],
+  "version": "1.0",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage config document indent 2: stringify 1`] = `
+"version: "1.0"
+services:
+  web:
+    image: nginx:latest
+    ports:
+      - 80:80
+      - 443:443
+    env:
+      NODE_ENV: production
+      DEBUG: false
+  db:
+    image: postgres:13
+    volumes:
+      - ./data:/var/lib/postgresql/data
+    replicas: 0
+networks:
+  default:
+    driver: bridge
+tags: []
+meta: {}"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage config document indent 2: parse 1`] = `
+{
+  "meta": {},
+  "networks": {
+    "default": {
+      "driver": "bridge",
+    },
+  },
+  "services": {
+    "db": {
+      "image": "postgres:13",
+      "replicas": 0,
+      "volumes": [
+        "./data:/var/lib/postgresql/data",
+      ],
+    },
+    "web": {
+      "env": {
+        "DEBUG": false,
+        "NODE_ENV": "production",
+      },
+      "image": "nginx:latest",
+      "ports": [
+        "80:80",
+        "443:443",
+      ],
+    },
+  },
+  "tags": [],
+  "version": "1.0",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage config document indent 4: stringify 1`] = `
+"version: "1.0"
+services:
+    web:
+        image: nginx:latest
+        ports:
+            - 80:80
+            - 443:443
+        env:
+            NODE_ENV: production
+            DEBUG: false
+    db:
+        image: postgres:13
+        volumes:
+            - ./data:/var/lib/postgresql/data
+        replicas: 0
+networks:
+    default:
+        driver: bridge
+tags: []
+meta: {}"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage config document indent 4: parse 1`] = `
+{
+  "meta": {},
+  "networks": {
+    "default": {
+      "driver": "bridge",
+    },
+  },
+  "services": {
+    "db": {
+      "image": "postgres:13",
+      "replicas": 0,
+      "volumes": [
+        "./data:/var/lib/postgresql/data",
+      ],
+    },
+    "web": {
+      "env": {
+        "DEBUG": false,
+        "NODE_ENV": "production",
+      },
+      "image": "nginx:latest",
+      "ports": [
+        "80:80",
+        "443:443",
+      ],
+    },
+  },
+  "tags": [],
+  "version": "1.0",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage undefined in object flow: stringify 1`] = `"{b: 1}"`;
+
+exports[`Bun.YAML stringify round-trip coverage undefined in object flow: parse 1`] = `
+{
+  "b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage undefined in object indent 2: stringify 1`] = `"b: 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage undefined in object indent 2: parse 1`] = `
+{
+  "b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage undefined in object indent 4: stringify 1`] = `"b: 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage undefined in object indent 4: parse 1`] = `
+{
+  "b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage only undefined in object flow: stringify 1`] = `"{}"`;
+
+exports[`Bun.YAML stringify round-trip coverage only undefined in object flow: parse 1`] = `{}`;
+
+exports[`Bun.YAML stringify round-trip coverage only undefined in object indent 2: stringify 1`] = `"{}"`;
+
+exports[`Bun.YAML stringify round-trip coverage only undefined in object indent 2: parse 1`] = `{}`;
+
+exports[`Bun.YAML stringify round-trip coverage only undefined in object indent 4: stringify 1`] = `"{}"`;
+
+exports[`Bun.YAML stringify round-trip coverage only undefined in object indent 4: parse 1`] = `{}`;
+
+exports[`Bun.YAML stringify round-trip coverage function in object flow: stringify 1`] = `"{b: 1}"`;
+
+exports[`Bun.YAML stringify round-trip coverage function in object flow: parse 1`] = `
+{
+  "b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage function in object indent 2: stringify 1`] = `"b: 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage function in object indent 2: parse 1`] = `
+{
+  "b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage function in object indent 4: stringify 1`] = `"b: 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage function in object indent 4: parse 1`] = `
+{
+  "b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage symbol in object flow: stringify 1`] = `"{b: 1}"`;
+
+exports[`Bun.YAML stringify round-trip coverage symbol in object flow: parse 1`] = `
+{
+  "b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage symbol in object indent 2: stringify 1`] = `"b: 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage symbol in object indent 2: parse 1`] = `
+{
+  "b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage symbol in object indent 4: stringify 1`] = `"b: 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage symbol in object indent 4: parse 1`] = `
+{
+  "b": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage symbol key flow: stringify 1`] = `"{b: 2}"`;
+
+exports[`Bun.YAML stringify round-trip coverage symbol key flow: parse 1`] = `
+{
+  "b": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage symbol key indent 2: stringify 1`] = `"b: 2"`;
+
+exports[`Bun.YAML stringify round-trip coverage symbol key indent 2: parse 1`] = `
+{
+  "b": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage symbol key indent 4: stringify 1`] = `"b: 2"`;
+
+exports[`Bun.YAML stringify round-trip coverage symbol key indent 4: parse 1`] = `
+{
+  "b": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage undefined in array flow: stringify 1`] = `"[1,2]"`;
+
+exports[`Bun.YAML stringify round-trip coverage undefined in array flow: parse 1`] = `
+[
+  1,
+  2,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage undefined in array indent 2: stringify 1`] = `
+"- 1
+- 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage undefined in array indent 2: parse 1`] = `
+[
+  1,
+  2,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage undefined in array indent 4: stringify 1`] = `
+"- 1
+- 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage undefined in array indent 4: parse 1`] = `
+[
+  1,
+  2,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage only undefined in array flow: stringify 1`] = `"[]"`;
+
+exports[`Bun.YAML stringify round-trip coverage only undefined in array flow: parse 1`] = `[]`;
+
+exports[`Bun.YAML stringify round-trip coverage only undefined in array indent 2: stringify 1`] = `"[]"`;
+
+exports[`Bun.YAML stringify round-trip coverage only undefined in array indent 2: parse 1`] = `[]`;
+
+exports[`Bun.YAML stringify round-trip coverage only undefined in array indent 4: stringify 1`] = `"[]"`;
+
+exports[`Bun.YAML stringify round-trip coverage only undefined in array indent 4: parse 1`] = `[]`;
+
+exports[`Bun.YAML stringify round-trip coverage sparse array flow: stringify 1`] = `"[1,3]"`;
+
+exports[`Bun.YAML stringify round-trip coverage sparse array flow: parse 1`] = `
+[
+  1,
+  3,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage sparse array indent 2: stringify 1`] = `
+"- 1
+- 3"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage sparse array indent 2: parse 1`] = `
+[
+  1,
+  3,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage sparse array indent 4: stringify 1`] = `
+"- 1
+- 3"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage sparse array indent 4: parse 1`] = `
+[
+  1,
+  3,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage function in array flow: stringify 1`] = `"[1]"`;
+
+exports[`Bun.YAML stringify round-trip coverage function in array flow: parse 1`] = `
+[
+  1,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage function in array indent 2: stringify 1`] = `"- 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage function in array indent 2: parse 1`] = `
+[
+  1,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage function in array indent 4: stringify 1`] = `"- 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage function in array indent 4: parse 1`] = `
+[
+  1,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage nested all skipped flow: stringify 1`] = `"{a: {},c: []}"`;
+
+exports[`Bun.YAML stringify round-trip coverage nested all skipped flow: parse 1`] = `
+{
+  "a": {},
+  "c": [],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage nested all skipped indent 2: stringify 1`] = `
+"a: {}
+c: []"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage nested all skipped indent 2: parse 1`] = `
+{
+  "a": {},
+  "c": [],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage nested all skipped indent 4: stringify 1`] = `
+"a: {}
+c: []"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage nested all skipped indent 4: parse 1`] = `
+{
+  "a": {},
+  "c": [],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared object flow: stringify 1`] = `"{p: &p {x: 1,"y": [2]},q: *p}"`;
+
+exports[`Bun.YAML stringify round-trip coverage shared object flow: parse 1`] = `
+{
+  "p": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "q": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared object indent 2: stringify 1`] = `
+"p:
+  &p
+  x: 1
+  "y":
+    - 2
+q:
+  *p"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared object indent 2: parse 1`] = `
+{
+  "p": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "q": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared object indent 4: stringify 1`] = `
+"p:
+    &p
+    x: 1
+    "y":
+        - 2
+q:
+    *p"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared object indent 4: parse 1`] = `
+{
+  "p": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "q": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared array flow: stringify 1`] = `"{p: &p [1,{z: 2}],q: *p}"`;
+
+exports[`Bun.YAML stringify round-trip coverage shared array flow: parse 1`] = `
+{
+  "p": [
+    1,
+    {
+      "z": 2,
+    },
+  ],
+  "q": [
+    1,
+    {
+      "z": 2,
+    },
+  ],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared array indent 2: stringify 1`] = `
+"p:
+  &p
+  - 1
+  - z: 2
+q:
+  *p"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared array indent 2: parse 1`] = `
+{
+  "p": [
+    1,
+    {
+      "z": 2,
+    },
+  ],
+  "q": [
+    1,
+    {
+      "z": 2,
+    },
+  ],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared array indent 4: stringify 1`] = `
+"p:
+    &p
+    - 1
+    - z: 2
+q:
+    *p"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared array indent 4: parse 1`] = `
+{
+  "p": [
+    1,
+    {
+      "z": 2,
+    },
+  ],
+  "q": [
+    1,
+    {
+      "z": 2,
+    },
+  ],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared empty object flow: stringify 1`] = `"{p: &p {},q: *p}"`;
+
+exports[`Bun.YAML stringify round-trip coverage shared empty object flow: parse 1`] = `
+{
+  "p": {},
+  "q": {},
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared empty object indent 2: stringify 1`] = `
+"p:
+  &p
+  {}
+q:
+  *p"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared empty object indent 2: parse 1`] = `
+{
+  "p": {},
+  "q": {},
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared empty object indent 4: stringify 1`] = `
+"p:
+    &p
+    {}
+q:
+    *p"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared empty object indent 4: parse 1`] = `
+{
+  "p": {},
+  "q": {},
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared empty array flow: stringify 1`] = `"{p: &p [],q: *p}"`;
+
+exports[`Bun.YAML stringify round-trip coverage shared empty array flow: parse 1`] = `
+{
+  "p": [],
+  "q": [],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared empty array indent 2: stringify 1`] = `
+"p:
+  &p
+  []
+q:
+  *p"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared empty array indent 2: parse 1`] = `
+{
+  "p": [],
+  "q": [],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared empty array indent 4: stringify 1`] = `
+"p:
+    &p
+    []
+q:
+    *p"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared empty array indent 4: parse 1`] = `
+{
+  "p": [],
+  "q": [],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared three times flow: stringify 1`] = `"{a: &a {x: 1,"y": [2]},b: *a,c: *a}"`;
+
+exports[`Bun.YAML stringify round-trip coverage shared three times flow: parse 1`] = `
+{
+  "a": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "b": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "c": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared three times indent 2: stringify 1`] = `
+"a:
+  &a
+  x: 1
+  "y":
+    - 2
+b:
+  *a
+c:
+  *a"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared three times indent 2: parse 1`] = `
+{
+  "a": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "b": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "c": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared three times indent 4: stringify 1`] = `
+"a:
+    &a
+    x: 1
+    "y":
+        - 2
+b:
+    *a
+c:
+    *a"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared three times indent 4: parse 1`] = `
+{
+  "a": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "b": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "c": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared in array items flow: stringify 1`] = `"[&item0 {x: 1,"y": [2]},*item0]"`;
+
+exports[`Bun.YAML stringify round-trip coverage shared in array items flow: parse 1`] = `
+[
+  {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared in array items indent 2: stringify 1`] = `
+"- &item0
+  x: 1
+  "y":
+    - 2
+- *item0"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared in array items indent 2: parse 1`] = `
+[
+  {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared in array items indent 4: stringify 1`] = `
+"- &item0
+  x: 1
+  "y":
+      - 2
+- *item0"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared in array items indent 4: parse 1`] = `
+[
+  {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared nested inside shared flow: stringify 1`] = `"{a: &a {leaf: &leaf {x: 1,"y": [2]}},b: *a,c: *leaf}"`;
+
+exports[`Bun.YAML stringify round-trip coverage shared nested inside shared flow: parse 1`] = `
+{
+  "a": {
+    "leaf": {
+      "x": 1,
+      "y": [
+        2,
+      ],
+    },
+  },
+  "b": {
+    "leaf": {
+      "x": 1,
+      "y": [
+        2,
+      ],
+    },
+  },
+  "c": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared nested inside shared indent 2: stringify 1`] = `
+"a:
+  &a
+  leaf:
+    &leaf
+    x: 1
+    "y":
+      - 2
+b:
+  *a
+c:
+  *leaf"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared nested inside shared indent 2: parse 1`] = `
+{
+  "a": {
+    "leaf": {
+      "x": 1,
+      "y": [
+        2,
+      ],
+    },
+  },
+  "b": {
+    "leaf": {
+      "x": 1,
+      "y": [
+        2,
+      ],
+    },
+  },
+  "c": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared nested inside shared indent 4: stringify 1`] = `
+"a:
+    &a
+    leaf:
+        &leaf
+        x: 1
+        "y":
+            - 2
+b:
+    *a
+c:
+    *leaf"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared nested inside shared indent 4: parse 1`] = `
+{
+  "a": {
+    "leaf": {
+      "x": 1,
+      "y": [
+        2,
+      ],
+    },
+  },
+  "b": {
+    "leaf": {
+      "x": 1,
+      "y": [
+        2,
+      ],
+    },
+  },
+  "c": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared under unsafe key flow: stringify 1`] = `"{a b: &value0 {x: 1,"y": [2]},"": *value0}"`;
+
+exports[`Bun.YAML stringify round-trip coverage shared under unsafe key flow: parse 1`] = `
+{
+  "": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "a b": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared under unsafe key indent 2: stringify 1`] = `
+"a b:
+  &value0
+  x: 1
+  "y":
+    - 2
+"":
+  *value0"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared under unsafe key indent 2: parse 1`] = `
+{
+  "": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "a b": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared under unsafe key indent 4: stringify 1`] = `
+"a b:
+    &value0
+    x: 1
+    "y":
+        - 2
+"":
+    *value0"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared under unsafe key indent 4: parse 1`] = `
+{
+  "": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "a b": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared under numeric key flow: stringify 1`] = `"{"1": &1 {x: 1,"y": [2]},"2": *1}"`;
+
+exports[`Bun.YAML stringify round-trip coverage shared under numeric key flow: parse 1`] = `
+{
+  "1": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "2": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared under numeric key indent 2: stringify 1`] = `
+""1":
+  &1
+  x: 1
+  "y":
+    - 2
+"2":
+  *1"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared under numeric key indent 2: parse 1`] = `
+{
+  "1": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "2": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared under numeric key indent 4: stringify 1`] = `
+""1":
+    &1
+    x: 1
+    "y":
+        - 2
+"2":
+    *1"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared under numeric key indent 4: parse 1`] = `
+{
+  "1": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "2": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared object and array together flow: stringify 1`] = `"{o: &o {x: 1,"y": [2]},a: &a [1,{z: 2}],o2: *o,a2: *a}"`;
+
+exports[`Bun.YAML stringify round-trip coverage shared object and array together flow: parse 1`] = `
+{
+  "a": [
+    1,
+    {
+      "z": 2,
+    },
+  ],
+  "a2": [
+    1,
+    {
+      "z": 2,
+    },
+  ],
+  "o": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "o2": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared object and array together indent 2: stringify 1`] = `
+"o:
+  &o
+  x: 1
+  "y":
+    - 2
+a:
+  &a
+  - 1
+  - z: 2
+o2:
+  *o
+a2:
+  *a"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared object and array together indent 2: parse 1`] = `
+{
+  "a": [
+    1,
+    {
+      "z": 2,
+    },
+  ],
+  "a2": [
+    1,
+    {
+      "z": 2,
+    },
+  ],
+  "o": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "o2": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared object and array together indent 4: stringify 1`] = `
+"o:
+    &o
+    x: 1
+    "y":
+        - 2
+a:
+    &a
+    - 1
+    - z: 2
+o2:
+    *o
+a2:
+    *a"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared object and array together indent 4: parse 1`] = `
+{
+  "a": [
+    1,
+    {
+      "z": 2,
+    },
+  ],
+  "a2": [
+    1,
+    {
+      "z": 2,
+    },
+  ],
+  "o": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "o2": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage self reference flow: stringify 1`] = `"&root {name: root,self: *root}"`;
+
+exports[`Bun.YAML stringify round-trip coverage self reference flow: parse 1`] = `
+{
+  "name": "root",
+  "self": [Circular],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage self reference indent 2: stringify 1`] = `
+"&root
+name: root
+self:
+  *root"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage self reference indent 2: parse 1`] = `
+{
+  "name": "root",
+  "self": [Circular],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage self reference indent 4: stringify 1`] = `
+"&root
+name: root
+self:
+    *root"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage self reference indent 4: parse 1`] = `
+{
+  "name": "root",
+  "self": [Circular],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage cyclic array flow: stringify 1`] = `"&root [1,*root]"`;
+
+exports[`Bun.YAML stringify round-trip coverage cyclic array flow: parse 1`] = `
+[
+  1,
+  [Circular],
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage cyclic array indent 2: stringify 1`] = `
+"&root
+- 1
+- *root"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage cyclic array indent 2: parse 1`] = `
+[
+  1,
+  [Circular],
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage cyclic array indent 4: stringify 1`] = `
+"&root
+- 1
+- *root"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage cyclic array indent 4: parse 1`] = `
+[
+  1,
+  [Circular],
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage mutual cycle flow: stringify 1`] = `"&root {id: a,b: {id: b,a: *root}}"`;
+
+exports[`Bun.YAML stringify round-trip coverage mutual cycle flow: parse 1`] = `
+{
+  "b": {
+    "a": [Circular],
+    "id": "b",
+  },
+  "id": "a",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage mutual cycle indent 2: stringify 1`] = `
+"&root
+id: a
+b:
+  id: b
+  a:
+    *root"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage mutual cycle indent 2: parse 1`] = `
+{
+  "b": {
+    "a": [Circular],
+    "id": "b",
+  },
+  "id": "a",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage mutual cycle indent 4: stringify 1`] = `
+"&root
+id: a
+b:
+    id: b
+    a:
+        *root"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage mutual cycle indent 4: parse 1`] = `
+{
+  "b": {
+    "a": [Circular],
+    "id": "b",
+  },
+  "id": "a",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared with same name as root flow: stringify 1`] = `"{root: &root1 {x: 1,"y": [2]},root2: *root1}"`;
+
+exports[`Bun.YAML stringify round-trip coverage shared with same name as root flow: parse 1`] = `
+{
+  "root": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "root2": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared with same name as root indent 2: stringify 1`] = `
+"root:
+  &root1
+  x: 1
+  "y":
+    - 2
+root2:
+  *root1"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared with same name as root indent 2: parse 1`] = `
+{
+  "root": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "root2": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared with same name as root indent 4: stringify 1`] = `
+"root:
+    &root1
+    x: 1
+    "y":
+        - 2
+root2:
+    *root1"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage shared with same name as root indent 4: parse 1`] = `
+{
+  "root": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+  "root2": {
+    "x": 1,
+    "y": [
+      2,
+    ],
+  },
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed number flow: stringify 1`] = `"1"`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed number flow: parse 1`] = `1`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed number indent 2: stringify 1`] = `"1"`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed number indent 2: parse 1`] = `1`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed number indent 4: stringify 1`] = `"1"`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed number indent 4: parse 1`] = `1`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed string flow: stringify 1`] = `"s"`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed string flow: parse 1`] = `"s"`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed string indent 2: stringify 1`] = `"s"`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed string indent 2: parse 1`] = `"s"`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed string indent 4: stringify 1`] = `"s"`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed string indent 4: parse 1`] = `"s"`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed boolean flow: stringify 1`] = `"false"`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed boolean flow: parse 1`] = `false`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed boolean indent 2: stringify 1`] = `"false"`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed boolean indent 2: parse 1`] = `false`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed boolean indent 4: stringify 1`] = `"false"`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed boolean indent 4: parse 1`] = `false`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed in object flow: stringify 1`] = `"{"n": 2.5,s: x y,b: true}"`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed in object flow: parse 1`] = `
+{
+  "b": true,
+  "n": 2.5,
+  "s": "x y",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed in object indent 2: stringify 1`] = `
+""n": 2.5
+s: x y
+b: true"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed in object indent 2: parse 1`] = `
+{
+  "b": true,
+  "n": 2.5,
+  "s": "x y",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed in object indent 4: stringify 1`] = `
+""n": 2.5
+s: x y
+b: true"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed in object indent 4: parse 1`] = `
+{
+  "b": true,
+  "n": 2.5,
+  "s": "x y",
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed in array flow: stringify 1`] = `"[0,"",false]"`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed in array flow: parse 1`] = `
+[
+  0,
+  "",
+  false,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed in array indent 2: stringify 1`] = `
+"- 0
+- ""
+- false"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed in array indent 2: parse 1`] = `
+[
+  0,
+  "",
+  false,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed in array indent 4: stringify 1`] = `
+"- 0
+- ""
+- false"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage boxed in array indent 4: parse 1`] = `
+[
+  0,
+  "",
+  false,
+]
+`;
+
+exports[`Bun.YAML stringify round-trip coverage date in object flow: stringify 1`] = `"{d: {}}"`;
+
+exports[`Bun.YAML stringify round-trip coverage date in object flow: parse 1`] = `
+{
+  "d": {},
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage date in object indent 2: stringify 1`] = `"d: {}"`;
+
+exports[`Bun.YAML stringify round-trip coverage date in object indent 2: parse 1`] = `
+{
+  "d": {},
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage date in object indent 4: stringify 1`] = `"d: {}"`;
+
+exports[`Bun.YAML stringify round-trip coverage date in object indent 4: parse 1`] = `
+{
+  "d": {},
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage regexp in object flow: stringify 1`] = `"{r: {}}"`;
+
+exports[`Bun.YAML stringify round-trip coverage regexp in object flow: parse 1`] = `
+{
+  "r": {},
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage regexp in object indent 2: stringify 1`] = `"r: {}"`;
+
+exports[`Bun.YAML stringify round-trip coverage regexp in object indent 2: parse 1`] = `
+{
+  "r": {},
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage regexp in object indent 4: stringify 1`] = `"r: {}"`;
+
+exports[`Bun.YAML stringify round-trip coverage regexp in object indent 4: parse 1`] = `
+{
+  "r": {},
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage map in object flow: stringify 1`] = `"{m: {}}"`;
+
+exports[`Bun.YAML stringify round-trip coverage map in object flow: parse 1`] = `
+{
+  "m": {},
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage map in object indent 2: stringify 1`] = `"m: {}"`;
+
+exports[`Bun.YAML stringify round-trip coverage map in object indent 2: parse 1`] = `
+{
+  "m": {},
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage map in object indent 4: stringify 1`] = `"m: {}"`;
+
+exports[`Bun.YAML stringify round-trip coverage map in object indent 4: parse 1`] = `
+{
+  "m": {},
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage set in object flow: stringify 1`] = `"{s: {}}"`;
+
+exports[`Bun.YAML stringify round-trip coverage set in object flow: parse 1`] = `
+{
+  "s": {},
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage set in object indent 2: stringify 1`] = `"s: {}"`;
+
+exports[`Bun.YAML stringify round-trip coverage set in object indent 2: parse 1`] = `
+{
+  "s": {},
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage set in object indent 4: stringify 1`] = `"s: {}"`;
+
+exports[`Bun.YAML stringify round-trip coverage set in object indent 4: parse 1`] = `
+{
+  "s": {},
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage class instance flow: stringify 1`] = `"{x: 1,"y": 2}"`;
+
+exports[`Bun.YAML stringify round-trip coverage class instance flow: parse 1`] = `
+{
+  "x": 1,
+  "y": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage class instance indent 2: stringify 1`] = `
+"x: 1
+"y": 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage class instance indent 2: parse 1`] = `
+{
+  "x": 1,
+  "y": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage class instance indent 4: stringify 1`] = `
+"x: 1
+"y": 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage class instance indent 4: parse 1`] = `
+{
+  "x": 1,
+  "y": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage null prototype object flow: stringify 1`] = `"{a: 1,b: []}"`;
+
+exports[`Bun.YAML stringify round-trip coverage null prototype object flow: parse 1`] = `
+{
+  "a": 1,
+  "b": [],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage null prototype object indent 2: stringify 1`] = `
+"a: 1
+b: []"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage null prototype object indent 2: parse 1`] = `
+{
+  "a": 1,
+  "b": [],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage null prototype object indent 4: stringify 1`] = `
+"a: 1
+b: []"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage null prototype object indent 4: parse 1`] = `
+{
+  "a": 1,
+  "b": [],
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array-like object flow: stringify 1`] = `"{"0": a,"1": b,length: 2}"`;
+
+exports[`Bun.YAML stringify round-trip coverage array-like object flow: parse 1`] = `
+{
+  "0": "a",
+  "1": "b",
+  "length": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array-like object indent 2: stringify 1`] = `
+""0": a
+"1": b
+length: 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array-like object indent 2: parse 1`] = `
+{
+  "0": "a",
+  "1": "b",
+  "length": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array-like object indent 4: stringify 1`] = `
+""0": a
+"1": b
+length: 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage array-like object indent 4: parse 1`] = `
+{
+  "0": "a",
+  "1": "b",
+  "length": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with toJSON flow: stringify 1`] = `"{a: 1}"`;
+
+exports[`Bun.YAML stringify round-trip coverage object with toJSON flow: parse 1`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with toJSON indent 2: stringify 1`] = `"a: 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage object with toJSON indent 2: parse 1`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage object with toJSON indent 4: stringify 1`] = `"a: 1"`;
+
+exports[`Bun.YAML stringify round-trip coverage object with toJSON indent 4: parse 1`] = `
+{
+  "a": 1,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage typed array flow: stringify 1`] = `"{"0": 1,"1": 2}"`;
+
+exports[`Bun.YAML stringify round-trip coverage typed array flow: parse 1`] = `
+{
+  "0": 1,
+  "1": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage typed array indent 2: stringify 1`] = `
+""0": 1
+"1": 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage typed array indent 2: parse 1`] = `
+{
+  "0": 1,
+  "1": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage typed array indent 4: stringify 1`] = `
+""0": 1
+"1": 2"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage typed array indent 4: parse 1`] = `
+{
+  "0": 1,
+  "1": 2,
+}
+`;
+
+exports[`Bun.YAML stringify round-trip coverage error object flow: stringify 1`] = `"{}"`;
+
+exports[`Bun.YAML stringify round-trip coverage error object flow: parse 1`] = `{}`;
+
+exports[`Bun.YAML stringify round-trip coverage error object indent 2: stringify 1`] = `"{}"`;
+
+exports[`Bun.YAML stringify round-trip coverage error object indent 2: parse 1`] = `{}`;
+
+exports[`Bun.YAML stringify round-trip coverage error object indent 4: stringify 1`] = `"{}"`;
+
+exports[`Bun.YAML stringify round-trip coverage error object indent 4: parse 1`] = `{}`;
+
+exports[`Bun.YAML stringify round-trip coverage space variants produce the same document: space 1 stringify 1`] = `
+"a:
+ b:
+  - 1
+  - c: "d: e"
+    f: []
+ g: {}
+h: x"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage space variants produce the same document: space 3 stringify 1`] = `
+"a:
+   b:
+      - 1
+      - c: "d: e"
+        f: []
+   g: {}
+h: x"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage space variants produce the same document: space 10 stringify 1`] = `
+"a:
+          b:
+                    - 1
+                    - c: "d: e"
+                      f: []
+          g: {}
+h: x"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage space variants produce the same document: space 11 stringify 1`] = `
+"a:
+          b:
+                    - 1
+                    - c: "d: e"
+                      f: []
+          g: {}
+h: x"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage space variants produce the same document: space 100 stringify 1`] = `
+"a:
+          b:
+                    - 1
+                    - c: "d: e"
+                      f: []
+          g: {}
+h: x"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage space variants produce the same document: space " " stringify 1`] = `
+"a:
+ b:
+  - 1
+  - c: "d: e"
+    f: []
+ g: {}
+h: x"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage space variants produce the same document: space "   " stringify 1`] = `
+"a:
+   b:
+      - 1
+      - c: "d: e"
+        f: []
+   g: {}
+h: x"
+`;
+
+exports[`Bun.YAML stringify round-trip coverage space variants produce the same document: space "            " stringify 1`] = `
+"a:
+          b:
+                    - 1
+                    - c: "d: e"
+                      f: []
+          g: {}
+h: x"
+`;

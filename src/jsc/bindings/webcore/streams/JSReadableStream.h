@@ -113,12 +113,21 @@ public:
         // reads the raw slot, so the fetch/server push-side is unaffected.
         if (m_nativeTextMode)
             return {};
+        // The native source of an errored stream only knows that it ended; the stored error is here.
+        if (m_state == ReadableStreamState::Errored)
+            return {};
         return m_nativePtr.get(); // may be empty
     }
     // Transferred to a node:stream Readable, drained as a Body, or detached: the handle is off limits.
     bool nativeHandleDetached() const
     {
         return m_transferred || m_consumedAsBody || (m_nativePtr.get().isInt32() && m_nativePtr.get().asInt32() == -1);
+    }
+    // A Body consumer holds this stream now. It stays disturbed and locked after the consumer lets go of it.
+    void markConsumedAsBody()
+    {
+        m_disturbed = true;
+        m_consumedAsBody = true;
     }
 
 private:

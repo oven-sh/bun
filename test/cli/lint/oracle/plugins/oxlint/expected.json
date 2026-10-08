@@ -562,6 +562,64 @@
   "a.ts:2:7 eslint(no-unused-vars)",
   "a.ts:4:7 eslint(no-unused-vars)"
  ],
+ "no-unused-vars/underscore-none": [
+  "a.ts:2:7 eslint(no-unused-vars)",
+  "a.ts:3:7 eslint(no-unused-vars)",
+  "a.ts:4:31 eslint(no-unused-vars)",
+  "a.ts:4:42 eslint(no-unused-vars)",
+  "a.ts:6:10 eslint(no-unused-vars)"
+ ],
+ "no-unused-vars/underscore-string": [
+  "a.ts:2:7 eslint(no-unused-vars)",
+  "a.ts:3:7 eslint(no-unused-vars)",
+  "a.ts:4:31 eslint(no-unused-vars)",
+  "a.ts:4:42 eslint(no-unused-vars)",
+  "a.ts:6:10 eslint(no-unused-vars)"
+ ],
+ "no-unused-vars/underscore-object": [
+  "a.ts:1:7 eslint(no-unused-vars)",
+  "a.ts:2:7 eslint(no-unused-vars)",
+  "a.ts:3:7 eslint(no-unused-vars)",
+  "a.ts:4:19 eslint(no-unused-vars)",
+  "a.ts:4:31 eslint(no-unused-vars)",
+  "a.ts:4:42 eslint(no-unused-vars)",
+  "a.ts:6:10 eslint(no-unused-vars)",
+  "a.ts:7:8 eslint(no-unused-vars)",
+  "a.ts:8:10 eslint(no-unused-vars)",
+  "a.ts:9:6 eslint(no-unused-vars)"
+ ],
+ "no-unused-vars/underscore-pattern": [
+  "a.ts:1:7 eslint(no-unused-vars)",
+  "a.ts:2:7 eslint(no-unused-vars)",
+  "a.ts:4:19 eslint(no-unused-vars)",
+  "a.ts:4:31 eslint(no-unused-vars)",
+  "a.ts:4:42 eslint(no-unused-vars)",
+  "a.ts:6:10 eslint(no-unused-vars)",
+  "a.ts:7:8 eslint(no-unused-vars)",
+  "a.ts:8:10 eslint(no-unused-vars)",
+  "a.ts:9:6 eslint(no-unused-vars)"
+ ],
+ "no-unused-vars/options-of-oxlint": [
+  "a.ts:1:7 eslint(no-unused-vars)",
+  "a.ts:3:8 eslint(no-unused-vars)",
+  "a.ts:4:19 eslint(no-unused-vars)"
+ ],
+ "no-unused-vars/globals-in-comments": [],
+ "no-unused-vars/vars-local": [
+  "a.ts:2:5 eslint(no-unused-vars)",
+  "a.ts:3:7 eslint(no-unused-vars)",
+  "a.ts:4:10 eslint(no-unused-vars)",
+  "a.ts:5:7 eslint(no-unused-vars)",
+  "a.ts:7:7 eslint(no-unused-vars)",
+  "b.cjs:2:5 eslint(no-unused-vars)",
+  "b.cjs:3:10 eslint(no-unused-vars)"
+ ],
+ "no-unused-vars/self-reassignment": [
+  "a.ts:15:7 eslint(no-unused-vars)",
+  "a.ts:28:7 eslint(no-unused-vars)",
+  "a.ts:31:7 eslint(no-unused-vars)",
+  "a.ts:37:7 eslint(no-unused-vars)"
+ ],
  "consistent-type-imports/react": [
   "c.ts:1:1 typescript(consistent-type-imports)",
   "d.ts:1:1 typescript(consistent-type-imports)",

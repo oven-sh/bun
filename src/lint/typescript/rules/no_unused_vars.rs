@@ -17,6 +17,10 @@ pub struct NoUnusedVars {
     ignore_class_with_static_init_block: bool,
     report_used_ignore_pattern: bool,
     autofixes_imports: bool,
+    /// The options are an object.
+    has_options_object: bool,
+    /// An option of oxlint.
+    reports_vars_only_used_as_types: bool,
     vars_ignore_pattern: Option<Pattern>,
     args_ignore_pattern: Option<Pattern>,
     caught_errors_ignore_pattern: Option<Pattern>,
@@ -51,18 +55,37 @@ const USED_ONLY_AS_TYPE: Message = Message::new(
     "'{{varName}}' is {{action}} but only used as a type{{additional}}.",
 );
 
+/// oxlint says nothing about the names in `/* global a */`.
+fn oxlint_ignores_globals_in_comments(file: &File) -> bool {
+    file.language().is_oxlint
+}
+
+/// With `vars: "local"`, what oxlint leaves alone is a `var` at the top of the file, of a module too.
+fn oxlint_takes_for_global(variable: Variable, def: Declaration) -> bool {
+    matches!(variable.scope().kind(), ScopeKind::Global | ScopeKind::Module)
+        && matches!(def.node(), Some(Node::VarDecl(it)) if it.var_kind() == VarKind::Var)
+}
+
 /// oxlint prints a variable that is assigned to and never read where it is declared, and not at the last assignment.
 fn oxlint_reports_the_declaration(file: &File) -> bool {
     file.language().is_oxlint
 }
 
-/// What is a use for oxlint 1.80 and not for typescript-eslint. It is asked about the few variables that are about to be reported.
-fn oxlint_counts_as_used(variable: Variable) -> bool {
+/// What is a use for oxlint 1.80 and not for typescript-eslint: `has_usages` of its rule, as far as values that are read go. It is
+/// asked about the few variables that are about to be reported.
+fn oxlint_counts_as_used(variable: Variable, reports_vars_only_used_as_types: bool) -> bool {
+    let is_variable = variable.defs().any(|it| matches!(it, Declaration::Var(_) | Declaration::Param(_)));
+    let is_function_or_class = variable.defs().any(|it| matches!(it, Declaration::Fn(_) | Declaration::Class(_)));
+    let is_const = variable.defs().any(|it| matches!(it.node(), Some(Node::VarDecl(it)) if it.var_kind() == VarKind::Const));
+    let is_callable = (is_variable || is_function_or_class) && !variable.defs().any(Declaration::is_catch_parameter);
     variable.references().any(|it| {
-        oxlint_counts_type_query_as_use(variable, it)
-            || it.is_read()
-                && statement_that_updates(it)
-                    .is_some_and(|statement| oxlint_is_in_loop_body(statement) || oxlint_is_in_return_statement(statement))
+        if is_type_only_reference(variable.symbol(), it) || !it.is_value() {
+            return !reports_vars_only_used_as_types && oxlint_counts_type_query_as_use(variable, it);
+        }
+        it.is_read()
+            && !(is_variable && oxlint_is_self_reassignment(variable, it))
+            && !(is_variable && !is_const && !is_function_or_class && oxlint_is_discarded_read(variable, it))
+            && !(is_callable && oxlint_is_self_call(variable, it, is_function_or_class))
     })
 }
 
@@ -73,10 +96,198 @@ fn oxlint_counts_type_query_as_use(variable: Variable, reference: Reference) -> 
         && !variable.defs().filter_map(Declaration::node).any(|it| !matches!(it, Node::Func(_)) && it.span().contains(reference.span()))
 }
 
-/// The `a++;` or `a = a + 1;` that `reference` is in: an expression statement, with nothing but expressions in between.
-fn statement_that_updates(reference: Reference<'_>) -> Option<Stmt<'_>> {
-    let statement = reference.node().ancestors().find(|it| !matches!(it, Node::Expr(_)))?.as_stmt()?;
-    (statement.tag() == StmtTag::Expr && !statement.is_wrapper()).then_some(statement)
+fn is_member_expression(e: Expr) -> bool {
+    matches!(e.tag(), ExprTag::Dot | ExprTag::Index)
+}
+
+/// What is around `node` as oxc has it, without what it calls transparent: parentheses, which are no nodes here, and what only
+/// concerns types. A function and a sequence are one node each.
+fn oxlint_relevant_parents<'a>(node: Node<'a>) -> impl Iterator<Item = Node<'a>> {
+    node.ancestors().filter(|it| match it {
+        Node::Expr(e) => match e.kind() {
+            ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::Satisfies { .. } | ExprKind::NonNull(_) | ExprKind::Instantiation { .. } => false,
+            ExprKind::Fn(_) | ExprKind::Class(_) => false,
+            ExprKind::Binary { op: BinOp::Comma, .. } => {
+                !matches!(e.parent(), Node::Expr(parent) if matches!(parent.kind(), ExprKind::Binary { op: BinOp::Comma, left, .. } if left == *e))
+            }
+            _ => true,
+        },
+        _ => true,
+    })
+}
+
+fn refers_to<'a>(e: Expr<'a>, variable: Variable<'a>) -> bool {
+    e.tag() == ExprTag::Ident && e.reference().and_then(Reference::symbol) == Some(variable.symbol())
+}
+
+/// oxlint's `is_self_reassignment`: what is read only serves to change the variable itself, as in `a++;` and `a = a + 1;`.
+fn oxlint_is_self_reassignment<'a>(variable: Variable<'a>, reference: Reference<'a>) -> bool {
+    let Some(e) = reference.expr() else {
+        return false;
+    };
+    let at = e.span();
+    if e.jsx_container_span().is_some() {
+        return false;
+    }
+    let (mut is_used_by_others, mut saw_self_update) = (true, false);
+    for node in Node::Expr(e).ancestors() {
+        match node {
+            Node::VarDecl(_) => return false,
+            Node::Member(member) if member.kind() == MemberKind::Property => return false,
+            Node::Param(_) if saw_self_update => return oxlint_is_discarded_read(variable, reference),
+            Node::Expr(parent) => {
+                match parent.kind() {
+                    ExprKind::Call(call) => {
+                        if let (Some(first), Some(last)) = (call.args().first(), call.args().last())
+                            && Span::new(first.outer_span().start, last.outer_span().end).contains(at)
+                        {
+                            return false;
+                        }
+                    }
+                    ExprKind::Unary {
+                        op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+                        operand,
+                    } => {
+                        // `for (let x = 0; x++; ) {}`: that the body runs depends on it.
+                        let head = oxlint_relevant_parents(node).find_map(Node::as_stmt).map(Stmt::kind);
+                        let is_in_head = matches!(head, Some(StmtKind::For { test, update, .. })
+                            if test.is_some_and(|it| it.span().contains(at)) || update.is_some_and(|it| it.span().contains(at)));
+                        if !is_in_head && !is_member_expression(operand.skip_type_wrappers()) {
+                            (is_used_by_others, saw_self_update) = (false, true);
+                        }
+                    }
+                    ExprKind::Assign { target, .. } if !parent.is_assignment_target() => match target.tag() {
+                        ExprTag::Ident if refers_to(target, variable) => {
+                            // In another function, what is read can be seen later.
+                            if reference.scope().variable_scope() != variable.scope().variable_scope() {
+                                return false;
+                            }
+                            is_used_by_others = false;
+                        }
+                        ExprTag::Ident | ExprTag::Dot | ExprTag::Index => return false,
+                        _ if target.operand().is_some_and(is_member_expression) => return false,
+                        _ => {}
+                    },
+                    ExprKind::Yield { .. } => return false,
+                    _ => {}
+                }
+                if parent.jsx_container_span().is_some() {
+                    return false;
+                }
+            }
+            Node::Stmt(statement) => match statement.kind() {
+                StmtKind::If { test, .. } | StmtKind::While { test, .. } | StmtKind::DoWhile { test, .. } if test.span().contains(at) => {
+                    return false;
+                }
+                StmtKind::ForIn { .. } | StmtKind::ForOf { .. } | StmtKind::While { .. } => break,
+                StmtKind::Expr(_) => {
+                    if oxlint_is_in_loop_body(statement) || oxlint_is_in_return_statement(statement) {
+                        return false;
+                    }
+                    break;
+                }
+                // Whether it is returned by the function that the variable is.
+                StmtKind::Return(_) => {
+                    let mut is_arrow = false;
+                    let function = oxlint_relevant_parents(node).find_map(|it| match it {
+                        Node::Func(func) if func.is_arrow() => {
+                            is_arrow = true;
+                            None
+                        }
+                        Node::Func(func) => Some(func.symbol()),
+                        Node::VarDecl(declarator) if is_arrow => Some(declarator.pat().symbol()),
+                        _ => None,
+                    });
+                    return function.flatten() == Some(variable.symbol());
+                }
+                _ => {}
+            },
+            Node::Func(func) if func.kind() == FnKind::Decl => break,
+            Node::Func(func) if func.is_arrow() && matches!(func.body(), FnBody::Expr(_)) => return false,
+            _ => {}
+        }
+    }
+    !is_used_by_others
+}
+
+/// oxlint's `is_discarded_read`: it is in a sequence, and not in its last part.
+fn oxlint_is_discarded_read<'a>(variable: Variable<'a>, reference: Reference<'a>) -> bool {
+    let Some(e) = reference.expr() else {
+        return false;
+    };
+    let at = e.span();
+    let is_assignment = |it: Expr| it.skip_type_wrappers().tag() == ExprTag::Assign;
+    let mut parent = Node::Expr(e);
+    for grandparent in oxlint_relevant_parents(Node::Expr(e)) {
+        let (inner, outer) = (std::mem::replace(&mut parent, grandparent), grandparent.as_expr().map(Expr::kind));
+        let Node::Expr(inner) = inner else {
+            // A function.
+            if let Some(ExprKind::Binary { op: BinOp::Comma, right: last, .. }) = outer
+                && !last.outer_span().contains(inner.span())
+            {
+                return true;
+            }
+            continue;
+        };
+        if matches!(outer, Some(ExprKind::Call(_) | ExprKind::New(_))) {
+            if inner == e {
+                continue;
+            }
+            break;
+        }
+        match (inner.kind(), outer) {
+            (
+                ExprKind::Dot { .. } | ExprKind::Index { .. },
+                Some(ExprKind::Unary {
+                    op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+                    ..
+                }),
+            ) => break,
+            (ExprKind::Assign { target, .. }, _) if !refers_to(target, variable) => break,
+            (ExprKind::Cond { test, .. }, _) if test.span().contains(at) => return false,
+            (ExprKind::Binary { op, left, right }, _)
+                if matches!(
+                    op,
+                    BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::In | BinOp::Instanceof
+                ) && left.span().contains(at)
+                    && is_assignment(right) =>
+            {
+                return false;
+            }
+            (kind, Some(ExprKind::Binary { op: BinOp::Comma, right: last, .. })) => {
+                let is_kept = matches!(kind, ExprKind::Call(_) | ExprKind::Await(_) | ExprKind::Yield { .. }) || inner.is_chain_root();
+                if !is_kept && !last.outer_span().contains(inner.span()) {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// oxlint's `is_self_call`: it is in the function or the class that the variable is.
+fn oxlint_is_self_call<'a>(variable: Variable<'a>, reference: Reference<'a>, is_function_or_class: bool) -> bool {
+    if is_function_or_class {
+        return variable.defs().any(|it| match it {
+            Declaration::Fn(func) => func.estree_span().contains(reference.span()),
+            Declaration::Class(class) => class.estree_span().contains(reference.span()),
+            _ => false,
+        });
+    }
+    let mut parents = oxlint_relevant_parents(reference.node()).peekable();
+    while let Some(parent) = parents.next() {
+        let is_function_expression = matches!(parent, Node::Func(func) if matches!(func.kind(), FnKind::Expr | FnKind::Arrow));
+        let is_value_of_variable = match parents.peek() {
+            Some(Node::VarDecl(declarator)) => declarator.pat().symbol() == Some(variable.symbol()),
+            Some(Node::Expr(assignment)) => matches!(assignment.kind(), ExprKind::Assign { target, .. } if refers_to(target, variable)),
+            _ => false,
+        };
+        if is_function_expression && is_value_of_variable {
+            return true;
+        }
+    }
+    false
 }
 
 /// oxlint's `is_in_loop_body`: what a variable is in one turn of a loop, the next turn can see.
@@ -358,6 +569,11 @@ fn fix_import<'a>(fixer: Fixer<'a>, fix: ImportFix<'a>, reported: &SymbolSet) ->
 // ───────────────────────────── the rule ─────────────────────────────
 
 impl NoUnusedVars {
+    /// Unless its options are an object, oxlint takes `^_` for `varsIgnorePattern` and `argsIgnorePattern`.
+    fn oxlint_ignores_underscore_by_default(&self, file: &File) -> bool {
+        file.language().is_oxlint && !self.has_options_object
+    }
+
     fn def_to_variable_type(&self, def: Declaration) -> VariableType {
         if self.destructured_array_ignore_pattern.is_some() && is_defined_in_array_pattern(def) {
             return VariableType::ArrayDestructure;
@@ -476,12 +692,21 @@ impl NoUnusedVars {
         let Some(def) = variable.defs().next() else {
             return false;
         };
-        if self.vars == Vars::Local && variable.scope().kind() == ScopeKind::Global {
+        let is_global = match cx.file().language().is_oxlint {
+            true => oxlint_takes_for_global(variable, def),
+            false => variable.scope().kind() == ScopeKind::Global,
+        };
+        if self.vars == Vars::Local && is_global {
             return false;
         }
         let name = variable.name();
+        let ignores_underscore = self.oxlint_ignores_underscore_by_default(cx.file());
         let is_ignored = |pattern: &Option<Pattern>| {
-            is_named_by_identifier(def) && pattern.as_ref().is_some_and(|it| it.test(name))
+            // A parameter that is called `_` is not ignored.
+            let is_underscore_ignored = ignores_underscore
+                && name.bytes().starts_with(b"_")
+                && (std::ptr::eq(pattern, &self.vars_ignore_pattern) || std::ptr::eq(pattern, &self.args_ignore_pattern) && !name.is("_"));
+            is_named_by_identifier(def) && (is_underscore_ignored || pattern.as_ref().is_some_and(|it| it.test(name)))
         };
         let mut report_if_used = |variable_type: VariableType| {
             if self.report_used_ignore_pattern && used {
@@ -620,7 +845,7 @@ impl NoUnusedVars {
         }
 
         for unused_var in unused_vars {
-            if file.language().is_oxlint && oxlint_counts_as_used(unused_var) {
+            if file.language().is_oxlint && oxlint_counts_as_used(unused_var, self.reports_vars_only_used_as_types) {
                 continue;
             }
             let used_only_as_type =
@@ -639,7 +864,9 @@ impl NoUnusedVars {
             self.report(cx, &mut reported, unused_var, message, (action, additional));
         }
 
-        Self::check_globals_in_comments(cx);
+        if !oxlint_ignores_globals_in_comments(file) {
+            Self::check_globals_in_comments(cx);
+        }
     }
 }
 
@@ -669,6 +896,8 @@ impl Rule for NoUnusedVars {
             ignore_class_with_static_init_block: object.bool_or("ignoreClassWithStaticInitBlock", false),
             report_used_ignore_pattern: object.bool_or("reportUsedIgnorePattern", false),
             autofixes_imports: object.object("enableAutofixRemoval").bool_or("imports", false),
+            has_options_object: options.get(0).is_some_and(|it| it.as_object().is_some()),
+            reports_vars_only_used_as_types: object.bool_or("reportVarsOnlyUsedAsTypes", false),
             vars_ignore_pattern: Pattern::new(object, "varsIgnorePattern"),
             args_ignore_pattern: Pattern::new(object, "argsIgnorePattern"),
             caught_errors_ignore_pattern: Pattern::new(object, "caughtErrorsIgnorePattern"),

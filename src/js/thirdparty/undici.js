@@ -3,6 +3,7 @@ const { checkIsHttpToken } = require("internal/validators");
 const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
 
 const ObjectCreate = Object.create;
+const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 const kEmptyObject = ObjectCreate(null);
 
 var fetch = Bun.fetch;
@@ -122,11 +123,13 @@ function requestMethod(method) {
       return method;
   }
   if (!method) return "GET";
-  if (method === "CONNECT") throw new InvalidArgumentError("invalid method");
   if (typeof method !== "string") throw new InvalidArgumentError("method must be a string");
   if (!checkIsHttpToken(method)) throw new InvalidArgumentError("invalid request method");
   // fetch() sends GET for a spelling outside its method table (#42497), and the table has no mixed case.
-  return method.toUpperCase();
+  method = StringPrototypeToUpperCase.$call(method);
+  // undici rejects only "CONNECT" and sends "connect" as written. Here every case of it would go out as CONNECT.
+  if (method === "CONNECT") throw new InvalidArgumentError("invalid method");
+  return method;
 }
 
 // NOT IMPLEMENTED

@@ -416,6 +416,22 @@ describe.concurrent("undici.request method", () => {
     return { lines, url: `http://127.0.0.1:${port}/`, [Symbol.asyncDispose]: () => server[Symbol.asyncDispose]() };
   }
 
+  async function expectRejection(_: string, method: unknown, message: string) {
+    await using server = await listen();
+
+    const rejected = request(server.url, { method: method as never });
+    await expect(rejected).rejects.toBeInstanceOf(errors.InvalidArgumentError);
+    await expect(rejected).rejects.toMatchObject({
+      name: "InvalidArgumentError",
+      code: "UND_ERR_INVALID_ARG",
+      message,
+    });
+
+    // The next request is the first one that the server sees.
+    await (await request(server.url)).body.text();
+    expect(server.lines).toEqual(["GET / HTTP/1.1"]);
+  }
+
   // undici makes these checks before it connects:
   // https://github.com/nodejs/undici/blob/v6.21.3/lib/api/api-request.js#L31-L33
   // https://github.com/nodejs/undici/blob/v6.21.3/lib/core/request.js#L59-L63
@@ -435,21 +451,14 @@ describe.concurrent("undici.request method", () => {
     // toUpperCase() turns U+017F into "S".
     ['"po\\u017ft"', "po\u017ft", "invalid request method"],
     ['"CONNECT"', "CONNECT", "invalid method"],
-  ])("rejects %s and sends nothing", async (_, method, message) => {
-    await using server = await listen();
+  ])("rejects %s and sends nothing", expectRejection);
 
-    const rejected = request(server.url, { method: method as never });
-    await expect(rejected).rejects.toBeInstanceOf(errors.InvalidArgumentError);
-    await expect(rejected).rejects.toMatchObject({
-      name: "InvalidArgumentError",
-      code: "UND_ERR_INVALID_ARG",
-      message,
-    });
-
-    // The next request is the first one that the server sees.
-    await (await request(server.url)).body.text();
-    expect(server.lines).toEqual(["GET / HTTP/1.1"]);
-  });
+  // undici sends each of these as written. request() upper-cases the method, so
+  // it would send CONNECT, and undici never sends CONNECT from request().
+  it.each([
+    ['"connect"', "connect", "invalid method"],
+    ['"Connect"', "Connect", "invalid method"],
+  ])("unlike undici, rejects %s and sends nothing", expectRejection);
 
   async function expectRequestLine(_: string, sent: string, method: unknown) {
     await using server = await listen();
@@ -475,9 +484,6 @@ describe.concurrent("undici.request method", () => {
     ['"patch"', "PATCH", "patch"],
     ['"Put"', "PUT", "Put"],
     ['"Delete"', "DELETE", "Delete"],
-    // Only exactly "CONNECT" is rejected, as in undici.
-    ['"connect"', "CONNECT", "connect"],
-    ['"Connect"', "CONNECT", "Connect"],
   ])("unlike undici, %s goes out as %s", expectRequestLine);
 
   // undici sends PUT for these: https://github.com/nodejs/undici/blob/v6.21.3/index.js#L99

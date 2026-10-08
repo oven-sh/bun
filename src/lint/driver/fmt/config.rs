@@ -280,6 +280,8 @@ pub(crate) struct Resolved {
     pub(crate) options: FormatOptions,
     /// `insertFinalNewline: false` of oxfmt.
     pub(crate) omits_final_newline: bool,
+    /// The syntax of TypeScript in a JavaScript file is formatted, whatever parser is asked for.
+    pub(crate) tolerates_types_in_javascript: bool,
 }
 
 /// Adds what the `tsconfig.json` at `path` says about JSX, after what the files that it extends say.

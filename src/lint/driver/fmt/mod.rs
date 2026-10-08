@@ -16,6 +16,7 @@ use bun_format::pragma::BeforeParsing;
 use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
+use bun_lint::linter::TypesInJavaScript;
 use bun_sema::atom::{Intern, Interner, InternerPerThread};
 use bun_js_parser::sema::Summary;
 use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format_in, try_bind_for_format_in};
@@ -154,6 +155,7 @@ fn format_javascript(path: &[u8], code: &[u8], options: &FormatOptions, out: &mu
     let resolved = Resolved {
         options: options.clone(),
         omits_final_newline: false,
+        tolerates_types_in_javascript: false,
     };
     let names = Session::new();
     let formatted = format(path, code, &resolved, (&Interner::new_in(&names), &names), &mut Scratches::default(), false);
@@ -233,7 +235,13 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, (atoms, memory): (&dyn 
 
 fn print<'a>(file: &'a File<'a>, first_error: Option<&Diagnostic>, how: &How, scratch: &mut Scratch) -> Result<Formatted, Failure> {
     let options = &how.resolved.options;
-    if bun_lint::linter::refused_by_prettier(file) {
+    // `babel` refuses the syntax of TypeScript. The parsers that take it have to be asked for by name.
+    let takes_types = matches!(options.parser.as_deref(), Some(b"flow" | b"babel-flow" | b"typescript" | b"babel-ts"));
+    let types = match takes_types || how.resolved.tolerates_types_in_javascript {
+        true => TypesInJavaScript::Tolerated,
+        false => TypesInJavaScript::Refused,
+    };
+    if bun_lint::linter::refused_by_prettier_with(file, types) {
         // What typescript-estree refuses while it converts the tree has words of its own.
         let Some(error) = bun_lint::linter::parse_error(file).filter(|_| file.language().parser == Parser::TypeScript) else {
             return Err(Failure::Syntax(syntax_error(file, first_error)));
@@ -287,6 +295,8 @@ pub fn format_for_tests(path: &[u8], text: &[u8], options: &FormatOptions) -> Re
             ..options.clone()
         },
         omits_final_newline: false,
+        // Many of Prettier's tests are for its other parsers.
+        tolerates_types_in_javascript: true,
     };
     let names = Session::new();
     format(path, text, &resolved, (&Interner::new_in(&names), &names), &mut Scratches::default(), false).map_err(|failure| matches!(failure, Failure::Syntax(_)))

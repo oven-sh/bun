@@ -97,6 +97,8 @@ export const cases = [
     },
     args: ["."],
   },
+  { name: "types in JavaScript", files: { "a.js": "const x: number = 0;\n", "b.js": "interface A {}\n", "c.mjs": "a as T;\n", "d.ts": "const x:number = 0\n", "e.js": "// @flow\nconst x:number = 0\n" }, args: ["."], ignores: ["stderr"] },
+  { name: "types in JavaScript, with a parser that takes them", files: { "a.js": "const x:number = 0\n" }, args: ["--parser", "babel-ts", "a.js"] },
   { name: "the parser option", files: { "a.txt": '{"a":1}', "b.js": ugly }, args: ["--parser", "json", "a.txt"] },
 
   // ───────────── ignoring ─────────────

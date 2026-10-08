@@ -2,6 +2,7 @@
 // the files that the projects below it list, however `files`, `include` or `references` name them.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 // Disable AI agent and CI detection regardless of the environment the tests run in.
@@ -24,6 +25,12 @@ async function run(cwd: { toString(): string }, cmd: string[]) {
   return { stdout: stdout.replaceAll("\\", "/").trim(), stderr: stderr.replaceAll("\\", "/").trim(), exitCode };
 }
 
+// Whether the file system takes `A` for `a`, where the projects of these tests are.
+const foldsCase = (() => {
+  using dir = tempDir("bun-check-directory", { "probe": "" });
+  return existsSync(join(String(dir), "PROBE"));
+})();
+
 // Instead of the library files, which a debug build takes seconds to read.
 const globals = "Array<T> Boolean CallableFunction Function IArguments NewableFunction Number Object RegExp String"
   .split(" ")
@@ -42,6 +49,8 @@ const javascript = {
   ".types/globals.d.ts": globals,
   "src/legacy.js": `/** @type {string} */\nexport const wrong = 1;\n`,
 };
+// The options of a project that another references.
+const library = { composite: true, emitDeclarationOnly: true, outDir: "dist" };
 
 // The files of `apps/site`, and what is reported of them from the root, which has no tsconfig.json.
 const layouts: Record<string, [files: Record<string, string>, reported: string[]]> = {
@@ -155,7 +164,6 @@ describe("a directory without a tsconfig.json at or above it", () => {
 
   // The tsconfig.json of `apps/admin` comes first, and what it references is not looked in twice.
   test("JavaScript of a project that the tsconfig.json of another package references too", async () => {
-    const composite = { allowJs: true, checkJs: true, composite: true, emitDeclarationOnly: true, outDir: "dist" };
     using dir = tempDir("bun-check-directory", {
       "apps/admin": {
         "tsconfig.json": config({ include: ["src"], references: [{ path: "../site/tsconfig.app.json" }] }),
@@ -165,11 +173,64 @@ describe("a directory without a tsconfig.json at or above it", () => {
       "apps/site": {
         ...javascript,
         "tsconfig.json": solution,
-        "tsconfig.app.json": config({ include: ["src", ".types/*"] }, composite),
+        "tsconfig.app.json": config({ include: ["src", ".types/*"] }, { allowJs: true, checkJs: true, ...library }),
       },
     });
     const { stdout, exitCode } = await run(dir, ["check", "."]);
     expect({ stdout, exitCode }).toEqual({ stdout: error("src/legacy.js", 2), exitCode: 1 });
+  });
+
+  // The link is what a package manager makes for a package of the workspace. The tsconfig.json that is reached through
+  // it is in `node_modules`, so it has no say about what is there.
+  test("a project that another references through a link in node_modules is checked where it is", async () => {
+    using dir = tempDir("bun-check-directory", {
+      "apps/site": {
+        "tsconfig.json": config({ include: ["src"], references: [{ path: "./node_modules/ui" }] }),
+        "src/globals.d.ts": globals,
+        "src/a.ts": right,
+      },
+      "packages/ui": {
+        "tsconfig.json": config({ include: ["src"] }, library),
+        "src/globals.d.ts": globals,
+        "src/x.ts": wrong,
+      },
+    });
+    mkdirSync(join(String(dir), "apps", "site", "node_modules"));
+    symlinkSync(
+      join(String(dir), "packages", "ui"),
+      join(String(dir), "apps", "site", "node_modules", "ui"),
+      "junction",
+    );
+    const [all, apps] = await Promise.all([run(dir, ["check", "."]), run(dir, ["check", "apps"])]);
+    expect([all, apps].map(({ stdout, exitCode }) => ({ stdout, exitCode }))).toEqual([
+      {
+        stdout: `packages/ui/src/x.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`,
+        exitCode: 1,
+      },
+      { stdout: "", exitCode: 0 },
+    ]);
+  });
+
+  // The tsconfig.json that references it is read first, and spells it otherwise than the directory is spelled.
+  test.skipIf(!foldsCase)("a project that another references in another case is read once", async () => {
+    using dir = tempDir("bun-check-directory", {
+      "apps/site": {
+        "tsconfig.json": config({ include: ["src"], references: [{ path: "../../Packages/UI" }] }),
+        "src/globals.d.ts": globals,
+        "src/a.ts": right,
+      },
+      "packages/ui": {
+        "tsconfig.json": config({ include: ["src", ".gen/*.ts"] }, library),
+        "src/globals.d.ts": globals,
+        ".gen/x.ts": wrong,
+        "scripts/s.ts": wrong,
+      },
+    });
+    const { stdout, exitCode } = await run(dir, ["check", "."]);
+    expect({ stdout, exitCode }).toEqual({
+      stdout: `packages/ui/.gen/x.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.`,
+      exitCode: 1,
+    });
   });
 
   // In `node_modules` no tsconfig.json is nearest to `..`, so the one nearest to the working directory is, and it is

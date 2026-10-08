@@ -1188,6 +1188,8 @@ struct Projects {
     /// An entry point is JavaScript (`Request::are_entry_points`). It is of the project that would
     /// have it under `allowJs`.
     counts_javascript: bool,
+    /// Under `counts_javascript`: `Project::files` as `allowJs` would make it.
+    with_javascript: FxHashMap<Vec<u8>, Vec<Vec<u8>>>,
 }
 
 impl Projects {
@@ -1228,25 +1230,22 @@ impl Projects {
 
     /// The files that `config` counts as its own: `Project::files`, and under `counts_javascript`
     /// those that `allowJs` would add to them. None if it cannot be read.
-    fn listed(
-        &mut self,
-        disk: &host::Disk,
-        request: &Request,
-        config: &[u8],
-    ) -> Cow<'_, [Vec<u8>]> {
-        if self.counts_javascript {
+    fn listed(&mut self, disk: &host::Disk, request: &Request, config: &[u8]) -> &[Vec<u8>] {
+        if !self.counts_javascript {
+            return match self.load(disk, request, config) {
+                Some(project) => &project.files,
+                None => &[],
+            };
+        }
+        (self.with_javascript.entry(config.to_vec())).or_insert_with(|| {
             let with_javascript = |has_references: bool| {
                 let mut options = overriding_options(request, has_references);
                 options.push((b"allowJs".to_vec(), Json::Bool(true)));
                 options
             };
             let project = config::load_overriding(disk, &Session::new(), config, &with_javascript);
-            return Cow::Owned(project.map(|it| it.files).unwrap_or_default());
-        }
-        match self.load(disk, request, config) {
-            Some(project) => Cow::Borrowed(&project.files),
-            None => Cow::Borrowed(&[]),
-        }
+            project.map(|it| it.files).unwrap_or_default()
+        })
     }
 
     /// `config`, or else the first of the projects that it references, directly or not, that has
@@ -1281,31 +1280,6 @@ impl Projects {
         (references.iter()).find_map(|it| self.find_project_with(disk, request, it, file, seen))
     }
 
-    /// Adds `config` to `seen`, and then the projects that it references, directly or not: those
-    /// that are not there, in the order in which `find_project_with` looks in them.
-    fn graph(
-        &mut self,
-        disk: &host::Disk,
-        request: &Request,
-        config: &[u8],
-        seen: &mut Vec<Vec<u8>>,
-    ) {
-        let is_seen = |it: &Vec<u8>| is_same_path(it, config, disk.is_case_sensitive());
-        if seen.iter().any(is_seen) || !disk.is_file(config) {
-            return;
-        }
-        seen.push(config.to_vec());
-        let Some(project) = self.load(disk, request, config) else {
-            return;
-        };
-        let references: Vec<Vec<u8>> = (project.references.iter())
-            .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
-            .collect();
-        for it in &references {
-            self.graph(disk, request, it, seen);
-        }
-    }
-
     /// Adds the configuration file and the files of `config` and of the projects that it references,
     /// directly or not. `seen`: the configuration files.
     fn files_of_graph(
@@ -1316,11 +1290,20 @@ impl Projects {
         seen: &mut Vec<Vec<u8>>,
         files: &mut Vec<Vec<u8>>,
     ) {
-        let from = seen.len();
-        self.graph(disk, request, config, seen);
-        for project in &seen[from..] {
-            let project = self.load(disk, request, project);
-            files.extend(project.into_iter().flat_map(|it| it.files.iter().cloned()));
+        let is_seen = |it: &Vec<u8>| is_same_path(it, config, disk.is_case_sensitive());
+        if seen.iter().any(is_seen) || !disk.is_file(config) {
+            return;
+        }
+        seen.push(config.to_vec());
+        let Some(project) = self.load(disk, request, config) else {
+            return;
+        };
+        files.extend(project.files.iter().cloned());
+        let references: Vec<Vec<u8>> = (project.references.iter())
+            .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
+            .collect();
+        for it in &references {
+            self.files_of_graph(disk, request, it, seen, files);
         }
     }
 
@@ -1374,6 +1357,13 @@ fn is_skipped_directory(name: &[u8]) -> bool {
             name,
             b"node_modules" | b"bower_components" | b"jspm_packages"
         )
+}
+
+/// The outermost such directory above the file at `path`, of those that `is_below` holds for.
+fn skipped_directory<'a>(path: &'a [u8], is_below: impl Fn(&&'a [u8]) -> bool) -> Option<&'a [u8]> {
+    let dirs = ancestors(dirname::<Posix>(path)).take_while(is_below);
+    dirs.filter(|dir| is_skipped_directory(bun_paths::basename_posix(dir)))
+        .last()
 }
 
 /// The directories below `top` with a configuration file of their own, as the paths of those files.
@@ -1606,49 +1596,67 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             None => nested_configs(disk, path),
         };
         // Not `at` again: the one nearest to the working directory can be below the directory.
-        below.retain(|it| Some(it) != at.as_ref());
+        below.retain(|it| !at.as_ref().is_some_and(|at| is_same(at, it)));
         let with_a_say: Vec<Option<Vec<u8>>> =
             (std::iter::once(at).chain(below.into_iter().map(Some))).collect();
         let is_below =
             |dir: &&[u8]| !is_same(dir, path) && contains_path(path, dir, is_case_sensitive);
-        // One in a directory that `nested_configs` does not look in has no say: a file beside it
-        // is of the project that lists it.
+        // One in a directory that `nested_configs` does not look in has no say: what is there is
+        // of a project outside it that lists it.
         let nearest = |file: &[u8]| {
-            let dirs = ancestors(dirname::<Posix>(file)).take_while(is_below);
-            let skipped = dirs.filter(|dir| is_skipped_directory(bun_paths::basename_posix(dir)));
-            config_in(dirname::<Posix>(skipped.last().unwrap_or(file)))
+            config_in(dirname::<Posix>(
+                skipped_directory(file, is_below).unwrap_or(file),
+            ))
         };
         // The directory stands for the files that the projects have in it. The projects know
-        // their files: each adds those of which it is the owner.
-        let mut included: FxHashMap<&[u8], Vec<(Vec<u8>, Vec<u8>)>> = (with_a_say.iter().flatten())
-            .map(|it| (&it[..], Vec::new()))
-            .collect();
-        let mut graph = Vec::new();
-        for root in with_a_say.iter().flatten() {
-            let from = graph.len();
-            projects.graph(disk, request, root, &mut graph);
-            for project in &graph[from..] {
-                let files = projects.listed(disk, request, project);
-                let files = files.iter().filter(|it| is_in_directory(it));
-                let files: Vec<Vec<u8>> = files.cloned().collect();
-                for file in files {
-                    let Some(config) = nearest(&file) else {
-                        continue;
-                    };
-                    let Some(included) = included.get_mut(&config[..]) else {
-                        continue;
-                    };
-                    let seen = &mut Vec::new();
-                    let owner = projects.find_project_with(disk, request, &config, &file, seen);
-                    if let Some(owner) = owner.filter(|it| is_same(it, project)) {
-                        included.push((owner, file));
-                    }
+        // their files: those with a say, as they are spelled here, and then what they reference.
+        // Each adds the files of which it is the owner.
+        let mut included: FxHashMap<Cow<[u8]>, (&Vec<u8>, Vec<(Vec<u8>, Vec<u8>)>)> =
+            (with_a_say.iter().flatten())
+                .map(|it| (to_path(it, is_case_sensitive), (it, Vec::new())))
+                .collect();
+        let mut graph: Vec<Vec<u8>> = with_a_say.iter().flatten().cloned().collect();
+        let mut next = 0;
+        while next < graph.len() {
+            let project = projects.load(disk, request, &graph[next]);
+            let references: Vec<Vec<u8>> = (project.into_iter().flat_map(|it| &it.references))
+                .map(|it| config::resolve_config_file_name_of_project_reference(&it.path))
+                .collect();
+            for it in references {
+                if !graph.iter().any(|seen| is_same(seen, &it)) && disk.is_file(&it) {
+                    graph.push(it);
+                }
+            }
+            let project = &graph[next];
+            next += 1;
+            let skipped = skipped_directory(project, is_below);
+            let is_beside = |file: &[u8]| {
+                skipped.is_some_and(|dir| contains_path(dir, file, is_case_sensitive))
+            };
+            let files = projects.listed(disk, request, project);
+            let files = files
+                .iter()
+                .filter(|it| is_in_directory(it) && !is_beside(it));
+            let files: Vec<Vec<u8>> = files.cloned().collect();
+            for file in files {
+                let Some(config) = nearest(&file) else {
+                    continue;
+                };
+                let config = included.get_mut(&*to_path(&config, is_case_sensitive));
+                let Some((config, included)) = config else {
+                    continue;
+                };
+                let seen = &mut Vec::new();
+                let owner = projects.find_project_with(disk, request, config, &file, seen);
+                if let Some(owner) = owner.filter(|it| is_same(it, project)) {
+                    included.push((owner, file));
                 }
             }
         }
         for config in &with_a_say {
-            let included = config.as_ref().and_then(|it| included.remove(&it[..]));
-            if let Some(included) = included.filter(|it| !it.is_empty()) {
+            let config_path = config.as_ref().map(|it| to_path(it, is_case_sensitive));
+            let included = config_path.and_then(|it| included.remove(&*it));
+            if let Some((_, included)) = included.filter(|it| !it.1.is_empty()) {
                 (included.into_iter())
                     .for_each(|(owner, file)| add(Some(owner), Extent::Project, file));
                 continue;

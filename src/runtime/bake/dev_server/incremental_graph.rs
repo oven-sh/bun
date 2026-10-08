@@ -118,8 +118,9 @@ pub(crate) struct File {
     /// If the file has an error, the failure can be looked up in `dev.bundling_failures`.
     pub(crate) failed: bool,
     // ── server-side ────────────────────────────────────────────────────
+    /// The server graph bundles this file as a module. Not set on the SSR graph's records
+    /// (see `SSR_KEY_PREFIX`), which are always bundled for that graph.
     pub(crate) is_rsc: bool,
-    pub(crate) is_ssr: bool,
     pub(crate) is_client_component_boundary: bool,
     pub(crate) is_route: bool,
     // ── client-side ────────────────────────────────────────────────────
@@ -154,7 +155,6 @@ impl Default for File {
             kind: FileKind::Unknown,
             failed: false,
             is_rsc: false,
-            is_ssr: false,
             is_client_component_boundary: false,
             is_route: false,
             is_hmr_root: false,
@@ -265,6 +265,57 @@ pub(crate) struct TakeJSBundleOptionsServer {
 struct TempLookup {
     edge_index: EdgeIndex,
     seen: bool,
+}
+
+/// The server side holds two graphs in one `IncrementalGraph`: the server graph and the SSR
+/// graph. Each has its own record of a file. The server graph's record has the file's key. The
+/// SSR graph's record has this prefix before it, like the module id of an SSR module.
+pub(crate) const SSR_KEY_PREFIX: &[u8] = b"ssr:";
+
+/// The key of the record that one of the server-side graphs holds for a file.
+pub(crate) enum ServerSideKey<'a> {
+    Plain(&'a [u8]),
+    Ssr(bun_paths::path_buffer_pool::Guard, usize),
+    LongSsr(Vec<u8>),
+}
+
+impl<'a> ServerSideKey<'a> {
+    /// `key` is a file path, or `Path::key_for_incremental_graph` of a path with a plugin
+    /// namespace, which names the SSR graph already.
+    pub(crate) fn new(key: &'a [u8], is_ssr_graph: bool) -> Self {
+        if !is_ssr_graph || key.starts_with(SSR_KEY_PREFIX) {
+            return Self::Plain(key);
+        }
+        let prefix = SSR_KEY_PREFIX.len();
+        let len = prefix + key.len();
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if len > buf.0.len() {
+            return Self::LongSsr([SSR_KEY_PREFIX, key].concat());
+        }
+        buf.0[..prefix].copy_from_slice(SSR_KEY_PREFIX);
+        buf.0[prefix..len].copy_from_slice(key);
+        Self::Ssr(buf, len)
+    }
+
+    pub(crate) fn get(&self) -> &[u8] {
+        match self {
+            Self::Plain(key) => key,
+            Self::Ssr(buf, len) => &buf.0[..*len],
+            Self::LongSsr(key) => key,
+        }
+    }
+}
+
+/// True for the key of a record of the SSR graph.
+#[inline]
+pub(crate) fn is_ssr_key(key: &[u8]) -> bool {
+    key.starts_with(SSR_KEY_PREFIX)
+}
+
+/// The file that a record of a server-side graph is for.
+#[inline]
+pub(crate) fn file_of_server_side_key(key: &[u8]) -> &[u8] {
+    key.strip_prefix(SSR_KEY_PREFIX).unwrap_or(key)
 }
 
 /// Parameterized via `adt_const_params` on `bake::Side`; `File` itself is
@@ -443,6 +494,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         self.stale_files.resize(aligned, are_new_files_stale)
     }
 
+    /// False for a file that `stale_files` does not cover yet.
+    #[inline]
+    pub(crate) fn is_stale(&self, index: usize) -> bool {
+        index < self.stale_files.bit_length && self.stale_files.is_set(index)
+    }
+
     /// `IncrementalGraph(side).freeFileContent` (client only).
     /// Frees the file's `source_map` + `content`, optionally unref'ing the
     /// associated CSS asset. Leaves `content = .Unknown`.
@@ -506,7 +563,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
     }
 
-    fn disconnect_and_delete_file(
+    pub(crate) fn disconnect_and_delete_file(
         &mut self,
         directory_watchers: &mut super::DirectoryWatchStore,
         file_index: FileIndex<SIDE>,
@@ -560,7 +617,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         unsafe { (*dev).graph_safety_lock.assert_locked() };
 
         let path = &ctx.sources[index.get() as usize].path;
-        let key = path.key_for_incremental_graph();
+        let key = ServerSideKey::new(path.key_for_incremental_graph(), is_ssr_graph);
+        let key = key.get();
 
         if cfg!(debug_assertions) {
             if let ReceiveChunkContent::Js { code, .. } = &content {
@@ -604,6 +662,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             Side::Client => {
                 let mut html_route_bundle_index: Option<route_bundle::Index> = None;
                 let mut is_special_framework_file = false;
+                // Only the server graph's record says that a file stopped being a boundary.
+                let mut is_hmr_root = ctx.server_to_client_bitset.is_set(index.get() as usize);
 
                 if found_existing {
                     // Note: take the existing slot out so `free_file_content`
@@ -627,6 +687,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
                     html_route_bundle_index = existing.html_route_bundle_index;
                     is_special_framework_file = existing.is_special_framework_file;
+                    is_hmr_root = is_hmr_root || existing.is_hmr_root;
                 }
 
                 let (new_content, new_source_map, code_len) = match content {
@@ -670,10 +731,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     kind: new_content.kind(),
                     failed: false,
                     is_rsc: false,
-                    is_ssr: false,
                     is_client_component_boundary: false,
                     is_route: false,
-                    is_hmr_root: ctx.server_to_client_bitset.is_set(index.get() as usize),
+                    is_hmr_root,
                     is_special_framework_file,
                     html_route_bundle_index,
                     source_map: new_source_map,
@@ -690,13 +750,14 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     ReceiveChunkContent::Js { .. } => FileKind::Js,
                     ReceiveChunkContent::Css(_) => FileKind::Css,
                 };
+                // A chunk of the SSR graph says nothing about the directive: that graph holds a
+                // "use client" file as a plain module.
+                let scb = !is_ssr_graph && ctx.server_to_client_bitset.is_set(index.get() as usize);
                 if !found_existing {
-                    let scb = ctx.server_to_client_bitset.is_set(index.get() as usize);
                     self.bundled_files.values_mut()[file_index.get() as usize] = File {
                         kind: new_kind,
                         failed: false,
                         is_rsc: !is_ssr_graph,
-                        is_ssr: is_ssr_graph,
                         is_client_component_boundary: scb,
                         is_route: false,
                         ..Default::default()
@@ -707,44 +768,23 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                             .push(ServerFileIndex::init(file_index.get()));
                     }
                 } else {
-                    let scb = ctx.server_to_client_bitset.is_set(index.get() as usize);
-                    {
+                    let was_boundary = {
                         let f = &mut self.bundled_files.values_mut()[file_index.get() as usize];
                         f.kind = new_kind;
                         if is_ssr_graph {
-                            f.is_ssr = true;
+                            false
                         } else {
                             f.is_rsc = true;
+                            core::mem::replace(&mut f.is_client_component_boundary, scb)
                         }
-                    }
+                    };
                     if scb {
-                        self.bundled_files.values_mut()[file_index.get() as usize]
-                            .is_client_component_boundary = true;
                         self.dev_incremental_result()
                             .client_components_added
                             .push(ServerFileIndex::init(file_index.get()));
-                    } else if !is_ssr_graph
-                        && self.bundled_files.values()[file_index.get() as usize]
-                            .is_client_component_boundary
-                    {
-                        // Only the server graph's copy says the directive is gone: the SSR graph holds a "use client" file as a plain module.
-                        // SAFETY: cross-graph access via `owner()`. We hold
-                        // `&mut self` (server_graph); `client_graph` and
-                        // `directory_watchers` are disjoint sibling fields.
-                        let (client_graph, directory_watchers) =
-                            unsafe { (&mut (*dev).client_graph, &mut (*dev).directory_watchers) };
-                        let key = bun_ptr::RawSlice::new(
-                            &*self.bundled_files.keys()[file_index.get() as usize],
-                        );
-                        let client_index =
-                            client_graph.get_file_index(key.slice()).unwrap_or_else(|| {
-                                bun_core::Output::panic(format_args!(
-                                    "Client graph's SCB was already deleted",
-                                ))
-                            });
-                        client_graph.disconnect_and_delete_file(directory_watchers, client_index);
-                        self.bundled_files.values_mut()[file_index.get() as usize]
-                            .is_client_component_boundary = false;
+                    } else if was_boundary {
+                        // The directive is gone. `DevServer::retire_boundary_copies` handles the
+                        // client and SSR copies once this bundle's edges are known.
                         self.dev_incremental_result()
                             .client_components_removed
                             .push(ServerFileIndex::init(file_index.get()));
@@ -836,23 +876,35 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         // A new import linked list is constructed from scratch.
         let mut new_imports: Option<EdgeIndex> = None;
 
-        if mode == ProcessMode::Normal && matches!(SIDE, Side::Server) {
-            if ctx.server_seen_bit_set.is_set(file_index.get() as usize) {
-                self.edge_lists[file_index.get() as usize].first_import = new_imports;
-                return Ok(());
-            }
-            // RSC+SSR dual-index dispatch (`ctx.scbs.getSSRIndex`) is
-            // intentionally not implemented.
-        }
-
         match mode {
-            ProcessMode::Normal => self.process_chunk_import_records(
-                ctx,
-                &mut quick_lookup,
-                &mut new_imports,
-                file_index,
-                bundle_graph_index,
-            )?,
+            ProcessMode::Normal => {
+                self.process_chunk_import_records(
+                    ctx,
+                    &mut quick_lookup,
+                    &mut new_imports,
+                    file_index,
+                    bundle_graph_index,
+                )?;
+                if matches!(SIDE, Side::Server)
+                    && self.bundled_files.values()[file_index.get() as usize]
+                        .is_client_component_boundary
+                {
+                    // A boundary uses its SSR copy through the manifest, not through an
+                    // import record. The edge lets a trace cross between the two graphs.
+                    let ssr_key = bun_ptr::RawSlice::new(
+                        &*self.bundled_files.keys()[file_index.get() as usize],
+                    );
+                    let ssr_key = ServerSideKey::new(ssr_key.slice(), true);
+                    if let Some(ssr_index) = self.bundled_files.get_index(ssr_key.get()) {
+                        self.attach_edge(
+                            &mut quick_lookup,
+                            &mut new_imports,
+                            file_index,
+                            FileIndex::init(ssr_index as u32),
+                        )?;
+                    }
+                }
+            }
             ProcessMode::Css => self.process_css_chunk_import_records(
                 ctx,
                 &mut quick_lookup,
@@ -897,17 +949,23 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         debug_assert!(index.is_valid());
         debug_assert!(!ctx.loaders[index.get() as usize].is_css());
 
+        // An import stays in the importer's graph, unless it has `bunBakeGraph: "ssr"`.
+        let importer_is_ssr = matches!(SIDE, Side::Server)
+            && is_ssr_key(&self.bundled_files.keys()[file_index.get() as usize]);
         let records_len = ctx.import_records[index.get() as usize].len();
         for i in 0..records_len {
-            // Note: snapshot the three fields we need so the shared borrow
+            // Note: snapshot the fields we need so the shared borrow
             // on `ctx.import_records` ends before `process_edge_attachment`
             // takes `&mut ctx`.
-            let (flags, src, key) = {
+            let (flags, src, key, is_ssr_import) = {
                 let ir = &ctx.import_records[index.get() as usize].as_slice()[i];
                 (
                     ir.flags,
                     ir.source_index,
                     ir.path.key_for_incremental_graph(),
+                    importer_is_ssr
+                        || (matches!(SIDE, Side::Server)
+                            && ir.tag == bun_ast::ImportRecordTag::BakeResolveToSsrGraph),
                 )
             };
             let _ = self.process_edge_attachment(
@@ -918,6 +976,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 flags,
                 src,
                 key,
+                is_ssr_import,
                 EdgeAttachmentMode::JsOrHtml,
             )?;
         }
@@ -959,6 +1018,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     flags,
                     src,
                     key,
+                    false,
                     EdgeAttachmentMode::Css,
                 )?;
                 if result == EdgeAttachmentResult::Continue && src.is_valid() {
@@ -979,6 +1039,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         ir_flags: bun_ast::ImportRecordFlags,
         ir_source_index: bun_ast::Index,
         key: &[u8],
+        is_ssr_import: bool,
         mode: EdgeAttachmentMode,
     ) -> Result<EdgeAttachmentResult, crate::Error> {
         // Duplicated import records are marked unused by `ConvertESMExportsForHmr`.
@@ -1013,10 +1074,13 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 // Invalid source indices in CSS are external URLs.
                 EdgeAttachmentMode::Css => return Ok(EdgeAttachmentResult::Stop),
                 // Check IncrementalGraph for a file from a prior build.
-                EdgeAttachmentMode::JsOrHtml => match self.bundled_files.get_index(key) {
-                    Some(i) => (FileIndex::<SIDE>::init(i as u32), FileKind::Unknown),
-                    None => return Ok(EdgeAttachmentResult::Continue),
-                },
+                EdgeAttachmentMode::JsOrHtml => {
+                    let key = ServerSideKey::new(key, is_ssr_import);
+                    match self.bundled_files.get_index(key.get()) {
+                        Some(i) => (FileIndex::<SIDE>::init(i as u32), FileKind::Unknown),
+                        None => return Ok(EdgeAttachmentResult::Continue),
+                    }
+                }
             }
         };
 
@@ -1034,10 +1098,22 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             ctx.gts.bits(SIDE).set(imported_file_index.get() as usize);
         }
 
+        self.attach_edge(quick_lookup, new_imports, file_index, imported_file_index)?;
+        Ok(EdgeAttachmentResult::Continue)
+    }
+
+    /// Keeps or makes the edge from `file_index` to a file it imports, in the new import list.
+    fn attach_edge(
+        &mut self,
+        quick_lookup: &mut ArrayHashMap<FileIndex<SIDE>, TempLookup>,
+        new_imports: &mut Option<EdgeIndex>,
+        file_index: FileIndex<SIDE>,
+        imported_file_index: FileIndex<SIDE>,
+    ) -> Result<(), crate::Error> {
         let gop = quick_lookup.get_or_put(imported_file_index)?;
         if gop.found_existing {
             if gop.value_ptr.seen {
-                return Ok(EdgeAttachmentResult::Continue);
+                return Ok(());
             }
             gop.value_ptr.seen = true;
             let ei = gop.value_ptr.edge_index;
@@ -1066,7 +1142,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 seen: true,
             };
         }
-        Ok(EdgeAttachmentResult::Continue)
+        Ok(())
     }
 
     // ────────────────────────────────────────────────────────────────────────
@@ -1309,7 +1385,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             Side::Client => graph == bake::Graph::Client,
             Side::Server => graph != bake::Graph::Client,
         });
-        let gop = self.bundled_files.get_or_put(abs_path)?;
+        let key = ServerSideKey::new(abs_path, graph == bake::Graph::Ssr);
+        let gop = self.bundled_files.get_or_put(key.get())?;
         let idx = gop.index;
         let found_existing = gop.found_existing;
         if found_existing {
@@ -1317,7 +1394,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 gop.value_ptr.is_route = true;
             }
         } else {
-            *gop.key_ptr = Box::<[u8]>::from(abs_path);
+            *gop.key_ptr = Box::<[u8]>::from(key.get());
         }
         if !found_existing {
             self.edge_lists.push(EdgeLists::default());
@@ -1346,14 +1423,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         kind: FileKind::Unknown,
                         failed: false,
                         is_rsc: !is_ssr_graph,
-                        is_ssr: is_ssr_graph,
                         is_route: route == RouteKind::Route,
                         is_client_component_boundary: false,
                         ..Default::default()
                     };
-                } else if is_ssr_graph {
-                    self.bundled_files.values_mut()[idx].is_ssr = true;
-                } else {
+                } else if !is_ssr_graph {
                     self.bundled_files.values_mut()[idx].is_rsc = true;
                 }
             }
@@ -1439,9 +1513,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     ) -> Result<(), bun_alloc::AllocError> {
         let (idx, found_existing) = match key {
             InsertFailureKey::AbsPath(abs_path) => {
-                let gop = self.bundled_files.get_or_put(abs_path)?;
+                let key = ServerSideKey::new(abs_path, matches!(SIDE, Side::Server) && is_ssr_graph);
+                let gop = self.bundled_files.get_or_put(key.get())?;
                 if !gop.found_existing {
-                    *gop.key_ptr = Box::<[u8]>::from(abs_path);
+                    *gop.key_ptr = Box::<[u8]>::from(key.get());
                 }
                 let (i, fe) = (gop.index, gop.found_existing);
                 if !fe {
@@ -1475,14 +1550,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     self.bundled_files.values_mut()[idx] = File {
                         failed: true,
                         is_rsc: !is_ssr_graph,
-                        is_ssr: is_ssr_graph,
                         ..Default::default()
                     };
                 } else {
                     let f = &mut self.bundled_files.values_mut()[idx];
-                    if is_ssr_graph {
-                        f.is_ssr = true;
-                    } else {
+                    if !is_ssr_graph {
                         f.is_rsc = true;
                     }
                     f.failed = true;
@@ -1502,7 +1574,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             let mut buf = bun_paths::path_buffer_pool::get();
             let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
             // SAFETY: sibling-field `relative_path` reads `dev.root` only.
-            let owner_display_name = unsafe { (*dev).relative_path(&mut *buf, key.slice()) };
+            let owner_display_name = unsafe {
+                (*dev).relative_path(&mut *buf, file_of_server_side_key(key.slice()))
+            };
             SerializedFailure::init_from_log(
                 match SIDE {
                     Side::Server => serialized_failure::Owner::Server(FileIndex::init(idx as u32)),
@@ -1536,12 +1610,15 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     // ────────────────────────────────────────────────────────────────────────
 
     /// `IncrementalGraph(side).onFileDeleted` (spec :1528).
+    /// `graph` is the graph of the task that found the file missing.
     pub(crate) fn on_file_deleted(
         &mut self,
         abs_path: &[u8],
+        graph: bake::Graph,
         bv2: &mut bun_bundler::BundleV2<'_>,
     ) -> Result<(), bun_alloc::AllocError> {
-        let Some(index) = self.get_file_index(abs_path) else {
+        let key = ServerSideKey::new(abs_path, graph == bake::Graph::Ssr);
+        let Some(index) = self.get_file_index(key.get()) else {
             return Ok(());
         };
 
@@ -1555,24 +1632,27 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.free_edge(edge_index);
         }
 
-        // Rebuild all dependencies.
-        let target = match SIDE {
-            Side::Client => bun_ast::Target::Browser,
-            Side::Server => bun_ast::Target::Bun,
-        };
+        // Rebuild all dependencies, each in its own graph.
         let mut it = self.edge_lists[index.get() as usize].first_dep;
         while let Some(edge_index) = it {
             let dep = self.edges[edge_index.get() as usize];
             it = dep.next_dependency;
             debug_assert_eq!(dep.imported.get(), index.get());
             let key = &self.bundled_files.keys()[dep.dependency.get() as usize];
+            let target = match SIDE {
+                Side::Client => bun_ast::Target::Browser,
+                Side::Server if is_ssr_key(key) => bun_ast::Target::ServerComponentsSsr,
+                Side::Server => bun_ast::Target::Bun,
+            };
             let loader = self.bundled_files.values()[dep.dependency.get() as usize]
                 .html_route_bundle_index
                 .is_some()
                 .then_some(bun_ast::Loader::Html);
             bun_core::handle_oom(
                 bv2.enqueue_file_from_dev_server_incremental_graph_invalidation(
-                    key, target, loader,
+                    file_of_server_side_key(key),
+                    target,
+                    loader,
                 ),
             );
         }
@@ -1614,6 +1694,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         entry_points: &mut EntryPointList,
     ) -> Result<(), crate::Error> {
         for path in paths {
+            if matches!(SIDE, Side::Server) {
+                self.invalidate_server_side(path, entry_points)?;
+                continue;
+            }
             let Some(index) = self.bundled_files.get_index(path) else {
                 continue;
             };
@@ -1679,15 +1763,33 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         }
                     }
                 },
-                Side::Server => {
-                    let f = &self.bundled_files.values()[index];
-                    if f.is_rsc {
-                        entry_points.append_js(owned_path, bake::Graph::Server)?;
-                    }
-                    if f.is_ssr && !f.is_client_component_boundary {
-                        entry_points.append_js(owned_path, bake::Graph::Ssr)?;
-                    }
-                }
+                Side::Server => unreachable!(),
+            }
+        }
+        Ok(())
+    }
+
+    /// `invalidate` for the records that the server graph and the SSR graph hold for `path`.
+    fn invalidate_server_side(
+        &mut self,
+        path: &[u8],
+        entry_points: &mut EntryPointList,
+    ) -> Result<(), crate::Error> {
+        let mut is_boundary = false;
+        if let Some(index) = self.bundled_files.get_index(path) {
+            self.stale_files.set(index);
+            let f = &self.bundled_files.values()[index];
+            is_boundary = f.is_client_component_boundary;
+            if f.is_rsc {
+                entry_points.append_js(path, bake::Graph::Server)?;
+            }
+        }
+        let ssr_key = ServerSideKey::new(path, true);
+        if let Some(index) = self.bundled_files.get_index(ssr_key.get()) {
+            self.stale_files.set(index);
+            // The server graph's load of a boundary makes the SSR copy from the same bytes.
+            if !is_boundary {
+                entry_points.append_js(path, bake::Graph::Ssr)?;
             }
         }
         Ok(())
@@ -1915,7 +2017,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 let mut overlapping_memory_cost: u32 = 0;
 
                 for item in &self.current_chunk_source_maps {
-                    file_paths.push(Box::<[u8]>::from(&*paths[item.file_index.get() as usize]));
+                    file_paths.push(Box::<[u8]>::from(file_of_server_side_key(
+                        &paths[item.file_index.get() as usize],
+                    )));
                     contained_maps.push(item.source_map.clone());
                     overlapping_memory_cost += item.source_map.memory_cost() as u32;
                 }

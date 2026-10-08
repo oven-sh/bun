@@ -16,6 +16,7 @@ const parser = require(join(root, "packages/parser/dist/index.js"));
 const util = (name: string) => require(join(root, "packages/eslint-plugin/dist/util", name));
 const returnTypes = util("explicitReturnTypeUtils.js");
 const { collectVariables } = util("collectUnusedVariables.js");
+const { isReferenceToGlobalFunction } = util("scopeUtils.js");
 const { analyzeClassMemberUsage } = util("class-scope-analyzer/classScopeAnalyzer.js");
 const { simpleTraverse } = require(join(root, "packages/typescript-estree/dist/index.js"));
 
@@ -40,6 +41,8 @@ function analyze(it: { filename: string; code: string; sourceType: string; parse
 
   const returnsOf = new Map<object, object[]>();
   const functions: any[] = [];
+  // Asked after the traversal, which sets the parents.
+  const names: [any, any][] = [];
   const isFunction = (node: any) =>
     node.type === "ArrowFunctionExpression" || node.type === "FunctionExpression" || node.type === "FunctionDeclaration";
   simpleTraverse(
@@ -49,6 +52,12 @@ function analyze(it: { filename: string; code: string; sourceType: string; parse
         if (isFunction(node)) {
           functions.push(node);
           returnsOf.set(node, []);
+        } else if ((node.type === "CallExpression" || node.type === "NewExpression") && node.callee.type === "Identifier") {
+          names.push([node.callee, node]);
+        } else if (node.type === "TSTypeReference" && node.typeName.type === "Identifier" && node.typeName.name !== "const") {
+          names.push([node.typeName, node.typeName]);
+        } else if ((node.type === "TSClassImplements" || node.type === "TSInterfaceHeritage") && node.expression.type === "Identifier") {
+          names.push([node.expression, node.expression]);
         } else if (node.type === "ReturnStatement") {
           let owner = node.parent;
           while (owner && !isFunction(owner)) owner = owner.parent;
@@ -58,6 +67,7 @@ function analyze(it: { filename: string; code: string; sourceType: string; parse
     },
     true,
   );
+  const globals = names.map(([name, node]) => [...name.range, Number(isReferenceToGlobalFunction(name.name, node, sourceCode))]);
   const functionRows = functions.map(node => {
     const info = { node, returns: returnsOf.get(node) };
     const isExpression = node.type !== "FunctionDeclaration";
@@ -108,6 +118,7 @@ function analyze(it: { filename: string; code: string; sourceType: string; parse
     unused: variables(analysis.unusedVariables),
     used: variables(analysis.usedVariables),
     members: rows(members),
+    globals: rows(globals),
   };
 }
 
@@ -130,7 +141,7 @@ function add(rule: string, one: Case) {
   cases.push(JSON.stringify({ id, rule, filename: one.filename, code: one.code, languageOptions }));
   const list = (all: string[]) => `[${all.join(",")}]`;
   expected.push(
-    `{"id":${id},"functions":${list(result.functions)},"unused":${list(result.unused)},"used":${list(result.used)},"members":${list(result.members)}}`,
+    `{"id":${id},"functions":${list(result.functions)},"unused":${list(result.unused)},"used":${list(result.used)},"members":${list(result.members)},"globals":${list(result.globals)}}`,
   );
 }
 

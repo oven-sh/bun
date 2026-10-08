@@ -85,7 +85,7 @@ impl UsedMarks {
     /// name. In a module nothing is in the global scope, and they have no effect.
     pub fn mark_exported_variables<'a>(&mut self, file: &'a File<'a>) {
         let global = file.scope();
-        if global.kind() != ScopeKind::Global || !strings::contains(file.text(), b"exported") {
+        if global.symbols().len() == 0 || !strings::contains(file.text(), b"exported") {
             return;
         }
         for comment in file.comments() {

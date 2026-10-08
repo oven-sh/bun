@@ -191,7 +191,11 @@ enum Level {
 /// Whether `e` is a link of an optional chain after its first `?.`. The `!` of `a?.b!` is one.
 #[inline]
 fn is_chain_link(e: Expr<'_>) -> bool {
-    e.is_in_optional_chain()
+    match e.tag() {
+        ExprTag::Dot | ExprTag::Index | ExprTag::Call => e.chain() != Chain::No,
+        ExprTag::NonNull => e.is_in_optional_chain(),
+        _ => false,
+    }
 }
 
 /// Whether oxc has a `ChainExpression` around `e`: it is all of `a?.b.c!`, not a part of it.

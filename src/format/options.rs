@@ -65,6 +65,9 @@ pub struct FormatOptions {
     /// semicolon. A line break that is part of a text (in a template, in a comment) is written as `\r\n`, to
     /// tell it from the others: Markdown indents what follows it in another way.
     pub is_in_markdown: bool,
+    /// The text is `<$>`, JSX that is in MDX, and `</$>`: Prettier's `rootMarker: "mdx"`. Only what is between the
+    /// two is written.
+    pub is_mdx_jsx: bool,
     /// Formats the JavaScript and TypeScript in blocks of code in Markdown. Without it they stay as they are.
     pub format_javascript: Option<FormatJavaScript>,
     /// Whose output to produce where the two differ.

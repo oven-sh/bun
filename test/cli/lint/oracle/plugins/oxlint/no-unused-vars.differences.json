@@ -1,0 +1,533 @@
+[
+ {
+  "cause": "a logical assignment as a statement is no use for oxlint",
+  "suite": "eslint",
+  "options": [],
+  "extension": "cjs",
+  "code": "var a; a ||= 1;",
+  "oxlint": [
+   "1:5"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "a logical assignment as a statement is no use for oxlint",
+  "suite": "eslint",
+  "options": [],
+  "extension": "cjs",
+  "code": "var a; a &&= 1;",
+  "oxlint": [
+   "1:5"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "a logical assignment as a statement is no use for oxlint",
+  "suite": "eslint",
+  "options": [],
+  "extension": "cjs",
+  "code": "var a; a ??= 1;",
+  "oxlint": [
+   "1:5"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "reportUsedIgnorePattern",
+  "suite": "eslint",
+  "options": [
+   {
+    "destructuredArrayIgnorePattern": "^_",
+    "reportUsedIgnorePattern": true,
+    "varsIgnorePattern": "[iI]gnored"
+   }
+  ],
+  "extension": "cjs",
+  "code": "let _x;\n[_x] = arr;\nfoo(_x);",
+  "oxlint": [],
+  "ours": [
+   "1:5"
+  ]
+ },
+ {
+  "cause": "a parameter with a default before one that is used",
+  "suite": "eslint",
+  "options": [],
+  "extension": "cjs",
+  "code": "function foo(a = 1, b){alert(b);} foo();",
+  "oxlint": [],
+  "ours": [
+   "1:14"
+  ]
+ },
+ {
+  "cause": "a logical assignment as a statement is no use for oxlint",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "ts",
+  "code": "\nvar a;\na ||= 1;\n      ",
+  "oxlint": [
+   "2:5"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "a logical assignment as a statement is no use for oxlint",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "ts",
+  "code": "\nvar a;\na &&= 1;\n      ",
+  "oxlint": [
+   "2:5"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "a logical assignment as a statement is no use for oxlint",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "ts",
+  "code": "\nvar a;\na ??= 1;\n      ",
+  "oxlint": [
+   "2:5"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "a syntax error that only oxc reports",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "ts",
+  "code": "\nimport { AccessorDecorator } from 'decorators';\nexport class Foo {\n  @AccessorDecorator\n  set bar() {}\n}\n    ",
+  "oxlint": [
+   "5:10"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "what is not exported in a declared namespace or module",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "ts",
+  "code": "\ndeclare namespace Foo {\n  function bar(line: string, index: number | null, tabSize: number): number;\n  var baz: string;\n}\nconsole.log(Foo);\n    ",
+  "oxlint": [
+   "4:7"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "a syntax error that only oxc reports",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "ts",
+  "code": "\ndeclare module 'foo' {\n  type Test = 1;\n  const x: Test = 1;\n  export = x;\n}\n    ",
+  "oxlint": [
+   "4:19"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "what is not exported in a declared namespace or module",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "ts",
+  "code": "\nexport declare namespace Foo {\n  namespace Bar {\n    namespace Baz {\n      namespace Bam {\n        const x = 1;\n      }\n    }\n  }\n}\n    ",
+  "oxlint": [
+   "6:15"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "a logical assignment as a statement is no use for oxlint",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "ts",
+  "code": "\nlet foo = 1;\nfoo ??= 2;\n    ",
+  "oxlint": [
+   "2:5"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "a logical assignment as a statement is no use for oxlint",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "ts",
+  "code": "\nlet foo = 1;\nfoo &&= 2;\n    ",
+  "oxlint": [
+   "2:5"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "a logical assignment as a statement is no use for oxlint",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "ts",
+  "code": "\nlet foo = 1;\nfoo ||= 2;\n    ",
+  "oxlint": [
+   "2:5"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "a syntax error that only oxc reports",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "d.ts",
+  "code": "\nexport namespace Foo {\n  type Foo = 1;\n  type Bar = 1;\n\n  export default function foo(): Bar;\n}\n      ",
+  "oxlint": [
+   "6:3"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "reportUsedIgnorePattern",
+  "suite": "typescript-eslint",
+  "options": [
+   {
+    "destructuredArrayIgnorePattern": "^_",
+    "reportUsedIgnorePattern": true,
+    "varsIgnorePattern": "[iI]gnored"
+   }
+  ],
+  "extension": "ts",
+  "code": "\nlet _x;\n[_x] = arr;\nfoo(_x);\n      ",
+  "oxlint": [],
+  "ours": [
+   "2:5"
+  ]
+ },
+ {
+  "cause": "an import that is called h in a file with JSX",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "tsx",
+  "code": "\nimport React from 'react';\nimport { h } from 'some-other-jsx-lib';\n\nexport const ComponentFoo = () => {\n  return <div>Foo Foo</div>;\n};\n      ",
+  "oxlint": [],
+  "ours": [
+   "3:10"
+  ]
+ },
+ {
+  "cause": "reportUsedIgnorePattern",
+  "suite": "typescript-eslint",
+  "options": [
+   {
+    "reportUsedIgnorePattern": true,
+    "varsIgnorePattern": "^_"
+   }
+  ],
+  "extension": "ts",
+  "code": "\nnamespace _Foo {}\nexport const x = _Foo;\n      ",
+  "oxlint": [],
+  "ours": [
+   "2:11"
+  ]
+ },
+ {
+  "cause": "a value and a type of one name",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "ts",
+  "code": "\nconst A = 0;\nexport type A = typeof A;\n      ",
+  "oxlint": [],
+  "ours": [
+   "2:7"
+  ]
+ },
+ {
+  "cause": "a value and a type of one name",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "ts",
+  "code": "\ninterface LocalName {}\nconst LocalName = 0;\nexport type UsesLocalName = LocalName;\n      ",
+  "oxlint": [],
+  "ours": [
+   "2:11"
+  ]
+ },
+ {
+  "cause": "a value and a type of one name",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "ts",
+  "code": "\nconst Foo = 1;\ninterface Foo {}\nexport type UsesFoo = Foo;\n      ",
+  "oxlint": [],
+  "ours": [
+   "2:7"
+  ]
+ },
+ {
+  "cause": "a syntax error that only oxc reports",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "d.ts",
+  "code": "\nexport namespace Foo {\n  const foo: string;\n  const bar: number;\n\n  export default bar;\n}\n      ",
+  "oxlint": [
+   "6:3"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "a syntax error that only oxc reports",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "d.ts",
+  "code": "\nexport namespace Foo {\n  const foo: string;\n  const bar: number;\n  export const bazz: number;\n\n  export default bar;\n}\n      ",
+  "oxlint": [
+   "7:3"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "a syntax error that only oxc reports",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "d.ts",
+  "code": "\nexport namespace Foo {\n  const foo: string;\n  export const bar: number;\n\n  export * from '...';\n}\n      ",
+  "oxlint": [
+   "6:3"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "a syntax error that only oxc reports",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "d.ts",
+  "code": "\nnamespace Foo {\n  type Foo = 1;\n  type Bar = 1;\n\n  export = Bar;\n}\n      ",
+  "oxlint": [
+   "6:3"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "what is not exported in a declared namespace or module",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "ts",
+  "code": "\nexport declare namespace Foo {\n  namespace Bar {\n    namespace Baz {\n      namespace Bam {\n        const x = 1;\n      }\n\n      export {};\n    }\n  }\n}\n      ",
+  "oxlint": [
+   "6:15"
+  ],
+  "ours": [
+   "5:17"
+  ]
+ },
+ {
+  "cause": "what is not exported in a declared namespace or module",
+  "suite": "typescript-eslint",
+  "options": [],
+  "extension": "ts",
+  "code": "\ndeclare module 'foo' {\n  namespace Bar {\n    namespace Baz {\n      namespace Bam {\n        const x = 1;\n      }\n\n      export {};\n    }\n  }\n}\n      ",
+  "oxlint": [
+   "6:15"
+  ],
+  "ours": [
+   "5:17"
+  ]
+ },
+ {
+  "cause": "a read that a sequence discards",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "\n        function foo(a) { return (a, 0); }\n        foo(1);\n        ",
+  "oxlint": [
+   "2:22"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "a logical assignment as a statement is no use for oxlint",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "let a = 1; a ||= 2;",
+  "oxlint": [
+   "1:5"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "a read that a sequence discards",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "let a = 0; let b = (a, 0) + 1; f(b);",
+  "oxlint": [
+   "1:5"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "declare function at the top of the file",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "declare function func(strings: any, ...values: any[]): object",
+  "oxlint": [],
+  "ours": [
+   "1:18"
+  ]
+ },
+ {
+  "cause": "React and names with a colon in JSX",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "\n        const React = {};\n\n        export const Foo = () => <div />\n        ",
+  "oxlint": [
+   "2:15"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "typeof in what declares the variable",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "function foo(...args: typeof args) {} foo()",
+  "oxlint": [
+   "1:17"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "the parameters of a method with override",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "\n        class Foo {\n            public method(a: number, b: number): number {\n                return a + b;\n            }\n        }\n        class Bar extends Foo {\n            public override method(a: number, b: number): number {\n                return a;\n            }\n        }\n        new Bar();\n        ",
+  "oxlint": [],
+  "ours": [
+   "8:47"
+  ]
+ },
+ {
+  "cause": "a type parameter of an interface in a declared module",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "\n        declare module 'vitest' {\n            interface Matchers<T> {\n                toBeFoo(value: unknown): unknown;\n            }\n        }\n        ",
+  "oxlint": [],
+  "ours": [
+   "3:32"
+  ]
+ },
+ {
+  "cause": "what is not exported in a declared namespace or module",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "declare module 'bun:test' { class MyClass<T> {} }",
+  "oxlint": [
+   "1:35",
+   "1:43"
+  ],
+  "ours": [
+   "1:43"
+  ]
+ },
+ {
+  "cause": "a value and a type of one name",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "const a = { hello: 'world' }; export type a = typeof a;",
+  "oxlint": [],
+  "ours": [
+   "1:7"
+  ]
+ },
+ {
+  "cause": "typeof in what declares the variable",
+  "suite": "oxc",
+  "options": [],
+  "extension": "ts",
+  "code": "function foo(): typeof foo { }",
+  "oxlint": [
+   "1:10"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "typeof in what declares the variable",
+  "suite": "oxc",
+  "options": [],
+  "extension": "ts",
+  "code": "function foo(): typeof foo { return foo }",
+  "oxlint": [
+   "1:10"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "typeof in what declares the variable",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "function foo(): typeof foo {}",
+  "oxlint": [
+   "1:10"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "React and names with a colon in JSX",
+  "suite": "oxc",
+  "options": [],
+  "extension": "tsx",
+  "code": "\n            var App;\n              var Hello;\n              React.render(<App:Hello/>);\n        ",
+  "oxlint": [
+   "2:17",
+   "3:19"
+  ],
+  "ours": []
+ },
+ {
+  "cause": "a type parameter that is called like a namespace or an import",
+  "suite": "oxc",
+  "options": [],
+  "extension": "ts",
+  "code": "\n        namespace Database {\n          export type Table<T> = T;\n        }\n\n        export function test<Database, Table extends Database.Table<Database>>(\n          database: Database,\n          table: Table\n        ): { database: Database; table: Table } {\n          return { database, table };\n        }\n            ",
+  "oxlint": [],
+  "ours": [
+   "2:19"
+  ]
+ },
+ {
+  "cause": "a type parameter that is called like a namespace or an import",
+  "suite": "oxc",
+  "options": [],
+  "extension": "ts",
+  "code": "\n        export namespace One {\n          namespace T {\n            export type Foo<U = 1> = U;\n          }\n          export type Bar<T> = T.Foo<T>;\n        }\n            ",
+  "oxlint": [],
+  "ours": [
+   "3:21"
+  ]
+ },
+ {
+  "cause": "a type parameter that is called like a namespace or an import",
+  "suite": "oxc",
+  "options": [],
+  "extension": "ts",
+  "code": "\n        namespace A {\n          export namespace B {\n            export type C<T> = T;\n          }\n        }\n        export type Test<A> = A.B.C<A>;\n            ",
+  "oxlint": [],
+  "ours": [
+   "2:19"
+  ]
+ },
+ {
+  "cause": "a type parameter that is called like a namespace or an import",
+  "suite": "oxc",
+  "options": [],
+  "extension": "ts",
+  "code": "\n        import type * as NS from 'foo';\n        export class Bar<NS> implements NS.Foo {\n          value: NS;\n        }\n            ",
+  "oxlint": [],
+  "ours": [
+   "2:26"
+  ]
+ }
+]

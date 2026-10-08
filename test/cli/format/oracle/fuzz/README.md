@@ -17,6 +17,7 @@ Each makes small programs, formats them with the npm package of Prettier and wit
 | `markdown.ts` | Markdown: snapshot inputs with random changes, or a soup of markers. Compares the output, the syntax tree with its positions, or MDX |
 | `markdown-guards.ts` | not a comparison: 102 shapes of Markdown that are slow or nest without end in other parsers, under a limit on time and memory |
 | `handlebars/generate.ts` | Handlebars: templates from a grammar, real ones with random changes, or pieces in any order. It only writes them: `against-prettier.ts --accepts` compares, what is rejected included |
+| `handlebars/damage.ts` | Handlebars: the templates whose syntax tree, as Prettier compares trees in its own tests, is another one after formatting, and of which `bun format` does not say that it would damage them |
 | `handlebars/guards.ts` | not a comparison: 92 shapes of templates that nest without end or take quadratic time in a careless parser or printer, at two sizes, under a limit on time and memory |
 | `html/templates.ts` | HTML in the templates of JavaScript: fixtures and small pieces in `` html`..` ``, `/* HTML */` and `@Component({ template })`, with substitutions in every kind of place. It only writes them: `against-prettier.ts --options='{"embeddedHtml":true}'` compares |
 | `html/templates-guards.ts` | not a comparison: 30 shapes of templates with HTML that nest without end or take quadratic time in a careless formatter, at two sizes, under a limit on time |

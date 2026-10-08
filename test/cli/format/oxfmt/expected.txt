@@ -200,5 +200,5 @@ FAIL prettier ts/union/suppression.ts { printWidth: 80 }
 FAIL prettier ts/union/suppression.ts { printWidth: 100 }
 FAIL oxfmt ts/union/suppression.ts { printWidth: 80 }
 FAIL oxfmt ts/union/suppression.ts { printWidth: 100 }
-as Prettier prints them: 678/736
-as oxfmt prints them, in its flavor: 584/728
+as Prettier prints them: 828/886
+as oxfmt prints them, in its flavor: 734/878

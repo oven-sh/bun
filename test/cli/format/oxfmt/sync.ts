@@ -4,7 +4,7 @@
 //   bun test/cli/format/oxfmt/sync.ts --extract <part of a path, or ""> <directory>
 import { $ } from "bun";
 import { readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { collect, extract, writeBundle } from "../bundle.ts";
 import { isInput, render, rowsOf, type Options } from "./fixtures.ts";
 
@@ -18,12 +18,33 @@ if (source === "--extract" && rest.length === 2) {
   const prettier = await import(join(prettierRoot, "index.mjs"));
   const files = new Map<string, Uint8Array>();
   for (const language of ["js", "ts"]) collect(join(source, "crates/oxc_formatter/tests/fixtures"), language, files, () => false);
+  // `tests/jsdoc/fixtures` has pairs, `a.ts` and `a.output.ts`, with options in snake case. They are written in the form of the others.
+  const pairs = new Map<string, Uint8Array>();
+  collect(join(source, "crates/oxc_formatter/tests"), "jsdoc/fixtures", pairs, () => false);
+  const rowsOfPairs = new Map<string, Options[]>();
+  for (const [name, bytes] of pairs) {
+    const [, stem, extension] = /^(.*?)(\.[jt]sx?)$/.exec(name) ?? [];
+    const output = pairs.get(`${stem}.output${extension}`);
+    // The one that oxc's own test leaves out: it needs a formatter for HTML.
+    if (!stem || !output || name.endsWith("descriptions/032-jsx-tsx-css.ts")) continue;
+    const given = pairs.get(`${stem}.options.json`) ?? pairs.get(`${dirname(name)}/options.json`);
+    const options: Options = {};
+    for (const [key, value] of Object.entries(given ? JSON.parse(Buffer.from(given).toString()) : {})) {
+      const camelCase = key.replace(/_(.)/g, (_, letter) => letter.toUpperCase());
+      options[key === "single_quote" || key === "print_width" ? camelCase : `jsdoc.${camelCase}`] = value;
+    }
+    // A property of `jsdoc` says that it is on.
+    if (!Object.keys(options).some(name => name.startsWith("jsdoc."))) options.jsdoc = true;
+    files.set(name, bytes);
+    files.set(`${name}.snap`, Buffer.from(render([[options, Buffer.from(output).toString()]])));
+    rowsOfPairs.set(name, [options]);
+  }
   for (const [name, bytes] of [...files]) {
     if (!isInput(name)) continue;
     const outputs: [Options, string][] = [];
-    for (const options of rowsOf(name, files)) {
-      // Not an option of Prettier.
-      const { jsdoc, ...known } = options;
+    for (const options of rowsOfPairs.get(name) ?? rowsOf(name, files)) {
+      // Not options of Prettier.
+      const known = Object.fromEntries(Object.entries(options).filter(([name]) => !name.startsWith("jsdoc")));
       const output = await prettier.format(Buffer.from(bytes).toString(), { ...known, filepath: name }).catch((error: Error) => `<${error.name}>`);
       outputs.push([options, output]);
     }

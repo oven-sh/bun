@@ -25,6 +25,8 @@ function expected([op, pattern, flags, text, replacement]: Request): unknown {
   switch (op) {
     case "test":
       return regex.test(text);
+    case "toString":
+      return String(regex);
     case "search":
       return text.search(regex);
     case "match":
@@ -70,7 +72,8 @@ for (const source of sources) {
     } catch {
       continue;
     }
-    for (const op of ["test", "search", "match", "matchAll", "replace", "split"]) {
+    // JavaScriptCore escapes the source in another way than V8, which is what ESLint prints.
+    for (const op of ["test", "search", "match", "matchAll", "replace", "split", ...(process.versions.bun ? [] : ["toString"])]) {
       batch.push([op, pattern, flags, text, op === "replace" ? pick(REPLACEMENTS) : ""]);
     }
     if (batch.length >= 60000) check(batch.splice(0));

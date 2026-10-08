@@ -8,7 +8,7 @@
 //!   with absolute paths for `parent`, `resolved` and `references`, or `{"error": {message, index}}`.
 //! - `exec <file>`: `pattern  flags  text  lastIndex`. `{"error"}`, `null`, `"limit"`, or `{"indices": [[start, end] | null, ..],
 //!   "groups": {name: [start, end] | null}}` as with the `d` flag.
-//! - `ops <file>`: `op  pattern  flags  text  [replacement]`, where `op` is `test`, `search`, `match`, `matchAll`, `replace` or
+//! - `ops <file>`: `op  pattern  flags  text  [replacement]`, where `op` is `test`, `toString`, `search`, `match`, `matchAll`, `replace` or
 //!   `split`. The result of the JavaScript method, with `matchAll` as the list of the lists of indices, or `"limit"`.
 //! - `charset <file>`: `pattern  flags`. The characters `c` for which `^(?:pattern)$` matches the string of only `c`, as
 //!   `"first-last first-last .."` in hexadecimal.
@@ -431,6 +431,7 @@ fn ops(line: &str) -> String {
     }
     match *op {
         "test" => write!(out, "{}", regex.test(&text)).unwrap(),
+        "toString" => quote(&mut out, regex.to_string().as_bytes()),
         "search" => match regex.search(&text) {
             Some(at) => write!(out, "{}", regex::utf16_index(&text, at)).unwrap(),
             None => out.push_str("-1"),

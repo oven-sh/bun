@@ -524,6 +524,16 @@ impl<'p, 't> Machine<'p, 't> {
         self.slots.resize(self.program.slot_count as usize, NONE);
         self.stack.clear();
         let mut pos = start;
+        if self.program.unicode {
+            // A position in the middle of a character stands for its start.
+            let is_inside =
+                |pos: u32| self.text.get(pos as usize).is_some_and(|byte| byte & 0xC0 == 0x80);
+            for _ in 0..3 {
+                if pos > 0 && is_inside(pos) {
+                    pos -= 1;
+                }
+            }
+        }
         loop {
             match self.candidate(pos) {
                 Some(candidate) if !sticky || candidate == pos => pos = candidate,

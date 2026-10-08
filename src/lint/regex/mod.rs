@@ -28,7 +28,8 @@
 //! | `s.replaceAll(re, "$1")` | the same: it requires `g` |
 //! | `s.replace(re, (m, p1) => ..)` | [`re.replace_with(s, \|m, out\| ..)`](Regex::replace_with) |
 //! | `s.split(re)` | [`re.split(s)`](Regex::split) |
-//! | `re.source`, `re.flags`, `re.global`, .. | [`Regex::source`], [`Regex::flags`] |
+//! | `re.source`, `re.flags`, `re.global`, .. | [`Regex::source`], [`Regex::flags`]: `re.flags().global`, `re.flags().to_string()` |
+//! | `String(re)`, `` `${re}` `` | `re.to_string()`, `format!("{re}")` |
 //! | `escapeRegExp(s)` of `escape-string-regexp` | [`escape`] |
 //!
 //! A [`Regex`] has no `lastIndex`: it does not change, and all threads can share it. [`Regex::test`],
@@ -94,6 +95,55 @@ pub fn escape(text: &[u8]) -> Vec<u8> {
     out
 }
 
+/// V8's `EscapeRegExpSource`.
+fn escape_source(pattern: &[u8]) -> Box<[u8]> {
+    if pattern.is_empty() {
+        return (*b"(?:)").into();
+    }
+    if strings::index_of_any(pattern, b"/\n\r\xE2").is_none() {
+        return pattern.into();
+    }
+    let mut out = Vec::with_capacity(pattern.len() + 8);
+    let (mut in_class, mut escaped) = (false, false);
+    let mut rest = pattern;
+    while let Some((&byte, tail)) = rest.split_first() {
+        let (line_terminator, tail): (&[u8], _) = match rest {
+            [b'\n', tail @ ..] => (b"n", tail),
+            [b'\r', tail @ ..] => (b"r", tail),
+            [0xE2, 0x80, 0xA8, tail @ ..] => (b"u2028", tail),
+            [0xE2, 0x80, 0xA9, tail @ ..] => (b"u2029", tail),
+            _ => (b"", tail),
+        };
+        rest = tail;
+        if !line_terminator.is_empty() {
+            if !escaped {
+                out.push(b'\\');
+            }
+            out.extend_from_slice(line_terminator);
+            escaped = false;
+            continue;
+        }
+        if !escaped {
+            match byte {
+                b'/' if !in_class => out.push(b'\\'),
+                b'[' => in_class = true,
+                b']' => in_class = false,
+                _ => {}
+            }
+        }
+        out.push(byte);
+        escaped = byte == b'\\' && !escaped;
+    }
+    out.into()
+}
+
+/// `String(regex)`: `/source/flags`
+impl std::fmt::Display for Regex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "/{}/{}", bstr::BStr::new(&self.source), self.flags)
+    }
+}
+
 const _: fn() = || {
     fn shared_by_threads<T: Send + Sync>() {}
     shared_by_threads::<Regex>();
@@ -123,7 +173,7 @@ impl Regex {
         Ok(Regex {
             program: compile::compile(&ast, flags)?,
             flags,
-            source: pattern.into(),
+            source: escape_source(pattern),
             names: compile::group_names(&ast),
         })
     }
@@ -143,7 +193,8 @@ impl Regex {
         }
     }
 
-    /// `regex.source`, but as it was given: `/` is not escaped and the empty pattern is not `(?:)`.
+    /// `regex.source`: the pattern with `/` and line terminators escaped, as V8 does it. `(?:)` if it
+    /// is empty.
     #[inline]
     pub fn source(&self) -> &[u8] {
         &self.source

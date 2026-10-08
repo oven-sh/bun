@@ -59,6 +59,27 @@ pub struct Flags {
     pub unicode_sets: bool,
 }
 
+/// `regex.flags`
+impl std::fmt::Display for Flags {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (flag, letter) in [
+            (self.has_indices, "d"),
+            (self.global, "g"),
+            (self.ignore_case, "i"),
+            (self.multiline, "m"),
+            (self.dot_all, "s"),
+            (self.unicode, "u"),
+            (self.unicode_sets, "v"),
+            (self.sticky, "y"),
+        ] {
+            if flag {
+                f.write_str(letter)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// The flags in `(?ims-ims:)`
 #[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
 pub struct ModifierFlags {

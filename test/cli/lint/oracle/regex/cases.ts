@@ -225,7 +225,7 @@ function fuzzPattern(flags: string): string {
   const unicode = /[uv]/.test(flags);
   let groups = 0;
   const names: string[] = [];
-  const char = () => pick([..."abcABC", "a", "b", "x", "_", "0", " ", "-", "é", "É", "ß", "ſ", "K", "k", "s", "σ", "ς", "\\n", "\\.", "\\u00e9", "\\x41", "\u{1f4a9}", "\u{10400}", "\u{10428}", unicode ? "\\u{1f4a9}" : "\\ud83d", "\\udca9"]);
+  const char = () => pick([..."abcABC", "/", "\\/", "\n", "\\\n", "\u2028", "a", "b", "x", "_", "0", " ", "-", "é", "É", "ß", "ſ", "K", "k", "s", "σ", "ς", "\\n", "\\.", "\\u00e9", "\\x41", "\u{1f4a9}", "\u{10400}", "\u{10428}", unicode ? "\\u{1f4a9}" : "\\ud83d", "\\udca9"]);
   const set = () => pick(["\\d", "\\D", "\\w", "\\W", "\\s", "\\S", ...(unicode ? ["\\p{L}", "\\P{L}", "\\p{Lu}", "\\p{Ll}", "\\P{Lu}", "\\p{Script=Greek}", "\\p{ASCII}", "\\p{Any}"] : [])]);
   const classItem = (): string => {
     switch (random(6)) {
@@ -331,9 +331,9 @@ function fuzzPattern(flags: string): string {
 }
 
 function* fuzz(count: number): Iterable<Case> {
-  const letters = [..."aaabbbcABCxks_0 -", "é", "É", "ß", "ſ", "K", "σ", "ς", "Σ", "\n", "\u{1f4a9}", "\u{10400}", "\u{10428}", "\ud83d", "\udca9", "ss", "abc", "d"];
+  const letters = [..."aaabbbcABCxks_0 -", "é", "É", "ß", "ſ", "K", "σ", "ς", "Σ", "\n", "\r", "\u2028", "/", "\u{1f4a9}", "\u{10400}", "\u{10428}", "\ud83d", "\udca9", "ss", "abc", "d"];
   for (let i = 0; i < count; i++) {
-    let flags = pick(["", "", "u", "u", "v", "i", "iu", "iv", "m", "s", "y", "g", "imsu", "ims", "gi", "msv"]);
+    const flags = pick(["", "", "u", "u", "v", "i", "iu", "iv", "m", "s", "y", "g", "imsu", "ims", "gi", "msv", "gu", "uy", "gv", "mu"]);
     const pattern = fuzzPattern(flags);
     try {
       new RegExp(pattern, flags);

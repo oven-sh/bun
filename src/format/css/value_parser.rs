@@ -5,9 +5,8 @@
 //! since Prettier goes by them.
 
 use super::Parser as Syntax;
-use super::selector_parser::{self, SelectorNode};
+use super::selector_parser::{SelectorId, Selectors};
 use super::text::{self, ByteSet};
-use std::borrow::Cow;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum TokenKind {
@@ -67,8 +66,8 @@ static WORD_END: ByteSet = ByteSet::new(b" \n\t\r(){}*:;@!&'\"+|~>,[]\\/");
 static WORD_END_NUM: ByteSet = ByteSet::new(b" \n\t\r(){}*:;@!&'\"-+|~>,[]\\/");
 static AT_END: ByteSet = ByteSet::new(b" \n\t\r{()'\"\\;,/");
 
-fn tokenize(css: &[u8]) -> Result<Vec<Token>, ParseError> {
-    let mut tokens: Vec<Token> = Vec::new();
+fn tokenize(css: &[u8], tokens: &mut Vec<Token>) -> Result<(), ParseError> {
+    tokens.clear();
     let length = css.len();
     // The position of the last line break, which is -1 at first: all columns are one more.
     let mut offset: i64 = -1;
@@ -199,7 +198,7 @@ fn tokenize(css: &[u8]) -> Result<Vec<Token>, ParseError> {
         });
         pos = end;
     }
-    Ok(tokens)
+    Ok(())
 }
 
 /// `source` and `sourceIndex`, and what Prettier's `calculateLoc` makes of them.
@@ -214,100 +213,98 @@ pub(crate) struct Loc {
     pub(crate) end_offset: Option<u32>,
 }
 
-#[derive(Debug)]
-pub(crate) enum ValueKind<'a> {
-    Root {
-        group: Box<ValueNode<'a>>,
-    },
-    Value {
-        group: Box<ValueNode<'a>>,
-    },
-    Word {
-        value: Cow<'a, [u8]>,
-        is_hex: bool,
-        is_color: bool,
-    },
-    Number {
-        value: Cow<'a, [u8]>,
-        unit: Cow<'a, [u8]>,
-    },
-    String {
-        value: Cow<'a, [u8]>,
-        /// `raws.quote`
-        quote: &'static [u8],
-    },
-    Operator(Cow<'a, [u8]>),
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) enum ValueKind {
+    /// It has a `group`.
+    Root,
+    /// It has a `group`.
+    Value,
+    Word,
+    Number,
+    String,
+    Operator,
     Colon,
     Comma,
-    Comment {
-        value: Cow<'a, [u8]>,
-        inline: bool,
-    },
-    Func {
-        value: Cow<'a, [u8]>,
-        group: Box<ValueNode<'a>>,
-    },
-    Paren(u8),
-    AtWord(Cow<'a, [u8]>),
-    UnicodeRange(Cow<'a, [u8]>),
-    ParenGroup {
-        open: Option<Box<ValueNode<'a>>>,
-        close: Option<Box<ValueNode<'a>>>,
-        groups: Vec<ValueNode<'a>>,
-    },
-    CommaGroup {
-        groups: Vec<ValueNode<'a>>,
-    },
+    Comment,
+    /// It has a `group`.
+    Func,
+    Paren,
+    AtWord,
+    UnicodeRange,
+    ParenGroup,
+    CommaGroup,
     /// A string in the `groups` of the parentheses of `url()`.
-    Text(Cow<'a, [u8]>),
+    Text,
     /// What is in the parentheses of `selector()`.
-    Selector(SelectorNode<'a>),
+    Selector,
     /// `value-unknown`
-    Unknown(Cow<'a, [u8]>),
+    Unknown,
 }
 
-#[derive(Debug)]
-pub(crate) struct ValueNode<'a> {
-    pub(crate) kind: ValueKind<'a>,
-    /// `raws.before`. A group has no `raws`.
-    pub(crate) before: Option<Cow<'a, [u8]>>,
+/// `raws.before`
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Before {
+    /// A group has no `raws`.
+    None,
+    Empty,
+    Spaces,
+}
+
+/// A range of `Values::text`.
+pub(crate) type Span = (u32, u32);
+
+/// An index into `Values::nodes`. 0: there is none.
+pub(crate) type ValueId = u32;
+
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct ValueNode {
+    pub(crate) kind: ValueKind,
+    /// `value`, if it is a string.
+    value: Span,
+    /// Of a number.
+    pub(crate) unit: Span,
+    /// Of a word.
+    pub(crate) is_hex: bool,
+    pub(crate) is_color: bool,
+    /// Of a comment.
+    pub(crate) inline: bool,
+    pub(crate) before: Before,
+    pub(crate) group: ValueId,
+    /// Of a `value-paren_group`.
+    pub(crate) open: ValueId,
+    pub(crate) close: ValueId,
+    /// `groups`: a range of `Values::lists`.
+    groups: (u32, u32),
+    pub(crate) selector: SelectorId,
     pub(crate) loc: Loc,
+    /// For the parser: the nodes of a container, what follows in the container that it is in, and `unbalanced`.
+    first_child: ValueId,
+    last_child: ValueId,
+    next_sibling: ValueId,
+    /// `None`: it has no such property.
+    unbalanced: Option<i32>,
 }
 
-impl<'a> ValueNode<'a> {
-    fn without_loc(kind: ValueKind<'a>) -> Self {
+impl ValueNode {
+    fn new(kind: ValueKind) -> Self {
         ValueNode {
             kind,
-            before: None,
+            value: (0, 0),
+            unit: (0, 0),
+            is_hex: false,
+            is_color: false,
+            inline: false,
+            before: Before::None,
+            group: 0,
+            open: 0,
+            close: 0,
+            groups: (0, 0),
+            selector: 0,
             loc: Loc::default(),
-        }
-    }
-
-    /// `node.value`, if it is a string.
-    pub(crate) fn value(&self) -> Option<&[u8]> {
-        match &self.kind {
-            ValueKind::Word { value, .. }
-            | ValueKind::Comment { value, .. }
-            | ValueKind::Number { value, .. }
-            | ValueKind::String { value, .. }
-            | ValueKind::Operator(value)
-            | ValueKind::Func { value, .. }
-            | ValueKind::AtWord(value)
-            | ValueKind::UnicodeRange(value)
-            | ValueKind::Unknown(value) => Some(value),
-            ValueKind::Colon => Some(b":"),
-            ValueKind::Comma => Some(b","),
-            ValueKind::Paren(b'(') => Some(b"("),
-            ValueKind::Paren(_) => Some(b")"),
-            _ => None,
-        }
-    }
-
-    /// `node.groups`
-    pub(crate) fn groups(&self) -> Option<&[ValueNode<'a>]> {
-        match &self.kind {
-            ValueKind::ParenGroup { groups, .. } | ValueKind::CommaGroup { groups } => Some(groups),
-            _ => None,
+            first_child: 0,
+            last_child: 0,
+            next_sibling: 0,
+            unbalanced: None,
         }
     }
 
@@ -315,28 +312,73 @@ impl<'a> ValueNode<'a> {
     pub(crate) fn has_source(&self) -> bool {
         self.loc.start_offset.is_some() || self.loc.end.is_some()
     }
+
+    fn is_group(&self) -> bool {
+        matches!(self.kind, ValueKind::ParenGroup | ValueKind::CommaGroup)
+    }
 }
 
-/// A node of `postcss-values-parser`, before Prettier groups what is in it.
-struct RawNode<'a> {
-    node: ValueNode<'a>,
-    /// Of a container.
-    nodes: Vec<usize>,
-    is_func: bool,
-    /// Of a function and of the value. `None`: it has no such property.
-    unbalanced: Option<i32>,
+/// A node of `values`.
+#[derive(Copy, Clone)]
+pub(crate) struct ValueRef<'v> {
+    pub(crate) values: &'v Values,
+    pub(crate) id: ValueId,
 }
 
-struct ValuesParser<'t, 'a> {
-    text: &'t [u8],
-    /// `text`, if it lives as long as the nodes.
-    borrowed: Option<&'a [u8]>,
+impl<'v> ValueRef<'v> {
+    pub(crate) fn node(self) -> &'v ValueNode {
+        self.values.node(self.id)
+    }
+
+    pub(crate) fn kind(self) -> ValueKind {
+        self.node().kind
+    }
+
+    /// `node.value`, if it is a string.
+    pub(crate) fn value(self) -> Option<&'v [u8]> {
+        self.values.value(self.id)
+    }
+
+    /// Another node of the same values.
+    pub(crate) fn at(self, id: ValueId) -> ValueRef<'v> {
+        ValueRef { id, ..self }
+    }
+
+    /// `node.groups`, or nothing if it has none.
+    pub(crate) fn groups(self) -> impl DoubleEndedIterator<Item = ValueRef<'v>> + ExactSizeIterator + Clone {
+        self.values.groups(self.id).iter().map(move |&id| self.at(id))
+    }
+
+    /// `node.groups[index]`
+    pub(crate) fn group(self, index: usize) -> Option<ValueRef<'v>> {
+        self.values.groups(self.id).get(index).map(|&id| self.at(id))
+    }
+}
+
+/// The parentheses that are open while the nodes of a container are grouped.
+#[derive(Copy, Clone)]
+struct OpenParen {
+    open: ValueId,
+    /// Where its groups start in `Values::groups`, and the nodes of its last group in `Values::group`.
+    groups_start: usize,
+    group_start: usize,
+}
+
+/// The values that have been parsed, and what it takes to parse the next one.
+#[derive(Default)]
+pub(crate) struct Values {
+    /// The texts of the values, and the strings that are not a part of them.
+    text: Vec<u8>,
+    nodes: Vec<ValueNode>,
+    lists: Vec<ValueId>,
     tokens: Vec<Token>,
-    position: usize,
-    nodes: Vec<RawNode<'a>>,
-    current: usize,
-    cache: Vec<usize>,
-    spaces: Option<(u32, u32)>,
+    /// `cache` of the parser.
+    cache: Vec<ValueId>,
+    /// The nodes of the containers that are being grouped.
+    container: Vec<ValueId>,
+    open_parens: Vec<OpenParen>,
+    groups: Vec<ValueId>,
+    group: Vec<ValueId>,
 }
 
 /// `/^[+-]?((\d+(\.\d*)?)|(\.\d+))([eE][+-]?\d+)?/`: the length of the match.
@@ -364,44 +406,55 @@ fn number_prefix_len(text: &[u8]) -> Option<usize> {
     Some(at)
 }
 
-impl<'t, 'a> ValuesParser<'t, 'a> {
-    fn cow(&self, start: usize, end: usize) -> Cow<'a, [u8]> {
-        match self.borrowed {
-            Some(text) => Cow::Borrowed(text.get(start..end).unwrap_or_default()),
-            None => Cow::Owned(self.text.get(start..end).unwrap_or_default().to_vec()),
-        }
+struct ValuesParser<'t> {
+    values: &'t mut Values,
+    /// Where the text of the value starts in `Values::text`, which all positions count from.
+    base: usize,
+    len: usize,
+    position: usize,
+    current: ValueId,
+    spaces: bool,
+}
+
+impl ValuesParser<'_> {
+    fn text(&self) -> &[u8] {
+        &self.values.text[self.base..self.base + self.len]
+    }
+
+    fn span(&self, start: usize, end: usize) -> Span {
+        ((self.base + start) as u32, (self.base + end) as u32)
     }
 
     fn token(&self, position: usize) -> Option<Token> {
-        self.tokens.get(position).copied()
+        self.values.tokens.get(position).copied()
     }
 
-    fn text_of(&self, token: Token) -> &'t [u8] {
-        &self.text[token.pos as usize..token.end as usize]
+    fn text_of(&self, token: Token) -> &[u8] {
+        &self.values.text[self.base + token.pos as usize..self.base + token.end as usize]
     }
 
-    fn last_of_current(&self) -> Option<usize> {
-        self.nodes[self.current].nodes.last().copied()
+    fn node(&mut self, id: ValueId) -> &mut ValueNode {
+        &mut self.values.nodes[id as usize]
     }
 
-    fn new_node(&mut self, kind: ValueKind<'a>, loc: Loc) -> usize {
-        let before = match self.spaces.take() {
-            Some((start, end)) => self.cow(start as usize, end as usize),
-            None => Cow::Borrowed(&b""[..]),
-        };
-        let is_func = matches!(kind, ValueKind::Func { .. });
-        let id = self.nodes.len();
-        self.nodes.push(RawNode {
-            node: ValueNode {
-                kind,
-                before: Some(before),
-                loc,
-            },
-            nodes: Vec::new(),
-            is_func,
-            unbalanced: is_func.then_some(-1),
+    fn last_of_current(&self) -> Option<ValueId> {
+        Some(self.values.nodes[self.current as usize].last_child).filter(|&id| id != 0)
+    }
+
+    fn new_node(&mut self, kind: ValueKind, value: Span, loc: Loc) -> ValueId {
+        let id = self.values.nodes.len() as ValueId;
+        self.values.nodes.push(ValueNode {
+            value,
+            before: if std::mem::take(&mut self.spaces) { Before::Spaces } else { Before::Empty },
+            loc,
+            unbalanced: (kind == ValueKind::Func).then_some(-1),
+            ..ValueNode::new(kind)
         });
-        self.nodes[self.current].nodes.push(id);
+        let current = self.current;
+        match std::mem::replace(&mut self.node(current).last_child, id) {
+            0 => self.node(current).first_child = id,
+            previous => self.node(previous).next_sibling = id,
+        }
         id
     }
 
@@ -417,19 +470,18 @@ impl<'t, 'a> ValuesParser<'t, 'a> {
 
     fn parse(&mut self) -> Result<(), ParseError> {
         while let Some(token) = self.token(self.position) {
+            let (start, end) = (token.pos as usize, token.end as usize);
             match token.kind {
-                TokenKind::Space => self.space(token)?,
+                TokenKind::Space => self.space()?,
                 TokenKind::Colon => self.simple(ValueKind::Colon, token),
                 TokenKind::Comma => self.simple(ValueKind::Comma, token),
                 TokenKind::Comment => {
                     // `.replace(/\/\*|\*\//g, "")`
                     let text = self.text_of(token);
-                    let (start, end) = (token.pos as usize, token.end as usize);
+                    let has_delimiter = |text: &[u8]| text::includes(text, b"/*") || text::includes(text, b"*/");
                     let mut value = match text.strip_prefix(b"/*").and_then(|it| it.strip_suffix(b"*/")) {
-                        Some(inner) if !text::includes(inner, b"/*") && !text::includes(inner, b"*/") => {
-                            self.cow(start + 2, end - 2)
-                        }
-                        _ if !text::includes(text, b"/*") && !text::includes(text, b"*/") => self.cow(start, end),
+                        Some(inner) if !has_delimiter(inner) => self.span(start + 2, end - 2),
+                        _ if !has_delimiter(text) => self.span(start, end),
                         _ => {
                             let mut value = Vec::with_capacity(text.len());
                             let mut rest = text;
@@ -442,49 +494,47 @@ impl<'t, 'a> ValuesParser<'t, 'a> {
                                     }
                                 }
                             }
-                            Cow::Owned(value)
+                            self.values.add_text(&value)
                         }
                     };
-                    let inline = value.starts_with(b"//");
+                    let inline = self.values.text(value).starts_with(b"//");
                     if inline {
-                        match &mut value {
-                            Cow::Borrowed(value) => *value = &value[2..],
-                            Cow::Owned(value) => drop(value.drain(..2)),
-                        }
+                        value.0 += 2;
                     }
-                    self.simple(ValueKind::Comment { value, inline }, token);
+                    let id = self.new_node(ValueKind::Comment, value, Self::loc_of(token));
+                    self.node(id).inline = inline;
+                    self.position += 1;
                 }
                 TokenKind::OpenParen => self.paren_open(token)?,
                 TokenKind::CloseParen => self.paren_close(token)?,
                 TokenKind::Operator => self.operator(token)?,
                 TokenKind::String => {
-                    let text = self.text_of(token);
-                    let quote: &'static [u8] = if text.starts_with(b"\"") { b"\"" } else { b"'" };
-                    let value = self.cow(token.pos as usize + 1, token.end as usize - 1);
-                    self.simple(ValueKind::String { value, quote }, token);
+                    // The quotes are `raws.quote`.
+                    let value = self.span(start + 1, end - 1);
+                    self.new_node(ValueKind::String, value, Self::loc_of(token));
+                    self.position += 1;
                 }
-                TokenKind::UnicodeRange => {
-                    let value = self.cow(token.pos as usize, token.end as usize);
-                    self.simple(ValueKind::UnicodeRange(value), token);
-                }
+                TokenKind::UnicodeRange => self.simple(ValueKind::UnicodeRange, token),
                 _ => self.split_word(),
             }
         }
         Ok(())
     }
 
-    fn simple(&mut self, kind: ValueKind<'a>, token: Token) {
-        self.new_node(kind, Self::loc_of(token));
+    /// A node whose value is the text of `token`.
+    fn simple(&mut self, kind: ValueKind, token: Token) {
+        let value = self.span(token.pos as usize, token.end as usize);
+        self.new_node(kind, value, Self::loc_of(token));
         self.position += 1;
     }
 
-    fn space(&mut self, token: Token) -> Result<(), ParseError> {
+    fn space(&mut self) -> Result<(), ParseError> {
         let next = self.token(self.position + 1);
         if next.is_none_or(|next| next.kind == TokenKind::CloseParen) {
             // It is added to the `raws.after` of the last node, which has to be there.
             self.last_of_current().ok_or(ParseError)?;
         } else {
-            self.spaces = Some((token.pos, token.end));
+            self.spaces = true;
         }
         self.position += 1;
         Ok(())
@@ -494,14 +544,14 @@ impl<'t, 'a> ValuesParser<'t, 'a> {
         if matches!(self.text_of(token), b"+" | b"-") {
             let is_sign = match self.last_of_current() {
                 None => true,
-                Some(last) => matches!(self.nodes[last].node.kind, ValueKind::Operator(_)),
+                Some(last) => self.values.nodes[last as usize].kind == ValueKind::Operator,
             };
             if is_sign && self.token(self.position + 1).ok_or(ParseError)?.kind == TokenKind::Word {
                 self.split_word();
                 return Ok(());
             }
         }
-        let value = self.cow(token.pos as usize, token.end as usize);
+        let value = self.span(token.pos as usize, token.end as usize);
         let loc = Loc {
             // `this.currToken[4]`, which is a line.
             source_index: Some(token.end_line),
@@ -509,14 +559,14 @@ impl<'t, 'a> ValuesParser<'t, 'a> {
             end: Some((token.line, token.column)),
             ..Loc::default()
         };
-        self.new_node(ValueKind::Operator(value), loc);
+        self.new_node(ValueKind::Operator, value, loc);
         self.position += 1;
         Ok(())
     }
 
     fn paren_open(&mut self, token: Token) -> Result<(), ParseError> {
         let mut unbalanced = 1;
-        for token in self.tokens.get(self.position + 1..).unwrap_or_default() {
+        for token in self.values.tokens.get(self.position + 1..).unwrap_or_default() {
             match token.kind {
                 TokenKind::OpenParen => unbalanced += 1,
                 TokenKind::CloseParen => unbalanced -= 1,
@@ -530,31 +580,33 @@ impl<'t, 'a> ValuesParser<'t, 'a> {
             return Err(ParseError);
         }
         if let Some(last) = self.last_of_current()
-            && self.nodes[last].is_func
-            && self.nodes[last].unbalanced.is_some_and(|it| it < 0)
+            && self.node(last).kind == ValueKind::Func
+            && self.node(last).unbalanced.is_some_and(|it| it < 0)
         {
-            self.nodes[last].unbalanced = Some(0);
+            self.node(last).unbalanced = Some(0);
             self.current = last;
         }
-        let current = &mut self.nodes[self.current];
+        let current = self.current;
+        let current = self.node(current);
         current.unbalanced = current.unbalanced.map(|it| it + 1);
-        self.simple(ValueKind::Paren(b'('), token);
+        self.simple(ValueKind::Paren, token);
         Ok(())
     }
 
     fn paren_close(&mut self, token: Token) -> Result<(), ParseError> {
-        self.simple(ValueKind::Paren(b')'), token);
+        self.simple(ValueKind::Paren, token);
         let is_zero = |unbalanced: Option<i32>| unbalanced.is_none_or(|it| it == 0);
-        if self.position + 1 >= self.tokens.len() && is_zero(self.nodes[self.current].unbalanced) {
+        let current = self.current;
+        if self.position + 1 >= self.values.tokens.len() && is_zero(self.node(current).unbalanced) {
             return Ok(());
         }
-        let current = &mut self.nodes[self.current];
+        let current = self.node(current);
         current.unbalanced = current.unbalanced.map(|it| it - 1);
         if current.unbalanced.is_some_and(|it| it < 0) {
             return Err(ParseError);
         }
         if is_zero(current.unbalanced)
-            && let Some(outer) = self.cache.pop()
+            && let Some(outer) = self.values.cache.pop()
         {
             self.current = outer;
         }
@@ -566,9 +618,8 @@ impl<'t, 'a> ValuesParser<'t, 'a> {
             return;
         };
         let word_start = first.pos as usize;
-        let first_text = self.text_of(first);
         // `/^(?!#([a-z0-9]+))[#{}]/i`
-        let no_follow = match first_text {
+        let no_follow = match self.text_of(first) {
             [b'{' | b'}', ..] => true,
             [b'#', rest @ ..] => !rest.first().is_some_and(u8::is_ascii_alphanumeric),
             _ => false,
@@ -583,20 +634,14 @@ impl<'t, 'a> ValuesParser<'t, 'a> {
             return;
         };
         let next_is_paren = self.token(self.position + 1).is_some_and(|next| next.kind == TokenKind::OpenParen);
-        let word_end = current.end as usize;
-        let word = &self.text[word_start..word_end];
+        let word_len = current.end as usize - word_start;
         let is_number = number_prefix_len(self.text_of(current)).is_some();
 
-        let mut indices: Vec<usize> = vec![0];
-        let mut from = 0;
-        while let Some(at) = text::index_of_char_from(word, b'@', from) {
-            if at != 0 {
-                indices.push(at);
-            }
-            from = at + 1;
-        }
-        for (i, &ind) in indices.iter().enumerate() {
-            let index = indices.get(i + 1).copied().unwrap_or(word.len());
+        // It is split before every `@` but one at the start.
+        let mut ind = 0;
+        loop {
+            let word = &self.text()[word_start..word_start + word_len];
+            let index = text::index_of_char_from(word, b'@', ind + 1).unwrap_or(word_len);
             let value = &word[ind..index];
             let (start, end) = (word_start + ind, word_start + index);
             let loc = Loc {
@@ -606,45 +651,38 @@ impl<'t, 'a> ValuesParser<'t, 'a> {
                 ..Loc::default()
             };
             if value.starts_with(b"@") {
-                let value = self.cow(start + 1, end);
-                self.new_node(ValueKind::AtWord(value), loc);
+                let value = self.span(start + 1, end);
+                self.new_node(ValueKind::AtWord, value, loc);
             } else if is_number {
                 let unit_start = number_prefix_len(value).unwrap_or(0);
                 let unit = &value[unit_start..];
                 // `value.replace(unit, "")` removes the first occurrence, wherever it is.
                 let number = match bun_core::strings::index_of(value, unit) {
                     Some(at) if !unit.is_empty() && at != unit_start => {
-                        Cow::Owned([&value[..at], &value[at + unit.len()..]].concat())
+                        let number = [&value[..at], &value[at + unit.len()..]].concat();
+                        self.values.add_text(&number)
                     }
-                    _ => self.cow(start, start + unit_start),
+                    _ => self.span(start, start + unit_start),
                 };
-                let unit = self.cow(start + unit_start, end);
-                self.new_node(ValueKind::Number { value: number, unit }, loc);
+                let id = self.new_node(ValueKind::Number, number, loc);
+                self.node(id).unit = self.span(start + unit_start, end);
             } else if next_is_paren {
-                let value = self.cow(start, end);
-                let placeholder = Box::new(ValueNode::without_loc(ValueKind::Text(Cow::Borrowed(b""))));
-                self.cache.push(self.current);
-                self.new_node(
-                    ValueKind::Func {
-                        value,
-                        group: placeholder,
-                    },
-                    loc,
-                );
+                let value = self.span(start, end);
+                self.values.cache.push(self.current);
+                self.new_node(ValueKind::Func, value, loc);
             } else {
                 let is_hex = value.len() > 1 && value[0] == b'#';
                 let is_color =
                     is_hex && matches!(value.len(), 4 | 5 | 7 | 9) && value[1..].iter().all(u8::is_ascii_hexdigit);
-                let value = self.cow(start, end);
-                self.new_node(
-                    ValueKind::Word {
-                        value,
-                        is_hex,
-                        is_color,
-                    },
-                    loc,
-                );
+                let value = self.span(start, end);
+                let id = self.new_node(ValueKind::Word, value, loc);
+                self.node(id).is_hex = is_hex;
+                self.node(id).is_color = is_color;
             }
+            if index == word_len {
+                break;
+            }
+            ind = index;
         }
         self.position += 1;
     }
@@ -652,214 +690,212 @@ impl<'t, 'a> ValuesParser<'t, 'a> {
 
 // ───────────────────────────── Prettier's `parse-value.js` ─────────────────────────────
 
-struct Grouper<'t, 'a> {
-    text: &'t [u8],
-    borrowed: Option<&'a [u8]>,
+struct Grouper<'t> {
+    values: &'t mut Values,
+    selectors: &'t mut Selectors,
+    /// Where the text of the value starts in `Values::text`.
+    base: usize,
     syntax: Syntax,
-    is_unbalanced: std::cell::Cell<bool>,
+    is_unbalanced: bool,
 }
 
-fn is_word(node: &ValueNode<'_>, text: &[u8]) -> bool {
-    matches!(&node.kind, ValueKind::Word { value, .. } if **value == *text)
-}
-
-impl<'t, 'a> Grouper<'t, 'a> {
-    fn cow(&self, start: usize, end: usize) -> Cow<'a, [u8]> {
-        match self.borrowed {
-            Some(text) => Cow::Borrowed(text.get(start..end).unwrap_or_default()),
-            None => Cow::Owned(self.text.get(start..end).unwrap_or_default().to_vec()),
-        }
+impl Grouper<'_> {
+    fn node(&self, id: ValueId) -> &ValueNode {
+        &self.values.nodes[id as usize]
     }
 
-    /// What is between the parentheses of the function whose `group` is `group`.
-    fn arguments_range(group: &ValueNode<'a>) -> Option<(usize, usize)> {
-        let ValueKind::ParenGroup {
-            open: Some(open),
-            close: Some(close),
-            ..
-        } = &group.kind
-        else {
+    fn add(&mut self, node: ValueNode) -> ValueId {
+        self.values.nodes.push(node);
+        (self.values.nodes.len() - 1) as ValueId
+    }
+
+    /// What is between the parentheses of the function whose `group` is `group`, counted from the start of the
+    /// value.
+    fn arguments_range(&self, group: ValueId) -> Option<(usize, usize)> {
+        let group = self.node(group);
+        if group.kind != ValueKind::ParenGroup || group.open == 0 || group.close == 0 {
             return None;
-        };
-        Some((open.loc.source_index? as usize + 1, close.loc.source_index? as usize))
+        }
+        Some((self.node(group.open).loc.source_index? as usize + 1, self.node(group.close).loc.source_index? as usize))
     }
 
-    /// `parseNestedValue` for the container `id`: its `nodes`, each with its `group`.
-    fn children(&self, nodes: &mut Vec<RawNode<'a>>, id: usize) -> Vec<ValueNode<'a>> {
-        let ids = std::mem::take(&mut nodes[id].nodes);
-        let mut children = Vec::with_capacity(ids.len());
-        for child in ids {
-            let is_func = nodes[child].is_func;
-            let group = is_func.then(|| {
-                let inner = self.children(nodes, child);
-                flatten_groups(self.parse_value_node(inner))
-            });
-            let placeholder = ValueNode::without_loc(ValueKind::Comma);
-            let mut node = std::mem::replace(&mut nodes[child].node, placeholder);
-            if let (ValueKind::Func { group: slot, .. }, Some(group)) = (&mut node.kind, group) {
-                **slot = group;
+    /// A `value-comma_group` of `self.values.group[start..]`, after `flattenGroups`: if it is only one, that is it.
+    fn take_comma_group(&mut self, start: usize) -> ValueId {
+        if let [only] = self.values.group[start..] {
+            self.values.group.truncate(start);
+            return only;
+        }
+        let groups = self.values.add_list_from_group(start);
+        self.add(ValueNode {
+            groups,
+            ..ValueNode::new(ValueKind::CommaGroup)
+        })
+    }
+
+    /// `parseNestedValue` and `parseValueNode` for the container `id`, and `flattenGroups` for the result.
+    fn group_nodes_of(&mut self, id: ValueId) -> ValueId {
+        // The functions in it first.
+        let mut child = self.node(id).first_child;
+        while child != 0 {
+            if self.node(child).kind == ValueKind::Func {
+                self.values.nodes[child as usize].group = self.group_nodes_of(child);
             }
-            children.push(node);
+            child = self.node(child).next_sibling;
         }
-        children
-    }
-
-    /// `parseValueNode`
-    fn parse_value_node(&self, nodes: Vec<ValueNode<'a>>) -> ValueNode<'a> {
-        struct ParenGroup<'a> {
-            open: Option<Box<ValueNode<'a>>>,
-            groups: Vec<ValueNode<'a>>,
+        let container_start = self.values.container.len();
+        let mut child = self.node(id).first_child;
+        while child != 0 {
+            self.values.container.push(child);
+            child = self.node(child).next_sibling;
         }
-        let comma_group = |groups: Vec<ValueNode<'a>>| ValueNode::without_loc(ValueKind::CommaGroup { groups });
-        let mut paren_groups = vec![ParenGroup {
-            open: None,
-            groups: Vec::new(),
-        }];
-        let mut comma_groups: Vec<Vec<ValueNode<'a>>> = vec![Vec::new()];
-        let len = nodes.len();
-        let is_closing = |node: Option<&ValueNode<'a>>| matches!(node.map(|it| &it.kind), Some(ValueKind::Paren(b')')));
+        let len = self.values.container.len() - container_start;
+        let at = |grouper: &Self, index: usize| grouper.values.container[container_start + index];
+        let is_closing = |grouper: &Self, id: ValueId| grouper.node(id).kind == ValueKind::Paren && grouper.values.value(id) == Some(b")");
         // Whether a comma is followed by a comment and the `)` that ends the list.
-        let ends_with_comment_and_paren = len >= 3
-            && matches!(nodes[len - 2].kind, ValueKind::Comment { .. })
-            && is_closing(nodes.last());
+        let ends_with_comment_and_paren =
+            len >= 3 && self.node(at(self, len - 2)).kind == ValueKind::Comment && is_closing(self, at(self, len - 1));
 
-        for (i, mut node) in nodes.into_iter().enumerate() {
+        let (parens_start, groups_start, group_start) =
+            (self.values.open_parens.len(), self.values.groups.len(), self.values.group.len());
+        self.values.open_parens.push(OpenParen {
+            open: 0,
+            groups_start,
+            group_start,
+        });
+
+        for i in 0..len {
+            let id = at(self, i);
+            let node = *self.node(id);
             if self.syntax == Syntax::Scss
-                && let ValueKind::Number { value, unit } = &mut node.kind
-                && **unit == *b".."
-                && value.ends_with(b".")
+                && node.kind == ValueKind::Number
+                && self.values.text(node.unit) == b".."
+                && self.values.text(node.value).ends_with(b".")
             {
-                let shorter = value.len() - 1;
-                match value {
-                    Cow::Borrowed(value) => *value = &value[..shorter],
-                    Cow::Owned(value) => value.truncate(shorter),
-                }
-                *unit = Cow::Borrowed(b"...");
+                let unit = self.values.add_text(b"...");
+                let node = &mut self.values.nodes[id as usize];
+                node.value.1 -= 1;
+                node.unit = unit;
             }
 
-            if let ValueKind::Func { value, group } = &mut node.kind {
-                if **value == *b"selector"
-                    && let Some((start, end)) = Self::arguments_range(group)
-                    && let ValueKind::ParenGroup { groups, .. } = &mut group.kind
+            if node.kind == ValueKind::Func {
+                let (is_selector, is_url) = (self.values.text(node.value) == b"selector", self.values.text(node.value) == b"url");
+                if is_selector
+                    && let Some((start, end)) = self.arguments_range(node.group)
                 {
-                    let selector = selector_parser::parse_selector(self.cow(start, end));
-                    let mut selector = ValueNode::without_loc(ValueKind::Selector(selector));
+                    let text = self.values.text.get(self.base + start..self.base + end).unwrap_or_default();
+                    let selector = self.selectors.parse(text);
+                    let mut selector = ValueNode {
+                        selector,
+                        ..ValueNode::new(ValueKind::Selector)
+                    };
                     selector.loc.source_index = Some(start as u32);
-                    *groups = vec![selector];
+                    let selector = self.add(selector);
+                    self.values.nodes[node.group as usize].groups = self.values.add_list(&[selector]);
                 }
-                if **value == *b"url" {
-                    let range = Self::arguments_range(group);
-                    if let ValueKind::ParenGroup { groups, .. } = &mut group.kind {
-                        let mut list: Vec<&ValueNode<'a>> = Vec::new();
-                        for group in groups.iter() {
-                            match &group.kind {
-                                ValueKind::CommaGroup { groups } => list.extend(groups.iter()),
-                                _ => list.push(group),
-                            }
-                        }
-                        let has_interpolation = (1..list.len()).any(|i| {
-                            is_word(list[i], b"{")
-                                && matches!(&list[i - 1].kind, ValueKind::Word { value, .. } if value.ends_with(b"#"))
-                        });
-                        let has_string_or_function = list.iter().any(|it| match &it.kind {
-                            ValueKind::String { .. } => true,
-                            ValueKind::Func { value, .. } => !value.ends_with(b"\\"),
+                if is_url && self.node(node.group).kind == ValueKind::ParenGroup {
+                    let range = self.arguments_range(node.group);
+                    // What is in the parentheses, and in the groups there.
+                    let mut has_interpolation = false;
+                    let mut has_string_or_function = false;
+                    let mut first = None;
+                    let mut previous: Option<ValueId> = None;
+                    let mut look_at = |values: &Values, id: ValueId| {
+                        let node = values.node(id);
+                        let is_word = node.kind == ValueKind::Word;
+                        has_interpolation |= is_word
+                            && values.text(node.value) == b"{"
+                            && previous.is_some_and(|it| values.node(it).kind == ValueKind::Word && values.text(values.node(it).value).ends_with(b"#"));
+                        has_string_or_function |= match node.kind {
+                            ValueKind::String => true,
+                            ValueKind::Func => !values.text(node.value).ends_with(b"\\"),
                             _ => false,
-                        });
-                        let is_scss_variable = self.syntax == Syntax::Scss
-                            && matches!(list.first().map(|it| &it.kind), Some(ValueKind::Word { value, .. }) if value.starts_with(b"$"));
-                        if (has_interpolation || (!has_string_or_function && !is_scss_variable))
-                            && let Some((start, end)) = range
-                        {
-                            let inner = self.text.get(start..end).unwrap_or_default();
-                            let skipped = inner.len() - text::trim_start(inner).len();
-                            let trimmed = text::trim(inner).len();
-                            let text = self.cow(start + skipped, start + skipped + trimmed);
-                            *groups = vec![ValueNode::without_loc(ValueKind::Text(text))];
+                        };
+                        first = first.or(Some(id));
+                        previous = Some(id);
+                    };
+                    for &group in self.values.groups(node.group) {
+                        match self.node(group).kind {
+                            ValueKind::CommaGroup => self.values.groups(group).iter().for_each(|&id| look_at(self.values, id)),
+                            _ => look_at(self.values, group),
                         }
+                    }
+                    let is_scss_variable = self.syntax == Syntax::Scss
+                        && first.is_some_and(|it| self.node(it).kind == ValueKind::Word && self.values.text(self.node(it).value).starts_with(b"$"));
+                    if (has_interpolation || (!has_string_or_function && !is_scss_variable))
+                        && let Some((start, end)) = range
+                    {
+                        let inner = self.values.text.get(self.base + start..self.base + end).unwrap_or_default();
+                        let skipped = inner.len() - text::trim_start(inner).len();
+                        let start = self.base + start + skipped;
+                        let text = self.add(ValueNode {
+                            value: (start as u32, (start + text::trim(inner).len()) as u32),
+                            ..ValueNode::new(ValueKind::Text)
+                        });
+                        self.values.nodes[node.group as usize].groups = self.values.add_list(&[text]);
                     }
                 }
             }
 
             match node.kind {
-                ValueKind::Paren(b'(') => {
-                    paren_groups.push(ParenGroup {
-                        open: Some(Box::new(node)),
-                        groups: Vec::new(),
+                ValueKind::Paren if self.values.text(node.value) == b"(" => {
+                    self.values.open_parens.push(OpenParen {
+                        open: id,
+                        groups_start: self.values.groups.len(),
+                        group_start: self.values.group.len(),
                     });
-                    comma_groups.push(Vec::new());
                 }
-                ValueKind::Paren(_) => {
-                    if paren_groups.len() < 2 {
-                        self.is_unbalanced.set(true);
+                ValueKind::Paren => {
+                    if self.values.open_parens.len() < parens_start + 2 {
+                        self.is_unbalanced = true;
                         continue;
                     }
-                    let (Some(mut paren_group), Some(last)) = (paren_groups.pop(), comma_groups.pop()) else {
+                    let Some(paren) = self.values.open_parens.pop() else {
                         continue;
                     };
-                    if !last.is_empty() {
-                        paren_group.groups.push(comma_group(last));
+                    if self.values.group.len() > paren.group_start {
+                        let last = self.take_comma_group(paren.group_start);
+                        self.values.groups.push(last);
                     }
-                    let group = ValueNode::without_loc(ValueKind::ParenGroup {
-                        open: paren_group.open,
-                        close: Some(Box::new(node)),
-                        groups: paren_group.groups,
+                    let groups = self.values.add_list_from_groups(paren.groups_start);
+                    let group = self.add(ValueNode {
+                        open: paren.open,
+                        close: id,
+                        groups,
+                        ..ValueNode::new(ValueKind::ParenGroup)
                     });
-                    if let Some(outer) = comma_groups.last_mut() {
-                        outer.push(group);
-                    }
+                    self.values.group.push(group);
                 }
                 ValueKind::Comma => {
                     if i + 3 == len && ends_with_comment_and_paren {
                         continue;
                     }
-                    if let (Some(paren_group), Some(last)) = (paren_groups.last_mut(), comma_groups.last_mut()) {
-                        paren_group.groups.push(comma_group(std::mem::take(last)));
+                    if let Some(paren) = self.values.open_parens.last().copied() {
+                        let group = self.take_comma_group(paren.group_start);
+                        self.values.groups.push(group);
                     }
                 }
-                _ => {
-                    if let Some(last) = comma_groups.last_mut() {
-                        last.push(node);
-                    }
-                }
+                _ => self.values.group.push(id),
             }
         }
         // An unclosed parenthesis cannot get here: its groups would be lost, as in Prettier.
-        let last = comma_groups.pop().unwrap_or_default();
-        if !last.is_empty()
-            && let Some(paren_group) = paren_groups.last_mut()
+        if let Some(paren) = self.values.open_parens.last().copied()
+            && self.values.group.len() > paren.group_start
         {
-            paren_group.groups.push(comma_group(last));
+            let last = self.take_comma_group(paren.group_start);
+            self.values.groups.push(last);
         }
-        let root = paren_groups.swap_remove(0);
-        ValueNode::without_loc(ValueKind::ParenGroup {
-            open: None,
-            close: None,
-            groups: root.groups,
-        })
-    }
-}
-
-fn flatten_groups(mut node: ValueNode<'_>) -> ValueNode<'_> {
-    match &mut node.kind {
-        ValueKind::ParenGroup {
-            open: None,
-            close: None,
+        self.values.open_parens.truncate(parens_start);
+        self.values.container.truncate(container_start);
+        self.values.group.truncate(group_start);
+        if let [only] = self.values.groups[groups_start..] {
+            self.values.groups.truncate(groups_start);
+            return only;
+        }
+        let groups = self.values.add_list_from_groups(groups_start);
+        self.add(ValueNode {
             groups,
-        }
-        | ValueKind::CommaGroup { groups }
-            if groups.len() == 1 =>
-        {
-            match groups.pop() {
-                Some(only) => flatten_groups(only),
-                None => node,
-            }
-        }
-        ValueKind::ParenGroup { groups, .. } | ValueKind::CommaGroup { groups } => {
-            *groups = std::mem::take(groups).into_iter().map(flatten_groups).collect();
-            node
-        }
-        _ => node,
+            ..ValueNode::new(ValueKind::ParenGroup)
+        })
     }
 }
 
@@ -882,148 +918,256 @@ fn fix_value_word_loc(value: &[u8], index: u32) -> u32 {
     }
 }
 
-/// `calculateNodeLoc` for what is in a value. `text`: of the value, which starts at `root_offset`.
-fn calculate_loc(node: &mut ValueNode<'_>, text: &[u8], root_offset: u32) {
-    let max_end = root_offset + text.len() as u32;
-    if let Some(source_index) = node.loc.source_index
-        && !matches!(node.kind, ValueKind::Selector(_))
-    {
-        let start = match &node.kind {
-            ValueKind::Word { value, .. } => fix_value_word_loc(value, source_index),
-            _ => source_index,
-        };
-        let end = match (&node.kind, node.loc.end) {
-            (ValueKind::Paren(paren), _) => Some(source_index + u32::from(*paren == b')')),
-            (ValueKind::Word { value, .. }, Some(end)) => Some(fix_value_word_loc(value, line_column_to_index(end, text))),
-            (_, Some(end)) => Some(line_column_to_index(end, text)),
-            (_, None) => None,
-        };
-        node.loc.start_offset = Some((start + root_offset).min(max_end));
-        node.loc.end_offset = end.map(|end| (end + root_offset).min(max_end));
+impl Values {
+    /// Forgets all values.
+    pub(crate) fn clear(&mut self) {
+        self.text.clear();
+        self.nodes.clear();
+        self.lists.clear();
     }
 
-    let parent_start = |loc: &Loc| loc.start_offset.zip(loc.end_offset).map(|(start, _)| (start, loc.start_line));
-    let mut children: Vec<&mut ValueNode<'_>> = Vec::new();
-    match &mut node.kind {
-        ValueKind::Root { group } | ValueKind::Value { group } | ValueKind::Func { group, .. } => children.push(group),
-        ValueKind::ParenGroup { open, close, groups } => {
-            children.extend(open.as_deref_mut());
-            children.extend(close.as_deref_mut());
-            children.extend(groups.iter_mut());
-        }
-        ValueKind::CommaGroup { groups } => children.extend(groups.iter_mut()),
-        _ => {}
+    pub(crate) fn node(&self, id: ValueId) -> &ValueNode {
+        &self.nodes[id as usize]
     }
-    let own = parent_start(&node.loc);
-    let is_empty_group = |child: &ValueNode<'_>| child.groups().is_some_and(<[_]>::is_empty) && !child.has_source();
-    let mut from_children: Option<(u32, u32, Option<u32>)> = None;
-    for child in &mut children {
-        match &child.kind {
-            ValueKind::Text(_) => continue,
-            // It is the root of a text of its own, and nobody asks where it is.
-            ValueKind::Selector(_) => continue,
-            _ => calculate_loc(child, text, root_offset),
+
+    pub(crate) fn text(&self, (start, end): Span) -> &[u8] {
+        self.text.get(start as usize..end as usize).unwrap_or_default()
+    }
+
+    /// `node.value`, if it is a string.
+    pub(crate) fn value(&self, id: ValueId) -> Option<&[u8]> {
+        let node = self.node(id);
+        match node.kind {
+            ValueKind::Root
+            | ValueKind::Value
+            | ValueKind::ParenGroup
+            | ValueKind::CommaGroup
+            | ValueKind::Text
+            | ValueKind::Selector => None,
+            _ => Some(self.text(node.value)),
         }
-        // `fillEmptyLocFromParent`
-        if let Some((start, line)) = own
-            && is_empty_group(child)
-        {
-            child.loc.start_offset = Some(start);
-            child.loc.end_offset = Some(start);
-            child.loc.start_line = line;
-        }
-        if let (Some(start), Some(end)) = (child.loc.start_offset, child.loc.end_offset) {
-            from_children = Some(match from_children {
-                None => (start, end, child.loc.start_line),
-                Some((first, last, line)) => {
-                    (first.min(start), last.max(end), if start < first { child.loc.start_line } else { line })
+    }
+
+    /// A string with its quotes.
+    pub(crate) fn raw_string(&self, id: ValueId) -> &[u8] {
+        let (start, end) = self.node(id).value;
+        self.text((start.saturating_sub(1), end + 1))
+    }
+
+    /// The text of a `ValueKind::Text`.
+    pub(crate) fn text_of(&self, id: ValueId) -> &[u8] {
+        self.text(self.node(id).value)
+    }
+
+    /// `node.groups`, or nothing if it has none.
+    pub(crate) fn groups(&self, id: ValueId) -> &[ValueId] {
+        let (start, end) = self.node(id).groups;
+        self.lists.get(start as usize..end as usize).unwrap_or_default()
+    }
+
+    fn add_text(&mut self, text: &[u8]) -> Span {
+        let start = self.text.len() as u32;
+        self.text.extend_from_slice(text);
+        (start, self.text.len() as u32)
+    }
+
+    fn add_list(&mut self, ids: &[ValueId]) -> (u32, u32) {
+        let start = self.lists.len() as u32;
+        self.lists.extend_from_slice(ids);
+        (start, self.lists.len() as u32)
+    }
+
+    fn add_list_from_group(&mut self, from: usize) -> (u32, u32) {
+        let start = self.lists.len() as u32;
+        self.lists.extend(self.group.drain(from..));
+        (start, self.lists.len() as u32)
+    }
+
+    fn add_list_from_groups(&mut self, from: usize) -> (u32, u32) {
+        let start = self.lists.len() as u32;
+        self.lists.extend(self.groups.drain(from..));
+        (start, self.lists.len() as u32)
+    }
+
+    /// The `index`th of the nodes that `calculateNodeLoc` finds in `node`.
+    fn child_for_loc(&self, node: &ValueNode, index: usize) -> Option<ValueId> {
+        match node.kind {
+            ValueKind::Root | ValueKind::Value | ValueKind::Func => Some(node.group).filter(|_| index == 0),
+            ValueKind::ParenGroup => {
+                let parens = [node.open, node.close];
+                let mut parens = parens.iter().copied().filter(|&id| id != 0);
+                let count = parens.clone().count();
+                match index < count {
+                    true => parens.nth(index),
+                    false => self.lists.get(node.groups.0 as usize..node.groups.1 as usize)?.get(index - count).copied(),
                 }
-            });
+            }
+            ValueKind::CommaGroup => self.lists.get(node.groups.0 as usize..node.groups.1 as usize)?.get(index).copied(),
+            _ => None,
         }
     }
-    // `fillLocFromChildren`
-    let has_offsets = node.loc.start_offset.is_some() && node.loc.end_offset.is_some();
-    if !(has_offsets && node.loc.end.is_some())
-        && let Some((start, end, line)) = from_children
-    {
-        if !has_offsets {
-            node.loc.start_offset = Some(start);
-            node.loc.end_offset = Some(end);
+
+    /// `calculateNodeLoc` for what is in a value. `(base, len)`: where the text of the value is, which starts at
+    /// `root_offset` in the style sheet.
+    fn calculate_loc(&mut self, id: ValueId, (base, len): (usize, usize), root_offset: u32) {
+        let max_end = root_offset + len as u32;
+        let mut node = *self.node(id);
+        if let Some(source_index) = node.loc.source_index
+            && node.kind != ValueKind::Selector
+        {
+            let text = &self.text[base..base + len];
+            let value = self.text(node.value);
+            let start = match node.kind {
+                ValueKind::Word => fix_value_word_loc(value, source_index),
+                _ => source_index,
+            };
+            let end = match (node.kind, node.loc.end) {
+                (ValueKind::Paren, _) => Some(source_index + u32::from(value == b")")),
+                (ValueKind::Word, Some(end)) => Some(fix_value_word_loc(value, line_column_to_index(end, text))),
+                (_, Some(end)) => Some(line_column_to_index(end, text)),
+                (_, None) => None,
+            };
+            node.loc.start_offset = Some((start + root_offset).min(max_end));
+            node.loc.end_offset = end.map(|end| (end + root_offset).min(max_end));
         }
-        node.loc.start_line = node.loc.start_line.or(line);
-    }
-    // `fillEmptyChildLocs`
-    if let Some((start, line)) = parent_start(&node.loc) {
-        for child in children {
-            if is_empty_group(child) {
+
+        let parent_start = |loc: &Loc| loc.start_offset.zip(loc.end_offset).map(|(start, _)| (start, loc.start_line));
+        let own = parent_start(&node.loc);
+        let is_empty_group = |child: &ValueNode| child.is_group() && child.groups.0 == child.groups.1 && !child.has_source();
+        let mut from_children: Option<(u32, u32, Option<u32>)> = None;
+        let mut index = 0;
+        while let Some(child_id) = self.child_for_loc(&node, index) {
+            index += 1;
+            match self.node(child_id).kind {
+                // A selector is the root of a text of its own, and nobody asks where it is.
+                ValueKind::Text | ValueKind::Selector => continue,
+                _ => self.calculate_loc(child_id, (base, len), root_offset),
+            }
+            let child = &mut self.nodes[child_id as usize];
+            // `fillEmptyLocFromParent`
+            if let Some((start, line)) = own
+                && is_empty_group(child)
+            {
                 child.loc.start_offset = Some(start);
                 child.loc.end_offset = Some(start);
                 child.loc.start_line = line;
             }
+            if let (Some(start), Some(end)) = (child.loc.start_offset, child.loc.end_offset) {
+                from_children = Some(match from_children {
+                    None => (start, end, child.loc.start_line),
+                    Some((first, last, line)) => {
+                        (first.min(start), last.max(end), if start < first { child.loc.start_line } else { line })
+                    }
+                });
+            }
+        }
+        // `fillLocFromChildren`
+        let has_offsets = node.loc.start_offset.is_some() && node.loc.end_offset.is_some();
+        if !(has_offsets && node.loc.end.is_some())
+            && let Some((start, end, line)) = from_children
+        {
+            if !has_offsets {
+                node.loc.start_offset = Some(start);
+                node.loc.end_offset = Some(end);
+            }
+            node.loc.start_line = node.loc.start_line.or(line);
+        }
+        // `fillEmptyChildLocs`
+        if let Some((start, line)) = parent_start(&node.loc) {
+            let mut index = 0;
+            while let Some(child_id) = self.child_for_loc(&node, index) {
+                index += 1;
+                let child = &mut self.nodes[child_id as usize];
+                if is_empty_group(child) {
+                    child.loc.start_offset = Some(start);
+                    child.loc.end_offset = Some(start);
+                    child.loc.start_line = line;
+                }
+            }
+        }
+        self.nodes[id as usize].loc = node.loc;
+    }
+
+    /// `value-unknown`
+    pub(crate) fn unknown(&mut self, value: &[u8], root_offset: u32) -> ValueId {
+        if self.nodes.is_empty() {
+            self.nodes.push(ValueNode::new(ValueKind::Unknown));
+        }
+        let mut node = ValueNode {
+            value: self.add_text(value),
+            ..ValueNode::new(ValueKind::Unknown)
+        };
+        node.loc.start_offset = Some(root_offset);
+        node.loc.end_offset = Some(root_offset + value.len() as u32);
+        self.nodes.push(node);
+        (self.nodes.len() - 1) as ValueId
+    }
+
+    /// Prettier's `parseValue`, and `calculateLoc` for its result. `root_offset`: where Prettier takes
+    /// `value` to start in the style sheet.
+    ///
+    /// An error is one that Prettier does not catch: a `)` without a `(`.
+    pub(crate) fn parse(
+        &mut self,
+        value: &[u8],
+        syntax: Syntax,
+        root_offset: u32,
+        selectors: &mut Selectors,
+    ) -> Result<ValueId, ParseError> {
+        // Inline JavaScript in Less.
+        if syntax == Syntax::Less && value.starts_with(b"~`") {
+            return Ok(self.unknown(value, root_offset));
+        }
+        if self.nodes.is_empty() {
+            self.nodes.push(ValueNode::new(ValueKind::Unknown));
+        }
+        let (base, first_node) = (self.text.len(), self.nodes.len());
+        self.text.extend_from_slice(value);
+        self.cache.clear();
+        // The `Value`, which is the only node of the root.
+        let container = first_node as ValueId;
+        self.nodes.push(ValueNode {
+            unbalanced: Some(0),
+            ..ValueNode::new(ValueKind::Value)
+        });
+        let parsed = tokenize(value, &mut self.tokens).and_then(|()| {
+            ValuesParser {
+                values: self,
+                base,
+                len: value.len(),
+                position: 0,
+                current: container,
+                spaces: false,
+            }
+            .parse()
+        });
+        if parsed.is_err() {
+            self.text.truncate(base);
+            self.nodes.truncate(first_node);
+            return Ok(self.unknown(value, root_offset));
+        }
+        let mut grouper = Grouper {
+            values: self,
+            selectors,
+            base,
+            syntax,
+            is_unbalanced: false,
+        };
+        let group = grouper.group_nodes_of(container);
+        let is_unbalanced = grouper.is_unbalanced;
+        self.nodes[container as usize].group = group;
+        let mut root = ValueNode {
+            group: container,
+            ..ValueNode::new(ValueKind::Root)
+        };
+        root.loc.start_offset = Some(root_offset);
+        root.loc.end_offset = Some(root_offset + value.len() as u32);
+        self.nodes.push(root);
+        let root = (self.nodes.len() - 1) as ValueId;
+        self.calculate_loc(root, (base, value.len()), root_offset);
+        match is_unbalanced {
+            true => Err(ParseError),
+            false => Ok(root),
         }
     }
-}
-
-/// Prettier's `parseValue`, and `calculateLoc` for its result. `root_offset`: where Prettier takes
-/// `value` to start in the style sheet.
-///
-/// An error is one that Prettier does not catch: a `)` without a `(`.
-pub(crate) fn parse_value<'a>(value: Cow<'a, [u8]>, syntax: Syntax, root_offset: u32) -> Result<ValueNode<'a>, ParseError> {
-    // Inline JavaScript in Less.
-    if syntax == Syntax::Less && value.starts_with(b"~`") {
-        return Ok(unknown(value, root_offset));
-    }
-    let borrowed = match &value {
-        Cow::Borrowed(text) => Some(*text),
-        Cow::Owned(_) => None,
-    };
-    let parsed = (|| {
-        let mut parser = ValuesParser {
-            text: &value,
-            borrowed,
-            tokens: tokenize(&value)?,
-            position: 0,
-            nodes: Vec::new(),
-            current: 0,
-            cache: Vec::new(),
-            spaces: None,
-        };
-        // The `Value`, which is the only node of the root.
-        parser.nodes.push(RawNode {
-            node: ValueNode::without_loc(ValueKind::Comma),
-            nodes: Vec::new(),
-            is_func: false,
-            unbalanced: Some(0),
-        });
-        parser.parse()?;
-        Ok::<_, ParseError>(parser.nodes)
-    })();
-    let Ok(mut nodes) = parsed else {
-        return Ok(unknown(value, root_offset));
-    };
-    let grouper = Grouper {
-        text: &value,
-        borrowed,
-        syntax,
-        is_unbalanced: std::cell::Cell::new(false),
-    };
-    let children = grouper.children(&mut nodes, 0);
-    let group = flatten_groups(grouper.parse_value_node(children));
-    let inner = ValueNode::without_loc(ValueKind::Value { group: Box::new(group) });
-    let mut root = ValueNode::without_loc(ValueKind::Root { group: Box::new(inner) });
-    root.loc.start_offset = Some(root_offset);
-    root.loc.end_offset = Some(root_offset + value.len() as u32);
-    calculate_loc(&mut root, &value, root_offset);
-    match grouper.is_unbalanced.get() {
-        true => Err(ParseError),
-        false => Ok(root),
-    }
-}
-
-pub(crate) fn unknown(value: Cow<'_, [u8]>, root_offset: u32) -> ValueNode<'_> {
-    let mut node = ValueNode::without_loc(ValueKind::Unknown(Cow::Borrowed(b"")));
-    node.loc.start_offset = Some(root_offset);
-    node.loc.end_offset = Some(root_offset + value.len() as u32);
-    node.kind = ValueKind::Unknown(value);
-    node
 }

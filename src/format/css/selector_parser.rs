@@ -2,7 +2,6 @@
 //! `parse/parse-selector.js`.
 
 use super::text::{self, ByteSet};
-use std::borrow::Cow;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum TokenKind {
@@ -32,8 +31,8 @@ fn is_space(byte: Option<&u8>) -> bool {
 static AT_END: ByteSet = ByteSet::new(b" \n\t\r{()'\"\\;/");
 static WORD_END: ByteSet = ByteSet::new(b" \n\t\r()*:;@!&'\"+|~>,[]\\/");
 
-fn tokenize(css: &[u8]) -> Result<Vec<Token>, ParseError> {
-    let mut tokens = Vec::new();
+fn tokenize(css: &[u8], tokens: &mut Vec<Token>) -> Result<(), ParseError> {
+    tokens.clear();
     let mut pos = 0;
     while let Some(&code) = css.get(pos) {
         let (kind, end);
@@ -102,7 +101,7 @@ fn tokenize(css: &[u8]) -> Result<Vec<Token>, ParseError> {
         tokens.push(Token { kind, start: pos, end });
         pos = end;
     }
-    Ok(tokens)
+    Ok(())
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -122,34 +121,50 @@ pub(crate) enum SelectorKind {
     Unknown,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) enum Namespace<'a> {
+#[derive(Debug, Copy, Clone)]
+pub(crate) enum Namespace {
     /// `true`
     Empty,
-    Name(Cow<'a, [u8]>),
+    Name(Span),
 }
 
-#[derive(Debug)]
-pub(crate) struct SelectorNode<'a> {
+/// A range of `Selectors::text`.
+pub(crate) type Span = (usize, usize);
+
+/// An index into `Selectors::nodes`. 0: there is none.
+pub(crate) type SelectorId = u32;
+
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct SelectorNode {
     pub(crate) kind: SelectorKind,
-    pub(crate) value: Cow<'a, [u8]>,
-    pub(crate) namespace: Option<Namespace<'a>>,
-    pub(crate) nodes: Vec<SelectorNode<'a>>,
+    pub(crate) value: Span,
+    pub(crate) namespace: Option<Namespace>,
+    parent: SelectorId,
+    /// `nodes`: the first, the last, and how many there are.
+    pub(crate) first_child: SelectorId,
+    last_child: SelectorId,
+    pub(crate) child_count: u32,
+    /// What follows in the `nodes` of the parent.
+    pub(crate) next_sibling: SelectorId,
     /// Of an attribute.
-    pub(crate) attribute: Cow<'a, [u8]>,
-    pub(crate) operator: Option<Cow<'a, [u8]>>,
+    pub(crate) attribute: Span,
+    pub(crate) operator: Option<Span>,
     pub(crate) has_value: bool,
     pub(crate) insensitive: bool,
 }
 
-impl<'a> SelectorNode<'a> {
-    fn unknown(value: Cow<'a, [u8]>) -> Self {
+impl SelectorNode {
+    fn new(kind: SelectorKind, value: Span, parent: SelectorId) -> Self {
         SelectorNode {
-            kind: SelectorKind::Unknown,
+            kind,
             value,
             namespace: None,
-            nodes: Vec::new(),
-            attribute: Cow::Borrowed(b""),
+            parent,
+            first_child: 0,
+            last_child: 0,
+            child_count: 0,
+            next_sibling: 0,
+            attribute: (0, 0),
             operator: None,
             has_value: false,
             insensitive: false,
@@ -157,31 +172,22 @@ impl<'a> SelectorNode<'a> {
     }
 }
 
-#[derive(Copy, Clone)]
-enum RawNamespace {
-    Empty,
-    Name(usize, usize),
-}
-
-struct RawNode {
-    kind: SelectorKind,
-    /// The range of the value.
-    value: (usize, usize),
-    namespace: Option<RawNamespace>,
-    parent: usize,
-    nodes: Vec<usize>,
-    attribute: (usize, usize),
-    operator: Option<(usize, usize)>,
-    has_value: bool,
-    insensitive: bool,
+/// The selectors that have been parsed, and what it takes to parse the next one.
+#[derive(Default)]
+pub(crate) struct Selectors {
+    text: Vec<u8>,
+    nodes: Vec<SelectorNode>,
+    tokens: Vec<Token>,
 }
 
 struct Parser<'t> {
+    /// All of `Selectors::text`. What is parsed starts at `base`, which the positions of the tokens count from.
     css: &'t [u8],
-    tokens: Vec<Token>,
+    base: usize,
+    tokens: &'t [Token],
     position: usize,
-    nodes: Vec<RawNode>,
-    current: usize,
+    nodes: &'t mut Vec<SelectorNode>,
+    current: SelectorId,
     /// So that what makes the parser go round in circles comes to an end.
     steps: usize,
     depth: usize,
@@ -207,34 +213,34 @@ impl<'t> Parser<'t> {
     }
 
     fn text_of(&self, token: Token) -> &'t [u8] {
-        &self.css[token.start..token.end]
+        &self.css[self.base + token.start..self.base + token.end]
     }
 
-    fn append(&mut self, parent: usize, kind: SelectorKind, value: (usize, usize)) -> usize {
-        let id = self.nodes.len();
-        self.nodes.push(RawNode {
-            kind,
-            value,
-            namespace: None,
-            parent,
-            nodes: Vec::new(),
-            attribute: (0, 0),
-            operator: None,
-            has_value: false,
-            insensitive: false,
-        });
-        self.nodes[parent].nodes.push(id);
+    fn node(&mut self, id: SelectorId) -> &mut SelectorNode {
+        &mut self.nodes[id as usize]
+    }
+
+    /// `value`: a range of what is parsed.
+    fn append(&mut self, parent: SelectorId, kind: SelectorKind, value: (usize, usize)) -> SelectorId {
+        let id = self.nodes.len() as SelectorId;
+        self.nodes.push(SelectorNode::new(kind, (self.base + value.0, self.base + value.1), parent));
+        let parent = self.node(parent);
+        parent.child_count += 1;
+        match std::mem::replace(&mut parent.last_child, id) {
+            0 => parent.first_child = id,
+            previous => self.node(previous).next_sibling = id,
+        }
         id
     }
 
-    fn new_node(&mut self, kind: SelectorKind, value: (usize, usize), namespace: Option<RawNamespace>) -> usize {
+    fn new_node(&mut self, kind: SelectorKind, value: (usize, usize), namespace: Option<Namespace>) -> SelectorId {
         let id = self.append(self.current, kind, value);
-        self.nodes[id].namespace = namespace;
+        self.node(id).namespace = namespace;
         id
     }
 
-    fn last_of_current(&self) -> Option<usize> {
-        self.nodes[self.current].nodes.last().copied()
+    fn last_of_current(&self) -> Option<SelectorId> {
+        Some(self.nodes[self.current as usize].last_child).filter(|&id| id != 0)
     }
 
     fn parse(&mut self, throw_on_parenthesis: bool) -> Result<(), ParseError> {
@@ -259,7 +265,7 @@ impl<'t> Parser<'t> {
             TokenKind::Control(b':') => self.pseudo(),
             TokenKind::Control(b',') => {
                 if self.position + 1 != self.tokens.len() {
-                    let parent = self.nodes[self.current].parent;
+                    let parent = self.nodes[self.current as usize].parent;
                     self.current = self.append(parent, SelectorKind::Selector, (0, 0));
                 }
                 self.position += 1;
@@ -282,13 +288,16 @@ impl<'t> Parser<'t> {
 
     fn attribute(&mut self) -> Result<(), ParseError> {
         self.position += 1;
-        let start = self.token(self.position).map_or(self.css.len(), |token| token.start);
+        let text_len = self.css.len() - self.base;
+        let start = self.token(self.position).map_or(text_len, |token| token.start);
         while self.token(self.position).is_some_and(|token| token.kind != TokenKind::Control(b']')) {
             self.position += 1;
         }
         // Without a `]`, the parser looks at a token that is not there.
         let end = self.current_token()?.start;
-        let string = &self.css[start..end];
+        let string = &self.css[self.base + start..self.base + end];
+        // Where `string` starts in the text.
+        let start = self.base + start;
 
         // `str.split(/((?:[*~^$|]?=))([^]*)/)`
         let operator = bun_core::strings::index_of_char_usize(string, b'=').map(|equals| {
@@ -299,21 +308,23 @@ impl<'t> Parser<'t> {
         let name = &string[..name_end];
 
         let id = self.new_node(SelectorKind::Attribute, (0, 0), None);
+        let node = &mut self.nodes[id as usize];
+        node.value = (0, 0);
         // `parts[0].split(/(\|)/g)`
         match bun_core::strings::index_of_char_usize(name, b'|') {
             Some(pipe) => {
                 let rest = &name[pipe + 1..];
                 let attribute_len = bun_core::strings::index_of_char_usize(rest, b'|').unwrap_or(rest.len());
-                self.nodes[id].attribute = (start + pipe + 1, start + pipe + 1 + attribute_len);
-                self.nodes[id].namespace = Some(match pipe {
-                    0 => RawNamespace::Empty,
-                    _ => RawNamespace::Name(start, start + pipe),
+                node.attribute = (start + pipe + 1, start + pipe + 1 + attribute_len);
+                node.namespace = Some(match pipe {
+                    0 => Namespace::Empty,
+                    _ => Namespace::Name((start, start + pipe)),
                 });
             }
-            None => self.nodes[id].attribute = (start, start + name_end),
+            None => node.attribute = (start, start + name_end),
         }
         if let Some((operator_start, operator_end)) = operator {
-            self.nodes[id].operator = Some((start + operator_start, start + operator_end));
+            node.operator = Some((start + operator_start, start + operator_end));
             let value = &string[operator_end..];
             if !value.is_empty() {
                 // `parts[2].split(/(\s+i\s*?)$/)`
@@ -323,9 +334,9 @@ impl<'t> Parser<'t> {
                     Some(rest) => text::trim_end(rest).len(),
                     None => value.len(),
                 };
-                self.nodes[id].insensitive = before_flag.is_some();
-                self.nodes[id].value = (start + operator_end, start + operator_end + value_len);
-                self.nodes[id].has_value = value_len > 0;
+                node.insensitive = before_flag.is_some();
+                node.value = (start + operator_end, start + operator_end + value_len);
+                node.has_value = value_len > 0;
             }
         }
         self.position += 1;
@@ -342,7 +353,7 @@ impl<'t> Parser<'t> {
         {
             let is_combinator = |token: Option<Token>| token.is_some_and(|it| it.kind == TokenKind::Combinator);
             if !is_combinator(self.next_token()) && !is_combinator(self.prev_token()) {
-                self.nodes[id].value = (token.start, token.end);
+                self.node(id).value = (self.base + token.start, self.base + token.end);
             }
             self.position += 1;
         }
@@ -351,8 +362,8 @@ impl<'t> Parser<'t> {
 
     fn namespace(&mut self) -> Result<(), ParseError> {
         let before = match self.prev_token() {
-            Some(prev) if prev.end > prev.start => RawNamespace::Name(prev.start, prev.end),
-            _ => RawNamespace::Empty,
+            Some(prev) if prev.end > prev.start => Namespace::Name((self.base + prev.start, self.base + prev.end)),
+            _ => Namespace::Empty,
         };
         match self.next_token().ok_or(ParseError)?.kind {
             TokenKind::Word => {
@@ -369,7 +380,7 @@ impl<'t> Parser<'t> {
 
     fn parentheses(&mut self) -> Result<(), ParseError> {
         let last = self.last_of_current();
-        if let Some(last) = last.filter(|&last| self.nodes[last].kind == SelectorKind::Pseudo) {
+        if let Some(last) = last.filter(|&last| self.nodes[last as usize].kind == SelectorKind::Pseudo) {
             self.depth += 1;
             if self.depth > MAX_DEPTH {
                 return Err(ParseError);
@@ -411,11 +422,12 @@ impl<'t> Parser<'t> {
                 self.position += 1;
                 // Everything up to here is added to the value. It follows what is there, unless
                 // that is nothing.
-                let value = &mut self.nodes[last].value;
+                let base = self.base;
+                let value = &mut self.node(last).value;
                 if value.0 == value.1 {
-                    value.0 = token.start.saturating_sub(1);
+                    value.0 = base + token.start.saturating_sub(1);
                 }
-                value.1 = token.end;
+                value.1 = base + token.end;
             }
             if balanced != 0 {
                 return Err(ParseError);
@@ -450,7 +462,7 @@ impl<'t> Parser<'t> {
         Ok(())
     }
 
-    fn universal(&mut self, namespace: Option<RawNamespace>) -> Result<(), ParseError> {
+    fn universal(&mut self, namespace: Option<Namespace>) -> Result<(), ParseError> {
         if self.next_token().is_some_and(|next| self.text_of(next) == b"|") {
             self.position += 1;
             return self.namespace();
@@ -461,7 +473,7 @@ impl<'t> Parser<'t> {
         Ok(())
     }
 
-    fn word(&mut self, namespace: Option<RawNamespace>) -> Result<(), ParseError> {
+    fn word(&mut self, namespace: Option<Namespace>) -> Result<(), ParseError> {
         if self.next_token().is_some_and(|next| self.text_of(next) == b"|") {
             self.position += 1;
             return self.namespace();
@@ -470,7 +482,7 @@ impl<'t> Parser<'t> {
     }
 
     /// `pseudo_start`: the word follows the colons of a pseudo class, which start there.
-    fn split_word(&mut self, namespace: Option<RawNamespace>, pseudo_start: Option<usize>) -> Result<(), ParseError> {
+    fn split_word(&mut self, namespace: Option<Namespace>, pseudo_start: Option<usize>) -> Result<(), ParseError> {
         let first = self.current_token()?;
         let mut end = first.end;
         while let Some(next) = self.next_token().filter(|next| next.kind == TokenKind::Word) {
@@ -483,50 +495,34 @@ impl<'t> Parser<'t> {
                 self.position += 1;
             }
         }
-        let word = &self.css[first.start..end];
-        let mut indices = vec![0];
-        for (at, &byte) in word.iter().enumerate() {
-            let is_split = byte == b'.' || (byte == b'#' && word.get(at + 1) != Some(&b'{'));
-            if is_split && at != 0 {
-                indices.push(at);
-            }
-        }
-        for (i, &ind) in indices.iter().enumerate() {
-            let index = indices.get(i + 1).copied().unwrap_or(word.len());
+        let word = &self.css[self.base + first.start..self.base + end];
+        // Where the next part starts behind `from`.
+        let next_part = |from: usize| {
+            (from + 1..word.len())
+                .find(|&at| word[at] == b'.' || (word[at] == b'#' && word.get(at + 1) != Some(&b'{')))
+                .unwrap_or(word.len())
+        };
+        let mut ind = 0;
+        while ind < word.len() || ind == 0 {
+            let index = next_part(ind);
             let (start, end) = (first.start + ind, first.start + index);
-            if let (0, Some(pseudo_start)) = (i, pseudo_start) {
+            if let (0, Some(pseudo_start)) = (ind, pseudo_start) {
                 self.new_node(SelectorKind::Pseudo, (pseudo_start, end), None);
                 let next_is_paren = self.next_token().is_some_and(|next| next.kind == TokenKind::Control(b'('));
-                if indices.len() > 1 && next_is_paren {
+                if index < word.len() && next_is_paren {
                     return Err(ParseError);
                 }
-                continue;
+            } else {
+                match word.get(ind) {
+                    Some(b'.') => self.new_node(SelectorKind::Class, (start + 1, end), namespace),
+                    Some(b'#') if word.get(ind + 1) != Some(&b'{') => self.new_node(SelectorKind::Id, (start + 1, end), namespace),
+                    _ => self.new_node(SelectorKind::Tag, (start, end), namespace),
+                };
             }
-            match word[ind] {
-                b'.' => self.new_node(SelectorKind::Class, (start + 1, end), namespace),
-                b'#' if word.get(ind + 1) != Some(&b'{') => self.new_node(SelectorKind::Id, (start + 1, end), namespace),
-                _ => self.new_node(SelectorKind::Tag, (start, end), namespace),
-            };
+            ind = index.max(1);
         }
         self.position += 1;
         Ok(())
-    }
-}
-
-fn build<'a>(nodes: &[RawNode], id: usize, cow: &impl Fn((usize, usize)) -> Cow<'a, [u8]>) -> SelectorNode<'a> {
-    let raw = &nodes[id];
-    SelectorNode {
-        kind: raw.kind,
-        value: cow(raw.value),
-        namespace: raw.namespace.map(|namespace| match namespace {
-            RawNamespace::Empty => Namespace::Empty,
-            RawNamespace::Name(start, end) => Namespace::Name(cow((start, end))),
-        }),
-        nodes: raw.nodes.iter().map(|&child| build(nodes, child, cow)).collect(),
-        attribute: cow(raw.attribute),
-        operator: raw.operator.map(cow),
-        has_value: raw.has_value,
-        insensitive: raw.insensitive,
     }
 }
 
@@ -553,49 +549,61 @@ fn has_comment(selector: &[u8]) -> bool {
     false
 }
 
-fn slice<'a>(text: &Cow<'a, [u8]>, (start, end): (usize, usize)) -> Cow<'a, [u8]> {
-    match text {
-        Cow::Borrowed(text) => Cow::Borrowed(text.get(start..end).unwrap_or_default()),
-        Cow::Owned(text) => Cow::Owned(text.get(start..end).unwrap_or_default().to_vec()),
+impl Selectors {
+    /// Forgets all selectors.
+    pub(crate) fn clear(&mut self) {
+        self.text.clear();
+        self.nodes.clear();
     }
-}
 
-/// Prettier's `parseSelector`.
-pub(crate) fn parse_selector(selector: Cow<'_, [u8]>) -> SelectorNode<'_> {
-    if has_comment(&selector) {
-        let skipped = selector.len() - text::trim_start(&selector).len();
-        let trimmed = text::trim(&selector).len();
-        return SelectorNode::unknown(slice(&selector, (skipped, skipped + trimmed)));
+    pub(crate) fn node(&self, id: SelectorId) -> &SelectorNode {
+        &self.nodes[id as usize]
     }
-    let parsed = (|| {
-        let mut parser = Parser {
-            css: &selector,
-            tokens: tokenize(&selector)?,
-            position: 0,
-            nodes: Vec::new(),
-            current: 0,
-            steps: 0,
-            depth: 0,
-        };
-        parser.nodes.push(RawNode {
-            kind: SelectorKind::Root,
-            value: (0, 0),
-            namespace: None,
-            parent: 0,
-            nodes: Vec::new(),
-            attribute: (0, 0),
-            operator: None,
-            has_value: false,
-            insensitive: false,
-        });
-        parser.current = parser.append(0, SelectorKind::Selector, (0, 0));
-        while parser.position < parser.tokens.len() {
-            parser.parse(true)?;
+
+    pub(crate) fn text(&self, (start, end): Span) -> &[u8] {
+        self.text.get(start..end).unwrap_or_default()
+    }
+
+    /// `node.value`
+    pub(crate) fn value(&self, id: SelectorId) -> &[u8] {
+        self.text(self.node(id).value)
+    }
+
+    /// Prettier's `parseSelector`.
+    pub(crate) fn parse(&mut self, selector: &[u8]) -> SelectorId {
+        if self.nodes.is_empty() {
+            self.nodes.push(SelectorNode::new(SelectorKind::Unknown, (0, 0), 0));
         }
-        Ok::<_, ParseError>(parser.nodes)
-    })();
-    match parsed {
-        Ok(nodes) => build(&nodes, 0, &|range| slice(&selector, range)),
-        Err(ParseError) => SelectorNode::unknown(selector),
+        let base = self.text.len();
+        self.text.extend_from_slice(selector);
+        let root = self.nodes.len() as SelectorId;
+        if has_comment(selector) {
+            let start = base + selector.len() - text::trim_start(selector).len();
+            self.nodes.push(SelectorNode::new(SelectorKind::Unknown, (start, start + text::trim(selector).len()), 0));
+            return root;
+        }
+        let parsed = tokenize(selector, &mut self.tokens).and_then(|()| {
+            self.nodes.push(SelectorNode::new(SelectorKind::Root, (0, 0), 0));
+            let mut parser = Parser {
+                css: &self.text,
+                base,
+                tokens: &self.tokens,
+                position: 0,
+                nodes: &mut self.nodes,
+                current: root,
+                steps: 0,
+                depth: 0,
+            };
+            parser.current = parser.append(root, SelectorKind::Selector, (0, 0));
+            while parser.position < parser.tokens.len() {
+                parser.parse(true)?;
+            }
+            Ok(())
+        });
+        if parsed.is_err() {
+            self.nodes.truncate(root as usize);
+            self.nodes.push(SelectorNode::new(SelectorKind::Unknown, (base, base + selector.len()), 0));
+        }
+        root
     }
 }

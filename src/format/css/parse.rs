@@ -4,39 +4,46 @@
 use super::Parser as Syntax;
 use super::media_query::{self, MediaNode};
 use super::postcss::{self, Kind, NodeId, Range, Tree};
-use super::selector_parser::{SelectorNode, parse_selector};
+use super::selector_parser::{SelectorId, Selectors};
 use super::text;
-use super::value_parser::{ValueNode, parse_value};
+use super::value_parser::{ValueId, Values};
 use std::borrow::Cow;
 
 /// `node.value`
-#[derive(Debug)]
 pub(crate) enum Value<'a> {
     None,
     Text(Cow<'a, [u8]>),
-    Parsed(Box<ValueNode<'a>>),
-    /// `--a: { .. }`: `{ type: "css-rule", nodes }`
-    Rule(Vec<CssNode<'a>>),
+    Parsed(ValueId),
+    /// `--a: { .. }`: `{ type: "css-rule", nodes }`. The nodes are those of the rule that is the only node of the
+    /// tree.
+    Rule(Box<Tree>),
 }
 
 /// `node.params`
-#[derive(Debug)]
 pub(crate) enum Params<'a> {
     None,
     Text(Cow<'a, [u8]>),
     Media(MediaNode<'a>),
-    Value(Box<ValueNode<'a>>),
+    Value(ValueId),
     /// `media-unknown` and `selector-unknown`, which are printed the same way here.
     Unknown(Cow<'a, [u8]>),
 }
 
-#[derive(Debug)]
+/// The selectors and the values of a node. Those of the next node take their place.
+#[derive(Default)]
+pub(crate) struct Parsed {
+    pub(crate) selectors: Selectors,
+    pub(crate) values: Values,
+}
+
+/// A node, without what is in its block.
 pub(crate) struct CssNode<'a> {
     pub(crate) kind: Kind,
     /// `locStart(node)` and `locEnd(node)`
     pub(crate) start: usize,
     pub(crate) end: usize,
-    pub(crate) nodes: Option<Vec<CssNode<'a>>>,
+    /// Whether it has `nodes`.
+    pub(crate) has_block: bool,
     /// `raws.before`, `raws.between`, `raws.after`, `raws.afterName`
     pub(crate) before: &'a [u8],
     pub(crate) between: Cow<'a, [u8]>,
@@ -44,11 +51,7 @@ pub(crate) struct CssNode<'a> {
     pub(crate) after_name: &'a [u8],
     /// `raws.semicolon`
     pub(crate) semicolon: bool,
-    /// Of a comment.
-    pub(crate) text: &'a [u8],
-    /// `inline || raws.inline`
-    pub(crate) inline: bool,
-    pub(crate) selector: Option<SelectorNode<'a>>,
+    pub(crate) selector: Option<SelectorId>,
     /// `raws.selector`
     pub(crate) raw_selector: Cow<'a, [u8]>,
     pub(crate) is_scss_nested_property: bool,
@@ -82,14 +85,14 @@ impl From<postcss::SyntaxError> for SyntaxError {
     }
 }
 
-struct Context<'a> {
+pub(crate) struct Context<'a> {
     /// What is parsed.
-    text: &'a [u8],
+    pub(crate) text: &'a [u8],
     /// `options.originalText`
-    original_text: &'a [u8],
+    pub(crate) original_text: &'a [u8],
     /// `Tree::extra`
-    extra: &'a [u8],
-    syntax: Syntax,
+    pub(crate) extra: &'a [u8],
+    pub(crate) syntax: Syntax,
 }
 
 /// The part of `text` from `start` to `end`.
@@ -208,7 +211,7 @@ fn is_scss_nested_property(selector: &[u8]) -> bool {
 }
 
 impl<'a> Context<'a> {
-    fn of(&self, range: Range) -> &'a [u8] {
+    pub(crate) fn of(&self, range: Range) -> &'a [u8] {
         postcss::text_of_range(range, self.text, self.extra)
     }
 
@@ -231,9 +234,10 @@ impl<'a> Context<'a> {
     }
 
     /// What `parseNestedCSS` does with an at-rule of Less only. Returns whether that is all.
-    fn convert_less_at_rule(&self, raw: &postcss::Node, node: &mut CssNode<'a>) -> Result<bool, SyntaxError> {
-        let parse = |text: Cow<'a, [u8]>, node: &CssNode<'a>| {
-            parse_value(text, self.syntax, value_root_offset(node)).map(|it| Value::Parsed(Box::new(it))).map_err(|_| SyntaxError)
+    fn convert_less_at_rule(&self, raw: &postcss::Node, node: &mut CssNode<'a>, parsed: &mut Parsed) -> Result<bool, SyntaxError> {
+        let parse = |text: Cow<'a, [u8]>, node: &CssNode<'a>, parsed: &mut Parsed| {
+            let Parsed { selectors, values } = parsed;
+            values.parse(&text, self.syntax, value_root_offset(node), selectors).map(Value::Parsed).map_err(|_| SyntaxError)
         };
         // `node.params`
         let clean_params: Cow<'a, [u8]> = match &raw.clean_params {
@@ -259,15 +263,14 @@ impl<'a> Context<'a> {
                         }
                     }
                 }
-                node.value = parse(value, node)?;
+                node.value = parse(value, node, parsed)?;
             }
         }
 
         if raw.mixin {
             // `raws.identifier + name + raws.afterName + raws.params`
             let source = [self.of(raw.identifier), node.name, node.after_name, &node.raw_params].concat();
-            let source = Cow::Owned(source);
-            node.selector = Some(parse_selector(source));
+            node.selector = Some(parsed.selectors.parse(&source));
             return Ok(true);
         }
         if raw.function {
@@ -287,7 +290,7 @@ impl<'a> Context<'a> {
             } else {
                 Cow::Owned([rest, &clean_params].concat())
             };
-            node.value = parse(value, node)?;
+            node.value = parse(value, node, parsed)?;
         }
         // `@color :blue;`
         if !matches!(node.name, b"page" | b"nest" | b"keyframes") && clean_params.starts_with(b":") {
@@ -297,35 +300,51 @@ impl<'a> Context<'a> {
                 false => self.of(Range::new(raw.after_name.start, raw.after_name.end + 1)),
             };
             if clean_params.len() > 1 {
-                node.value = parse(skip(&clean_params, 1), node)?;
+                node.value = parse(skip(&clean_params, 1), node, parsed)?;
             }
         }
         Ok(node.variable)
     }
 
-    fn convert_children(&self, tree: &Tree, raw: &postcss::Node) -> Result<Vec<CssNode<'a>>, SyntaxError> {
-        tree.children(raw).map(|id| self.convert(tree, id)).collect()
+    /// Whether `id` and everything in it can be converted.
+    fn can_be_converted(&self, tree: &Tree, id: NodeId, parsed: &mut Parsed) -> bool {
+        self.convert(tree, id, parsed).is_ok() && tree.children(&tree.nodes[id as usize]).all(|child| self.can_be_converted(tree, child, parsed))
     }
 
-    /// `parseNestedCSS`, and `calculateLoc` for the node.
-    fn convert(&self, tree: &Tree, id: NodeId) -> Result<CssNode<'a>, SyntaxError> {
+    /// `locEnd(node)`
+    pub(crate) fn end_of(&self, tree: &Tree, id: NodeId, parsed: &mut Parsed) -> usize {
         let raw = &tree.nodes[id as usize];
-        let nodes = match raw.has_block {
-            true => Some(self.convert_children(tree, raw)?),
-            false => None,
-        };
+        match raw.end {
+            Some(end) if !raw.inline => (end as usize).min(self.original_text.len()),
+            _ => self.convert(tree, id, parsed).map_or(0, |node| node.end),
+        }
+    }
+
+    /// The name that an at-rule has for Prettier.
+    pub(crate) fn name_of_at_rule(&self, raw: &postcss::Node) -> &'a [u8] {
+        let name = self.of(raw.name);
+        match bun_core::strings::index_of_char_usize(name, b':') {
+            // `@color:blue;`
+            Some(colon) if self.syntax == Syntax::Less && !raw.mixin && !raw.function => &name[..colon],
+            _ => name,
+        }
+    }
+
+    /// `parseNestedCSS`, and `calculateLoc` for the node. What has been in `parsed` is lost.
+    pub(crate) fn convert(&self, tree: &Tree, id: NodeId, parsed: &mut Parsed) -> Result<CssNode<'a>, SyntaxError> {
+        parsed.selectors.clear();
+        parsed.values.clear();
+        let raw = &tree.nodes[id as usize];
         let mut node = CssNode {
             kind: raw.kind,
             start: raw.start as usize,
             end: 0,
-            nodes,
+            has_block: raw.has_block,
             before: self.of(raw.before),
             between: Cow::Borrowed(self.of(raw.between)),
             after: self.of(raw.after),
             after_name: self.of(raw.after_name),
             semicolon: raw.semicolon,
-            text: self.of(raw.text),
-            inline: raw.inline || raw.raw_inline,
             selector: None,
             raw_selector: Cow::Borrowed(b""),
             is_scss_nested_property: false,
@@ -364,11 +383,11 @@ impl<'a> Context<'a> {
                 {
                     let clean = raw.clean_selector.as_deref().unwrap_or_else(|| self.of(raw.selector));
                     node.is_scss_nested_property = self.syntax == Syntax::Scss && is_scss_nested_property(clean);
-                    node.selector = Some(parse_selector(node.raw_selector.clone()));
+                    node.selector = Some(parsed.selectors.parse(&node.raw_selector));
                 }
             }
-            Kind::Decl => self.convert_declaration(raw, &mut node)?,
-            Kind::AtRule => self.convert_at_rule(raw, &mut node)?,
+            Kind::Decl => self.convert_declaration(raw, &mut node, parsed)?,
+            Kind::AtRule => self.convert_at_rule(raw, &mut node, parsed)?,
         }
 
         // `calculateLocEnd`
@@ -381,17 +400,19 @@ impl<'a> Context<'a> {
                 node.start + bun_core::strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len())
             }
             Some(end) => end as usize,
-            None => match (raw.kind, node.nodes.as_ref().and_then(|nodes| nodes.last())) {
-                (_, Some(last)) => last.end,
-                (Kind::AtRule, None) => node.start + 1 + node.name.len() + node.after_name.len() + node.raw_params.len(),
-                _ => text_len,
+            // What is in `parsed` is lost, which only matters for what is printed: the root is not.
+            None => match (raw.kind, raw.last_child) {
+                (Kind::AtRule, 0) => node.start + 1 + node.name.len() + node.after_name.len() + node.raw_params.len(),
+                (_, 0) => text_len,
+                (Kind::Root, last) => self.end_of(tree, last, parsed),
+                (_, last) => self.end_of(tree, last, &mut Parsed::default()),
             },
         }
         .min(text_len);
         Ok(node)
     }
 
-    fn convert_declaration(&self, raw: &postcss::Node, node: &mut CssNode<'a>) -> Result<(), SyntaxError> {
+    fn convert_declaration(&self, raw: &postcss::Node, node: &mut CssNode<'a>, parsed: &mut Parsed) -> Result<(), SyntaxError> {
         let value = self.of(raw.value);
         // `getValueRootOffset`
         let root_offset = raw.start + node.prop.len() as u32 + node.between.len() as u32;
@@ -412,14 +433,16 @@ impl<'a> Context<'a> {
                 && tree.nodes[only as usize].kind == Kind::Rule
                 // What is in it would not live long enough.
                 && tree.extra.is_empty()
+                && self.can_be_converted(&tree, only, parsed)
             {
-                rules = self.convert(&tree, only).ok().and_then(|rule| rule.nodes);
+                rules = Some(Box::new(tree));
             }
+            parsed.values.clear();
             node.value = match rules {
                 Some(rules) => Value::Rule(rules),
                 // Prettier reads `raws.value.raw`, which is only there if the value has comments.
                 None if raw.clean_value.is_none() => return Err(SyntaxError),
-                None => Value::Parsed(Box::new(super::value_parser::unknown(Cow::Borrowed(value), root_offset))),
+                None => Value::Parsed(parsed.values.unknown(value, root_offset)),
             };
             return Ok(());
         }
@@ -449,8 +472,8 @@ impl<'a> Context<'a> {
                 });
                 return Ok(());
             }
-            let parsed = parse_value(Cow::Borrowed(value), self.syntax, root_offset).map_err(|_| SyntaxError)?;
-            node.value = Value::Parsed(Box::new(parsed));
+            let root = parsed.values.parse(value, self.syntax, root_offset, &mut parsed.selectors).map_err(|_| SyntaxError)?;
+            node.value = Value::Parsed(root);
         }
 
         if self.syntax == Syntax::Less {
@@ -468,14 +491,14 @@ impl<'a> Context<'a> {
                 if node.extend {
                     node.value = Value::None;
                     let selector = value.get(b"extend(".len()..value.len() - 1).unwrap_or_default();
-                    node.selector = Some(parse_selector(Cow::Borrowed(selector)));
+                    node.selector = Some(parsed.selectors.parse(selector));
                 }
             }
         }
         Ok(())
     }
 
-    fn convert_at_rule(&self, raw: &postcss::Node, node: &mut CssNode<'a>) -> Result<(), SyntaxError> {
+    fn convert_at_rule(&self, raw: &postcss::Node, node: &mut CssNode<'a>, parsed: &mut Parsed) -> Result<(), SyntaxError> {
         let has_text = |range: Range| !text::trim(self.of(range)).is_empty();
         let params = trim(&self.concat(&[
             if has_text(raw.after_name) { raw.after_name } else { Range::default() },
@@ -483,12 +506,15 @@ impl<'a> Context<'a> {
             if has_text(raw.between) { raw.between } else { Range::default() },
         ]));
         node.raw_params.clone_from(&params);
-        if self.syntax == Syntax::Less && self.convert_less_at_rule(raw, node)? {
+        if self.syntax == Syntax::Less && self.convert_less_at_rule(raw, node, parsed)? {
             return Ok(());
         }
         let name = node.name;
         let root_offset = value_root_offset(node);
-        let value = |text: Cow<'a, [u8]>| parse_value(text, self.syntax, root_offset).map(Box::new).map_err(|_| SyntaxError);
+        let Parsed { selectors, values } = parsed;
+        let value = |text: &[u8], values: &mut Values, selectors: &mut Selectors| {
+            values.parse(text, self.syntax, root_offset, selectors).map_err(|_| SyntaxError)
+        };
 
         if self.syntax == Syntax::Css && name == b"custom-selector" {
             // `node.params.match(/:--\S+\s+/)[0].trim()`
@@ -502,7 +528,7 @@ impl<'a> Context<'a> {
                 return Err(SyntaxError);
             }
             node.custom_selector = Some(slice(&clean, start, start + name_len));
-            node.selector = Some(parse_selector(trim(&slice(&clean, name_len, clean.len()))));
+            node.selector = Some(selectors.parse(&trim(&slice(&clean, name_len, clean.len()))));
             return Ok(());
         }
         if params.is_empty() {
@@ -511,7 +537,7 @@ impl<'a> Context<'a> {
         if matches!(name, b"warn" | b"error") {
             node.params = Params::Unknown(params.clone());
         } else if matches!(name, b"extend" | b"nest") {
-            node.selector = Some(parse_selector(params.clone()));
+            node.selector = Some(selectors.parse(&params));
         } else if name == b"at-root" {
             // `/^\(\s*(?:without|with)\s*:.+\)$/s`
             let is_query = params.strip_prefix(b"(").and_then(|it| it.strip_suffix(b")")).is_some_and(|inner| {
@@ -520,11 +546,11 @@ impl<'a> Context<'a> {
                 rest.and_then(|it| text::trim_start(it).strip_prefix(b":")).is_some_and(|it| !it.is_empty())
             });
             match is_query {
-                true => node.params = Params::Value(value(params.clone())?),
-                false => node.selector = Some(parse_selector(params.clone())),
+                true => node.params = Params::Value(value(&params, values, selectors)?),
+                false => node.selector = Some(selectors.parse(&params)),
             }
         } else if matches!(&*name.to_ascii_lowercase(), b"import" | b"use" | b"forward") {
-            node.params = Params::Value(value(params.clone())?);
+            node.params = Params::Value(value(&params, values, selectors)?);
         } else if matches!(
             name,
             b"namespace"
@@ -549,7 +575,7 @@ impl<'a> Context<'a> {
             if let Some(moved) = move_space_behind_parenthesis(&text) {
                 text = Cow::Owned(moved);
             }
-            node.value = Value::Parsed(value(text)?);
+            node.value = Value::Parsed(value(&text, values, selectors)?);
         } else if matches!(&*name.to_ascii_lowercase(), b"media" | b"custom-media") {
             node.params = if text::includes(&params, b"#{") {
                 // What Prettier makes of it is lost, and the string of `postcss` stays.
@@ -571,21 +597,4 @@ impl<'a> Context<'a> {
         }
         Ok(())
     }
-}
-
-/// What Prettier's `parseCss`, `parseLess` and `parseScss` make of the result of `postcss`. `text`: what
-/// `postcss` has got of `original_text`.
-pub(crate) fn parse<'a>(
-    tree: &'a Tree,
-    text: &'a [u8],
-    original_text: &'a [u8],
-    syntax: Syntax,
-) -> Result<CssNode<'a>, SyntaxError> {
-    let context = Context {
-        text,
-        original_text,
-        extra: &tree.extra,
-        syntax,
-    };
-    context.convert(tree, 0)
 }

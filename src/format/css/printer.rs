@@ -6,25 +6,69 @@ use super::misc::{
     adjust_numbers, adjust_strings, has_newline_backwards, is_next_line_empty, last_line_has_inline_comment,
     maybe_to_lower_case, print_css_number, print_string, print_unit, quote_attribute_value,
 };
-use super::parse::{CssNode, Params, Value};
-use super::postcss::Kind;
-use super::selector_parser::{Namespace, SelectorKind, SelectorNode};
+use super::parse::{Context, CssNode, Params, Parsed, Value};
+use super::postcss::{Kind, Node, NodeId, Tree};
+use super::selector_parser::{Namespace, SelectorId, SelectorKind, Selectors};
 use super::sink::Sink;
 use super::text;
-use super::value_parser::{ValueKind, ValueNode};
+use super::value_parser::{ValueId, ValueKind, Values};
 
-pub(crate) struct Printer<'t, 'a, 'o> {
-    /// `options.originalText`
-    pub(crate) text: &'a [u8],
-    pub(crate) syntax: Syntax,
+/// A node and the nodes that it is in.
+#[derive(Copy, Clone)]
+pub(crate) struct Scope<'s, 'a> {
+    pub(crate) node: &'s CssNode<'a>,
+    pub(crate) parent: Option<&'s Scope<'s, 'a>>,
+    /// What `node` is a node of.
+    tree: &'s Tree,
+}
+
+/// The node that is being printed, with what has been parsed of it.
+#[derive(Copy, Clone)]
+pub(crate) struct Statement<'s, 'a> {
+    pub(crate) scope: &'s Scope<'s, 'a>,
+    pub(crate) selectors: &'s Selectors,
+    pub(crate) values: &'s Values,
+}
+
+impl<'s, 'a> Statement<'s, 'a> {
+    pub(crate) fn node(&self) -> &'s CssNode<'a> {
+        self.scope.node
+    }
+
+    fn parent(&self) -> Option<&'s CssNode<'a>> {
+        self.scope.parent.map(|parent| parent.node)
+    }
+
+    /// `path.findAncestor((node) => node.type === kind)`, for what is in a selector, a value or
+    /// parameters: the node of the style sheet that it belongs to counts.
+    pub(crate) fn css_ancestor(&self, kind: Kind) -> Option<&'s CssNode<'a>> {
+        std::iter::successors(Some(self.scope), |scope| scope.parent).map(|scope| scope.node).find(|node| node.kind == kind)
+    }
+
+    /// `insideAtRuleNode`
+    pub(crate) fn inside_at_rule(&self, names: &[&[u8]]) -> bool {
+        self.css_ancestor(Kind::AtRule).is_some_and(|node| names.iter().any(|name| text::eq_lower_case(node.name, name)))
+    }
+
+    /// `insideIcssRuleNode`, for a declaration.
+    fn inside_icss_rule(&self) -> bool {
+        std::iter::successors(Some(self.scope), |scope| scope.parent).any(|scope| {
+            let node = scope.node;
+            node.kind == Kind::Rule && (node.raw_selector.starts_with(b":import") || node.raw_selector.starts_with(b":export"))
+        })
+    }
+}
+
+pub(crate) struct Printer<'a, 'o> {
+    pub(crate) context: Context<'a>,
     pub(crate) single_quote: bool,
     /// `trailingComma` is `"es5"` or `"all"`.
     pub(crate) trailing_comma: bool,
-    /// The nodes of the style sheet that what is being printed is in, itself included if it is one.
-    pub(crate) css_stack: Vec<&'t CssNode<'a>>,
     /// The nodes of the value that what is being printed is in.
-    pub(crate) value_stack: Vec<&'t ValueNode<'a>>,
-    /// Prettier throws an error for what has been printed.
+    pub(crate) value_stack: Vec<ValueId>,
+    /// The nodes of the blocks that are being printed.
+    pub(crate) blocks: Vec<NodeId>,
+    /// Prettier throws an error for the style sheet.
     pub(crate) has_failed: bool,
     pub(crate) sink: Sink<'o>,
 }
@@ -47,32 +91,21 @@ fn normalize_bang(text: &[u8], word: &[u8], allows_space: bool) -> Vec<u8> {
     text.to_vec()
 }
 
-impl<'t, 'a: 't> Printer<'t, 'a, '_> {
-    // ───────────────────────────── ancestors ─────────────────────────────
-
-    /// `path.findAncestor((node) => node.type === kind)`, for what is in a selector, a value or
-    /// parameters: the node of the style sheet that it belongs to counts.
-    pub(crate) fn css_ancestor(&self, kind: Kind) -> Option<&'t CssNode<'a>> {
-        self.css_stack.iter().rev().find(|node| node.kind == kind).copied()
+impl<'a> Printer<'a, '_> {
+    pub(crate) fn syntax(&self) -> Syntax {
+        self.context.syntax
     }
 
-    /// `insideAtRuleNode`
-    pub(crate) fn inside_at_rule(&self, names: &[&[u8]]) -> bool {
-        self.css_ancestor(Kind::AtRule).is_some_and(|node| names.iter().any(|name| text::eq_lower_case(node.name, name)))
-    }
-
-    /// `insideIcssRuleNode`, for a declaration.
-    fn inside_icss_rule(&self) -> bool {
-        self.css_stack.iter().any(|node| {
-            node.kind == Kind::Rule && (node.raw_selector.starts_with(b":import") || node.raw_selector.starts_with(b":export"))
-        })
+    /// `options.originalText`
+    pub(crate) fn text(&self) -> &'a [u8] {
+        self.context.original_text
     }
 
     // ───────────────────────────── the style sheet ─────────────────────────────
 
     /// Has `write` write something that no group is around and that a line break follows. See `Sink`. Whatever
     /// `write` does besides writing, doing it twice has to be the same as doing it once.
-    fn unit(&mut self, write: impl Fn(&mut Self)) {
+    fn unit(&mut self, mut write: impl FnMut(&mut Self)) {
         let mark = self.sink.start_unit();
         write(self);
         if let Some(mark) = mark
@@ -83,157 +116,245 @@ impl<'t, 'a: 't> Printer<'t, 'a, '_> {
         }
     }
 
-    pub(crate) fn print_root(&mut self, root: &'t CssNode<'a>) {
+    pub(crate) fn print_root(&mut self, tree: &Tree, parsed: &mut Parsed) {
+        let Ok(root) = self.context.convert(tree, 0, parsed) else {
+            self.has_failed = true;
+            return;
+        };
         let mut after = text::trim(root.after);
         if let Some(rest) = after.strip_prefix(b";") {
             after = text::trim(rest);
         }
-        self.css_stack.push(root);
-        self.print_sequence(root.nodes.as_deref().unwrap_or_default(), after);
-        self.css_stack.pop();
-        if root.nodes.as_ref().is_some_and(|nodes| !nodes.is_empty()) {
+        let scope = Scope {
+            node: &root,
+            parent: None,
+            tree,
+        };
+        self.print_sequence(&scope, &tree.nodes[0], after, parsed);
+        if tree.nodes[0].first_child != 0 {
             self.sink.hard_line();
         }
     }
 
-    /// Whether no block is printed for `node`.
-    fn has_no_block(&self, node: &CssNode<'a>) -> bool {
-        match node.kind {
+    /// Whether no block is printed for `raw`.
+    fn has_no_block(&self, raw: &Node) -> bool {
+        match raw.kind {
             Kind::Root | Kind::Rule => false,
             Kind::Comment => true,
-            Kind::Decl => node.nodes.is_none() && !matches!(node.value, Value::Rule(_)),
-            Kind::AtRule => node.nodes.is_none() || (self.syntax == Syntax::Less && (node.mixin || node.function)),
+            // A custom property set looks like a declaration.
+            Kind::Decl => {
+                !raw.has_block && !(self.context.of(raw.prop).starts_with(b"--") && self.context.of(raw.value).starts_with(b"{"))
+            }
+            Kind::AtRule => !raw.has_block || (self.syntax() == Syntax::Less && (raw.mixin || raw.function)),
         }
     }
 
-    /// `printSequence`, and `after` behind a blank unless it is empty.
-    fn print_sequence(&mut self, nodes: &'t [CssNode<'a>], after: &[u8]) {
-        let text = self.text;
-        if nodes.is_empty() && !after.is_empty() {
+    /// `printSequence` for the nodes of `block`, which `scope` is for, and `after` behind a blank unless it is empty.
+    fn print_sequence(&mut self, scope: &Scope<'_, 'a>, block: &Node, after: &[u8], parsed: &mut Parsed) {
+        let (text, tree) = (self.text(), scope.tree);
+        if block.first_child == 0 && !after.is_empty() {
             self.sink.token(" ");
             self.sink.text(after);
         }
-        let is_on_the_same_line = |node: &CssNode<'a>, next: &CssNode<'a>| {
-            (next.kind == Kind::Comment && !has_newline_backwards(text, next.start))
-                || (next.kind == Kind::AtRule && next.name == b"else" && node.kind != Kind::Comment)
-        };
+        let first = self.blocks.len();
+        self.blocks.extend(tree.children(block));
+        let count = self.blocks.len() - first;
+        let raw = |printer: &Self, index: usize| &tree.nodes[printer.blocks[first + index] as usize];
+        let start_of = |raw: &Node| (raw.start as usize).min(text.len());
+        let is_ignore_comment =
+            |printer: &Self, raw: &Node| raw.kind == Kind::Comment && text::trim(printer.context.of(raw.text)) == b"prettier-ignore";
+
         let mut start = 0;
-        while start < nodes.len() {
+        while start < count {
             let mut end = start + 1;
-            while nodes.get(end).is_some_and(|next| is_on_the_same_line(&nodes[end - 1], next)) {
+            while end < count && {
+                let (node, next) = (raw(self, end - 1), raw(self, end));
+                (next.kind == Kind::Comment && !has_newline_backwards(text, start_of(next)))
+                    || (next.kind == Kind::AtRule && node.kind != Kind::Comment && self.context.name_of_at_rule(next) == b"else")
+            } {
                 end += 1;
             }
-            let write = |printer: &mut Self, from: usize, to: usize| {
+            let mut write = |printer: &mut Self, from: usize, to: usize| {
                 for index in from..to {
                     if index > start {
                         printer.sink.token(" ");
                     }
-                    let node = &nodes[index];
-                    let previous = index.checked_sub(1).and_then(|at| nodes.get(at));
-                    if previous.is_some_and(|it| it.kind == Kind::Comment && text::trim(it.text) == b"prettier-ignore") {
-                        printer.sink.text(text.get(node.start..node.end).unwrap_or_default());
+                    let id = printer.blocks[first + index];
+                    if index > 0 && is_ignore_comment(printer, raw(printer, index - 1)) {
+                        let end = printer.context.end_of(tree, id, parsed);
+                        printer.sink.text(text.get(start_of(&tree.nodes[id as usize])..end).unwrap_or_default());
                     } else {
-                        printer.print_css(node);
+                        printer.print_css(scope, id, parsed);
                     }
                 }
-                if to == nodes.len() && !after.is_empty() {
+                if to == count && !after.is_empty() {
                     printer.sink.token(" ");
                     printer.sink.text(after);
                 }
             };
             // What has a block takes care of the line that its `{` ends. Everything else goes with the rest of the
             // line.
-            let blocks = nodes[start..end].iter().take_while(|node| node.kind == Kind::Comment || !self.has_no_block(node)).count();
+            let blocks = (start..end).take_while(|&index| raw(self, index).kind == Kind::Comment || !self.has_no_block(raw(self, index))).count();
             if blocks > 0 {
                 write(self, start, start + blocks);
             }
             if start + blocks < end {
                 self.unit(|printer| write(printer, start + blocks, end));
             }
-            if end < nodes.len() {
+            if end < count {
                 self.sink.hard_line();
-                if is_next_line_empty(text, nodes[end - 1].end) {
+                let last = self.blocks[first + end - 1];
+                if is_next_line_empty(text, self.context.end_of(tree, last, parsed)) {
                     self.sink.hard_line();
                 }
             }
             start = end;
         }
+        self.blocks.truncate(first);
     }
 
-    fn print_css(&mut self, node: &'t CssNode<'a>) {
-        self.css_stack.push(node);
-        match node.kind {
-            Kind::Root => self.print_root(node),
-            Kind::Comment => {
-                let text = self.text.get(node.start..node.end).unwrap_or_default();
-                self.sink.text(if node.inline { text::trim_end(text) } else { text });
-            }
-            Kind::Rule => self.print_rule(node),
-            Kind::Decl => self.print_declaration(node),
-            Kind::AtRule => self.print_at_rule(node),
+    /// Prints the node `id`, which is in the block of `parent`.
+    fn print_css(&mut self, parent: &Scope<'_, 'a>, id: NodeId, parsed: &mut Parsed) {
+        let tree = parent.tree;
+        let raw = &tree.nodes[id as usize];
+        if raw.kind == Kind::Comment {
+            let text = self.text();
+            let end = self.context.end_of(tree, id, parsed);
+            let comment = text.get((raw.start as usize).min(text.len())..end).unwrap_or_default();
+            return self.sink.text(if raw.inline || raw.raw_inline { text::trim_end(comment) } else { comment });
         }
-        self.css_stack.pop();
+        let Ok(node) = self.context.convert(tree, id, parsed) else {
+            self.has_failed = true;
+            return;
+        };
+        let scope = Scope {
+            node: &node,
+            parent: Some(parent),
+            tree,
+        };
+        match node.kind {
+            Kind::Root | Kind::Comment => {}
+            Kind::Rule => self.print_rule(&scope, raw, parsed),
+            Kind::Decl => self.print_declaration(&scope, raw, parsed),
+            Kind::AtRule => self.print_at_rule(&scope, raw, parsed),
+        }
     }
 
-    /// What is in `nodes`, each on a line of its own, and `}`. The `{` has been written.
-    fn print_block(&mut self, nodes: &'t [CssNode<'a>], is_hard_line: bool) {
+    /// What is in `block`, each on a line of its own, and `}`. The `{` has been written.
+    fn print_block(&mut self, scope: &Scope<'_, 'a>, block: &Node, is_hard_line: bool, parsed: &mut Parsed) {
         let line = if is_hard_line { Sink::hard_line } else { Sink::soft_line };
-        if !nodes.is_empty() {
+        if block.first_child != 0 {
             self.sink.start_indent();
             line(&mut self.sink);
-            self.print_sequence(nodes, b"");
+            self.print_sequence(scope, block, b"", parsed);
             self.sink.end_indent();
         }
         line(&mut self.sink);
         self.sink.token("}");
     }
 
-    fn print_rule(&mut self, node: &'t CssNode<'a>) {
+    fn print_rule(&mut self, scope: &Scope<'_, 'a>, raw: &Node, parsed: &mut Parsed) {
+        let node = scope.node;
+        let statement = Statement {
+            scope,
+            selectors: &parsed.selectors,
+            values: &parsed.values,
+        };
+        let unknown_selector = node.selector.filter(|&it| statement.selectors.node(it).kind == SelectorKind::Unknown);
+        // `isDetachedRulesetDeclarationNode`: `/^@.+:.*$/`
+        let is_detached_ruleset = unknown_selector.is_some_and(|selector| {
+            let value = statement.selectors.value(selector);
+            value.starts_with(b"@")
+                && bun_core::strings::index_of_any(value, b"\n\r").is_none()
+                && text::index_of_char_from(value, b':', 2).is_some()
+        });
         self.unit(|printer| {
-            if let Some(selector) = &node.selector {
-                printer.print_selector(selector, None, None, true);
+            if let Some(selector) = node.selector {
+                printer.print_selector(statement, selector, None, None);
             }
             if node.important {
                 printer.sink.token(" !important");
             }
-            match &node.selector {
-                Some(selector) if selector.kind == SelectorKind::Unknown && last_line_has_inline_comment(&selector.value) => {
-                    printer.sink.line();
-                }
-                Some(_) => printer.sink.token(" "),
-                None => {}
+            match (node.selector, unknown_selector) {
+                (_, Some(selector)) if last_line_has_inline_comment(statement.selectors.value(selector)) => printer.sink.line(),
+                (Some(_), _) => printer.sink.token(" "),
+                (None, _) => {}
             }
             printer.sink.token("{");
         });
-        self.print_block(node.nodes.as_deref().unwrap_or_default(), true);
-        // `isDetachedRulesetDeclarationNode`: `/^@.+:.*$/`
-        let is_detached_ruleset = node.selector.as_ref().is_some_and(|selector| {
-            let value = &selector.value;
-            selector.kind == SelectorKind::Unknown
-                && value.starts_with(b"@")
-                && bun_core::strings::index_of_any(value, b"\n\r").is_none()
-                && text::index_of_char_from(value, b':', 2).is_some()
-        });
+        self.print_block(scope, raw, true, parsed);
         if is_detached_ruleset {
             self.sink.token(";");
         }
     }
 
-    fn print_declaration(&mut self, node: &'t CssNode<'a>) {
-        let write = |printer: &mut Self| {
-            printer.print_name_and_value(node);
-            printer.print_rest_of_declaration(node);
-        };
-        match self.has_no_block(node) {
-            true => write(self),
-            false => self.unit(write),
+    fn print_declaration(&mut self, scope: &Scope<'_, 'a>, raw: &Node, parsed: &mut Parsed) {
+        let node = scope.node;
+        if let Value::Rule(tree) = &node.value {
+            // The lines of the block are written as they come.
+            return self.unit(|printer| {
+                let is_on_its_own_line = printer.print_name(scope);
+                printer.sink.token("{");
+                let scope = Scope { tree, ..*scope };
+                printer.print_block(&scope, &tree.nodes[tree.nodes[0].first_child as usize], true, parsed);
+                if is_on_its_own_line {
+                    printer.sink.end_indent();
+                    printer.sink.end_indent();
+                }
+                printer.print_rest_of_declaration(&scope);
+            });
         }
-        if let Some(nodes) = &node.nodes {
-            self.print_block(nodes, false);
+        let statement = Statement {
+            scope,
+            selectors: &parsed.selectors,
+            values: &parsed.values,
+        };
+        let write = |printer: &mut Self| {
+            let is_on_its_own_line = printer.print_name_and_extend(statement);
+            match &node.value {
+                Value::None | Value::Rule(_) => {}
+                Value::Text(value) => printer.sink.text(value),
+                Value::Parsed(value) => {
+                    // `hasComposesNode`
+                    let is_without_lines =
+                        statement.values.node(*value).kind == ValueKind::Root && text::eq_lower_case(&node.prop, b"composes");
+                    if is_without_lines {
+                        printer.sink.start_without_lines();
+                    }
+                    printer.print_value(statement, *value, None);
+                    if is_without_lines {
+                        printer.sink.end_without_lines();
+                    }
+                }
+            }
+            if is_on_its_own_line {
+                printer.sink.end_indent();
+                printer.sink.end_indent();
+            }
+            printer.print_rest_of_declaration(scope);
+        };
+        match node.has_block {
+            false => write(self),
+            true => {
+                self.unit(write);
+                self.print_block(scope, raw, false, parsed);
+            }
         }
     }
 
-    fn print_name_and_value(&mut self, node: &'t CssNode<'a>) {
+    /// The name of a declaration whose value is a block. See `print_name_and_extend`.
+    fn print_name(&mut self, scope: &Scope<'_, 'a>) -> bool {
+        let (selectors, values) = Default::default();
+        self.print_name_and_extend(Statement {
+            scope,
+            selectors: &selectors,
+            values: &values,
+        })
+    }
+
+    /// What is before the value. Returns whether an `indent` and a `dedent` in it have been started for the value.
+    fn print_name_and_extend(&mut self, statement: Statement<'_, 'a>) -> bool {
+        let node = statement.node();
         let trimmed_between = text::trim(&node.between);
         let is_colon = trimmed_between == b":";
         let is_value_all_space = matches!(&node.value, Value::Text(value) if value.iter().all(|&b| b == b' '));
@@ -243,10 +364,8 @@ impl<'t, 'a: 't> Printer<'t, 'a, '_> {
                 node.before.iter().copied().filter(|&b| b != b';' && !text::starts_with_white_space(&[b])).collect();
             self.sink.text(&before);
         }
-        // The parent, which is before the declaration itself.
-        let is_in_less_variable =
-            matches!(self.css_stack[..], [.., parent, _] if parent.kind == Kind::AtRule && parent.variable);
-        match is_in_less_variable || self.inside_icss_rule() {
+        let is_in_less_variable = statement.parent().is_some_and(|parent| parent.kind == Kind::AtRule && parent.variable);
+        match is_in_less_variable || statement.inside_icss_rule() {
             true => self.sink.text(&node.prop),
             false => self.sink.text(&maybe_to_lower_case(&node.prop)),
         }
@@ -257,20 +376,21 @@ impl<'t, 'a: 't> Printer<'t, 'a, '_> {
         // `a:${b} { .. }` in a template of JavaScript.
         let is_placeholder_right_behind_colon = node.is_nested
             && !(is_colon && node.between.ends_with(b" "))
-            && matches!(&node.value, Value::Parsed(value) if top_level_group(value).is_some_and(|group| {
-                is_at_word_placeholder(group) || group.groups().and_then(<[_]>::first).is_some_and(is_at_word_placeholder)
+            && matches!(node.value, Value::Parsed(value) if top_level_group(statement.values, value).is_some_and(|group| {
+                is_at_word_placeholder(statement.values, group)
+                    || statement.values.groups(group).first().is_some_and(|&first| is_at_word_placeholder(statement.values, first))
             }));
         if !(node.extend || is_value_all_space || is_placeholder_right_behind_colon) {
             self.sink.token(" ");
         }
-        if let Some(selector) = node.selector.as_ref().filter(|_| self.syntax == Syntax::Less && node.extend) {
-            match selector.nodes.len() > 1 {
+        if let Some(selector) = node.selector.filter(|_| self.syntax() == Syntax::Less && node.extend) {
+            match statement.selectors.node(selector).child_count > 1 {
                 true => {
                     self.sink.start_group(false);
                     self.sink.token("extend(");
                     self.sink.start_indent();
                     self.sink.soft_line();
-                    self.print_selector(selector, None, None, true);
+                    self.print_selector(statement, selector, None, None);
                     self.sink.end_indent();
                     self.sink.soft_line();
                     self.sink.token(")");
@@ -278,46 +398,28 @@ impl<'t, 'a: 't> Printer<'t, 'a, '_> {
                 }
                 false => {
                     self.sink.token("extend(");
-                    self.print_selector(selector, None, None, true);
+                    self.print_selector(statement, selector, None, None);
                     self.sink.token(")");
                 }
             }
         }
 
-        let is_on_its_own_line =
-            !is_colon && last_line_has_inline_comment(trimmed_between) && !self.should_break_top_level_list(node);
+        // `path.call(() => shouldBreakList(path), "value", "group", "group")`
+        let should_break_top_level_list = matches!(node.value, Value::Parsed(value)
+            if top_level_group(statement.values, value).is_some_and(|group| is_list_with_comma_group(statement.values, group)))
+            && !node.prop.starts_with(b"--");
+        let is_on_its_own_line = !is_colon && last_line_has_inline_comment(trimmed_between) && !should_break_top_level_list;
         if is_on_its_own_line {
             self.sink.start_indent();
             self.sink.hard_line();
             self.sink.start_dedent();
         }
-        match &node.value {
-            Value::None => {}
-            Value::Text(value) => self.sink.text(value),
-            Value::Parsed(value) => {
-                // `hasComposesNode`
-                let is_without_lines = matches!(value.kind, ValueKind::Root { .. }) && text::eq_lower_case(&node.prop, b"composes");
-                if is_without_lines {
-                    self.sink.start_without_lines();
-                }
-                self.print_value(value, None);
-                if is_without_lines {
-                    self.sink.end_without_lines();
-                }
-            }
-            Value::Rule(nodes) => {
-                self.sink.token("{");
-                self.print_block(nodes, true);
-            }
-        }
-        if is_on_its_own_line {
-            self.sink.end_indent();
-            self.sink.end_indent();
-        }
+        is_on_its_own_line
     }
 
     /// What follows the value, up to the `{` if there is a block.
-    fn print_rest_of_declaration(&mut self, node: &'t CssNode<'a>) {
+    fn print_rest_of_declaration(&mut self, scope: &Scope<'_, 'a>) {
+        let node = scope.node;
         let mut bang = |raw: Option<&[u8]>, is_set: bool, word: &'static str, allows_space: bool| match raw {
             Some(raw) => self.sink.text(&normalize_bang(raw, word.as_bytes(), allows_space)),
             None if is_set => {
@@ -329,69 +431,61 @@ impl<'t, 'a: 't> Printer<'t, 'a, '_> {
         bang(node.raw_important, node.important, "important", true);
         bang(node.raw_scss_default, node.scss_default, "default", false);
         bang(node.raw_scss_global, node.scss_global, "global", false);
-        match &node.nodes {
-            Some(_) => self.sink.token(" {"),
+        match node.has_block {
+            true => self.sink.token(" {"),
             // `isTemplatePropNode`
-            None if node.prop.starts_with(b"@prettier-placeholder") && self.has_no_semicolon(node) => {}
-            None => self.sink.token(";"),
+            false if node.prop.starts_with(b"@prettier-placeholder") && self.has_no_semicolon(scope) => {}
+            false => self.sink.token(";"),
         }
     }
 
-    /// `path.call(() => shouldBreakList(path), "value", "group", "group")`
-    fn should_break_top_level_list(&self, node: &CssNode<'a>) -> bool {
-        let Value::Parsed(root) = &node.value else {
-            return false;
-        };
-        let ValueKind::Root { group } = &root.kind else {
-            return false;
-        };
-        let ValueKind::Value { group } = &group.kind else {
-            return false;
-        };
-        is_list_with_comma_group(group) && !node.prop.starts_with(b"--")
-    }
-
-    /// Whether there is no semicolon behind `node`, which is being printed.
-    fn has_no_semicolon(&mut self, node: &CssNode<'a>) -> bool {
+    /// Whether there is no semicolon behind the node of `scope`.
+    fn has_no_semicolon(&mut self, scope: &Scope<'_, 'a>) -> bool {
+        let parent = scope.parent.map(|parent| parent.node);
         // What Prettier makes of `--a: { .. }` has no `raws` to look at.
-        if matches!(self.css_stack[..], [.., parent, _] if matches!(parent.value, Value::Rule(_))) {
+        if parent.is_some_and(|parent| matches!(parent.value, Value::Rule(_))) {
             self.has_failed = true;
         }
-        matches!(self.css_stack[..], [.., parent, _] if !parent.semicolon)
-            && node.end.checked_sub(1).and_then(|at| self.text.get(at)) != Some(&b';')
+        parent.is_some_and(|parent| !parent.semicolon) && scope.node.end.checked_sub(1).and_then(|at| self.text().get(at)) != Some(&b';')
     }
 
-    fn print_at_rule(&mut self, node: &'t CssNode<'a>) {
-        if self.has_no_block(node) {
-            return self.print_at_rule_up_to_block(node);
+    fn print_at_rule(&mut self, scope: &Scope<'_, 'a>, raw: &Node, parsed: &mut Parsed) {
+        let statement = Statement {
+            scope,
+            selectors: &parsed.selectors,
+            values: &parsed.values,
+        };
+        if self.has_no_block(raw) {
+            return self.print_at_rule_up_to_block(statement);
         }
-        self.unit(|printer| printer.print_at_rule_up_to_block(node));
-        self.print_block(node.nodes.as_deref().unwrap_or_default(), false);
-        if self.syntax == Syntax::Less && node.variable {
-            let semicolon = self.semicolon_of_at_rule(node);
+        self.unit(|printer| printer.print_at_rule_up_to_block(statement));
+        self.print_block(scope, raw, false, parsed);
+        if self.syntax() == Syntax::Less && scope.node.variable {
+            let semicolon = self.semicolon_of_at_rule(scope);
             self.sink.token(semicolon);
         }
     }
 
-    fn semicolon_of_at_rule(&mut self, node: &CssNode<'a>) -> &'static str {
+    fn semicolon_of_at_rule(&mut self, scope: &Scope<'_, 'a>) -> &'static str {
         // `isTemplatePlaceholderNode`: an expression in a template of JavaScript.
-        if node.name.starts_with(b"prettier-placeholder") && self.has_no_semicolon(node) { "" } else { ";" }
+        if scope.node.name.starts_with(b"prettier-placeholder") && self.has_no_semicolon(scope) { "" } else { ";" }
     }
 
     /// All of an at-rule, or what is before its block and the `{`.
-    fn print_at_rule_up_to_block(&mut self, node: &'t CssNode<'a>) {
+    fn print_at_rule_up_to_block(&mut self, statement: Statement<'_, 'a>) {
+        let node = statement.node();
         let is_placeholder = node.name.starts_with(b"prettier-placeholder");
-        let semicolon = self.semicolon_of_at_rule(node);
+        let semicolon = self.semicolon_of_at_rule(statement.scope);
         // `/^\(\s*\)$/`
         let is_detached_ruleset_call = node
             .raw_params
             .strip_prefix(b"(")
             .and_then(|it| it.strip_suffix(b")"))
             .is_some_and(|inner| text::trim(inner).is_empty());
-        if self.syntax == Syntax::Less {
+        if self.syntax() == Syntax::Less {
             if node.mixin {
-                if let Some(selector) = &node.selector {
-                    self.print_selector(selector, None, None, true);
+                if let Some(selector) = node.selector {
+                    self.print_selector(statement, selector, None, None);
                 }
                 if node.important {
                     self.sink.token(" !important");
@@ -410,15 +504,15 @@ impl<'t, 'a: 't> Printer<'t, 'a, '_> {
                 self.sink.token("@");
                 self.sink.text(node.name);
                 self.sink.token(": ");
-                if let Value::Parsed(value) = &node.value {
-                    self.print_value(value, None);
+                if let Value::Parsed(value) = node.value {
+                    self.print_value(statement, value, None);
                     self.sink.line_suffix_boundary();
                 }
                 if !between.is_empty() {
                     self.sink.text(between);
                     self.sink.token(" ");
                 }
-                return self.sink.token(if node.nodes.is_some() { "{" } else { semicolon });
+                return self.sink.token(if node.has_block { "{" } else { semicolon });
             }
         }
         let is_control_directive = self.is_scss_control_directive(node);
@@ -446,22 +540,25 @@ impl<'t, 'a: 't> Printer<'t, 'a, '_> {
                 Params::None => {}
                 Params::Text(params) | Params::Unknown(params) => self.sink.text(params),
                 Params::Media(list) => self.print_media(list, true),
-                Params::Value(value) => self.print_value(value, None),
+                Params::Value(value) => self.print_value(statement, *value, None),
             }
         }
-        if let Some(selector) = &node.selector {
+        if let Some(selector) = node.selector {
             self.sink.start_indent();
             self.sink.token(" ");
-            self.print_selector(selector, None, None, true);
+            self.print_selector(statement, selector, None, None);
             self.sink.end_indent();
         }
-        match &node.value {
+        match node.value {
             Value::Parsed(value) => {
                 // `hasParensAroundNode`
-                let has_parens = matches!(top_level_group(value).map(|it| &it.kind), Some(ValueKind::ParenGroup { open: Some(_), close: Some(_), .. }));
+                let has_parens = top_level_group(statement.values, value).is_some_and(|group| {
+                    let group = statement.values.node(group);
+                    group.kind == ValueKind::ParenGroup && group.open != 0 && group.close != 0
+                });
                 self.sink.start_group(false);
                 self.sink.token(" ");
-                self.print_value(value, None);
+                self.print_value(statement, value, None);
                 match (is_control_directive, has_parens) {
                     (false, _) => {}
                     (true, true) => self.sink.token(" "),
@@ -473,12 +570,14 @@ impl<'t, 'a: 't> Printer<'t, 'a, '_> {
             _ => {}
         }
         let is_import_that_ends_with_semicolon = node.name == b"import"
-            && matches!(&node.params, Params::Value(value) if matches!(&value.kind, ValueKind::Unknown(text) if text.ends_with(b";")));
-        match &node.nodes {
-            Some(_) => {
-                let has_inline_comment = match (&node.selector, &node.params) {
+            && matches!(node.params, Params::Value(value)
+                if statement.values.node(value).kind == ValueKind::Unknown && statement.values.value(value).is_some_and(|it| it.ends_with(b";")));
+        match node.has_block {
+            true => {
+                let has_inline_comment = match (node.selector, &node.params) {
                     (Some(selector), _) => {
-                        selector.kind == SelectorKind::Unknown && last_line_has_inline_comment(&selector.value)
+                        statement.selectors.node(selector).kind == SelectorKind::Unknown
+                            && last_line_has_inline_comment(statement.selectors.value(selector))
                     }
                     (None, Params::Text(params)) => last_line_has_inline_comment(params),
                     _ => false,
@@ -490,21 +589,21 @@ impl<'t, 'a: 't> Printer<'t, 'a, '_> {
                 }
                 self.sink.token("{");
             }
-            None if is_import_that_ends_with_semicolon => {}
-            None => self.sink.token(semicolon),
+            false if is_import_that_ends_with_semicolon => {}
+            false => self.sink.token(semicolon),
         }
     }
 
     /// `isSCSSControlDirectiveNode`
     pub(crate) fn is_scss_control_directive(&self, node: &CssNode<'a>) -> bool {
-        self.syntax == Syntax::Scss
+        self.syntax() == Syntax::Scss
             && node.kind == Kind::AtRule
             && matches!(node.name, b"if" | b"else" | b"for" | b"each" | b"while")
     }
 
     // ───────────────────────────── media queries ─────────────────────────────
 
-    fn print_media(&mut self, node: &'t MediaNode<'a>, is_last: bool) {
+    fn print_media(&mut self, node: &MediaNode<'a>, is_last: bool) {
         let children = node.nodes.as_deref().unwrap_or_default();
         match node.kind {
             MediaKind::QueryList => {
@@ -581,60 +680,69 @@ impl<'t, 'a: 't> Printer<'t, 'a, '_> {
 
     // ───────────────────────────── selectors ─────────────────────────────
 
-    fn print_namespace(&mut self, namespace: &Option<Namespace<'a>>) {
+    fn print_namespace(&mut self, selectors: &Selectors, namespace: Option<Namespace>) {
         match namespace {
             None => {}
             Some(Namespace::Empty) => self.sink.token("|"),
             Some(Namespace::Name(name)) => {
-                self.sink.text(text::trim(name));
+                self.sink.text(text::trim(selectors.text(name)));
                 self.sink.token("|");
             }
         }
     }
 
-    /// `parent`: the selector that `node` is in. `previous`: what is before it there.
+    /// `parent`: the selector that `id` is in. `previous`: what is before it there.
     pub(crate) fn print_selector(
         &mut self,
-        node: &'t SelectorNode<'a>,
-        parent: Option<&'t SelectorNode<'a>>,
-        previous: Option<&'t SelectorNode<'a>>,
-        is_last: bool,
+        statement: Statement<'_, 'a>,
+        id: SelectorId,
+        parent: Option<SelectorId>,
+        previous: Option<SelectorId>,
     ) {
-        let value: &'t [u8] = &node.value;
+        let selectors = statement.selectors;
+        let node = selectors.node(id);
+        let value = selectors.text(node.value);
         let single_quote = self.single_quote;
         match node.kind {
             SelectorKind::Root => {
-                let custom_selector = match self.inside_at_rule(&[b"custom-selector"]) {
-                    true => self.css_ancestor(Kind::AtRule).and_then(|it| it.custom_selector.as_deref()),
+                let custom_selector = match statement.inside_at_rule(&[b"custom-selector"]) {
+                    true => statement.css_ancestor(Kind::AtRule).and_then(|it| it.custom_selector.as_deref()),
                     false => None,
                 };
-                let is_on_one_line = self.inside_at_rule(&[b"extend", b"custom-selector", b"nest"]);
+                let is_on_one_line = statement.inside_at_rule(&[b"extend", b"custom-selector", b"nest"]);
                 // One on each line, which the group is broken by.
-                self.sink.start_group(!is_on_one_line && node.nodes.len() > 1);
+                self.sink.start_group(!is_on_one_line && node.child_count > 1);
                 if let Some(name) = custom_selector {
                     self.sink.text(name);
                     self.sink.line();
                 }
-                for (index, child) in node.nodes.iter().enumerate() {
-                    if index > 0 {
+                let (mut child, mut previous) = (node.first_child, None);
+                while child != 0 {
+                    if previous.is_some() {
                         self.sink.token(",");
                         match is_on_one_line {
                             true => self.sink.line(),
                             false => self.sink.hard_line(),
                         }
                     }
-                    let previous = index.checked_sub(1).and_then(|at| node.nodes.get(at));
-                    self.print_selector(child, Some(node), previous, index + 1 == node.nodes.len());
+                    self.print_selector(statement, child, Some(id), previous);
+                    previous = Some(child);
+                    child = selectors.node(child).next_sibling;
                 }
                 self.sink.end_group();
             }
             SelectorKind::Selector => {
                 self.sink.start_group(false);
-                if node.nodes.len() > 2 {
+                if node.child_count > 2 {
                     self.sink.start_indent();
                 }
-                self.print_selectors(node);
-                if node.nodes.len() > 2 {
+                let (mut child, mut previous) = (node.first_child, None);
+                while child != 0 {
+                    self.print_selector(statement, child, Some(id), previous);
+                    previous = Some(child);
+                    child = selectors.node(child).next_sibling;
+                }
+                if node.child_count > 2 {
                     self.sink.end_indent();
                 }
                 self.sink.end_group();
@@ -642,13 +750,13 @@ impl<'t, 'a: 't> Printer<'t, 'a, '_> {
             SelectorKind::Comment | SelectorKind::Nesting => self.sink.text(value),
             SelectorKind::String => self.sink.text(&adjust_strings(value, single_quote)),
             SelectorKind::Tag => {
-                self.print_namespace(&node.namespace);
-                if previous.is_some_and(|it| it.kind == SelectorKind::Nesting) {
+                self.print_namespace(selectors, node.namespace);
+                if previous.is_some_and(|it| selectors.node(it).kind == SelectorKind::Nesting) {
                     return self.sink.text(value);
                 }
                 // `isKeyframeAtRuleKeywords`
                 let is_keyframe_keyword = (text::eq_lower_case(value, b"from") || text::eq_lower_case(value, b"to"))
-                    && self.css_ancestor(Kind::AtRule).is_some_and(|it| it.name.to_ascii_lowercase().ends_with(b"keyframes"));
+                    && statement.css_ancestor(Kind::AtRule).is_some_and(|it| it.name.to_ascii_lowercase().ends_with(b"keyframes"));
                 match is_keyframe_keyword {
                     true => self.sink.text(&value.to_ascii_lowercase()),
                     false => self.sink.text(&adjust_numbers(value)),
@@ -664,9 +772,9 @@ impl<'t, 'a: 't> Printer<'t, 'a, '_> {
             }
             SelectorKind::Attribute => {
                 self.sink.token("[");
-                self.print_namespace(&node.namespace);
-                self.sink.text(text::trim(&node.attribute));
-                self.sink.text(node.operator.as_deref().unwrap_or_default());
+                self.print_namespace(selectors, node.namespace);
+                self.sink.text(text::trim(selectors.text(node.attribute)));
+                self.sink.text(node.operator.map(|it| selectors.text(it)).unwrap_or_default());
                 if node.has_value {
                     let adjusted = adjust_strings(text::trim(value), single_quote);
                     // `replaceEndOfLine(.., literallineWithoutBreakParent)`
@@ -682,13 +790,14 @@ impl<'t, 'a: 't> Printer<'t, 'a, '_> {
             SelectorKind::Combinator => {
                 if matches!(value, b"+" | b">" | b"~" | b">>>") {
                     let is_first = parent.is_some_and(|parent| {
-                        parent.kind == SelectorKind::Selector && parent.nodes.first().is_some_and(|it| std::ptr::eq(it, node))
+                        let parent = selectors.node(parent);
+                        parent.kind == SelectorKind::Selector && parent.first_child == id
                     });
                     if !is_first {
                         self.sink.line();
                     }
                     self.sink.text(value);
-                    if !is_last {
+                    if node.next_sibling != 0 {
                         self.sink.token(" ");
                     }
                     return;
@@ -704,23 +813,25 @@ impl<'t, 'a: 't> Printer<'t, 'a, '_> {
                 }
             }
             SelectorKind::Universal => {
-                self.print_namespace(&node.namespace);
+                self.print_namespace(selectors, node.namespace);
                 self.sink.text(value);
             }
             SelectorKind::Pseudo => {
                 self.sink.text(&maybe_to_lower_case(value));
-                if !node.nodes.is_empty() {
+                if node.first_child != 0 {
                     self.sink.start_group(false);
                     self.sink.token("(");
                     self.sink.start_indent();
                     self.sink.soft_line();
-                    for (index, child) in node.nodes.iter().enumerate() {
-                        if index > 0 {
+                    let (mut child, mut previous) = (node.first_child, None);
+                    while child != 0 {
+                        if previous.is_some() {
                             self.sink.token(",");
                             self.sink.line();
                         }
-                        let previous = index.checked_sub(1).and_then(|at| node.nodes.get(at));
-                        self.print_selector(child, Some(node), previous, index + 1 == node.nodes.len());
+                        self.print_selector(statement, child, Some(id), previous);
+                        previous = Some(child);
+                        child = selectors.node(child).next_sibling;
                     }
                     self.sink.end_indent();
                     self.sink.soft_line();
@@ -728,68 +839,61 @@ impl<'t, 'a: 't> Printer<'t, 'a, '_> {
                     self.sink.end_group();
                 }
             }
-            SelectorKind::Unknown => self.print_unknown_selector(node),
+            SelectorKind::Unknown => self.print_unknown_selector(statement, value),
         }
     }
 
-    fn print_selectors(&mut self, node: &'t SelectorNode<'a>) {
-        for (index, child) in node.nodes.iter().enumerate() {
-            let previous = index.checked_sub(1).and_then(|at| node.nodes.get(at));
-            self.print_selector(child, Some(node), previous, index + 1 == node.nodes.len());
-        }
-    }
-
-    fn print_unknown_selector(&mut self, node: &'t SelectorNode<'a>) {
-        if self.css_ancestor(Kind::Rule).is_some_and(|rule| rule.is_scss_nested_property) {
-            let value = maybe_to_lower_case(&node.value);
+    fn print_unknown_selector(&mut self, statement: Statement<'_, 'a>, value: &[u8]) {
+        if statement.css_ancestor(Kind::Rule).is_some_and(|rule| rule.is_scss_nested_property) {
+            let value = maybe_to_lower_case(value);
             return self.sink.text(&adjust_numbers(&adjust_strings(&value, self.single_quote)));
         }
+        let values = statement.values;
         // In the parentheses of `selector()`.
         if let [.., func, paren_group] = self.value_stack[..]
-            && let ValueKind::ParenGroup {
-                open: Some(open),
-                close: Some(close),
-                ..
-            } = &paren_group.kind
-            && matches!(&func.kind, ValueKind::Func { value, .. } if **value == *b"selector")
+            && let paren_group = values.node(paren_group)
+            && paren_group.kind == ValueKind::ParenGroup
+            && paren_group.open != 0
+            && paren_group.close != 0
+            && values.node(func).kind == ValueKind::Func
+            && values.value(func) == Some(b"selector")
         {
-            let start = open.loc.end_offset.map_or(0, |at| at as usize + 1);
-            let end = close.loc.start_offset.map_or(0, |at| at as usize);
-            let selector = text::trim(self.text.get(start..end).unwrap_or_default());
+            let start = values.node(paren_group.open).loc.end_offset.map_or(0, |at| at as usize + 1);
+            let end = values.node(paren_group.close).loc.start_offset.map_or(0, |at| at as usize);
+            let selector = text::trim(self.text().get(start..end).unwrap_or_default());
             if last_line_has_inline_comment(selector) {
                 self.sink.break_parent();
             }
             return self.sink.text(selector);
         }
         // The text is taken from the style sheet, for the sake of Less.
-        if self.value_stack.is_empty()
-            && let Some(parent) = self.css_stack.last().filter(|parent| !parent.raw_selector.is_empty())
-        {
+        let parent = statement.node();
+        if self.value_stack.is_empty() && !parent.raw_selector.is_empty() {
             let end = parent.start + parent.raw_selector.len();
-            return self.sink.text(text::trim(self.text.get(parent.start..end).unwrap_or_default()));
+            return self.sink.text(text::trim(self.text().get(parent.start..end).unwrap_or_default()));
         }
-        self.sink.text(&node.value);
+        self.sink.text(value);
     }
 
     // ───────────────────────────── values ─────────────────────────────
 
     /// `insideValueFunctionNode`
-    pub(crate) fn inside_value_function(&self, name: &[u8]) -> bool {
-        let function = self.value_stack.iter().rev().find_map(|node| match &node.kind {
-            ValueKind::Func { value, .. } => Some(value),
-            _ => None,
-        });
-        function.is_some_and(|value| text::eq_lower_case(value, name))
+    pub(crate) fn inside_value_function(&self, values: &Values, name: &[u8]) -> bool {
+        let function = self.value_stack.iter().rev().find(|&&id| values.node(id).kind == ValueKind::Func);
+        function.and_then(|&id| values.value(id)).is_some_and(|value| text::eq_lower_case(value, name))
     }
 
-    /// `previous`: what is before `node` in the group that it is in.
-    pub(crate) fn print_value(&mut self, node: &'t ValueNode<'a>, previous: Option<&'t ValueNode<'a>>) {
-        match &node.kind {
-            ValueKind::Root { group } | ValueKind::Value { group } => self.print_child_value(node, group),
-            ValueKind::Comment { inline, .. } => {
+    /// `previous`: what is before `id` in the group that it is in.
+    pub(crate) fn print_value(&mut self, statement: Statement<'_, 'a>, id: ValueId, previous: Option<ValueId>) {
+        let values = statement.values;
+        let node = values.node(id);
+        let value = values.value(id).unwrap_or_default();
+        match node.kind {
+            ValueKind::Root | ValueKind::Value => self.print_child_value(statement, id, node.group),
+            ValueKind::Comment => {
                 let (start, end) = (node.loc.start_offset.unwrap_or(0) as usize, node.loc.end_offset.unwrap_or(0) as usize);
-                let text = self.text.get(start..end).unwrap_or_default();
-                match inline {
+                let text = self.text().get(start..end).unwrap_or_default();
+                match node.inline {
                     true => {
                         self.sink.start_line_suffix();
                         self.sink.text(text::trim_end(text));
@@ -798,89 +902,80 @@ impl<'t, 'a: 't> Printer<'t, 'a, '_> {
                     false => self.sink.text(text),
                 }
             }
-            ValueKind::CommaGroup { .. } => self.print_comma_separated_value_group(node),
-            ValueKind::ParenGroup { .. } => self.print_parenthesized_value_group(node),
-            ValueKind::Func { value, group } => {
+            ValueKind::CommaGroup => self.print_comma_separated_value_group(statement, id),
+            ValueKind::ParenGroup => self.print_parenthesized_value_group(statement, id),
+            ValueKind::Func => {
                 let is_keyword = ["not", "and", "or"].iter().any(|it| text::eq_lower_case(value, it.as_bytes()));
                 self.sink.text(value);
-                if is_keyword && self.inside_at_rule(&[b"supports"]) {
+                if is_keyword && statement.inside_at_rule(&[b"supports"]) {
                     self.sink.token(" ");
                 }
-                self.print_child_value(node, group);
+                self.print_child_value(statement, id, node.group);
             }
-            ValueKind::Paren(b'(') => self.sink.token("("),
-            ValueKind::Paren(_) => self.sink.token(")"),
-            ValueKind::Number { value, unit } => {
+            ValueKind::Number => {
+                let unit = values.text(node.unit);
                 let mut text = Vec::with_capacity(value.len() + unit.len());
                 print_css_number(value, &mut text);
                 text.extend_from_slice(print_unit(unit));
                 self.sink.text(&text);
             }
-            ValueKind::Operator(value) | ValueKind::UnicodeRange(value) | ValueKind::Unknown(value) | ValueKind::Text(value) => {
+            ValueKind::Paren | ValueKind::Operator | ValueKind::UnicodeRange | ValueKind::Unknown | ValueKind::Comma => {
                 self.sink.text(value);
             }
-            ValueKind::Word {
-                value,
-                is_hex,
-                is_color,
-            } => {
+            ValueKind::Text => self.sink.text(values.text_of(id)),
+            ValueKind::Word => {
                 let is_wide_keyword =
                     ["initial", "inherit", "unset", "revert"].iter().any(|it| text::eq_lower_case(value, it.as_bytes()));
-                match (*is_color && *is_hex) || is_wide_keyword {
+                match (node.is_color && node.is_hex) || is_wide_keyword {
                     true => self.sink.text(&text::to_lower_case(value)),
                     false => self.sink.text(value),
                 }
             }
             ValueKind::Colon => {
-                let is_escaped = previous.and_then(ValueNode::value).is_some_and(|it| it.ends_with(b"\\"));
+                let is_escaped = previous.and_then(|it| values.value(it)).is_some_and(|it| it.ends_with(b"\\"));
                 self.sink.start_group(false);
                 self.sink.token(":");
-                if !(is_escaped || self.inside_value_function(b"url")) {
+                if !(is_escaped || self.inside_value_function(values, b"url")) {
                     self.sink.line();
                 }
                 self.sink.end_group();
             }
-            ValueKind::Comma => self.sink.token(","),
-            ValueKind::String { value, quote } => {
-                let raw = [quote, &**value, quote].concat();
+            ValueKind::String => {
+                let raw = values.raw_string(id);
                 let mut text = Vec::with_capacity(raw.len());
-                print_string(&raw, self.single_quote, &mut text);
+                print_string(raw, self.single_quote, &mut text);
                 self.sink.text(&text);
             }
-            ValueKind::AtWord(value) => {
+            ValueKind::AtWord => {
                 self.sink.token("@");
                 self.sink.text(value);
             }
-            ValueKind::Selector(selector) => self.print_selector(selector, None, None, true),
+            ValueKind::Selector => self.print_selector(statement, node.selector, None, None),
         }
     }
 
     /// Prints `child`, which is in `parent`.
-    pub(crate) fn print_child_value(&mut self, parent: &'t ValueNode<'a>, child: &'t ValueNode<'a>) {
+    pub(crate) fn print_child_value(&mut self, statement: Statement<'_, 'a>, parent: ValueId, child: ValueId) {
         self.value_stack.push(parent);
-        self.print_value(child, None);
+        self.print_value(statement, child, None);
         self.value_stack.pop();
     }
 }
 
 /// `isAtWordPlaceholderNode`
-pub(crate) fn is_at_word_placeholder(node: &ValueNode<'_>) -> bool {
-    matches!(&node.kind, ValueKind::AtWord(value) if value.starts_with(b"prettier-placeholder-"))
+pub(crate) fn is_at_word_placeholder(values: &Values, id: ValueId) -> bool {
+    values.node(id).kind == ValueKind::AtWord && values.value(id).is_some_and(|value| value.starts_with(b"prettier-placeholder-"))
 }
 
 /// `node.value.group.group`
-pub(crate) fn top_level_group<'t, 'a>(root: &'t ValueNode<'a>) -> Option<&'t ValueNode<'a>> {
-    let ValueKind::Root { group } = &root.kind else {
-        return None;
-    };
-    let ValueKind::Value { group } = &group.kind else {
-        return None;
-    };
-    Some(group)
+pub(crate) fn top_level_group(values: &Values, root: ValueId) -> Option<ValueId> {
+    let root = values.node(root);
+    let value = Some(values.node(root.group)).filter(|value| root.kind == ValueKind::Root && value.kind == ValueKind::Value)?;
+    Some(value.group)
 }
 
 /// The first condition of `shouldBreakList`.
-pub(crate) fn is_list_with_comma_group(node: &ValueNode<'_>) -> bool {
-    matches!(&node.kind, ValueKind::ParenGroup { open: None, groups, .. }
-        if groups.iter().any(|it| matches!(it.kind, ValueKind::CommaGroup { .. })))
+pub(crate) fn is_list_with_comma_group(values: &Values, id: ValueId) -> bool {
+    let node = values.node(id);
+    node.kind == ValueKind::ParenGroup && node.open == 0 && values.groups(id).iter().any(|&it| values.node(it).kind == ValueKind::CommaGroup)
 }

@@ -195,9 +195,8 @@ fn parse_and_print<'o>(text: &[u8], parser: Parser, options: &FormatOptions, mut
     }
 
     let tree = postcss::parse(&blanked, parser).map_err(|_| FormatError::SyntaxError)?;
-    let root = parse::parse(&tree, &blanked, text, parser).map_err(|_| FormatError::SyntaxError)?;
     if let Some(front_matter) = front_matter {
-        let has_nodes = root.nodes.as_ref().is_some_and(|nodes| !nodes.is_empty());
+        let has_nodes = tree.nodes[0].first_child != 0;
         // Prettier's `printEmbedFrontMatter`.
         let first_line_end = text::index_of_char_from(front_matter, b'\n', 0).unwrap_or(front_matter.len());
         let last_line_start = bun_core::strings::last_index_of_char(front_matter, b'\n').map_or(0, |at| at + 1);
@@ -229,16 +228,20 @@ fn parse_and_print<'o>(text: &[u8], parser: Parser, options: &FormatOptions, mut
         ]));
     }
     let mut printer = printer::Printer {
-        text,
-        syntax: parser,
+        context: parse::Context {
+            text: &blanked,
+            original_text: text,
+            extra: &tree.extra,
+            syntax: parser,
+        },
         single_quote: matches!(options.quote_style, QuoteStyle::Single),
         trailing_comma: !matches!(options.trailing_commas, TrailingCommas::None),
-        css_stack: Vec::new(),
         value_stack: Vec::new(),
+        blocks: Vec::new(),
         has_failed: false,
         sink,
     };
-    printer.print_root(&root);
+    printer.print_root(&tree, &mut parse::Parsed::default());
     match printer.has_failed {
         true => Err(FormatError::SyntaxError),
         false => Ok(printer.sink),

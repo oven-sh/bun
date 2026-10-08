@@ -1590,10 +1590,8 @@ pub fn get_function_name_with_kind(func: Func<'_>) -> Vec<u8> {
     let parent = FunctionParent::of(func);
     let private_name = parent.private_name();
     let mut tokens: SmallVec<[&[u8]; 6]> = SmallVec::new();
-    let mut is_static = false;
     if let FunctionParent::Method(member) | FunctionParent::Field(member) = parent {
-        is_static = member.is_static();
-        if is_static {
+        if member.is_static() {
             tokens.push(b"static");
         }
         if private_name.is_some() {
@@ -1609,7 +1607,7 @@ pub fn get_function_name_with_kind(func: Func<'_>) -> Vec<u8> {
     match parent {
         FunctionParent::Method(member) | FunctionParent::Signature(member) => {
             tokens.push(match member.kind() {
-                MemberKind::Constructor if !is_static => return b"constructor".to_vec(),
+                _ if member.is_constructor() => return b"constructor".to_vec(),
                 MemberKind::Getter => b"getter",
                 MemberKind::Setter => b"setter",
                 _ => b"method",
@@ -2003,6 +2001,7 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
     // The key of a class field without a value.
     if let Node::Member(member) = at
         && member.kind() == MemberKind::Property
+        && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
         && matches!(member.parent(), Node::Class(_))
         && member
             .key()

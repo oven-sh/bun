@@ -7,19 +7,13 @@
 //! the code does not parse. `bun-lint utils-core adjacent <pairs.jsonl>` answers
 //! `can_tokens_be_adjacent` for `[left, right]` pairs, `bun-lint utils-core text <pairs.jsonl>` prints
 //! what `utils::text` makes of them, `bun-lint utils-core types-at <cases.jsonl>` the
-//! `estree_type_at` of every offset, as runs, `bun-lint utils-core strings <cases.jsonl>` every string.
+//! `estree_type_at` of every offset, as runs.
 
 use bstr::BStr;
-use bun_lint::ast::{Expr, ExprKind, ExprTag, File, Node, Stmt, StmtKind};
-use bun_lint::context::{Cx, Severity};
+use bun_lint::ast::{Expr, ExprKind, File, Node, Stmt, StmtKind};
 use bun_lint::language::{LanguageOptions, SourceType};
-use bun_lint::options::{Json, Object, Options};
-use bun_lint::rule::{Kind, Listeners, Message, Meta, Rule};
-use bun_lint::runner::{Enabled, RuleEntry};
+use bun_lint::options::{Json, Object};
 use bun_lint::span::Span;
-use bun_lint::utils::string_literals::{
-    StringLiteral, StringLiteralRole, StringLiterals, on_string_literals,
-};
 use bun_lint::utils::{self, Target, TargetKind, ast_utils};
 use std::fmt::Write;
 
@@ -354,44 +348,6 @@ fn dump(case: Object<'_>) -> String {
     )
 }
 
-/// Reports every string of a file, with the type of its parent in ESTree.
-struct Strings;
-
-const STRING: Message = Message::new("string", "{{type}} {{parent}}");
-
-impl StringLiterals for Strings {
-    fn string_literal<'a>(&self, literal: StringLiteral<'a>, cx: &mut Cx<'a, Self>) {
-        let kind = match literal.role {
-            StringLiteralRole::TypeTemplateElement => "TemplateElement",
-            _ if literal.is_template() => "TemplateLiteral",
-            _ => "Literal",
-        };
-        cx.report(literal, STRING)
-            .data("type", kind)
-            .data("parent", literal.estree_parent_type());
-    }
-}
-
-impl Rule for Strings {
-    const META: Meta = Meta::eslint("strings", Kind::Problem);
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        Strings
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on_string_literals(on);
-        on.exprs([ExprTag::String, ExprTag::Template], |_, e, cx| {
-            let kind = utils::estree_type_name(e.into());
-            let is_static = !matches!(e.kind(), ExprKind::Template(it) if !it.exprs().is_empty());
-            if is_static && !kind.starts_with("JSX") {
-                cx.report(e, STRING).data("type", kind).data("parent", "-");
-            }
-        });
-    }
-}
-
 /// What `utils::text` says about `a`, and about `a` and `b`.
 fn text_facts(a: &[u8], b: &[u8]) -> String {
     use utils::text;
@@ -492,29 +448,6 @@ pub(crate) fn run(args: &[String]) {
                         "{{\"id\":{id},\"runs\":\"{runs}{} {}\"}}",
                         previous.0, previous.1
                     );
-                });
-            }
-            "strings" => {
-                let case = Object::of(Some(&json));
-                let code = case.get("code").and_then(Json::as_str).unwrap_or_default();
-                let path = case.str("filename").unwrap_or("file.js");
-                let id = case.number("id").unwrap_or(-1.0);
-                crate::with_file(path, code, &LanguageOptions::default(), |file| {
-                    if file.has_parse_errors() || !code.is_ascii() {
-                        println!("{{\"id\":{id},\"error\":true}}");
-                        return;
-                    }
-                    let rule = (RuleEntry::of::<Strings>().build)(&Options::default());
-                    let rules = [Enabled {
-                        rule: &*rule,
-                        severity: Severity::Error,
-                    }];
-                    let mut found = String::new();
-                    for it in bun_lint::runner::run(file, &rules, false) {
-                        let message = BStr::new(&it.message);
-                        _ = write!(found, "{}-{} {message},", it.span.start, it.span.end);
-                    }
-                    println!("{{\"id\":{id},\"strings\":\"{found}\"}}");
                 });
             }
             "text" => {

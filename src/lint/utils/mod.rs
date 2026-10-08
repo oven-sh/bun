@@ -23,7 +23,7 @@
 //! | `node.type`, `node.range`, `node.parent`, `ChainExpression`, `SequenceExpression`, patterns in assignments | [`estree_compat`], re-exported from here | `utils::estree_type_name(node)`, `utils::estree_type_at(file, offset)`, `utils::sequence_expressions(e)`, `utils::Target` |
 //! | `array.sort((a, b) => a > b ? 1 : -1)`, a comparison that never answers 0 | [`array`] | `utils::array_sort_by(&mut items, \|a, b\| ..)` |
 //! | `a.localeCompare(b)`, `new Intl.Collator("en", { numeric: true, sensitivity: "base" })` | [`collation`] | `collation::locale_compare(a, b)`, `collation::collator_compare_numeric_base(a, b)` |
-//! | a `Literal` / `TemplateLiteral` listener that looks at strings: keys, module specifiers and literal types are not expressions here | [`string_literals`] | `impl StringLiterals for MyRule`, `on_string_literals(on)` beside `on.exprs([ExprTag::String, ExprTag::Template], ..)` |
+//! | a `Literal` listener that looks at strings or numbers: keys, module specifiers and literal types are not expressions here | `rule.rs` | `on.string_literals(f)`, `on.number_literals(f)` |
 //! | `n.toPrecision(p)`, `n.toFixed(d)`, `n.toExponential(d)`, `n.toString(radix)`, `parseInt`, `parseFloat`, `ToInt32` | [`eslint_utils::js_number`] | `js_number::to_precision(n, p)`, `js_number::decimal_digits(n, p)`, .. |
 //! | methods of `String`, `/\s/`, `escapeRegExp` | [`text`] | `text::trim(bytes)`, `text::utf16_len(bytes)` |
 //!
@@ -92,7 +92,6 @@ pub mod ignore;
 pub mod keywords;
 pub mod naming;
 pub mod regular_expressions;
-pub mod string_literals;
 pub mod string_utils;
 pub mod text;
 pub mod ts_scope;

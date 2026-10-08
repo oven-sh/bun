@@ -189,9 +189,10 @@ fn is_type_unchanged<'a>(
                 .is_some_and(|other_part| is_empty_object_type(other_part) && !contains_type_variable(other_part))
             && uncast.get_base_constraint_of_type().is_some_and(|constraint| !is_nullable_type(constraint));
     }
-    has_same_properties(uncast, cast)
-        && have_same_type_arguments(uncast, cast)
+    // The properties last: each is looked up in each constituent of a union.
+    have_same_type_arguments(uncast, cast)
         && are_mutually_assignable(uncast, cast)
+        && has_same_properties(uncast, cast)
 }
 
 fn is_type_literal(ty: Type) -> bool {
@@ -313,8 +314,11 @@ fn are_union_parts_equivalent_ignoring_undefined<'a>(uncast: Type<'a>, cast: Typ
     let parts = |ty: Type<'a>| {
         union_constituents(ty).iter().filter(|part| !is_type_flag_set(*part, TypeFlags::UNDEFINED))
     };
-    parts(uncast).count() == parts(cast).count()
-        && parts(cast).all(|part| parts(uncast).any(|it| it == part))
+    if parts(uncast).count() != parts(cast).count() {
+        return false;
+    }
+    let uncast_parts: FxHashSet<Type<'a>> = parts(uncast).collect();
+    parts(cast).all(|part| uncast_parts.contains(&part))
 }
 
 fn get_original_expression(assertion: Assertion<'_>) -> Expr<'_> {
@@ -401,8 +405,8 @@ fn as_argument(node: Expr<'_>) -> Option<(Call<'_>, usize)> {
     let (ExprKind::Call(call) | ExprKind::New(call)) = parent.kind() else {
         return None;
     };
-    let index = call.args().iter().position(|argument| argument == node)?;
-    Some((call, index))
+    let index = call.args().index_of_start(node.span().start)?;
+    (call.args().get(index) == Some(node)).then_some((call, index))
 }
 
 fn is_argument_to_overloaded_function(assertion: Assertion) -> bool {
@@ -520,7 +524,7 @@ fn is_in_generic_context(node: Expr) -> bool {
                     || (!is_new
                         && is_member_expression(callee)
                         && !callee.is_chain_root()
-                        && call.args().iter().any(|argument| argument == node))
+                        && call.args().around(node.span().start) == Some(node))
                 {
                     continue;
                 }

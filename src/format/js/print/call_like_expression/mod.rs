@@ -7,7 +7,8 @@ use super::arrow_function_expression::is_multiline_template_starting_on_same_lin
 use super::type_parameters::type_arguments;
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::utils::call_expression::{
-    callee_trailing_comments, is_call_expression, is_member_expression, is_test_call_expression,
+    callee_trailing_comments, comments_before_arguments, is_call_expression, is_member_expression,
+    is_test_call_expression,
 };
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::member_chain::MemberChain;
@@ -16,7 +17,12 @@ use crate::{format_args, write};
 
 pub(crate) fn write_call_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut Formatter<'a>) {
     let callee = call.callee();
-    let head = format_args!(FormatCallee(call), call.is_optional().then_some("?."), FormatTypeArguments(e, call));
+    let head = format_args!(
+        FormatCallee(call),
+        call.is_optional().then_some("?."),
+        FormatTypeArguments(e, call),
+        (!call.type_args().is_empty()).then_some(line_suffix_boundary())
+    );
 
     if is_template_on_its_own_line_only_argument(call.args(), f)
         || is_simple_module_import(e, call, f)
@@ -38,7 +44,13 @@ pub(crate) fn write_call_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut For
 }
 
 pub(crate) fn write_new_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut Formatter<'a>) {
-    let head = format_args!("new", space(), FormatCallee(call), FormatTypeArguments(e, call));
+    let head = format_args!(
+        "new",
+        space(),
+        FormatCallee(call),
+        FormatTypeArguments(e, call),
+        (!call.type_args().is_empty()).then_some(line_suffix_boundary())
+    );
     if is_template_on_its_own_line_only_argument(call.args(), f) {
         return write!(f, [head, FormatArgumentsOnOneLine(call.args())]);
     }
@@ -66,7 +78,7 @@ impl<'a> Format<'a> for FormatCallee<'a> {
         let call = self.0;
         let callee = call.callee();
         // `new A` has no `(` to look for.
-        if f.is_quiet() || !call.type_args().is_empty() || call.close_paren().is_none() {
+        if f.is_quiet() || call.close_paren().is_none() {
             return write!(f, [callee, line_suffix_boundary()]);
         }
         write!(f, FormatNodeWithoutTrailingComments(&callee));
@@ -75,15 +87,23 @@ impl<'a> Format<'a> for FormatCallee<'a> {
     }
 }
 
-/// The `<T>` of `a<T>()`.
-struct FormatTypeArguments<'a>(Expr<'a>, Call<'a>);
+/// The `<T>` of `a<T>()`, with the comments around it.
+pub(crate) struct FormatTypeArguments<'a>(pub(crate) Expr<'a>, pub(crate) Call<'a>);
 
 impl<'a> Format<'a> for FormatTypeArguments<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let type_args = self.1.type_args();
-        if !type_args.is_empty() {
-            write!(f, [type_arguments(type_args, Node::Expr(self.0)), line_suffix_boundary()]);
+        let FormatTypeArguments(e, call) = *self;
+        if call.type_args().is_empty() {
+            return;
         }
+        let type_arguments = type_arguments(call.type_args(), Node::Expr(e));
+        if f.is_quiet() || call.close_paren().is_none() {
+            return write!(f, type_arguments);
+        }
+        let span = AstNodes::TSTypeParameterInstantiation(Node::Expr(e)).span();
+        write!(f, format_leading_comments(span));
+        type_arguments.write_without_comments(f);
+        write!(f, FormatTrailingComments::Comments(comments_before_arguments(call, span.end, f)));
     }
 }
 

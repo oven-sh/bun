@@ -26,17 +26,74 @@ pub(crate) fn strip_chain_element_wrappers(mut e: Expr<'_>) -> Expr<'_> {
     e
 }
 
-/// Of the comments between the callee of `call`, which ends at `callee_end`, and the `(`, those that
-/// trail the callee. `call` has a `(` and no type arguments.
-///
-/// Without arguments there is nothing else that they could belong to. Otherwise they lead the first
-/// argument, unless something is between them and the `(`: the end of the line, if they are on the
-/// line of the callee, the `?.`, or the `)` of a callee in parentheses.
-pub(crate) fn callee_trailing_comments<'a>(call: Call<'a>, callee_end: u32, f: &Formatter<'a>) -> &'a [Comment] {
-    let comments = f.comments().comments_before_character(callee_end, b'(');
-    if call.args().is_empty() {
-        return comments;
+/// Prettier's `isNextLineEmpty`: whether the line after the one that `position` is on is empty. What
+/// is behind `position` on its line may be `,`, `;` and comments.
+pub(crate) fn is_next_line_empty(source_text: SourceText<'_>, position: u32) -> bool {
+    fn skip_newline(text: &[u8]) -> Option<&[u8]> {
+        match text {
+            [b'\r', b'\n', rest @ ..] | [b'\n' | b'\r', rest @ ..] | [0xE2, 0x80, 0xA8 | 0xA9, rest @ ..] => Some(rest),
+            _ => None,
+        }
     }
+    fn skip_spaces(text: &[u8]) -> &[u8] {
+        let count = text.iter().take_while(|b| matches!(b, b' ' | b'\t')).count();
+        text.get(count..).unwrap_or_default()
+    }
+
+    let mut rest = source_text.as_bytes().get(position as usize..).unwrap_or_default();
+    loop {
+        let count = rest.iter().take_while(|b| matches!(b, b',' | b';' | b' ' | b'\t')).count();
+        rest = rest.get(count..).unwrap_or_default();
+        // A block comment on one line.
+        let Some(comment) = rest.strip_prefix(b"/*") else {
+            break;
+        };
+        let Some(end) = bun_core::strings::index_of(comment, b"*/") else {
+            break;
+        };
+        let (comment, after) = comment.split_at(end);
+        if SourceText::new(comment).contains_newline_between(0, comment.len() as u32) {
+            break;
+        }
+        rest = after.get(2..).unwrap_or_default();
+    }
+    if rest.starts_with(b"//") {
+        let mut end = 0;
+        while let Some(tail) = rest.get(end..)
+            && !tail.is_empty()
+            && skip_newline(tail).is_none()
+        {
+            end += 1;
+        }
+        rest = rest.get(end..).unwrap_or_default();
+    }
+    skip_newline(skip_spaces(skip_newline(rest).unwrap_or(rest))).is_some()
+}
+
+/// Of the comments between the callee of `call`, which ends at `callee_end`, and the `<` or the `(`,
+/// those that trail the callee. `call` has a `(`.
+///
+/// Without type arguments and arguments there is nothing else that they could belong to. Otherwise
+/// they lead what is next, unless something is between them and it: the end of the line, if they
+/// are on the line of the callee, the `?.`, or the `)` of a callee in parentheses.
+pub(crate) fn callee_trailing_comments<'a>(call: Call<'a>, callee_end: u32, f: &Formatter<'a>) -> &'a [Comment] {
+    match call.type_args().is_empty() {
+        true => comments_before_arguments(call, callee_end, f),
+        false => trailing_prefix(f.comments().comments_before_character(callee_end, b'<'), f),
+    }
+}
+
+/// Of the comments between `start` and the `(` of `call`, those that trail what ends at `start`: the
+/// callee or the type arguments.
+pub(crate) fn comments_before_arguments<'a>(call: Call<'a>, start: u32, f: &Formatter<'a>) -> &'a [Comment] {
+    let comments = f.comments().comments_before_character(start, b'(');
+    match call.args().is_empty() {
+        true => comments,
+        false => trailing_prefix(comments, f),
+    }
+}
+
+fn trailing_prefix<'a>(comments: &'a [Comment], f: &Formatter<'a>) -> &'a [Comment] {
     let source_text = f.source_text();
     let count = comments
         .iter()

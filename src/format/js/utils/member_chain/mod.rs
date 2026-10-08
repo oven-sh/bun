@@ -7,7 +7,7 @@ pub(crate) mod chain_member;
 pub(crate) mod groups;
 pub(crate) mod simple_argument;
 
-use self::chain_member::{CallExpressionPosition, ChainMember, plain_call_of_callee};
+use self::chain_member::{CallExpressionPosition, ChainMember, call_of_callee};
 use self::groups::{MemberChainGroup, MemberChainGroupsBuilder, TailChainGroups};
 use self::simple_argument::SimpleArgument;
 use super::call_expression::{callee_trailing_comments, is_call_expression, is_member_expression};
@@ -52,7 +52,20 @@ impl<'a> MemberChain<'a> {
         let Some(first_member) = self.tail.first().and_then(|group| group.members().first()) else {
             return false;
         };
-        if !f.is_quiet() && Self::has_comment_in_member(first_member, f) {
+        // A comment before the `.` that does not start its line trails the object.
+        let has_comment = !f.is_quiet()
+            && match *first_member {
+                ChainMember::StaticMember(member) => {
+                    has_trailing_comment(member, f)
+                        || member.object().is_some_and(|object| {
+                            let comments = f.comments().comments_before_character(object.span().end, b'.');
+                            comments.iter().any(|comment| comment.preceded_by_newline())
+                        })
+                }
+                ChainMember::ComputedMember(member) => has_trailing_comment(member, f),
+                _ => false,
+            };
+        if has_comment {
             return false;
         }
         let has_computed_property = first_member.is_computed_expression();
@@ -150,7 +163,14 @@ impl<'a> MemberChain<'a> {
                     !f.comments().comments_before_character(object.span().end, b'.').is_empty()
                 }) || has_trailing_comment(member, f)
             }
-            ChainMember::ComputedMember(member) => plain_call_of_callee(member).is_some() && has_trailing_comment(member, f),
+            ChainMember::ComputedMember(member) => call_of_callee(member).is_some() && has_trailing_comment(member, f),
+            ChainMember::CallExpression {
+                expression,
+                position: CallExpressionPosition::Middle,
+            }
+            | ChainMember::TSNonNullExpression(expression) => {
+                call_of_callee(expression).is_some_and(|call| !callee_trailing_comments(call, expression.span().end, f).is_empty())
+            }
             _ => false,
         }
     }
@@ -210,7 +230,7 @@ impl<'a> Format<'a> for MemberChain<'a> {
 /// Whether a comment trails `member`, which is `a.b` or `a[b]`.
 fn has_trailing_comment<'a>(member: Expr<'a>, f: &Formatter<'a>) -> bool {
     let end = member.span().end;
-    match plain_call_of_callee(member) {
+    match call_of_callee(member) {
         Some(call) => !callee_trailing_comments(call, end, f).is_empty(),
         None => f.comments().has_end_of_line_comment_after(end),
     }
@@ -260,20 +280,17 @@ fn compute_remaining_groups<'a>(
     let mut groups_builder = MemberChainGroupsBuilder::default();
 
     for member in members {
-        let has_trailing_comment = !f.is_quiet()
-            && match member {
-                ChainMember::StaticMember(member) | ChainMember::ComputedMember(member)
-                    if plain_call_of_callee(member).is_some() =>
-                {
-                    has_trailing_comment(member, f)
-                }
-                _ => {
-                    let end = member.span().end;
-                    f.comments().comments_after(end).first().is_some_and(|comment| {
-                        f.source_text().bytes_range(end, comment.span.start).trim_ascii().is_empty()
-                    })
-                }
-            };
+        let has_trailing_comment = !f.is_quiet() && {
+            let (expression, end) = (member.expr(), member.span().end);
+            match call_of_callee(expression) {
+                Some(call) => !callee_trailing_comments(call, end, f).is_empty(),
+                // A comment on its own line leads the next member.
+                None => f.comments().comments_after(end).first().is_some_and(|comment| {
+                    !comment.preceded_by_newline()
+                        && f.source_text().bytes_range(end, comment.span.start).trim_ascii().is_empty()
+                }),
+            }
+        };
 
         match member {
             // `[0]` goes with what is before it.

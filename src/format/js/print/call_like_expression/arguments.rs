@@ -7,7 +7,7 @@ use crate::js::print::arrow_function_expression::{
 };
 use crate::js::print::function::FormatFunctionOptions;
 use crate::js::print::parameters::{FormatFormalParameters, has_only_simple_parameters};
-use crate::js::utils::call_expression::{is_call_expression, strip_chain_element_wrappers};
+use crate::js::utils::call_expression::{is_call_expression, is_next_line_empty, strip_chain_element_wrappers};
 use crate::js::utils::is_long_curried_call;
 use crate::js::utils::member_chain::simple_argument::SimpleArgument;
 use crate::prelude::*;
@@ -74,9 +74,8 @@ impl<'a> Format<'a> for FormatArguments<'a> {
         }
 
         // An empty line between two arguments is kept, which takes breaking them all.
-        let has_empty_line = self.iter().zip(self.iter().skip(1)).any(|(current, next)| {
-            bun_core::strings::count_char(f.source_text().bytes_range(current.span().end, next.span().start), b'\n') >= 2
-        });
+        let has_empty_line =
+            self.iter().take(self.len().saturating_sub(1)).any(|argument| is_next_line_empty(f.source_text(), argument.span().end));
 
         if has_empty_line
             || (!matches!(self.parent.parent(), AstNodes::Decorator(_)) && is_function_composition_args(self.args))
@@ -144,9 +143,8 @@ fn is_function_composition_args<'a>(args: List<'a, Expr<'a>>) -> bool {
     false
 }
 
-/// An argument that has been formatted, with the comma after it, and the number of line breaks
-/// before it in the source.
-type FormattedArgument = (Option<FormatElement>, usize);
+/// An argument that has been formatted, with the comma after it.
+type FormattedArgument = Option<FormatElement>;
 
 /// Each argument on its own line.
 fn format_all_elements_broken_out<'a>(
@@ -160,13 +158,10 @@ fn format_all_elements_broken_out<'a>(
         group(&format_args!(
             "(",
             soft_block_indent(&format_with(|f| {
-                for (index, &(element, lines_before)) in elements.iter().enumerate() {
-                    if let Some(element) = element {
+                for (index, element) in elements.iter().enumerate() {
+                    if let Some(element) = *element {
                         if index > 0 {
-                            match lines_before {
-                                0 | 1 => write!(f, soft_line_break_or_space()),
-                                _ => write!(f, empty_line()),
-                            }
+                            write!(f, soft_line_break_or_space());
                         }
                         f.write_element(element);
                     }
@@ -187,13 +182,13 @@ fn format_all_args_broken_out<'a>(node: &FormatArguments<'a>, expand: bool, f: &
             "(",
             soft_block_indent(&format_with(|f| {
                 for (index, argument) in node.iter().enumerate() {
-                    if index > 0 {
-                        match f.lines_before(argument.span()) {
-                            0 | 1 => write!(f, soft_line_break_or_space()),
-                            _ => write!(f, empty_line()),
+                    write!(f, argument);
+                    if index != last_index {
+                        match is_next_line_empty(f.source_text(), argument.span().end) {
+                            true => write!(f, [",", empty_line()]),
+                            false => write!(f, [",", soft_line_break_or_space()]),
                         }
                     }
-                    write!(f, [argument, (index != last_index).then_some(",")]);
                 }
                 write!(f, node.trailing_commas());
             })),
@@ -412,8 +407,6 @@ fn write_grouped_arguments<'a>(
     let mut elements: SmallVec<[FormattedArgument; 4]> = SmallVec::new();
     for (index, argument) in node.iter().enumerate() {
         let is_grouped_argument = is_grouped(index);
-        // Before the argument is formatted, because it depends on the comments before it.
-        let lines_before = f.lines_before(argument.span());
         let comma = (last_index != index).then_some(",");
 
         let options = match argument.as_fn() {
@@ -446,7 +439,7 @@ fn write_grouped_arguments<'a>(
             true => grouped_breaks = grouped_breaks || breaks,
             false => non_grouped_breaks = non_grouped_breaks || breaks,
         }
-        elements.push((interned, lines_before));
+        elements.push(interned);
     }
 
     // If an argument that is not grouped breaks, they are all on lines of their own.
@@ -473,9 +466,17 @@ fn write_grouped_arguments<'a>(
             return;
         };
 
-        if let Some(function) = argument.as_fn()
-            && has_signature_without_soft_lines(function)
-        {
+        // Of an arrow function that is the last argument, a body that is an arrow function is
+        // written like the argument itself.
+        let mut next = argument.as_fn();
+        while let Some(function) = next {
+            next = match function.body() {
+                FnBody::Expr(body) if group_layout.is_grouped_last() => body.arrow_function(),
+                _ => None,
+            };
+            if !has_signature_without_soft_lines(function) {
+                continue;
+            }
             let params = FormatFormalParameters(function);
             let Some(cached_element) = f.context().get_cached_element(&params) else {
                 debug_assert!(false, "the parameters have been formatted and cached");
@@ -504,7 +505,7 @@ fn write_grouped_arguments<'a>(
         // An arrow chain, for one, is written differently when it is grouped.
         grouped_breaks = element.is_some_and(|element| element.will_break(f));
         if let Some(slot) = grouped.get_mut(grouped_index) {
-            slot.0 = element;
+            *slot = element;
         }
     }
 
@@ -515,7 +516,7 @@ fn write_grouped_arguments<'a>(
             "(",
             format_with(|f| {
                 let mut joiner = f.join_with(soft_line_break_or_space());
-                for (index, &(element, _)) in grouped.iter().enumerate() {
+                for (index, &element) in grouped.iter().enumerate() {
                     let content = format_with(|f| {
                         if let Some(element) = element {
                             f.write_element(element);
@@ -541,7 +542,7 @@ fn write_grouped_arguments<'a>(
             &format_args!(
                 "(",
                 format_with(|f| {
-                    f.join_with(soft_line_break_or_space()).entries(grouped.iter().map(|&(element, _)| {
+                    f.join_with(soft_line_break_or_space()).entries(grouped.iter().map(|&element| {
                         format_with(move |f: &mut Formatter<'a>| {
                             if let Some(element) = element {
                                 f.write_element(element);
@@ -569,12 +570,9 @@ fn has_signature_without_soft_lines(function: Func<'_>) -> bool {
     if matches!(function.owner(), Node::Expr(argument) if is_decorated_function(argument)) {
         return false;
     }
-    if !function.params().is_empty() || function.this_param().is_some() {
-        return true;
-    }
     // Without parameters, the type parameters and the comments in `()` break as they do anywhere
-    // else. Only the return type of an arrow function does not.
-    function.is_arrow() && function.return_type().is_some() && function.type_params().is_empty()
+    // else. Only the return type of an arrow function does not, which is what is cached for it.
+    function.is_arrow() || !function.params().is_empty() || function.this_param().is_some()
 }
 
 /// A function or an arrow function with options, without the comments and the parentheses around

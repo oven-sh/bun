@@ -1,6 +1,6 @@
-use crate::js::format::{identifier, write_trailing_comments_of};
+use crate::js::format::{FormatNonNullMarks, identifier, write_trailing_comments_of};
+use crate::js::print::call_like_expression::FormatTypeArguments;
 use crate::js::print::call_like_expression::arguments::FormatArguments;
-use crate::js::print::type_parameters::type_arguments;
 use crate::js::utils::call_expression::callee_trailing_comments;
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -26,7 +26,7 @@ pub(crate) enum ChainMember<'a> {
     },
     /// `[b]`
     ComputedMember(Expr<'a>),
-    /// `!`
+    /// `!`, `!!`
     TSNonNullExpression(Expr<'a>),
     /// What the chain starts with.
     Node(Expr<'a>),
@@ -52,22 +52,23 @@ impl<'a> ChainMember<'a> {
     }
 }
 
-/// The call that `callee` is the callee of, if it has no type arguments.
-pub(super) fn plain_call_of_callee(callee: Expr<'_>) -> Option<Call<'_>> {
+/// The call that `callee` is the callee of.
+pub(super) fn call_of_callee(callee: Expr<'_>) -> Option<Call<'_>> {
     match callee.parent() {
         Node::Expr(parent) => match parent.kind() {
-            ExprKind::Call(call) if call.callee() == callee && call.type_args().is_empty() => Some(call),
+            ExprKind::Call(call) if call.callee() == callee => Some(call),
             _ => None,
         },
         _ => None,
     }
 }
 
+/// The comments behind a link of the chain.
 fn write_trailing_comments_of_member<'a>(member: Expr<'a>, f: &mut Formatter<'a>) {
     if f.is_quiet() {
         return;
     }
-    match plain_call_of_callee(member) {
+    match call_of_callee(member) {
         Some(call) => {
             let comments = callee_trailing_comments(call, member.span().end, f);
             write!(f, FormatTrailingComments::Comments(comments));
@@ -85,7 +86,7 @@ fn write_call_without_callee<'a>(expression: Expr<'a>, f: &mut Formatter<'a>) {
         f,
         [
             call.is_optional().then_some("?."),
-            type_arguments(call.type_args(), Node::Expr(expression)),
+            FormatTypeArguments(expression, call),
             FormatArguments::of_call(expression, call)
         ]
     );
@@ -110,8 +111,8 @@ impl<'a> Format<'a> for ChainMember<'a> {
                 write_trailing_comments_of_member(member, f);
             }
             Self::TSNonNullExpression(e) => {
-                write!(f, [format_leading_comments(e.span()), "!"]);
-                write_trailing_comments_of(e.as_chain_element(), f);
+                write!(f, [format_leading_comments(e.span()), FormatNonNullMarks(e)]);
+                write_trailing_comments_of_member(e, f);
             }
             Self::CallExpression {
                 expression,
@@ -120,7 +121,7 @@ impl<'a> Format<'a> for ChainMember<'a> {
                 CallExpressionPosition::Middle => {
                     format_leading_comments(expression.span()).fmt(f);
                     write_call_without_callee(expression, f);
-                    write_trailing_comments_of(expression.as_chain_element(), f);
+                    write_trailing_comments_of_member(expression, f);
                 }
                 CallExpressionPosition::End => write_call_without_callee(expression, f),
             },
@@ -149,7 +150,9 @@ impl<'a> Format<'a> for FormatComputedMemberExpressionWithoutObject<'a> {
         let ExprKind::Index { index, .. } = member.kind() else {
             return;
         };
-        if !f.is_quiet() {
+        // A comment on its own line before the `[` leads what is in the brackets, unless that is a
+        // name.
+        if !f.is_quiet() && matches!(index.kind(), ExprKind::Ident(_)) {
             let comments = f.comments().comments_before_character(member.span().start, b'[');
             if !comments.is_empty() {
                 write!(f, [soft_line_break(), FormatLeadingComments::Comments(comments)]);
@@ -157,7 +160,7 @@ impl<'a> Format<'a> for FormatComputedMemberExpressionWithoutObject<'a> {
         }
 
         let optional = member.is_optional().then_some("?.");
-        if matches!(index.kind(), ExprKind::Number(_)) && !f.comments().has_comment_before(member.span().end) {
+        if matches!(index.kind(), ExprKind::Number(_)) {
             write!(f, [optional, "[", index, "]"]);
         } else {
             write!(f, group(&format_args!(optional, "[", soft_block_indent(&index), "]")));

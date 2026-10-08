@@ -4,41 +4,41 @@ import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
   const nodePolyfillList = {
-    "assert": "polyfill",
-    "buffer": "polyfill",
-    "child_process": "no-op",
-    "cluster": "no-op",
-    "console": "polyfill",
-    "constants": "polyfill",
-    "crypto": "polyfill",
-    "dgram": "no-op",
-    "dns": "no-op",
-    "domain": "polyfill",
-    "events": "polyfill",
-    "fs": "no-op",
-    "http": "polyfill",
-    "https": "polyfill",
-    "module": "no-op",
-    "net": "polyfill",
-    "os": "polyfill",
-    "path": "polyfill",
-    "perf_hooks": "no-op",
-    "process": "polyfill",
-    "punycode": "polyfill",
-    "querystring": "polyfill",
-    "readline": "no-op",
-    "repl": "no-op",
-    "stream": "polyfill",
-    "string_decoder": "polyfill",
-    "sys": "polyfill",
-    "timers": "polyfill",
-    "tls": "no-op",
-    "tty": "polyfill",
-    "url": "polyfill",
-    "util": "polyfill",
-    "v8": "no-op",
-    "vm": "no-op",
-    "zlib": "polyfill",
+    assert: "polyfill",
+    buffer: "polyfill",
+    child_process: "no-op",
+    cluster: "no-op",
+    console: "polyfill",
+    constants: "polyfill",
+    crypto: "polyfill",
+    dgram: "no-op",
+    dns: "no-op",
+    domain: "polyfill",
+    events: "polyfill",
+    fs: "no-op",
+    http: "polyfill",
+    https: "polyfill",
+    module: "no-op",
+    net: "polyfill",
+    os: "polyfill",
+    path: "polyfill",
+    perf_hooks: "no-op",
+    process: "polyfill",
+    punycode: "polyfill",
+    querystring: "polyfill",
+    readline: "no-op",
+    repl: "no-op",
+    stream: "polyfill",
+    string_decoder: "polyfill",
+    sys: "polyfill",
+    timers: "polyfill",
+    tls: "no-op",
+    tty: "polyfill",
+    url: "polyfill",
+    util: "polyfill",
+    v8: "no-op",
+    vm: "no-op",
+    zlib: "polyfill",
   };
 
   itBundled("browser/NodeBuffer#21522", {
@@ -163,7 +163,31 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      assert(!out.includes("$newPromiseCapability"), "events polyfill must not reference a JSC builtin intrinsic");
+      assert(
+        !out.includes("$newPromiseCapability"),
+        "events polyfill must not reference a JSC builtin intrinsic",
+      );
+    },
+  });
+  // `path.format` separates the extension from the name with a dot, adding one
+  // when `ext` does not start with it, and `toNamespacedPath` was missing from
+  // the polyfill. The expected output is what Node.js prints for the same code.
+  itBundled("browser/NodePathFormatAndNamespaced", {
+    files: {
+      "/entry.js": /* js */ `
+        import path from "node:path";
+        console.log(path.format({ dir: "/a", name: "n", ext: "txt" }), path.format({ name: "n", ext: ".txt" }));
+        console.log(path.format({ ext: "e" }), JSON.stringify(path.format({ dir: "/a", name: "", ext: "e" })));
+        console.log(path.format(path.parse("/a/b.c")), path.format({ dir: "/a", base: "b", ext: "ignored" }));
+        console.log(path.toNamespacedPath("/a/b"), path.toNamespacedPath("a") === "a", path.toNamespacedPath === path._makeLong);
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: '/a/n.txt n.txt\n.e "/a/.e"\n/a/b.c /a/b\n/a/b true true',
+    },
+    onAfterBundle(api) {
+      api.expectFile("out.js").not.toInclude("import ");
     },
   });
   itBundled("browser/NodeUrlProtocolTablesIgnorePrototype", {
@@ -281,7 +305,7 @@ describe("bundler", () => {
       const file = api.readFile("/out.js");
       const imports = new Bun.Transpiler().scanImports(file);
       expect(imports).toStrictEqual(
-        Object.keys(nodePolyfillList).map(x => ({
+        Object.keys(nodePolyfillList).map((x) => ({
           kind: "import-statement",
           path: "node:" + x,
         })),
@@ -325,9 +349,18 @@ describe("bundler", () => {
       const out = api.readFile("/out.js");
       // The crypto polyfill pulls in createHash/Transform; neither should appear
       // when the browser map disables the builtin.
-      assert(!out.includes("createHash"), "crypto polyfill should not be bundled when browser:{crypto:false}");
-      assert(!out.includes("Transform"), "stream polyfill should not be bundled when browser:{stream:false}");
-      assert(out.length < 10000, `output should be a small stub, got ${out.length} bytes`);
+      assert(
+        !out.includes("createHash"),
+        "crypto polyfill should not be bundled when browser:{crypto:false}",
+      );
+      assert(
+        !out.includes("Transform"),
+        "stream polyfill should not be bundled when browser:{stream:false}",
+      );
+      assert(
+        out.length < 10000,
+        `output should be a small stub, got ${out.length} bytes`,
+      );
     },
   });
   itBundled("browser/BrowserFieldDisablesPolyfilledBuiltinNodePrefix#4928", {
@@ -358,7 +391,10 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      assert(!out.includes("createHash"), "crypto polyfill should not be bundled when browser:{crypto:false}");
+      assert(
+        !out.includes("createHash"),
+        "crypto polyfill should not be bundled when browser:{crypto:false}",
+      );
     },
   });
   itBundled("browser/BrowserFieldRemapsPolyfilledBuiltin#4928", {
@@ -390,7 +426,10 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
       assert(out.includes("shimmed-crypto"), "browser shim should be bundled");
-      assert(!out.includes("createHash"), "crypto polyfill should not be bundled when browser map remaps it");
+      assert(
+        !out.includes("createHash"),
+        "crypto polyfill should not be bundled when browser map remaps it",
+      );
     },
   });
   itBundled("browser/BrowserFieldDisabledBuiltinStillPolyfillsOutsideScope", {
@@ -444,7 +483,9 @@ describe("bundler", () => {
     entryPointsRaw: ["./entry.js"],
     target: "browser",
     bundleErrors: {
-      "<bun>": ['"./entry.js" is disabled due to "browser" field in package.json (entry point)'],
+      "<bun>": [
+        '"./entry.js" is disabled due to "browser" field in package.json (entry point)',
+      ],
     },
   });
   itBundled("browser/EntryPointDisabledByBrowserFieldNextToLiveEntryPoint", {
@@ -454,20 +495,25 @@ describe("bundler", () => {
     entryPointsRaw: ["./entry.js", "./other.js"],
     target: "browser",
     bundleErrors: {
-      "<bun>": ['"./entry.js" is disabled due to "browser" field in package.json (entry point)'],
+      "<bun>": [
+        '"./entry.js" is disabled due to "browser" field in package.json (entry point)',
+      ],
     },
   });
-  itBundled("browser/EntryPointDisabledByBrowserFieldOnlyAppliesToBrowserTarget", {
-    skipOnEsbuild: true,
-    backend: "cli",
-    files: browserFieldDisabledEntryPointFiles,
-    entryPointsRaw: ["./entry.js"],
-    target: "bun",
-    run: {
-      file: "/out/entry.js",
-      stdout: "entry",
+  itBundled(
+    "browser/EntryPointDisabledByBrowserFieldOnlyAppliesToBrowserTarget",
+    {
+      skipOnEsbuild: true,
+      backend: "cli",
+      files: browserFieldDisabledEntryPointFiles,
+      entryPointsRaw: ["./entry.js"],
+      target: "bun",
+      run: {
+        file: "/out/entry.js",
+        stdout: "entry",
+      },
     },
-  });
+  );
   itBundled("browser/EntryPointDisabledByPackageMainBrowserField", {
     // The disabled module is reached through a package's "main", so the entry
     // point specifier and the disabled file differ.
@@ -484,7 +530,9 @@ describe("bundler", () => {
     entryPointsRaw: ["pkg"],
     target: "browser",
     bundleErrors: {
-      "<bun>": ['"pkg" is disabled due to "browser" field in package.json (entry point)'],
+      "<bun>": [
+        '"pkg" is disabled due to "browser" field in package.json (entry point)',
+      ],
     },
   });
   itBundled("browser/EntryPointIsNodeBuiltinStubbedForBrowser", {
@@ -506,7 +554,7 @@ describe("bundler", () => {
   // unsure: do we want polyfills or no-op stuff like node:* has
   // right now all error except bun:wrap which errors at resolve time, but is included if external
   const bunModules: Record<string, "no-op" | "polyfill" | "error"> = {
-    "bun": "error",
+    bun: "error",
     "bun:ffi": "error",
     "bun:dns": "error",
     "bun:test": "error",
@@ -517,8 +565,8 @@ describe("bundler", () => {
   };
 
   const nonErroringBunModules = Object.entries(bunModules)
-    .filter(x => x[1] !== "error")
-    .map(x => x[0]);
+    .filter((x) => x[1] !== "error")
+    .map((x) => x[0]);
 
   // all of them are set to error so this test doesnt make sense to run
   itBundled.skip("browser/BunPolyfill", {
@@ -535,13 +583,18 @@ describe("bundler", () => {
     },
     target: "browser",
     onAfterBundle(api) {
-      assert(!api.readFile("/out.js").includes("\0"), "bundle should not contain null bytes");
+      assert(
+        !api.readFile("/out.js").includes("\0"),
+        "bundle should not contain null bytes",
+      );
       const file = api.readFile("/out.js");
       const imports = new Bun.Transpiler().scanImports(file);
       expect(imports).toStrictEqual([]);
     },
     run: {
-      stdout: nonErroringBunModules.map(x => `${x.padEnd(12, " ")}: ${bunModules[x]}`).join("\n"),
+      stdout: nonErroringBunModules
+        .map((x) => `${x.padEnd(12, " ")}: ${bunModules[x]}`)
+        .join("\n"),
     },
   });
 
@@ -560,8 +613,11 @@ describe("bundler", () => {
     target: "browser",
     bundleErrors: {
       "/entry.js": Object.keys(bunModules)
-        .filter(x => bunModules[x] === "error")
-        .map(x => `Browser build cannot import Bun builtin: "${x}". When bundling for Bun, set target to 'bun'`),
+        .filter((x) => bunModules[x] === "error")
+        .map(
+          (x) =>
+            `Browser build cannot import Bun builtin: "${x}". When bundling for Bun, set target to 'bun'`,
+        ),
     },
   });
 
@@ -575,7 +631,7 @@ describe("bundler", () => {
       const file = api.readFile("/out.js");
       const imports = new Bun.Transpiler().scanImports(file);
       expect(imports).toStrictEqual(
-        Object.keys(bunModules).map(x => ({
+        Object.keys(bunModules).map((x) => ({
           kind: "import-statement",
           path: x,
         })),
@@ -591,7 +647,9 @@ describe("bundler", () => {
       `,
     },
     bundleErrors: {
-      "/entry.js": [`Could not resolve: "node:net1". Maybe you need to "bun install"?`],
+      "/entry.js": [
+        `Could not resolve: "node:net1". Maybe you need to "bun install"?`,
+      ],
     },
   });
   itBundled("browser/ImportNonExistentWithoutNodePrefix", {
@@ -602,7 +660,9 @@ describe("bundler", () => {
       `,
     },
     bundleErrors: {
-      "/entry.js": [`Could not resolve: "net1". Maybe you need to "bun install"?`],
+      "/entry.js": [
+        `Could not resolve: "net1". Maybe you need to "bun install"?`,
+      ],
     },
   });
   itBundled("browser/TargetNodeNonExistentBuiltinShouldBeExternal", {

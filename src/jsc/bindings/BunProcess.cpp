@@ -928,7 +928,7 @@ extern "C" void Process__dispatchOnBeforeExit(Zig::GlobalObject* globalObject, u
     Bun__VirtualMachine__exitDuringUncaughtException(bunVM(vm));
     auto event = Identifier::fromString(vm, "beforeExit"_s);
     if (emitThroughReplacedEmit(globalObject, process, event, arguments, ProcessEmitCall::MakeCallback)) [[unlikely]] {
-        // MakeCallback ends with the checkpoint, whatever `emit` returned or threw to a handler: https://github.com/nodejs/node/blob/v26.3.0/src/api/callback.cc#L133
+        // node's MakeCallback ends with the tick and microtask checkpoint, whatever `emit` returned: https://github.com/nodejs/node/blob/v26.3.0/src/api/callback.cc#L133
         globalObject->drainMicrotasks();
         RELEASE_AND_RETURN(scope, );
     }

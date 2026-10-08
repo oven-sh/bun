@@ -123,6 +123,14 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
         let mut out = Vec::new();
         return bun_format::css::format(code, parser, options, &mut Default::default(), &mut out).map(|()| (out, None));
     }
+    let is_graphql = match &options.parser {
+        Some(parser) => &parser[..] == b"graphql",
+        None => bun_format::graphql::is_graphql_path(name),
+    };
+    if is_graphql {
+        let mut out = Vec::new();
+        return bun_format::graphql::format(code, options, &mut Default::default(), &mut out).map(|()| (out, None));
+    }
     let code = match bun_format::pragma::before_parsing(code, options) {
         bun_format::pragma::BeforeParsing::LeaveAsItIs => return Ok((code.to_vec(), options.cursor_offset)),
         bun_format::pragma::BeforeParsing::Format(code) => code,
@@ -191,10 +199,12 @@ impl Args {
 
 const EXTENSIONS: &[&str] = &["js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts"];
 
-/// JSON or a style sheet.
+/// JSON, a style sheet or GraphQL.
 fn is_other_language(path: &Path) -> bool {
     let path = path.as_os_str().as_encoded_bytes();
-    bun_format::json::parser_for_path(path).is_some() || bun_format::css::parser_for_path(path).is_some()
+    bun_format::json::parser_for_path(path).is_some()
+        || bun_format::css::parser_for_path(path).is_some()
+        || bun_format::graphql::is_graphql_path(path)
 }
 
 /// The files at `paths` and in the directories at `paths` that can be formatted.

@@ -352,7 +352,7 @@ fn dump(case: Object<'_>) -> String {
 fn text_facts(a: &[u8], b: &[u8]) -> String {
     use utils::text;
     let number = text::string_to_number(a);
-    let fields: [Vec<u8>; 17] = [
+    let fields: [Vec<u8>; 18] = [
         text::utf16_len(a).to_string().into(),
         text::code_point_count(a).to_string().into(),
         text::trim(a).to_vec(),
@@ -377,6 +377,12 @@ fn text_facts(a: &[u8], b: &[u8]) -> String {
             "{:?} {:?}",
             text::compare(a, b),
             text::natural_compare(a, b)
+        )
+        .into(),
+        format!(
+            "{:?} {:?}",
+            utils::collation::locale_compare(a, b),
+            utils::collation::collator_compare_numeric_base(a, b)
         )
         .into(),
         format!(

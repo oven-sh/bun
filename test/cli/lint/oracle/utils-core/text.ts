@@ -29,6 +29,7 @@ for (const line of readFileSync(process.argv[2], "utf8").split("\n").slice(0, 60
   if (code.length < 60 && code.isWellFormed()) texts.add(code);
 }
 const lineBreak = new RegExp(`\\r\\n|[\\r\\n${String.fromCharCode(0x2028, 0x2029)}]`, "u");
+const collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
 const all = [...texts];
 const order = (n: number) => (n < 0 ? "Less" : n > 0 ? "Greater" : "Equal");
 const pairs: string[] = [];
@@ -54,6 +55,7 @@ all.forEach((a, i) => {
         a.slice(1, 3).isWellFormed() ? a.slice(1, 3) : null,
         `${esutils.keyword.isIdentifierES5(a)} ${esutils.keyword.isIdentifierES6(a)}`,
         `${order(a < b ? -1 : a > b ? 1 : 0)} ${order(naturalCompare(a, b))}`,
+        /^[\x00-\x7f]*$/.test(a + b) ? `${order(a.localeCompare(b))} ${order(collator.compare(a, b))}` : null,
         `${astUtils.hasOctalOrNonOctalDecimalEscapeSequence(a)} ${a !== "" && [...a][0] !== [...a][0].toLocaleLowerCase()}`,
       ]),
     );

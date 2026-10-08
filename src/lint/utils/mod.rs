@@ -22,6 +22,7 @@
 //! | `require("ignore")` | [`ignore`] | `Ignore::new(&patterns, ignores_case, IgnoreVersion::V5).ignores(path)` |
 //! | `node.type`, `node.range`, `node.parent`, `ChainExpression`, `SequenceExpression`, patterns in assignments | [`estree_compat`], re-exported from here | `utils::estree_type_name(node)`, `utils::estree_type_at(file, offset)`, `utils::sequence_expressions(e)`, `utils::Target` |
 //! | `array.sort((a, b) => a > b ? 1 : -1)`, a comparison that never answers 0 | [`array`] | `utils::array_sort_by(&mut items, \|a, b\| ..)` |
+//! | `a.localeCompare(b)`, `new Intl.Collator("en", { numeric: true, sensitivity: "base" })` | [`collation`] | `collation::locale_compare(a, b)`, `collation::collator_compare_numeric_base(a, b)` |
 //! | methods of `String`, `/\s/`, `escapeRegExp` | [`text`] | `text::trim(bytes)`, `text::utf16_len(bytes)` |
 //!
 //! A function that takes two handles has one lifetime for both, `fn f<'a>(a: Expr<'a>, b: Expr<'a>)`:
@@ -79,6 +80,7 @@
 pub mod array;
 pub mod ast_utils;
 pub mod char_source;
+pub mod collation;
 pub mod directives;
 pub mod eslint_utils;
 pub mod estree_compat;

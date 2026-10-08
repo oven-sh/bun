@@ -17,31 +17,29 @@ pub(crate) fn write_ts_type_parameter<'a>(param: TypeParam<'a>, f: &mut Formatte
     write!(f, identifier(param.name(), AstNodes::TSTypeParameter(param)));
 
     if let Some(constraint) = param.constraint() {
-        let group_id = f.group_id("constraint");
-        write!(
-            f,
-            [
-                space(),
-                "extends",
-                group(&indent(&soft_line_break_or_space())).with_group_id(Some(group_id)),
-                line_suffix_boundary(),
-                indent_if_group_breaks(&constraint, group_id)
-            ]
-        );
+        write_type_parameter_bound("extends", constraint, f);
     }
     if let Some(default) = param.default() {
-        let group_id = f.group_id("default");
-        write!(
-            f,
-            [
-                space(),
-                "=",
-                group(&indent(&soft_line_break_or_space())).with_group_id(Some(group_id)),
-                line_suffix_boundary(),
-                indent_if_group_breaks(&default, group_id)
-            ]
-        );
+        write_type_parameter_bound("=", default, f);
     }
+}
+
+/// ` extends T`, ` = T`
+fn write_type_parameter_bound<'a>(operator: &'static str, ty: TypeNode<'a>, f: &mut Formatter<'a>) {
+    let group_id = f.group_id("bound");
+    // A union that breaks starts with a line break. If there is one after the operator as well,
+    // Prettier writes both. The empty text is what makes the second one count.
+    let is_union = matches!(ty.kind(), TypeKind::Union(types) if types.len() > 1);
+    write!(
+        f,
+        [
+            space(),
+            operator,
+            group(&indent(&soft_line_break_or_space())).with_group_id(Some(group_id)),
+            line_suffix_boundary(),
+            indent_if_group_breaks(&format_args!(is_union.then_some(""), ty), group_id)
+        ]
+    );
 }
 
 /// Prettier's `shouldForceTrailingComma`: `<T,>() => {}` in a `.tsx` file, where `<T>` would be

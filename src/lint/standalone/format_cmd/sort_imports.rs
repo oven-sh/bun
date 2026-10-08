@@ -68,11 +68,11 @@ fn cases(args: &Args) {
         if args.flag("filter").is_some_and(|filter| !full_name.contains(filter)) {
             continue;
         }
-        let (Some(input), Some(expected_text), Some(expected_output)) =
-            (string(case, b"input"), string(case, b"text"), string(case, b"output"))
-        else {
+        let (Some(input), Some(expected_output)) = (string(case, b"input"), string(case, b"output")) else {
             continue;
         };
+        // oxfmt sorts while it formats: there is no text in between.
+        let expected_text = string(case, b"text");
         let filename = crate::text(&string(case, b"filename").unwrap_or_default());
         let group = full_name.split('/').take(2).collect::<Vec<_>>().join("/");
         let counts = tally.entry(group).or_default();
@@ -86,9 +86,10 @@ fn cases(args: &Args) {
                 sort_imports: None,
                 ..options
             };
-            let is_text_right = match &text {
-                Some(text) => *text == expected_text,
-                None => Ok(&output) == super::format_text(&filename, &expected_text, &plain).as_ref(),
+            let is_text_right = match (&text, &expected_text) {
+                (Some(text), Some(expected_text)) => text == expected_text,
+                (None, Some(expected_text)) => Ok(&output) == super::format_text(&filename, expected_text, &plain).as_ref(),
+                (text, None) => text.is_none(),
             };
             Ok::<_, String>((text, is_text_right, output))
         });
@@ -108,7 +109,7 @@ fn cases(args: &Args) {
             let base = format!("{report}/{}", full_name.replace('/', "_"));
             let _ = std::fs::create_dir_all(report);
             let _ = std::fs::write(format!("{base}.input"), &input);
-            let _ = std::fs::write(format!("{base}.text.expected"), &expected_text);
+            let _ = std::fs::write(format!("{base}.text.expected"), expected_text.as_deref().unwrap_or_default());
             let _ = std::fs::write(format!("{base}.text.actual"), text.as_deref().unwrap_or(b"(unchanged)"));
             let _ = std::fs::write(format!("{base}.output.expected"), &expected_output);
             let _ = std::fs::write(format!("{base}.output.actual"), &output);

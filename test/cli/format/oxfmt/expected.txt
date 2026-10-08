@@ -1,5 +1,3 @@
-FAIL oxfmt js/arguments/empty-lines.js { printWidth: 80 }
-FAIL oxfmt js/arguments/empty-lines.js { printWidth: 100 }
 FAIL oxfmt js/arrow-function/chain-exact-fill-signature.js { printWidth: 80 }
 FAIL oxfmt js/arrow-function/chain-exact-fill-signature.js { printWidth: 100 }
 FAIL oxfmt js/calls/callee-opener-comment.js { printWidth: 80 }
@@ -28,8 +26,6 @@ FAIL oxfmt js/comments/head-body-blocks.js { printWidth: 80 }
 FAIL oxfmt js/comments/head-body-blocks.js { printWidth: 100 }
 FAIL oxfmt js/comments/head-paren-line-comment.js { printWidth: 80 }
 FAIL oxfmt js/comments/head-paren-line-comment.js { printWidth: 100 }
-FAIL oxfmt js/comments/logical.js { printWidth: 80 }
-FAIL oxfmt js/comments/logical.js { printWidth: 100 }
 FAIL oxfmt js/comments/multiline-block-head.js { printWidth: 80 }
 FAIL oxfmt js/comments/multiline-block-head.js { printWidth: 100 }
 FAIL oxfmt js/comments/parenthesized-trailing-comment.js { printWidth: 80 }
@@ -62,14 +58,6 @@ FAIL prettier js/ignore/type-cast-after-ignored-cast.js { printWidth: 80 }
 FAIL prettier js/ignore/type-cast-after-ignored-cast.js { printWidth: 100 }
 FAIL oxfmt js/ignore/type-cast-after-ignored-cast.js { printWidth: 80 }
 FAIL oxfmt js/ignore/type-cast-after-ignored-cast.js { printWidth: 100 }
-FAIL oxfmt js/jsdoc/example-preservation.js { jsdoc: true, printWidth: 80 }
-FAIL oxfmt js/jsdoc/example-preservation.js { jsdoc: true, printWidth: 100 }
-FAIL oxfmt js/jsdoc/example-tabs-preservation.js { jsdoc: true, printWidth: 80 }
-FAIL oxfmt js/jsdoc/example-tabs-preservation.js { jsdoc: true, printWidth: 100 }
-FAIL oxfmt js/jsdoc/example-then-param.js { jsdoc: true, printWidth: 80 }
-FAIL oxfmt js/jsdoc/example-then-param.js { jsdoc: true, printWidth: 100 }
-FAIL oxfmt js/jsx/arrow-body-paren-comment.jsx { printWidth: 80 }
-FAIL oxfmt js/jsx/arrow-body-paren-comment.jsx { printWidth: 100 }
 FAIL oxfmt js/jsx/logical-chain-jsx-leading-comment.jsx { printWidth: 80 }
 FAIL oxfmt js/jsx/logical-chain-jsx-leading-comment.jsx { printWidth: 100 }
 FAIL oxfmt js/operator-position/comments.js { experimentalOperatorPosition: "start", printWidth: 80 }
@@ -142,8 +130,6 @@ FAIL oxfmt ts/comments/type-alias-multiline-block-comment.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/type-alias-multiline-block-comment.ts { printWidth: 100 }
 FAIL oxfmt ts/comments/type-alias.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/type-alias.ts { printWidth: 100 }
-FAIL oxfmt ts/comments/yield.ts { printWidth: 80 }
-FAIL oxfmt ts/comments/yield.ts { printWidth: 100 }
 FAIL oxfmt ts/conditional-type/branch-comments.ts { printWidth: 80 }
 FAIL oxfmt ts/conditional-type/branch-comments.ts { printWidth: 100 }
 FAIL prettier ts/ignore/decorated-class-export.ts { printWidth: 80 }
@@ -215,4 +201,4 @@ FAIL prettier ts/union/suppression.ts { printWidth: 100 }
 FAIL oxfmt ts/union/suppression.ts { printWidth: 80 }
 FAIL oxfmt ts/union/suppression.ts { printWidth: 100 }
 as Prettier prints them: 678/736
-as oxfmt prints them, in its flavor: 570/728
+as oxfmt prints them, in its flavor: 584/728

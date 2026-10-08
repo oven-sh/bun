@@ -14,6 +14,7 @@ use bun_core::strings;
 use bun_format::FormatOptions;
 
 const OUTPUT: &[u8] = b"==================== Output ====================\n";
+const SECOND_PASS: &[u8] = b"---------- Not idempotent (second pass) ----------";
 const END: &[u8] = b"===================== End =====================\n";
 
 /// The outputs in a snapshot, each with the line that says the options.
@@ -30,6 +31,8 @@ fn parse(text: &[u8]) -> Vec<(&[u8], Vec<u8>)> {
     let outputs = headers.iter().enumerate().map(|(i, &at)| {
         // The line break at the end of the output is followed by one more.
         let end = headers.get(i + 1).map_or(lines.len() - 1, |&next| next);
+        // What oxfmt makes of its own output, where that is something else, is not compared.
+        let end = (at + 3..end).find(|&line| lines[line] == SECOND_PASS).unwrap_or(end);
         (lines[at + 1], lines[at + 3..end].join(&b"\n"[..]))
     });
     outputs.collect()

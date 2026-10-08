@@ -147,8 +147,6 @@ FAIL oxfmt js/calls/issue-16125.js { printWidth: 80 }
 FAIL oxfmt js/calls/issue-16125.js { printWidth: 100 }
 FAIL oxfmt js/calls/test-call-comment-order.js { printWidth: 80 }
 FAIL oxfmt js/calls/test-call-comment-order.js { printWidth: 100 }
-FAIL prettier js/comments/array-holes.js { printWidth: 80 }
-FAIL prettier js/comments/array-holes.js { printWidth: 100 }
 FAIL oxfmt js/comments/array-holes.js { printWidth: 80 }
 FAIL oxfmt js/comments/array-holes.js { printWidth: 100 }
 FAIL oxfmt js/comments/arrow.js { printWidth: 80 }
@@ -339,10 +337,6 @@ FAIL oxfmt ts/comments/declaration-head-body.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/declaration-head-body.ts { printWidth: 100 }
 FAIL oxfmt ts/comments/if.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/if.ts { printWidth: 100 }
-FAIL prettier ts/comments/mapped-type.ts { printWidth: 80 }
-FAIL prettier ts/comments/mapped-type.ts { printWidth: 100 }
-FAIL oxfmt ts/comments/mapped-type.ts { printWidth: 80 }
-FAIL oxfmt ts/comments/mapped-type.ts { printWidth: 100 }
 FAIL oxfmt ts/comments/method.ts { printWidth: 80 }
 FAIL oxfmt ts/comments/method.ts { printWidth: 100 }
 FAIL oxfmt ts/comments/operator-eol-line-comment.ts { printWidth: 80 }
@@ -403,8 +397,6 @@ FAIL oxfmt ts/semicolons/trailing-comments-parens.ts { printWidth: 80, semi: tru
 FAIL oxfmt ts/semicolons/trailing-comments-parens.ts { printWidth: 100, semi: true }
 FAIL oxfmt ts/semicolons/trailing-comments-parens.ts { printWidth: 80, semi: false }
 FAIL oxfmt ts/semicolons/trailing-comments-parens.ts { printWidth: 100, semi: false }
-FAIL prettier ts/semicolons/trailing-comments.ts { printWidth: 80, semi: true }
-FAIL prettier ts/semicolons/trailing-comments.ts { printWidth: 100, semi: true }
 FAIL oxfmt ts/semicolons/trailing-comments.ts { printWidth: 80, semi: true }
 FAIL oxfmt ts/semicolons/trailing-comments.ts { printWidth: 100, semi: true }
 FAIL oxfmt ts/semicolons/trailing-comments.ts { printWidth: 80, semi: false }
@@ -452,5 +444,5 @@ FAIL oxfmt yaml/yaml/suppression.yaml { printWidth: 80 }
 FAIL oxfmt yaml/yaml/suppression.yaml { printWidth: 100 }
 FAIL oxfmt yaml/yaml/tab-width-zero/nested.yaml { printWidth: 80, tabWidth: 0 }
 FAIL oxfmt yaml/yaml/tab-width-zero/nested.yaml { printWidth: 100, tabWidth: 0 }
-as Prettier prints them: 1519/1570
-as oxfmt prints them, in its flavor: 1095/1498
+as Prettier prints them: 1525/1570
+as oxfmt prints them, in its flavor: 1097/1498

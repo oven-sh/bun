@@ -91,6 +91,7 @@ pub use wrapping_fixer::*;
 
 pub use super::ast_utils::{
     get_name_location_in_global_directive_comment, get_static_string_value, is_function, is_loop,
-    is_null_literal, is_token_on_same_line, skip_chain_expression,
+    is_null_literal, is_start_of_expression_statement, is_token_on_same_line,
+    skip_chain_expression,
 };
 pub use super::text::{escape_reg_exp, upper_case_first};

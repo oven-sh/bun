@@ -8,7 +8,7 @@
 // so that offsets in UTF-16 code units are offsets in bytes. With rule names, only the cases of those rules. With `CORPUS`,
 // also the `.js`, `.jsx`, `.ts` and `.tsx` files in those directories.
 
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 const root = process.env.TYPESCRIPT_ESLINT!;
@@ -38,7 +38,9 @@ const MEMBERS = new Set(
 );
 const CLASS_MEMBERS = new Set([...MEMBERS].filter(it => !it.endsWith("Signature")));
 const FUNCTIONS = new Set(["ArrowFunctionExpression", "FunctionDeclaration", "FunctionExpression"]);
-const fixer = { replaceText: (node: any, text: string) => [...node.range, text] };
+// Long text is compared by its length, its start and its end.
+const short = (text: string) => (text.length > 160 ? `${text.slice(0, 60)}..${text.length}..${text.slice(-60)}` : text);
+const fixer = { replaceText: (node: any, text: string) => [...node.range, short(text)] };
 const add = (code: string) => `${code} + 1`;
 const array = (code: string) => `[${code}]`;
 const pair = (a: string, b: string) => `(${a}, ${b})`;
@@ -85,7 +87,7 @@ function analyze(it: { filename: string; code: string; sourceType: string; parse
         row("isConditionalTest", () => util.isConditionalTest(node));
         // A regular expression is equal to itself only.
         if (!hasRegex(node)) row("isNodeEqual", () => util.isNodeEqual(node, node));
-        row("getMovedNodeCode", () => util.getMovedNodeCode({ destinationNode: node, nodeToMove: node, sourceCode }));
+        row("getMovedNodeCode", () => short(util.getMovedNodeCode({ destinationNode: node, nodeToMove: node, sourceCode })));
         row("getWrappingFixer:add", () => util.getWrappingFixer({ node, sourceCode, wrap: add })(fixer));
         row("getWrappingFixer:array", () => util.getWrappingFixer({ node, sourceCode, wrap: array })(fixer));
         row("getWrappingFixer:none", () => util.getWrappingFixer({ node, sourceCode })(fixer));
@@ -121,7 +123,7 @@ function analyze(it: { filename: string; code: string; sourceType: string; parse
       );
       row("needsPrecedingSemicolon", () => util.needsPrecedingSemicolon(sourceCode, node));
       row("getThisExpression", () => util.getThisExpression(node)?.range ?? null);
-      row("getTextWithParentheses", () => util.getTextWithParentheses(sourceCode, node));
+      row("getTextWithParentheses", () => short(util.getTextWithParentheses(sourceCode, node)));
       row("getStaticStringValue", () => util.getStaticStringValue(node));
       row("getParentFunctionNode", () => getParentFunctionNode(node)?.range ?? null);
       if (node.type === "CallExpression") {
@@ -133,7 +135,7 @@ function analyze(it: { filename: string; code: string; sourceType: string; parse
         row("isPromiseAggregatorMethod", () => (["all", "allSettled", "race", "any"].includes(called()) ? node.callee.object.range : null));
       }
       if (EXPRESSIONS.has(parent?.type) && parent.type !== "ChainExpression" && parent.parent?.type !== "ChainExpression") {
-        row("getMovedNodeCode(parent)", () => util.getMovedNodeCode({ destinationNode: parent, nodeToMove: node, sourceCode }));
+        row("getMovedNodeCode(parent)", () => short(util.getMovedNodeCode({ destinationNode: parent, nodeToMove: node, sourceCode })));
       }
       row("predicates", () => [
         util.isNullLiteral(node),
@@ -224,9 +226,11 @@ function analyze(it: { filename: string; code: string; sourceType: string; parse
   return rows;
 }
 
+mkdirSync(out, { recursive: true });
 const seen = new Set<string>();
-const cases: string[] = [];
-const expected: string[] = [];
+const cases = openSync(join(out, "cases.jsonl"), "w");
+const expected = openSync(join(out, "expected.jsonl"), "w");
+let count = 0;
 function addCase(rule: string, one: Parameters<typeof analyze>[0]) {
   const identity = JSON.stringify(one);
   if (seen.has(identity) || !/^[\x00-\x7f]*$/.test(one.code)) return;
@@ -237,9 +241,9 @@ function addCase(rule: string, one: Parameters<typeof analyze>[0]) {
   } catch {
     return;
   }
-  const id = cases.length;
-  cases.push(JSON.stringify({ id, rule, ...one }));
-  expected.push(`{"id":${id},"rows":[${rows.join(",")}]}`);
+  const id = count++;
+  writeSync(cases, JSON.stringify({ id, rule, ...one }) + "\n");
+  writeSync(expected, `{"id":${id},"rows":[${rows.join(",")}]}\n`);
 }
 for (const plugin of ["eslint", "typescript-eslint"]) {
   for (const file of readdirSync(join(fixtures, plugin)).sort()) {
@@ -269,7 +273,6 @@ for (const directory of (process.env.CORPUS ?? "").split(":").filter(Boolean)) {
     });
   }
 }
-mkdirSync(out, { recursive: true });
-writeFileSync(join(out, "cases.jsonl"), cases.join("\n") + "\n");
-writeFileSync(join(out, "expected.jsonl"), expected.join("\n") + "\n");
-console.log(`${cases.length} cases`);
+closeSync(cases);
+closeSync(expected);
+console.log(`${count} cases`);

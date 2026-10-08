@@ -17,6 +17,17 @@ fn string(text: &[u8]) -> String {
     String::from_utf8_lossy(&json_stringify(text)).into_owned()
 }
 
+/// Long text is compared by its length, its start and its end.
+fn short(text: &[u8]) -> String {
+    match text.len() > 160 {
+        true => {
+            let length = format!("..{}..", text.len());
+            string(&[&text[..60], length.as_bytes(), &text[text.len() - 60..]].concat())
+        }
+        false => string(text),
+    }
+}
+
 fn optional_string(text: Option<impl AsRef<[u8]>>) -> String {
     text.map_or_else(|| "null".to_owned(), |it| string(it.as_ref()))
 }
@@ -60,7 +71,7 @@ impl Rows {
         self.row("isWeakPrecedenceParent", at, ts_utils::is_weak_precedence_parent(e));
         self.row("isConditionalTest", at, ts_utils::is_conditional_test(e));
         self.row("isNodeEqual", at, ts_utils::is_node_equal(e, e));
-        self.row("getMovedNodeCode", at, string(&ts_utils::get_moved_node_code(e, e)));
+        self.row("getMovedNodeCode", at, short(&ts_utils::get_moved_node_code(e, e)));
         let has_arguments = matches!(e.kind(), ExprKind::New(call) if !call.args().is_empty());
         let precedence = ts_utils::get_operator_precedence(
             ts_utils::ts_syntax_kind(e),
@@ -100,7 +111,7 @@ impl Rows {
         }
         self.row("needsPrecedingSemicolon", at, ts_utils::needs_preceding_semicolon(e));
         self.row("getThisExpression", at, optional_range(ts_utils::get_this_expression(e).map(Expr::span)));
-        self.row("getTextWithParentheses", at, string(ts_utils::get_text_with_parentheses(e)));
+        self.row("getTextWithParentheses", at, short(ts_utils::get_text_with_parentheses(e)));
         self.row("getStaticStringValue", at, optional_string(ts_utils::get_static_string_value(e)));
         let function = ts_utils::get_parent_function_node(e);
         self.row("getParentFunctionNode", at, optional_range(function.map(|it| estree_span(Node::Func(it)))));
@@ -119,7 +130,7 @@ impl Rows {
             self.row("isPromiseAggregatorMethod", at, optional_range(object));
         }
         if let Node::Expr(parent) = estree_parent(Node::Expr(e)) {
-            self.row("getMovedNodeCode(parent)", at, string(&ts_utils::get_moved_node_code(parent, e)));
+            self.row("getMovedNodeCode(parent)", at, short(&ts_utils::get_moved_node_code(parent, e)));
         }
         let predicates = [
             ts_utils::is_null_literal(e),
@@ -316,7 +327,7 @@ fn dump(case: Object<'_>, rules: &[Enabled]) -> String {
         }
         for it in bun_lint::runner::run(file, rules, true) {
             if let Some(fix) = it.fix {
-                let value = format!("[{},{},{}]", fix.span.start, fix.span.end, string(&fix.text));
+                let value = format!("[{},{},{}]", fix.span.start, fix.span.end, short(&fix.text));
                 rows.row(it.message_id, it.span, value);
             }
         }

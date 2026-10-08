@@ -1,6 +1,5 @@
 //! `getWrappingFixer.ts`.
 
-use super::estree::is_expression_statement;
 use super::precedence::parenthesize;
 use crate::ast::{BinOp, Expr, ExprKind, FnBody, FnKind, Node, Stmt, StmtKind, TypeKind, UnOp};
 use crate::context::IntoText;
@@ -218,7 +217,7 @@ pub fn is_missing_semicolon_before(node: Expr<'_>) -> bool {
     loop {
         let parent = match node.parent() {
             Node::Stmt(statement) => {
-                return is_expression_statement(statement)
+                return matches!(statement.kind(), StmtKind::Expr(_))
                     && previous_statement_in_block(statement)
                         .is_some_and(|previous| !previous.text().ends_with(b";"));
             }

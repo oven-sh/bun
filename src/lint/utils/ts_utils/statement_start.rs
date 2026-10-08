@@ -1,26 +1,10 @@
-//! `isStartOfExpressionStatement.ts`, `isStartOfExpressionStatementNeedingParentheses.ts`,
+//! `isStartOfExpressionStatementNeedingParentheses.ts`,
 //! `isStartOfArrowFunctionBodyNeedingParentheses.ts`, `needsPrecedingSemiColon.ts`.
 
-use super::estree::is_expression_statement;
 use crate::ast::{ExprKind, FnBody, FnKind, Node, StmtKind};
 use crate::tokens::{Token, TokenKind};
+use crate::utils::ast_utils::is_start_of_expression_statement;
 use crate::utils::estree_compat::{estree_span, get_node_by_range_index};
-
-/// typescript-eslint's and ESLint's `isStartOfExpressionStatement`: whether the node is what an
-/// expression statement starts with.
-pub fn is_start_of_expression_statement<'a>(node: impl Into<Node<'a>>) -> bool {
-    let node = node.into();
-    let start = node.span().start;
-    for ancestor in node.ancestors() {
-        if ancestor.span().start != start {
-            return false;
-        }
-        if let Node::Stmt(statement) = ancestor {
-            return is_expression_statement(statement);
-        }
-    }
-    false
-}
 
 /// typescript-eslint's `isStartOfExpressionStatementNeedingParentheses`: whether code that starts
 /// with `first_token` would, in the place of the node, be taken for a block, a class declaration or
@@ -64,9 +48,12 @@ fn is_start_of_arrow_function_body(node: Node<'_>) -> bool {
     }
 }
 
-/// typescript-eslint's and ESLint's `needsPrecedingSemicolon`: whether a `(`, a `[` or a `` ` ``
-/// put where the node starts needs a `;` before it. The node is at the start of an expression
-/// statement, of a member of a class, or of the body of an arrow function.
+/// typescript-eslint's `needsPrecedingSemicolon`: whether a `(`, a `[` or a `` ` `` put where the
+/// node starts needs a `;` before it. The node is at the start of an expression statement, of a
+/// member of a class, or of the body of an arrow function.
+///
+/// It is a copy of an earlier version of ESLint's, which `ast_utils::needs_preceding_semicolon` is
+/// the current one of: that knows about type syntax and class fields.
 pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
     let node = node.into();
     let file = node.file();
@@ -129,12 +116,7 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
     if matches!(previous.kind(), TokenKind::Identifier | TokenKind::Keyword) {
         return match (previous.text(), previous_node) {
             // The keyword, or the label.
-            (_, Node::Stmt(_))
-                if matches!(
-                    previous_statement,
-                    Some(StmtKind::Break(_) | StmtKind::Continue(_))
-                ) =>
-            {
+            _ if matches!(previous_statement, Some(StmtKind::Break(_) | StmtKind::Continue(_))) => {
                 false
             }
             (b"debugger", _) => !matches!(previous_statement, Some(StmtKind::Debugger)),
@@ -149,9 +131,7 @@ pub fn needs_preceding_semicolon<'a>(node: impl Into<Node<'a>>) -> bool {
         // The module specifier, which is not a node here.
         return !matches!(
             previous_statement,
-            Some(
-                StmtKind::ExportStar { .. } | StmtKind::ExportNamed(_) | StmtKind::Import(_)
-            )
+            Some(StmtKind::ExportStar { .. } | StmtKind::ExportNamed(_) | StmtKind::Import(_))
         );
     }
     true

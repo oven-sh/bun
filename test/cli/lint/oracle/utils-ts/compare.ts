@@ -5,11 +5,20 @@
 // A row is compared if both sides have one for the function and the range. Many nodes exist on one side only: an
 // `Identifier` that is a name and not an expression, the `a, b` of `a, b, c`.
 
-import { readFileSync } from "node:fs";
+import { openSync, readSync } from "node:fs";
 import { join } from "node:path";
 
 const [directory, actualPath, only = "", show = "5"] = process.argv.slice(2);
-const lines = (path: string) => readFileSync(path, "utf8").split("\n").filter(Boolean).map(it => JSON.parse(it));
+// The files can be larger than a string can be.
+function* lines(path: string) {
+  const file = openSync(path, "r");
+  const chunk = Buffer.alloc(1 << 24);
+  let rest = Buffer.alloc(0);
+  for (let size; (size = readSync(file, chunk, 0, chunk.length, null)) > 0; ) {
+    rest = Buffer.concat([rest, chunk.subarray(0, size)]);
+    for (let end; (end = rest.indexOf(10)) >= 0; rest = rest.subarray(end + 1)) yield rest.toString("utf8", 0, end);
+  }
+}
 const cases = lines(join(directory, "cases.jsonl"));
 const expected = lines(join(directory, "expected.jsonl"));
 const actual = lines(actualPath);
@@ -29,9 +38,16 @@ function index(rows: unknown[][]) {
 }
 let errors = 0;
 let shown = 0;
-expected.forEach((want, i) => {
-  const got = actual[i];
-  if (!got || got.error) return void errors++;
+let total = 0;
+for (;;) {
+  const [caseLine, wantLine, gotLine] = [cases.next(), expected.next(), actual.next()];
+  if (wantLine.done) break;
+  const i = total++;
+  const [it, want, got] = [JSON.parse(caseLine.value), JSON.parse(wantLine.value), gotLine.done ? undefined : JSON.parse(gotLine.value)];
+  if (!got || got.error) {
+    errors++;
+    continue;
+  }
   const [a, b] = [index(want.rows), index(got.rows)];
   for (const [key, value] of a) {
     const [name, start, end] = key.split("\t");
@@ -44,8 +60,8 @@ expected.forEach((want, i) => {
     } else {
       count(name).differ++;
       if ((!only || only === name) && shown++ < Number(show)) {
-        console.log(`--- ${name} #${i} (${cases[i].rule}, ${cases[i].filename}, ${cases[i].sourceType})\n${cases[i].code}`);
-        console.log(`  at ${start}..${end}: ${JSON.stringify(cases[i].code.slice(Number(start), Number(end)))}`);
+        console.log(`--- ${name} #${i} (${it.rule}, ${it.filename}, ${it.sourceType})\n${it.code.length < 2000 ? it.code : "(long)"}`);
+        console.log(`  at ${start}..${end}: ${JSON.stringify(it.code.slice(Number(start), Number(end)))}`);
         console.log(`  expected: ${value}\n  actual:   ${b.get(key)}`);
       }
     }
@@ -53,8 +69,8 @@ expected.forEach((want, i) => {
   for (const key of b.keys()) {
     if (!a.has(key)) count(key.split("\t")[0]).extra++;
   }
-});
-console.log(`${expected.length} cases, ${errors} that do not parse here`);
+}
+console.log(`${total} cases, ${errors} that do not parse here`);
 for (const [name, it] of [...counts].sort()) {
   console.log(`${String(it.differ).padStart(7)} differ, ${String(it.same).padStart(8)} same, ${String(it.missing).padStart(7)} only upstream, ${String(it.extra).padStart(7)} only here: ${name}`);
 }

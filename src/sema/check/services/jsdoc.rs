@@ -209,7 +209,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             let comment = text.get(range.0..range.1).unwrap_or_default();
             comment.starts_with(b"/**") && comment.get(3) != Some(&b'/')
         };
-        let &(start, end) = ranges.iter().filter(is_js_doc).next_back()?;
+        let &(start, end) = ranges.iter().rfind(is_js_doc)?;
         Some(parse_tags(&text[start..end]))
     }
 

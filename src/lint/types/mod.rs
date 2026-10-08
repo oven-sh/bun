@@ -59,8 +59,8 @@
 //! - A method of `ts.TypeChecker` that takes a type, a symbol or a signature first is a method of
 //!   that handle **and** of [`Types`]: `checker.getApparentType(type)` is
 //!   `type.get_apparent_type()` or `types.get_apparent_type(type)`.
-//! - [`tsutils`]: `ts-api-utils`.
-//! - [`utils`]: `@typescript-eslint/type-utils`, and what in `eslint-plugin/src/util` needs types.
+//! - `ts-api-utils` is [`tsutils`].
+//! - `@typescript-eslint/type-utils`, and what in `eslint-plugin/src/util` needs types, is [`utils`].
 //!
 //! # Without types
 //!

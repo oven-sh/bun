@@ -82,7 +82,7 @@ impl<'a> TypeList<'a> {
 
     #[inline]
     pub fn get(self, i: usize) -> Option<Type<'a>> {
-        let id = self.ids.get(i).copied().or(self.one.filter(|_| i == 0))?;
+        let id = self.ids.get(i).copied().or_else(|| self.one.filter(|_| i == 0))?;
         Some(Type::new(self.file, id))
     }
 

@@ -634,7 +634,7 @@ pub enum LiteralValue<'a> {
 }
 
 /// What a type is made of, where that is not a list of types.
-#[derive(Copy, Clone, PartialEq, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Structure<'a> {
     /// `check extends extends ? .. : ..`
     Conditional {

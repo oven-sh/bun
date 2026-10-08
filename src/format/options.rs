@@ -618,10 +618,6 @@ pub enum TrailingCommas {
 }
 
 impl TrailingCommas {
-    pub const fn is_es5(self) -> bool {
-        matches!(self, TrailingCommas::Es5)
-    }
-
     pub const fn is_all(self) -> bool {
         matches!(self, TrailingCommas::All)
     }
@@ -658,10 +654,6 @@ pub enum ArrowParentheses {
 impl ArrowParentheses {
     pub const fn is_as_needed(self) -> bool {
         matches!(self, Self::AsNeeded)
-    }
-
-    pub const fn is_always(self) -> bool {
-        matches!(self, Self::Always)
     }
 }
 
@@ -762,10 +754,6 @@ pub enum OperatorPosition {
 }
 
 impl OperatorPosition {
-    pub const fn is_start(self) -> bool {
-        matches!(self, Self::Start)
-    }
-
     pub const fn is_end(self) -> bool {
         matches!(self, Self::End)
     }
@@ -778,12 +766,3 @@ pub enum EmbeddedLanguageFormatting {
     Off,
 }
 
-impl EmbeddedLanguageFormatting {
-    pub const fn is_auto(self) -> bool {
-        matches!(self, Self::Auto)
-    }
-
-    pub const fn is_off(self) -> bool {
-        matches!(self, Self::Off)
-    }
-}

@@ -539,43 +539,11 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         };
         match is_plain(self.a, at.0) && is_plain(self.b, at.1) {
             true => Ok(()),
-            false => self.literal_name_as_written(at),
+            false => self.check(
+                is_literal_name_same((self.a, at.0), (self.b, at.1)),
+                "how a key is written",
+            ),
         }
-    }
-
-    fn literal_name_as_written(&mut self, at: (u32, u32)) -> Same {
-        // `["a"]`
-        let inside = |program: &Program<'_>, at: u32| match program.text.get(at as usize) {
-            Some(b'[') => skip_trivia(program.text, at + 1),
-            _ => at,
-        };
-        let (x, y) = (
-            self.a.from(inside(self.a, at.0)),
-            self.b.from(inside(self.b, at.1)),
-        );
-        // What is between the quotes is what is written without them. Allowed: `.5` is `"0.5"`.
-        let is_without_quotes = |string: &[u8], other: &[u8]| {
-            let content = string.get(1..string.len() - 1).unwrap_or_default();
-            if let Some(number) = number_at_start(other) {
-                return *content == *format_trimmed_number(number);
-            }
-            let is_part = |it: &u8| {
-                it.is_ascii_alphanumeric() || matches!(it, b'_' | b'$' | b'.') || !it.is_ascii()
-            };
-            other
-                .strip_prefix(content)
-                .is_some_and(|rest| !rest.first().is_some_and(is_part))
-        };
-        let is_same = match (string_at_start(x), string_at_start(y)) {
-            (Some(x), Some(y)) => is_same_string(x, y),
-            (Some(string), None) => is_without_quotes(string, y),
-            (None, Some(string)) => is_without_quotes(string, x),
-            (None, None) => match (number_at_start(x), number_at_start(y)) {
-                (Some(x), Some(y)) => is_same_number(x, y),
-                _ => true,
-            },
-        };
-        self.check(is_same, "how a key is written")
     }
 
     /// Allowed: the keywords that are next to each other are put in order, but for `export`, `default`,
@@ -722,76 +690,12 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         self.expr(a.1, b.1)
     }
 
-    /// Everything about the import `id` that is compared, in a form that does not depend on the order
-    /// of its names, but for its attributes, which come with it.
-    fn import_as_text(program: &Program<'_>, id: u32) -> (Vec<u8>, Option<(u32, ExprId)>) {
-        let mut out = Vec::new();
-        let Some(Stmt {
-            kind: StmtKind::Import(import),
-            start,
-            loc,
-            ..
-        }) = program.stmts.get(id as usize)
-        else {
-            return (out, None);
-        };
-        let Some(import) = program.imports.get(import.idx()) else {
-            return (out, None);
-        };
-        let text = |atom: Atom| {
-            if atom.is_none() {
-                &b"\x01"[..]
-            } else {
-                program.atoms.bytes(atom)
-            }
-        };
-        for part in [
-            text(import.spec),
-            text(import.default),
-            text(import.namespace),
-        ] {
-            out.extend_from_slice(part);
-            out.push(0);
-        }
-        out.extend([
-            u8::from(import.type_only),
-            u8::from(import.is_deferred),
-            import.mode as u8,
-        ]);
-        let mut names: Vec<Vec<u8>> = (program
-            .import_specs
-            .get(import.named.range())
-            .unwrap_or_default()
-            .iter())
-        .map(|it| {
-            [
-                text(it.imported),
-                b"\0",
-                text(it.local),
-                b"\0",
-                &[u8::from(it.type_only)],
-            ]
-            .concat()
-        })
-        .collect();
-        names.sort();
-        out.extend(names.concat());
-        (
-            out,
-            program
-                .import_attributes
-                .iter()
-                .find(|it| (*start..loc.end).contains(&it.0))
-                .copied(),
-        )
-    }
-
     /// Allowed, if the formatter sorts imports: they, and the names in them, are in another order.
     fn moved_imports(&mut self) -> Same {
         let sorted = |program: &Program<'_>, ids: &[u32]| {
             let mut all: Vec<_> = ids
                 .iter()
-                .map(|&id| Self::import_as_text(program, id))
+                .map(|&id| import_as_text(program, id))
                 .collect();
             all.sort_by(|x, y| x.0.cmp(&y.0));
             all
@@ -1902,21 +1806,8 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         self.jsx_children(&x, &y)
     }
 
-    /// The text of the string `e`, if that is not between braces: JSX text, or the value of an
-    /// attribute with its quotes.
-    fn jsx_string<'p>(program: &'p Program<'p>, e: ExprId) -> Option<&'p [u8]> {
-        match program.exprs.get(e.idx()) {
-            Some(Expr {
-                kind: ExprKind::String(_),
-                pos,
-                end,
-            }) if !program.is_in_braces(e) => Some(program.slice(*pos, *end)),
-            _ => None,
-        }
-    }
-
     fn jsx_attribute_value(&mut self, a: ExprId, b: ExprId) -> Same {
-        let (Some(x), Some(y)) = (Self::jsx_string(self.a, a), Self::jsx_string(self.b, b)) else {
+        let (Some(x), Some(y)) = (jsx_string(self.a, a), jsx_string(self.b, b)) else {
             self.check(
                 self.a.is_in_braces(a) == self.b.is_in_braces(b),
                 "the braces of the value of an attribute",
@@ -2236,6 +2127,118 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 }
             }
         }
+    }
+}
+
+/// Whether the keys that are not plain names, each in a program at a position, are written the same.
+fn is_literal_name_same(a: (&Program<'_>, u32), b: (&Program<'_>, u32)) -> bool {
+    // `["a"]`
+    let inside = |program: &Program<'_>, at: u32| match program.text.get(at as usize) {
+        Some(b'[') => skip_trivia(program.text, at + 1),
+        _ => at,
+    };
+    let (x, y) = (
+        a.0.from(inside(a.0, a.1)),
+        b.0.from(inside(b.0, b.1)),
+    );
+    // What is between the quotes is what is written without them. Allowed: `.5` is `"0.5"`.
+    let is_without_quotes = |string: &[u8], other: &[u8]| {
+        let content = string.get(1..string.len() - 1).unwrap_or_default();
+        if let Some(number) = number_at_start(other) {
+            return *content == *format_trimmed_number(number);
+        }
+        let is_part = |it: &u8| {
+            it.is_ascii_alphanumeric() || matches!(it, b'_' | b'$' | b'.') || !it.is_ascii()
+        };
+        other
+            .strip_prefix(content)
+            .is_some_and(|rest| !rest.first().is_some_and(is_part))
+    };
+    match (string_at_start(x), string_at_start(y)) {
+        (Some(x), Some(y)) => is_same_string(x, y),
+        (Some(string), None) => is_without_quotes(string, y),
+        (None, Some(string)) => is_without_quotes(string, x),
+        (None, None) => match (number_at_start(x), number_at_start(y)) {
+            (Some(x), Some(y)) => is_same_number(x, y),
+            _ => true,
+        },
+    }
+}
+
+/// Everything about the import `id` that is compared, in a form that does not depend on the order
+/// of its names, but for its attributes, which come with it.
+fn import_as_text(program: &Program<'_>, id: u32) -> (Vec<u8>, Option<(u32, ExprId)>) {
+    let mut out = Vec::new();
+    let Some(Stmt {
+        kind: StmtKind::Import(import),
+        start,
+        loc,
+        ..
+    }) = program.stmts.get(id as usize)
+    else {
+        return (out, None);
+    };
+    let Some(import) = program.imports.get(import.idx()) else {
+        return (out, None);
+    };
+    let text = |atom: Atom| {
+        if atom.is_none() {
+            &b"\x01"[..]
+        } else {
+            program.atoms.bytes(atom)
+        }
+    };
+    for part in [
+        text(import.spec),
+        text(import.default),
+        text(import.namespace),
+    ] {
+        out.extend_from_slice(part);
+        out.push(0);
+    }
+    out.extend([
+        u8::from(import.type_only),
+        u8::from(import.is_deferred),
+        import.mode as u8,
+    ]);
+    let mut names: Vec<Vec<u8>> = (program
+        .import_specs
+        .get(import.named.range())
+        .unwrap_or_default()
+        .iter())
+    .map(|it| {
+        [
+            text(it.imported),
+            b"\0",
+            text(it.local),
+            b"\0",
+            &[u8::from(it.type_only)],
+        ]
+        .concat()
+    })
+    .collect();
+    names.sort();
+    out.extend(names.concat());
+    (
+        out,
+        program
+            .import_attributes
+            .iter()
+            .find(|it| (*start..loc.end).contains(&it.0))
+            .copied(),
+    )
+}
+
+/// The text of the string `e`, if that is not between braces: JSX text, or the value of an
+/// attribute with its quotes.
+fn jsx_string<'p>(program: &'p Program<'p>, e: ExprId) -> Option<&'p [u8]> {
+    match program.exprs.get(e.idx()) {
+        Some(Expr {
+            kind: ExprKind::String(_),
+            pos,
+            end,
+        }) if !program.is_in_braces(e) => Some(program.slice(*pos, *end)),
+        _ => None,
     }
 }
 

@@ -56,7 +56,8 @@ printed on stderr, the counts, and for each kind of difference (a rule and who r
 - **`format`**: `--list-different`, then both write, each on a copy: the files that were changed, byte for byte. Which files
   each reads: Prettier prints them; for `bun format`, empty lines are appended to every tracked file of a copy, which makes
   `--list-different` name each file that it reads.
-- **The judge** is their installed version for ESLint. For Prettier it is 3.9.9, which `bun format` follows, next to their
+- **The judge** is their installed version for ESLint; where the results differ, ESLint 10.12.0, which `bun lint` follows,
+  runs too, with their configuration and plugins, to tell what ESLint has changed since from what we get wrong. For Prettier it is 3.9.9, which `bun format` follows, next to their
   version: a repository on Prettier 2 differs for reasons that are in Prettier's changelog. For oxlint and oxfmt it is the
   version in their lock file, next to oxlint 1.80.0 and oxfmt 0.72.0.
 - In a package that has a `lint` or a `format` script, `bun lint` runs that script, except in the script itself. So

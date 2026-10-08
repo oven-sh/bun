@@ -47,6 +47,8 @@ type Entry = {
   sha: string;
   install: "none" | "bun" | "pnpm" | "yarn" | "yarn1";
   installArgs?: string[];
+  /** Where their tools are installed, if not at the top: `tools/eslint`. */
+  installCwd?: string;
   /**
    * With `install: "none"`: the versions of their tools in their lock file. oxlint and oxfmt need nothing else of a repository's
    * dependencies, unless the configuration has plugins in JavaScript or asks for types.
@@ -78,7 +80,7 @@ const limits: Limits = {
 const here = import.meta.dir;
 const manifest: Entry[] = JSON.parse(readFileSync(flags.get("manifest") || join(here, "manifest.json"), "utf8"));
 /** The versions that `bun lint` and `bun format` are compared with where a repository has none installed, and Prettier always. */
-const JUDGES = { prettier: "3.9.9", oxlint: "1.80.0", oxfmt: "0.72.0" };
+const JUDGES = { eslint: "10.12.0", prettier: "3.9.9", oxlint: "1.80.0", oxfmt: "0.72.0" };
 
 const nameOf = (repo: string) => repo.replace("/", "__");
 const cloneOf = (repo: string) => join(work, nameOf(repo));
@@ -116,7 +118,7 @@ let serial = 0;
 async function inCopy(
   entry: Entry,
   label: string,
-  command: Pick<Command, "cmd" | "env"> & { cwd?: string; upper?: string; perf?: boolean },
+  command: Pick<Command, "cmd" | "env"> & { cwd?: string; upper?: string; perf?: boolean; seconds?: number },
 ): Promise<Outcome> {
   const base = join(work, ".runs", nameOf(entry.repo), `${label}-${serial++}`);
   const [upper, out] = [command.upper ?? ownDirectory(join(base, "upper")), ownDirectory(join(base, "out"))];
@@ -132,7 +134,7 @@ async function inCopy(
     stderr: join(out, "stderr"),
     time: join(out, "time"),
     perf: command.perf ? join(out, "perf") : undefined,
-    limits,
+    limits: { ...limits, seconds: Math.min(limits.seconds, command.seconds ?? limits.seconds) },
   });
   // `time` writes a line of its own first if the command fails.
   const [seconds, user, system, rss] = (read(join(out, "time")).trim().split("\n").at(-1) ?? "").split(" ").map(Number);
@@ -162,11 +164,18 @@ const summary = ({ code, seconds, user, rssMb, instructions, stderr, stdout }: O
 });
 
 /** In the clone itself, with the network: git and package managers. */
-async function inClone(entry: Entry, label: string, cmd: string[], env: Record<string, string> = {}, network = true) {
+async function inClone(
+  entry: Entry,
+  label: string,
+  cmd: string[],
+  env: Record<string, string> = {},
+  network = true,
+  cwd = ".",
+) {
   const out = ownDirectory(join(work, ".runs", nameOf(entry.repo), `${label}-${serial++}`));
   const code = await sandboxed({
     cmd,
-    cwd: cloneOf(entry.repo),
+    cwd: join(cloneOf(entry.repo), cwd),
     env: {
       BUN_INSTALL_CACHE_DIR: join(cache, "bun"),
       COREPACK_HOME: join(cache, "corepack"),
@@ -240,10 +249,10 @@ async function install(entry: Entry) {
   const cmd = commands[entry.install];
   const started = performance.now();
   let result = { code: 0, stdout: "", stderr: "" };
-  if (cmd) result = await inClone(entry, "install", cmd);
+  if (cmd) result = await inClone(entry, "install", cmd, {}, true, entry.installCwd);
   // `bun install` writes the lock file that it has made of another package manager's, which would be formatted too.
   if (entry.install === "bun" && frozen === "--no-save") {
-    await inClone(entry, "git", ["rm", "-f", "bun.lock"], {}, false);
+    await inClone(entry, "git", ["rm", "-f", "bun.lock"], {}, false, entry.installCwd);
   }
   const prepared: { cmd: string[]; code: number; stderr: string }[] = [];
   for (const cmd of result.code === 0 ? (entry.prepare ?? []) : []) {
@@ -268,10 +277,11 @@ async function install(entry: Entry) {
 
 /** Packages of npm in a directory of their own below `<work>/.tools`, which every run can read. */
 async function installTools(directory: string, dependencies: Record<string, string>) {
-  if (existsSync(join(directory, "node_modules", ".bin"))) return;
+  const wanted = JSON.stringify({ private: true, dependencies });
+  if (existsSync(join(directory, "node_modules", ".bin")) && read(join(directory, "package.json")) === wanted) return;
   ownDirectory(tools);
   ownDirectory(directory);
-  writeFileSync(join(directory, "package.json"), JSON.stringify({ private: true, dependencies }));
+  writeFileSync(join(directory, "package.json"), wanted);
   const out = ownDirectory(join(work, ".runs", "_tools", String(serial++)));
   const code = await sandboxed({
     cmd: [bun, "install", "--ignore-scripts", "--no-progress"],
@@ -328,6 +338,9 @@ function commandOf(run: Run, before: string[], after: string[]) {
   ];
 }
 
+/** A run of ours that takes four times as long as theirs, and more than three minutes, hangs. */
+const patience = (theirs: Outcome) => Math.max(180, Math.ceil((theirs.seconds ?? 0) * 4));
+
 /** In a package that has a `lint` or a `format` script, `bun lint` runs the script, except in that script. */
 const asScript = (command: "lint" | "format") => ({ npm_lifecycle_event: command });
 
@@ -360,6 +373,7 @@ async function lint(entry: Entry, run: Run) {
     cwd: run.cwd,
     env: { ...run.env, ...asScript("lint") },
     perf: true,
+    seconds: patience(theirs),
   });
   const compare = (a: any, b: any) =>
     run.tool === "eslint"
@@ -372,23 +386,29 @@ async function lint(entry: Entry, run: Run) {
     theirCode === ours.code
       ? "identical"
       : "differs";
-  const [a, b] = [parse<any>(theirs.stdout), parse<any>(ours.stdout)];
+  // A report in the format of the other linter is no report: `bun lint` chooses by the configuration file, not by the flags.
+  const report = (path: string) => {
+    const it = parse<any>(path);
+    return (run.tool === "eslint" ? Array.isArray(it) : Array.isArray(it?.diagnostics)) ? it : null;
+  };
+  const [a, b] = [report(theirs.stdout), report(ours.stdout)];
   const comparison = a && b ? compare(a, b) : null;
-  // What an older oxlint does not report can be what oxlint has learnt since.
+  // What another version of their tool reports can be what the tool has learnt since: `bun lint` follows one version of each.
+  // ESLint's judge runs with their configuration and their plugins.
   let judge = null;
-  if (run.tool === "oxlint" && version !== JUDGES.oxlint) {
+  if (version !== JUDGES[run.tool as "eslint"] && !(comparison && verdictOf(comparison, theirs.code) === "identical")) {
     const it = await inCopy(entry, "judge", {
-      cmd: commandOf(run, [join(tools, "node_modules", ".bin", "oxlint")], [...json, ...(run.theirArgs ?? [])]),
+      cmd: commandOf(run, [join(tools, "node_modules", ".bin", run.tool)], [...json, ...(run.theirArgs ?? [])]),
       cwd: run.cwd,
       env: run.env,
     });
-    const report = parse<any>(it.stdout);
-    const judged = report && b ? compare(report, b) : null;
+    const judgeReport = report(it.stdout);
+    const judged = judgeReport && b ? compare(judgeReport, b) : null;
     judge = {
-      version: JUDGES.oxlint,
+      version: JUDGES[run.tool as "eslint"],
       ...summary(it),
       comparison: judged && cut(judged),
-      verdict: !report ? "cannot run: theirs" : !b ? "cannot run: ours" : verdictOf(judged!, it.code),
+      verdict: !judgeReport ? "cannot run: theirs" : !b ? "cannot run: ours" : verdictOf(judged!, it.code),
     };
     if (!flags.has("keep")) removeRuns(it.out);
   }
@@ -469,6 +489,7 @@ async function fix(entry: Entry, run: Run) {
     cmd: commandOf(run, [bun, "lint"], ["--fix", ...(run.ourArgs ?? [])]),
     cwd: run.cwd,
     env: { ...run.env, ...asScript("lint") },
+    seconds: patience(theirs),
   });
   const [a, b] = [changedFiles(entry, theirs.upper), changedFiles(entry, ours.upper)];
   const tree = compareTrees(a, b);
@@ -754,7 +775,7 @@ function tables() {
         "Exit theirs",
         "Exit ours",
         "Verdict",
-        ...(tool === "oxlint" ? [`Against ${JUDGES.oxlint}`] : []),
+        `Against ${JUDGES[tool as "eslint"]}`,
       ],
       runs.map(({ result, run }) => {
         const c = run.comparison;
@@ -771,7 +792,7 @@ function tables() {
           run.theirs.code,
           run.ours.code,
           run.verdict,
-          ...(tool === "oxlint" ? [run.judge?.verdict ?? run.verdict] : []),
+          run.judge?.verdict ?? run.verdict,
         ];
       }),
     );

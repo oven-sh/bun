@@ -133,6 +133,17 @@ type EslintMessage = {
 };
 type EslintResult = { filePath: string; messages: EslintMessage[]; suppressedMessages?: EslintMessage[] };
 
+/** The keys of a suggestion are in the order in which the rule has written them. */
+function sorted(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sorted);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([key, it]) => [key, sorted(it)]),
+  );
+}
+
 /** `eslint -f json` of both. */
 export function compareEslint(theirs: EslintResult[], ours: EslintResult[], root: string): LintComparison {
   let suppressed = [0, 0];
@@ -149,7 +160,7 @@ export function compareEslint(theirs: EslintResult[], ours: EslintResult[], root
           line: it.line ?? 0,
           key: JSON.stringify([rule, it.severity, ...place, it.message, suppressed]),
           text: `${place.join(":")} ${it.severity}${suppressed ? " (suppressed)" : ""} ${it.message}`.slice(0, 400),
-          fix: JSON.stringify([it.fix ?? null, it.suggestions ?? null]),
+          fix: JSON.stringify(sorted([it.fix ?? null, it.suggestions ?? null])),
         };
       };
       byFile.set(relative(root, result.filePath), [

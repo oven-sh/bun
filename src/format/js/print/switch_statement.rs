@@ -1,5 +1,6 @@
 use super::program::{FormatStatements, is_next_line_empty};
 use crate::js::format::write_declaration;
+use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -35,6 +36,10 @@ pub(crate) fn write_switch_statement<'a>(
 
 /// `case a: ..`, `default: ..`
 pub(crate) fn write_switch_case<'a>(case: Case<'a>, f: &mut Formatter<'a>) {
+    // `case 1: a(); // prettier-ignore`: the comment is not in the `case`, so it trails all of it.
+    if !f.is_quiet() && f.comments().has_trailing_suppression_comment(case.span().end) {
+        return write!(f, FormatSuppressedNode(case.span()));
+    }
     match case.test() {
         Some(test) => write!(f, ["case", space(), test, ":"]),
         None => write!(f, ["default", ":"]),

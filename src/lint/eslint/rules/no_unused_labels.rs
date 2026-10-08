@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Disallow unused labels.
 pub struct NoUnusedLabels;
@@ -14,19 +15,26 @@ pub struct Labels<'a> {
 
 /// Whether the label of `statement` can be removed: no comment is lost, `body` does not become a
 /// directive, and it does not continue the statement before.
-fn is_fixable<'a>(statement: Stmt<'a>, label: Ident<'a>, body: Stmt<'a>) -> bool {
+///
+/// `known`: whether what is around a statement and its labels can have directives.
+fn is_fixable<'a>(
+    statement: Stmt<'a>,
+    label: Ident<'a>,
+    body: Stmt<'a>,
+    known: &mut AncestorMemo<'a, bool>,
+) -> bool {
     let file = statement.file();
     if file.tokens_after(label).with_comments().next() != file.tokens_before(body).with_comments().next() {
         return false;
     }
 
-    let ancestor = Node::Stmt(statement).ancestors().find(|it| !matches!(it, Node::Stmt(s) if s.tag() == StmtTag::Labeled));
-    let has_directives = match ancestor {
-        Some(Node::File(_)) => true,
-        Some(Node::Func(func)) => func.kind() != FnKind::StaticBlock,
-        _ => false,
-    };
-    if has_directives
+    let has_directives = known.find(Node::Stmt(statement), |_, ancestor| match ancestor {
+        Node::Stmt(it) if it.tag() == StmtTag::Labeled => None,
+        Node::File(_) => Some(true),
+        Node::Func(func) => Some(func.kind() != FnKind::StaticBlock),
+        _ => Some(false),
+    });
+    if has_directives == Some(true)
         && let StmtKind::Expr(e) = body.kind()
         && (e.as_string().is_some() || ast_utils::is_static_template_literal(e))
     {
@@ -65,6 +73,7 @@ impl Rule for NoUnusedLabels {
         });
         on.finish(|_, cx| {
             cx.state.used.sort_unstable();
+            let mut known = AncestorMemo::default();
             for &statement in &cx.state.all {
                 if cx.state.used.binary_search(&statement.span().start).is_ok() {
                     continue;
@@ -73,7 +82,7 @@ impl Rule for NoUnusedLabels {
                     continue;
                 };
                 cx.report(label, UNUSED).data("name", label).fix(|fixer| {
-                    is_fixable(statement, label, body)
+                    is_fixable(statement, label, body, &mut known)
                         .then(|| fixer.remove(Span::new(statement.span().start, body.span().start)))
                 });
             }

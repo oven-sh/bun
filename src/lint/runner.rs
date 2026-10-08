@@ -10,6 +10,7 @@ use crate::context::{Cx, Diagnostic, Severity};
 use crate::options::Options;
 use crate::rule::{Entry, Listeners, Meta, NodeTags, Rule};
 use bun_sema::bind::{FnOwner, MemberOwner, Parent, PatParent};
+use std::cell::OnceCell;
 
 // ───────────────────────────── the nodes of a file, by kind ─────────────────────────────
 
@@ -49,48 +50,70 @@ impl<const KINDS: usize> Grouped<KINDS> {
     }
 }
 
-/// The expressions, statements, types and patterns of a file by kind. Left out are the nodes that
-/// are not part of the tree, which the parser leaves behind where it has backtracked, and those
-/// that are synthesized from JSDoc comments.
+/// The expressions, statements, types and patterns of a file by kind, each grouped the first time a rule listens for one. Left
+/// out are the nodes that are not part of the tree, which the parser leaves behind where it has backtracked, and those that are
+/// synthesized from JSDoc comments.
+#[derive(Default)]
 pub(crate) struct ByKind {
-    exprs: Grouped<{ ExprTag::COUNT }>,
-    stmts: Grouped<{ StmtTag::COUNT }>,
-    types: Grouped<{ TypeTag::COUNT }>,
-    pats: Grouped<{ PatTag::COUNT }>,
-}
-
-impl ByKind {
-    fn new(file: &File) -> ByKind {
-        let (hir, bound) = (&file.hir, &file.bound);
-        let hides = file.has_synthetic_nodes();
-        let is_written = |pos: u32| !hides || !file.is_in_jsdoc(pos);
-        ByKind {
-            exprs: Grouped::new(hir.exprs.len(), |i| {
-                let is_reached = !matches!(bound.expr_parent.get(i), None | Some(Parent::None));
-                (is_reached && is_written(hir.exprs[i].pos)).then(|| hir.exprs[i].kind.tag() as usize)
-            }),
-            stmts: Grouped::new(hir.stmts.len(), |i| {
-                let is_reached = !matches!(bound.stmt_parent.get(i), None | Some(Parent::None));
-                (is_reached && is_written(hir.stmts[i].start))
-                    .then(|| StmtTag::of(&hir.stmts[i].kind) as usize)
-            }),
-            types: Grouped::new(hir.types.len(), |i| {
-                let is_reached = bound.type_scope.get(i).is_some_and(|scope| scope.is_some());
-                (is_reached && is_written(hir.types[i].pos))
-                    .then(|| TypeTag::of(&hir.types[i].kind) as usize)
-            }),
-            pats: Grouped::new(hir.pats.len(), |i| {
-                let is_reached = !matches!(bound.pat_parent.get(i), None | Some(PatParent::None));
-                (is_reached && is_written(hir.pats[i].pos))
-                    .then(|| PatTag::of(&hir.pats[i].kind) as usize)
-            }),
-        }
-    }
+    exprs: OnceCell<Grouped<{ ExprTag::COUNT }>>,
+    stmts: OnceCell<Grouped<{ StmtTag::COUNT }>>,
+    types: OnceCell<Grouped<{ TypeTag::COUNT }>>,
+    pats: OnceCell<Grouped<{ PatTag::COUNT }>>,
 }
 
 impl File<'_> {
+    #[inline]
     fn by_kind(&self) -> &ByKind {
-        self.lazy.by_kind.get_or_init(|| ByKind::new(self))
+        self.lazy.by_kind.get_or_init(ByKind::default)
+    }
+
+    #[inline]
+    fn is_written(&self, pos: u32) -> bool {
+        !self.has_synthetic_nodes() || !self.is_in_jsdoc(pos)
+    }
+
+    fn exprs_of(&self, tag: ExprTag) -> &[u32] {
+        let (hir, bound) = (&self.hir, &self.bound);
+        let grouped = self.by_kind().exprs.get_or_init(|| {
+            Grouped::new(hir.exprs.len(), |i| {
+                let is_reached = !matches!(bound.expr_parent.get(i), None | Some(Parent::None));
+                (is_reached && self.is_written(hir.exprs[i].pos)).then(|| hir.exprs[i].kind.tag() as usize)
+            })
+        });
+        grouped.of(tag as usize)
+    }
+
+    fn stmts_of(&self, tag: StmtTag) -> &[u32] {
+        let (hir, bound) = (&self.hir, &self.bound);
+        let grouped = self.by_kind().stmts.get_or_init(|| {
+            Grouped::new(hir.stmts.len(), |i| {
+                let is_reached = !matches!(bound.stmt_parent.get(i), None | Some(Parent::None));
+                (is_reached && self.is_written(hir.stmts[i].start)).then(|| StmtTag::of(&hir.stmts[i].kind) as usize)
+            })
+        });
+        grouped.of(tag as usize)
+    }
+
+    fn types_of(&self, tag: TypeTag) -> &[u32] {
+        let (hir, bound) = (&self.hir, &self.bound);
+        let grouped = self.by_kind().types.get_or_init(|| {
+            Grouped::new(hir.types.len(), |i| {
+                let is_reached = bound.type_scope.get(i).is_some_and(|scope| scope.is_some());
+                (is_reached && self.is_written(hir.types[i].pos)).then(|| TypeTag::of(&hir.types[i].kind) as usize)
+            })
+        });
+        grouped.of(tag as usize)
+    }
+
+    fn pats_of(&self, tag: PatTag) -> &[u32] {
+        let (hir, bound) = (&self.hir, &self.bound);
+        let grouped = self.by_kind().pats.get_or_init(|| {
+            Grouped::new(hir.pats.len(), |i| {
+                let is_reached = !matches!(bound.pat_parent.get(i), None | Some(PatParent::None));
+                (is_reached && self.is_written(hir.pats[i].pos)).then(|| PatTag::of(&hir.pats[i].kind) as usize)
+            })
+        });
+        grouped.of(tag as usize)
     }
 }
 
@@ -195,22 +218,22 @@ impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
         for entry in &self.entries {
             match *entry {
                 Entry::Exprs(tag, listener) => {
-                    for &id in file.by_kind().exprs.of(tag as usize) {
+                    for &id in file.exprs_of(tag) {
                         listener(rule, Expr::from_raw(file, id), cx);
                     }
                 }
                 Entry::Stmts(tag, listener) => {
-                    for &id in file.by_kind().stmts.of(tag as usize) {
+                    for &id in file.stmts_of(tag) {
                         listener(rule, Stmt::from_raw(file, id), cx);
                     }
                 }
                 Entry::Types(tag, listener) => {
-                    for &id in file.by_kind().types.of(tag as usize) {
+                    for &id in file.types_of(tag) {
                         listener(rule, TypeNode::from_raw(file, id), cx);
                     }
                 }
                 Entry::Pats(tag, listener) => {
-                    for &id in file.by_kind().pats.of(tag as usize) {
+                    for &id in file.pats_of(tag) {
                         listener(rule, Pat::from_raw(file, id), cx);
                     }
                 }
@@ -404,13 +427,16 @@ fn run_rules<'r, 'a: 'r>(file: &'a File<'a>, rules: &'r [Enabled<'r>]) {
         rule.run_unordered();
     }
 
-    let mut enter = vec![Vec::new(); NodeTags::COUNT];
-    let mut exit = vec![Vec::new(); NodeTags::COUNT];
+    let (mut enter, mut exit): (Vec<Vec<(u16, u16)>>, Vec<Vec<(u16, u16)>>) = (Vec::new(), Vec::new());
     let mut code_path = Vec::new();
     let mut needs_walk = false;
     for (i, rule) in running.iter().enumerate() {
         rule.listeners_of_walk(&mut |listener| {
-            needs_walk = true;
+            if !needs_walk {
+                needs_walk = true;
+                enter.resize(NodeTags::COUNT, Vec::new());
+                exit.resize(NodeTags::COUNT, Vec::new());
+            }
             let (table, tags, entry) = match listener {
                 WalkListener::Enter(tags, entry) => (&mut enter, tags, entry),
                 WalkListener::Exit(tags, entry) => (&mut exit, tags, entry),

@@ -292,12 +292,88 @@ fn run_one(args: &[String]) {
     }
 }
 
+/// Every `.js`, `.jsx`, `.ts`, `.tsx`, `.mjs`, `.cjs`, `.mts`, `.cts` file in `path`, which can be one itself.
+fn collect(path: &std::path::Path, into: &mut Vec<std::path::PathBuf>) {
+    const EXTENSIONS: [&str; 8] = ["js", "jsx", "ts", "tsx", "mjs", "cjs", "mts", "cts"];
+    if path.is_dir() {
+        let is_skipped = matches!(path.file_name().and_then(|it| it.to_str()), Some("node_modules" | ".git"));
+        if let (false, Ok(entries)) = (is_skipped, std::fs::read_dir(path)) {
+            let mut paths: Vec<_> = entries.flatten().map(|it| it.path()).collect();
+            paths.sort();
+            paths.iter().for_each(|it| collect(it, into));
+        }
+    } else if path.extension().and_then(|it| it.to_str()).is_some_and(|it| EXTENSIONS.contains(&it)) {
+        into.push(path.to_owned());
+    }
+}
+
+/// `bun-lint bench <paths..> [--threads=n] [--repeat=n] [--rules=a,b]`: how long parsing and binding take, and how long all the
+/// rules that need no types take, with their default options.
+fn bench(args: &[String]) {
+    let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
+    let threads: usize = flag("--threads=").and_then(|n| n.parse().ok()).unwrap_or(1);
+    let repeat: usize = flag("--repeat=").and_then(|n| n.parse().ok()).unwrap_or(1);
+    let only: Option<Vec<&str>> = flag("--rules=").map(|it| it.split(',').collect());
+    let mut paths = Vec::new();
+    for arg in args.iter().filter(|a| !a.starts_with("--")) {
+        collect(std::path::Path::new(arg), &mut paths);
+    }
+    let files: Vec<(String, Vec<u8>)> = (paths.iter())
+        .filter_map(|path| Some((path.to_string_lossy().into_owned(), std::fs::read(path).ok()?)))
+        .collect();
+    let bytes: usize = files.iter().map(|it| it.1.len()).sum();
+    let all = bun_lint_eslint::RULES.iter().chain(bun_lint_typescript::RULES);
+    let built: Vec<_> = all
+        .filter(|it| !it.meta.requires_types && only.as_ref().is_none_or(|only| only.contains(&it.meta.name)))
+        .map(|it| (it.build)(&Options::default()))
+        .collect();
+    let rules: Vec<_> = (built.iter())
+        .map(|rule| Enabled {
+            rule: &**rule,
+            severity: Severity::Error,
+        })
+        .collect();
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    let (parsing, linting, found) = (AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0));
+    let language = LanguageOptions::default();
+    let started = std::time::Instant::now();
+    for _ in 0..repeat {
+        bun_sema_standalone::for_each_parallel(threads, files.len(), |i| {
+            let (path, code) = &files[i];
+            let before = std::time::Instant::now();
+            with_file(path, code, &language, |file| {
+                parsing.fetch_add(before.elapsed().as_nanos() as u64, Relaxed);
+                if file.has_parse_errors() {
+                    return;
+                }
+                let before = std::time::Instant::now();
+                let diagnostics = bun_lint::runner::run(file, &rules, false);
+                linting.fetch_add(before.elapsed().as_nanos() as u64, Relaxed);
+                found.fetch_add(diagnostics.len() as u64, Relaxed);
+            });
+        });
+    }
+    let per_pass = |nanos: &AtomicU64| nanos.load(Relaxed) as f64 / 1e6 / repeat as f64;
+    println!(
+        "{} files, {:.1} MB, {} rules, {} threads: {:.1} ms wall a pass; cpu: parse+bind {:.1} ms, rules {:.1} ms; {} reports",
+        files.len(),
+        bytes as f64 / 1e6,
+        rules.len(),
+        threads,
+        started.elapsed().as_secs_f64() * 1e3 / repeat as f64,
+        per_pass(&parsing),
+        per_pass(&linting),
+        found.load(Relaxed) / repeat as u64,
+    );
+}
+
 fn main() {
     bun_sema_standalone::native::set_stack_size(7 << 20);
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("conformance") => conformance(&args[1..]),
         Some("run") => run_one(&args[1..]),
+        Some("bench") => bench(&args[1..]),
         Some("ast") => ast_cmd::run(&args[1..]),
         Some("tokens") => tokens_cmd::run(&args[1..]),
         Some("semantic") => semantic_cmd::run(&args[1..]),

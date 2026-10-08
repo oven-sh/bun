@@ -4241,6 +4241,12 @@ function emitErrorNextTick(self, error) {
 }
 
 function emitErrorAndCloseNextTick(self, error) {
+  // A socket that still has a stream behind it closes through destroy(), or it emits 'close' twice:
+  // once here and once when that stream tears down.
+  if (!self.destroyed) {
+    self.destroy(error);
+    return;
+  }
   self.emit("error", error);
   self.emit("close", true);
 }

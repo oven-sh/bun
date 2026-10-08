@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { once } from "events";
-import { tls as certs } from "harness";
+import { bunEnv, bunExe, tls as certs } from "harness";
 import net from "net";
+import path from "node:path";
 import tls from "tls";
 
 test("should be able to upgrade a paused socket and also have backpressure on it #15438", async () => {
@@ -86,6 +87,10 @@ test("tls.connect({ socket }) on a socket that already finished writing emits 'e
     await once(socket, "finish");
 
     const tlsSocket = tls.connect({ socket, rejectUnauthorized: false });
+    // The refusal has to close the TLSSocket through its stream, or 'close' arrives twice: once
+    // from the error itself and once when that stream tears down. Node emits it once.
+    let tlsClosed = 0;
+    tlsSocket.on("close", () => tlsClosed++);
     const outcome = new Promise<Error>((resolve, reject) => {
       tlsSocket.once("error", resolve);
       tlsSocket.once("secureConnect", () => reject(new Error("handshake completed on a finished socket")));
@@ -98,7 +103,9 @@ test("tls.connect({ socket }) on a socket that already finished writing emits 'e
     expect((await outcome).message).toBe("Cannot upgrade to TLS: the socket is closed or has been shut down");
     await peerReplied;
     await socketClosed;
-    expect(received).toBe("bye");
+    // The second 'close' of the bug lands before the wrapped socket's own close, which is awaited
+    // above, so the count is final here.
+    expect({ received, tlsClosed }).toEqual({ received: "bye", tlsClosed: 1 });
   } finally {
     server.close();
   }
@@ -219,3 +226,17 @@ test("a STARTTLS exchange hands no TLS bytes to the 'data' listeners of the wrap
     server.close();
   }
 });
+
+test("a refused tls.connect({ socket }) emits 'close' once, like Node", async () => {
+  // The refusal used to report the error and emit 'close' by hand, and the stream behind the
+  // TLSSocket emitted a second one when it tore down.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "node-tls-upgrade-refused-close-fixture.js")],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect(JSON.parse(stdout)).toEqual({ silent: 1, replies: 1, ends: 1 });
+}, 20_000);

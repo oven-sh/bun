@@ -11,7 +11,7 @@ use super::{
     Case, Class, EnumMember, ExportSpec, ExprTag, File, Func, Handle, ImportSpec, Member, Param,
     PatTag, Prop, StmtTag, TypeParam, TypeTag, VarDecl,
 };
-use bun_sema::bind::{FnOwner, MemberOwner, Parent, PatParent};
+use bun_sema::bind::{ClassOwner, FnOwner, MemberOwner, Parent, PatParent};
 use bun_sema::hir;
 
 /// In place of the kind of what is not a node: see [`File::expr_tags_in_tree`].
@@ -176,7 +176,7 @@ macro_rules! in_tree {
 
 in_tree! {
     Func |_it, file, i| file.bound.fns.get(i).is_some_and(|f| f.owner != FnOwner::None);
-    Class |_it, file, i| file.bound.class_scope.get(i).is_some_and(|scope| scope.is_some());
+    Class |_it, file, i| !matches!(file.bound.class_owner.get(i), None | Some(ClassOwner::Stmt(hir::StmtId::NONE)));
     Member |_it, file, i| !matches!(file.bound.member_owner.get(i), None | Some(MemberOwner::None));
     Prop |it, file, i| file.bound.prop_owner.get(i).is_some_and(|owner| owner.is_some())
         && !file.is_import_attribute(it.id);

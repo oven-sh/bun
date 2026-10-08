@@ -2223,8 +2223,7 @@ function hasInvalidTrailer(response) {
   return outHeaders !== null && outHeaders["trailer"] !== undefined;
 }
 
-// OutgoingMessage keeps an array value by reference and appendHeader pushes into it, as in Node.
-// A header list folded below must not reach the caller's array, so an array value goes in as a copy.
+// appendHeader pushes into a stored array, as in Node, so a header list folded here stores a copy of each array value.
 function copyHeaderValueArray(values) {
   const length = values.length;
   const copy = $newArrayWithSize(length);
@@ -2305,8 +2304,7 @@ function _writeHead(statusCode, reason, obj, response) {
           k = obj[n];
           if (k) {
             let value = obj[n + 1];
-            // With a header set before, Node appends to the caller's array here, and the value stays in it:
-            // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L450-L453. Bun appends to a copy.
+            // Node pushes into the caller's array here when a header was set before. Bun appends to a copy on purpose.
             if (typeof value === "object" && $isArray(value)) value = copyHeaderValueArray(value);
             response.appendHeader(k, value);
           }

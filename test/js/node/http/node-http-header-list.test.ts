@@ -111,9 +111,10 @@ describe("a header list does not write into an array that the caller keeps", () 
   });
 
   // Deliberate divergence from Node v26.3.0. With a header already set, Node merges a flat list into its header
-  // store and appends to the caller's array there: the second user receives the cookie of the first user. In that
-  // state Node takes no list of pairs at all (ERR_INVALID_ARG_TYPE, or ERR_INVALID_ARG_VALUE for an odd count).
-  // Bun takes both forms and appends to a copy.
+  // store and appends to the caller's array there: the second user receives the cookie of the first user.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L450-L453
+  // In that state Node takes no list of pairs at all (ERR_INVALID_ARG_TYPE, or ERR_INVALID_ARG_VALUE for an odd
+  // count). Bun takes both forms and appends to a copy.
   describe("writeHead() after a header was set", () => {
     const lists: [string, Respond][] = [
       [

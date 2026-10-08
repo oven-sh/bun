@@ -857,3 +857,9 @@ describe("indented delimiter row", () => {
     expect(markdown.html("| a | b |\n    | --- | --- |\n")).toBe("<p>| a | b |\n| --- | --- |</p>\n");
   });
 });
+
+describe("strikethrough in a word", () => {
+  test("tildes open and close like asterisks, not like underscores", () => {
+    expect(markdown.html("a~~b~~c\n")).toBe("<p>a<del>b</del>c</p>\n");
+  });
+});

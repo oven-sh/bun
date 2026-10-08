@@ -1261,7 +1261,7 @@ pub(crate) fn can_open_emphasis(
     if !lf {
         return false;
     }
-    if emph_char == b'*' {
+    if emph_char != b'_' {
         return true;
     }
     // _ requires: left-flanking AND (not right-flanking OR preceded by punctuation)
@@ -1282,7 +1282,7 @@ pub(crate) fn can_close_emphasis(
     if !rf {
         return false;
     }
-    if emph_char == b'*' {
+    if emph_char != b'_' {
         return true;
     }
     // _ requires: right-flanking AND (not left-flanking OR followed by punctuation)

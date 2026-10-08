@@ -1,7 +1,7 @@
 // Writes what Prettier and oxfmt print for the inputs in `cases`, next to them.
 //
 //   bun test/cli/format/own/sync.ts <directory with node_modules/prettier> <directory with node_modules/.bin/oxfmt>
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { collect } from "../bundle.ts";
@@ -15,7 +15,7 @@ if (!prettierRoot || !oxfmtRoot) {
 const prettier = await import(resolve(prettierRoot, "node_modules/prettier/index.mjs"));
 const oxfmt = resolve(oxfmtRoot, "node_modules/.bin/oxfmt");
 const files = new Map<string, Uint8Array>();
-collect(import.meta.dir, "cases", files, name => name.endsWith(".snap"));
+collect(import.meta.dir, "cases", files, name => name.endsWith(".snap") || name.endsWith(".todo"));
 
 for (const [path, bytes] of files) {
   if (!path.endsWith(".input")) continue;
@@ -32,5 +32,7 @@ for (const [path, bytes] of files) {
     rmSync(directory, { recursive: true });
   }
   writeFileSync(join(import.meta.dir, `${name}.prettier.snap`), render(asPrettier));
-  if (asOxfmt.length > 0) writeFileSync(join(import.meta.dir, `${name}.snap`), render(asOxfmt));
+  // `.todo`: `bun format` does not print that yet, and it is not compared.
+  const snapshot = join(import.meta.dir, `${name}.snap`);
+  if (asOxfmt.length > 0) writeFileSync(existsSync(`${snapshot}.todo`) ? `${snapshot}.todo` : snapshot, render(asOxfmt));
 }

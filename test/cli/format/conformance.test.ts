@@ -17,7 +17,7 @@ const every = isDebug || isASAN ? 20 : 1;
 /** `own/cases`, in the form of oxfmt's tests. An input has `.input` after its name, so that nothing else takes it for code. */
 function ownCases() {
   const found = new Map<string, Uint8Array>();
-  collect(join(import.meta.dir, "own"), "cases", found, () => false);
+  collect(join(import.meta.dir, "own"), "cases", found, name => name.endsWith(".todo"));
   return concatenate(new Map([...found].map(([name, bytes]) => [name.replace(/\.input$/, ""), bytes])));
 }
 
@@ -38,14 +38,17 @@ test.skipIf(!hasRunner).concurrent.each([
       stderr: "inherit",
     });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    const expected = await Bun.file(join(import.meta.dir, suite, "expected.txt")).text();
+    // Of our own inputs none fails.
+    const expected = suite === "own" ? "" : await Bun.file(join(import.meta.dir, suite, "expected.txt")).text();
 
-    if (every === 1) {
+    if (every === 1 && suite !== "own") {
       expect(stdout).toBe(expected);
     } else {
       // Nothing fails that is not known to.
       const known = new Set(expected.split("\n"));
       expect(stdout.split("\n").filter(line => line.startsWith("FAIL ") && !known.has(line))).toEqual([]);
+      // And something has run.
+      expect(stdout).toMatch(/^(?:format|as Prettier prints them): [1-9]/m);
     }
     expect(exitCode).toBe(0);
   },

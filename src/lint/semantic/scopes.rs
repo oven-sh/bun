@@ -517,10 +517,10 @@ impl<'f, 'a> Collector<'f, 'a> {
             }
         }
         // To the binder neither is a scope.
-        let may_export_namespace = !self.is_javascript && bun_core::strings::contains(hir.text, b"namespace");
-        if !hir.with_bodies.is_empty() || may_export_namespace {
+        let has_with = !hir.with_bodies.is_empty();
+        if has_with || !self.is_javascript {
             for (i, stmt) in hir.stmts.iter().enumerate() {
-                if matches!(stmt.kind, StmtKind::ExportAsNamespace(_)) || is_with_statement(self.file, stmt) {
+                if matches!(stmt.kind, StmtKind::ExportAsNamespace(_)) || has_with && is_with_statement(self.file, stmt) {
                     self.statement(i);
                 }
             }

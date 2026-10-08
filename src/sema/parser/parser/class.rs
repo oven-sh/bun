@@ -281,7 +281,9 @@ impl Parser<'_> {
             }
             self.next();
         }
-        if self.token() == T::Asterisk {
+        // In Flow: the variance of a property.
+        if self.token() == T::Asterisk || matches!(self.token(), T::Plus | T::Minus) && self.is_flow
+        {
             return true;
         }
         if self.is_literal_property_name() {

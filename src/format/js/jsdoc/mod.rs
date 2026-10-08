@@ -46,28 +46,54 @@ pub(crate) fn write_comment<'a>(comment: &Comment, f: &mut Formatter<'a>) -> boo
         .map(|&byte| if byte == b'\t' { tab_width } else { 1 })
         .sum();
     let available_width = (f.options().line_width.value() as usize).saturating_sub(indent);
-    let after = f.file().text().get(comment.span.end as usize..).unwrap_or_default();
-    match format_jsdoc_comment(content, after, &options, f.options(), available_width) {
+    let write_lines = |lines: &[u8], f: &mut Formatter<'a>| {
+        write!(f, "/**");
+        for line in strings::split(lines, b"\n") {
+            write!(f, [hard_line_break(), " *"]);
+            if !line.is_empty() {
+                write!(f, " ");
+                f.write_text(line, None);
+            }
+        }
+        write!(f, [hard_line_break(), " */"]);
+    };
+    // An escape or a blank that is gone would end the comment early.
+    let format = |content: &[u8], end: usize, f: &Formatter<'a>| {
+        let after = f.file().text().get(end..).unwrap_or_default();
+        format_jsdoc_comment(content, after, &options, f.options(), available_width).filter(|formatted| match formatted {
+            FormattedJsdoc::SingleLine(text) | FormattedJsdoc::MultiLine(text) => !strings::contains(text, b"*/"),
+            FormattedJsdoc::Empty => true,
+        })
+    };
+
+    // Comments that directly follow each other have been made one. Each is formatted by itself, and they go on
+    // following each other directly if each has several lines.
+    if strings::contains(inner, b"*//**") {
+        let mut formatted = Vec::new();
+        let mut start = 0;
+        while start < content.len() {
+            let end = strings::index_of(&content[start..], b"*//**").map_or(content.len(), |at| start + at + 2);
+            match format(&content[start..end], comment.span.start as usize + end, f) {
+                Some(FormattedJsdoc::MultiLine(lines)) => formatted.push(lines),
+                _ => return false,
+            }
+            start = end;
+        }
+        for lines in &formatted {
+            write_lines(lines, f);
+        }
+        return true;
+    }
+
+    match format(content, comment.span.end as usize, f) {
         None => return false,
-        // An escape or a blank that is gone would end the comment early.
-        Some(FormattedJsdoc::SingleLine(text) | FormattedJsdoc::MultiLine(text)) if strings::contains(&text, b"*/") => return false,
         Some(FormattedJsdoc::Empty) => {}
         Some(FormattedJsdoc::SingleLine(line)) => {
             write!(f, "/** ");
             f.write_text(&line, None);
             write!(f, " */");
         }
-        Some(FormattedJsdoc::MultiLine(lines)) => {
-            write!(f, "/**");
-            for line in strings::split(&lines, b"\n") {
-                write!(f, [hard_line_break(), " *"]);
-                if !line.is_empty() {
-                    write!(f, " ");
-                    f.write_text(line, None);
-                }
-            }
-            write!(f, [hard_line_break(), " */"]);
-        }
+        Some(FormattedJsdoc::MultiLine(lines)) => write_lines(&lines, f),
     }
     true
 }

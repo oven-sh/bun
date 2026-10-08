@@ -19,6 +19,7 @@ use std::sync::Arc;
 /// | `@trivago/prettier-plugin-sort-imports` | `importOrderSeparation`, `importOrderSortSpecifiers`, `importOrderGroupNamespaceSpecifiers`, `importOrderCaseInsensitive`, `importOrderSideEffects`, `importOrderSortByLength`, `importOrderImportAttributesKeyword`, `importOrderExclude` |
 /// | `@ianvs/prettier-plugin-sort-imports` | `importOrderTypeScriptVersion`, `importOrderCaseSensitive`, `importOrderSafeSideEffects` |
 /// | `prettier-plugin-organize-imports` | `organizeImportsSkipDestructiveCodeActions`, `organizeImportsTypeOrder` |
+/// | the `compilerOptions` of the `tsconfig.json` of the file, which that plugin reads | `tsconfig.jsx`, `tsconfig.jsxFactory`, `tsconfig.jsxFragmentFactory`, `tsconfig.reactNamespace` |
 /// | oxfmt | `sortImports`, which used to be `experimentalSortImports` |
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct Settings {
@@ -47,6 +48,7 @@ impl Settings {
     pub fn set(&mut self, name: &[u8], value: &[u8]) -> bool {
         let is_known = matches!(name, b"plugins" | b"importOrder" | b"importOrderParserPlugins" | b"sortImports" | b"experimentalSortImports")
             || name.starts_with(b"organizeImports")
+            || matches!(name, b"tsconfig.jsx" | b"tsconfig.jsxFactory" | b"tsconfig.jsxFragmentFactory" | b"tsconfig.reactNamespace")
             || OF_TRIVAGO.contains(&name)
             || OF_IANVS.contains(&name);
         if is_known {
@@ -214,6 +216,12 @@ impl Settings {
                     Some(b"inline") => Some(TypeOrder::Inline),
                     Some(value) => return Err(invalid(b"organizeImportsTypeOrder", value)),
                 },
+                jsx_needs_import: matches!(self.get(b"tsconfig.jsx"), Some(b"react" | b"react-native")),
+                jsx_namespace: (self.get(b"tsconfig.jsxFactory").map(first_name))
+                    .or_else(|| self.get(b"tsconfig.reactNamespace"))
+                    .unwrap_or(b"React")
+                    .into(),
+                jsx_fragment_factory: self.get(b"tsconfig.jsxFragmentFactory").map(|it| first_name(it).into()),
             };
             return Ok(Some(Arc::new(SortImports { how: How::Organize(options) })));
         }
@@ -245,6 +253,11 @@ fn semver(version: &[u8]) -> Option<((u64, u64, u64), bool)> {
     });
     let numbers = (parts.next()??, parts.next()??, parts.next()??);
     parts.next().is_none().then_some((numbers, prerelease.is_none()))
+}
+
+/// The `a` of `a.b.c`.
+fn first_name(entity: &[u8]) -> &[u8] {
+    strings::index_of_char_usize(entity, b'.').map_or(entity, |dot| &entity[..dot])
 }
 
 /// `new RegExp(pattern)`

@@ -8,7 +8,7 @@
 
 use super::sort::stable_sort_by;
 use bun_core::strings;
-use bun_lint::ast::{Export, ExportSpec, File, Ident, Import, ImportSpec, List, ModuleName, Node, Stmt, StmtKind};
+use bun_lint::ast::{Export, ExportSpec, ExprTag, File, Ident, Import, ImportSpec, List, ModuleName, Node, Stmt, StmtKind};
 use bun_lint::span::Span;
 use bun_lint::tokens::TokenKind;
 use std::cmp::Ordering;
@@ -26,6 +26,12 @@ pub(super) struct Options {
     pub(super) skips_destructive_code_actions: bool,
     /// `organizeImportsTypeOrder`
     pub(super) type_order: Option<TypeOrder>,
+    /// `jsx` of the `tsconfig.json` is `react` or `react-native`: JSX uses what the next two name.
+    pub(super) jsx_needs_import: bool,
+    /// The first name in `jsxFactory`, or `reactNamespace`, or `React`.
+    pub(super) jsx_namespace: Box<[u8]>,
+    /// The first name in `jsxFragmentFactory`.
+    pub(super) jsx_fragment_factory: Option<Box<[u8]>>,
 }
 
 /// `getOrganizeImportsOrdinalStringComparer`
@@ -238,8 +244,11 @@ struct Organizer<'a, 'o> {
     /// The comments of the file.
     comments: Vec<(Span, bool)>,
     module_comparer: Comparer,
-    named_comparer: Comparer,
+    /// `None`: there is nothing to tell it by.
+    named_comparer: Option<Comparer>,
     type_order: TypeOrder,
+    /// The names that JSX uses, if there is JSX and it uses any.
+    jsx_names: Vec<Vec<u8>>,
     /// What replaces which part of the text.
     changes: Vec<(Span, Vec<u8>)>,
 }
@@ -435,7 +444,9 @@ impl<'a> Organizer<'a, '_> {
     /// `isDeclarationUsed`
     fn is_used(&self, name: Ident<'a>, statement: Stmt<'a>) -> bool {
         let symbol = Node::Stmt(statement).scope().get_name(name.name());
-        symbol.is_none_or(|symbol| symbol.references().len() > 0) || self.is_named_in_jsdoc(name.bytes())
+        self.jsx_names.iter().any(|it| it == name.bytes())
+            || symbol.is_none_or(|symbol| symbol.references().any(|it| !it.is_jsx_pragma()))
+            || self.is_named_in_jsdoc(name.bytes())
     }
 
     /// `removeUnusedImports`
@@ -538,7 +549,7 @@ impl<'a> Organizer<'a, '_> {
                     }
                 };
                 specifiers.extend(named.iter().flat_map(|it| it.named.iter().flatten()).copied());
-                stable_sort_by(&mut specifiers, |a, b| compare_specifiers(a.key(), b.key(), self.named_comparer, self.type_order));
+                stable_sort_by(&mut specifiers, |a, b| compare_specifiers(a.key(), b.key(), self.named_comparer.unwrap_or(Comparer::IgnoringCase), self.type_order));
                 let new_named = (!specifiers.is_empty() || new_default.is_none()).then_some(specifiers);
                 let import = |base: &NewImport<'a>, name, named| NewImport {
                     base: base.base,
@@ -738,6 +749,13 @@ impl<'a> Organizer<'a, '_> {
         }
     }
 
+    /// Whether writing `declarations` anew in the same order changes nothing: no other statement
+    /// is between them, and no comment that is written with the second or a later one.
+    fn is_plain(&self, declarations: &[Declaration<'a>]) -> bool {
+        (declarations.iter().zip(declarations.iter().skip(1)))
+            .all(|(a, b)| a.span().end == b.full_start && (self.comments.is_empty() || self.leading_comments(b.full_start).is_empty()))
+    }
+
     /// `organizeImportsWorker`
     fn organize_imports(&mut self, old: &[Declaration<'a>]) {
         let mut new: Vec<NewImport<'a>> = Vec::with_capacity(old.len());
@@ -751,7 +769,7 @@ impl<'a> Organizer<'a, '_> {
             new.extend(imports);
         }
         let is_same = new.len() == old.len()
-            && is_adjacent(old)
+            && self.is_plain(old)
             && new.iter().zip(old).all(|(new, old)| new.base.span() == old.span() && new.is_unchanged());
         if !is_same {
             let new: Vec<(Declaration<'a>, Vec<u8>)> = new.iter().map(|it| (it.base, self.import_code(it))).collect();
@@ -808,14 +826,14 @@ impl<'a> Organizer<'a, '_> {
                 let mut items = written.clone();
                 stable_sort_by(&mut items, |a, b| {
                     let key = |it: &ExportSpec<'a>| (it.is_type_only(), it.exported().bytes());
-                    compare_specifiers(key(a), key(b), self.named_comparer, type_order)
+                    compare_specifiers(key(a), key(b), self.named_comparer.unwrap_or(Comparer::CaseSensitive), type_order)
                 });
                 let is_sorted = items.iter().zip(&written).all(|(a, b)| a.span() == b.span());
                 is_same &= is_sorted;
                 new.push((*first, if is_sorted && of_kind.len() == 1 { self.file.slice(first.span()).to_vec() } else { self.export_code(first, export, &items) }));
             }
         }
-        is_same &= new.len() == old.len() && is_adjacent(old) && new.iter().zip(old).all(|(new, old)| new.0.span() == old.span());
+        is_same &= new.len() == old.len() && self.is_plain(old) && new.iter().zip(old).all(|(new, old)| new.0.span() == old.span());
         if !is_same {
             self.replace(old, &new);
         }
@@ -851,11 +869,6 @@ impl<'a> Organizer<'a, '_> {
     }
 }
 
-/// Whether no other statement is between `declarations`.
-fn is_adjacent(declarations: &[Declaration]) -> bool {
-    declarations.iter().zip(declarations.iter().skip(1)).all(|(a, b)| a.span().end == b.full_start)
-}
-
 fn stable_sort_by_clone<T: Clone>(items: &mut Vec<T>, compare: impl Fn(&T, &T) -> Ordering) {
     let mut order: Vec<usize> = (0..items.len()).collect();
     stable_sort_by(&mut order, |a, b| compare(&items[*a], &items[*b]));
@@ -880,8 +893,9 @@ pub(super) fn preprocess<'a>(file: &'a File<'a>, options: &Options, end_of_line:
         end_of_line,
         comments: (file.comments().filter(|it| it.kind() != TokenKind::Shebang)).map(|it| (it.span(), it.kind() == TokenKind::Block)).collect(),
         module_comparer: Comparer::IgnoringCase,
-        named_comparer: Comparer::IgnoringCase,
+        named_comparer: None,
         type_order: TypeOrder::Last,
+        jsx_names: Vec::new(),
         changes: Vec::new(),
     };
     let start = file.comments().next().filter(|it| it.kind() == TokenKind::Shebang).map_or(0, |it| it.span().end);
@@ -892,8 +906,23 @@ pub(super) fn preprocess<'a>(file: &'a File<'a>, options: &Options, end_of_line:
     organizer.module_comparer = detect_case_sensitivity_by_sort(&names);
     let orders = options.type_order.map_or(vec![TypeOrder::Last, TypeOrder::Inline, TypeOrder::First], |order| vec![order]);
     let detected = detect_named_import_organization_by_sort(&imports, &orders);
-    organizer.named_comparer = detected.map_or(Comparer::IgnoringCase, |it| it.0);
+    organizer.named_comparer = detected.map(|it| it.0);
     organizer.type_order = options.type_order.or(detected.and_then(|it| it.1)).unwrap_or(TypeOrder::Last);
+
+    if options.jsx_needs_import && file.has_exprs([ExprTag::Jsx]) {
+        // `/** @jsx h */`
+        let pragma = |name: &[u8]| {
+            let first_token = file.program_span().start;
+            organizer.comments.iter().take_while(|it| it.0.end <= first_token).filter(|it| it.1).find_map(|it| {
+                let text = file.slice(it.0);
+                let rest = text[strings::index_of(text, name)? + name.len()..].strip_prefix(b" ")?.trim_ascii_start();
+                Some(rest[..rest.iter().take_while(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$')).count()].to_vec())
+            })
+        };
+        let namespace = pragma(b"@jsx").unwrap_or_else(|| options.jsx_namespace.to_vec());
+        let fragment_factory = pragma(b"@jsxFrag").or_else(|| options.jsx_fragment_factory.as_deref().map(<[u8]>::to_vec));
+        organizer.jsx_names = std::iter::once(namespace).chain(fragment_factory).collect();
+    }
 
     for group in &groups {
         organizer.organize_imports(group);

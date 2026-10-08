@@ -1,6 +1,6 @@
 // Compares import sorting on real code with the real plugins. Nothing is written anywhere.
 //
-//   node real.mjs --bin=<bun-lint> --modules=<dir> --plugin=trivago|ianvs|organize --options='{"importOrder":["^[./]"]}' [--whole] [--quiet] [--jobs=8] <directories..>
+//   node real.mjs --bin=<bun-lint> --modules=<dir> --plugin=trivago|ianvs|organize|oxfmt --options='{"importOrder":["^[./]"]}' [--whole] [--quiet] [--jobs=8] <directories..>
 //
 // Of each file, what is compared is its start, up to the end of the first statement after the last import
 // (`--whole`: all of it). Counted are the files
@@ -13,7 +13,7 @@ import { fork, spawn } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { PACKAGES, flags, load } from "./oracle.mjs";
 
 const { named, positional } = flags(process.argv.slice(2));
@@ -85,13 +85,21 @@ class Server {
 }
 
 const [shard, shards] = named.shard.split("/").map(Number);
-const { expected } = await load(named.modules);
-const { parse } = createRequire(path.resolve(named.modules, "index.js"))("@babel/parser");
+// For oxfmt, which sorts while it formats, the text is what it prints.
+const oxfmt = async (_, input, options, file) => {
+  const require = createRequire(path.resolve(named.modules, "index.js"));
+  const { format } = await import(pathToFileURL(require.resolve("oxfmt")).href);
+  const result = await format(file, input, options);
+  return result.errors.length ? { error: result.errors[0].message } : { text: result.code, output: result.code };
+};
+const { expected } = named.plugin === "oxfmt" ? { expected: oxfmt } : await load(named.modules);
+const { parse } = createRequire(path.resolve(named.babel ?? named.modules, "index.js"))("@babel/parser");
 const options = JSON.parse(named.options ?? "{}");
 const asFlag = ([name, value]) => `--${name}=${typeof value === "string" ? value : JSON.stringify(value)}`;
-const isAboutImports = ([name]) => name.startsWith("importOrder") || name.startsWith("organizeImports");
-const sorting = new Server([`--plugins=["${PACKAGES[named.plugin]}"]`, ...Object.entries(options).map(asFlag)]);
-const plain = new Server(Object.entries(options).filter(it => !isAboutImports(it)).map(asFlag));
+const isAboutImports = ([name]) => name.startsWith("importOrder") || name.startsWith("organizeImports") || name === "sortImports";
+const always = named.plugin === "oxfmt" ? ["--flavor=oxfmt", ...("printWidth" in options ? [] : ["--printWidth=100"])] : [];
+const sorting = new Server([`--plugins=["${PACKAGES[named.plugin] ?? ""}"]`, ...always, ...Object.entries(options).map(asFlag)]);
+const plain = new Server([...always, ...Object.entries(options).filter(it => !isAboutImports(it)).map(asFlag)]);
 
 const counts = { files: 0, withoutImports: 0, pluginFails: 0, compared: 0, sorted: 0, identical: 0, unchanged: 0 };
 for (const [index, file] of files(positional).entries()) {
@@ -125,12 +133,12 @@ for (const [index, file] of files(positional).entries()) {
   counts.compared++;
   const ours = await sorting.format(file, input);
   const reference = await plain.format(file, theirs.text);
-  const isSorted = ours.output !== null && ours.output === reference.output && (ours.text === "" || ours.text === theirs.text || named.plugin === "organize");
+  const isSorted = ours.output !== null && ours.output === reference.output && (ours.text === "" || ours.text === theirs.text || named.plugin === "organize" || named.plugin === "oxfmt");
   counts.sorted += isSorted;
   counts.identical += ours.output === theirs.output;
   counts.unchanged += ours.text === "";
   if (!named.quiet && !isSorted) console.log(`not sorted alike: ${file}`);
-  if (!named.quiet && named.verbose && isSorted && ours.output !== theirs.output) console.log(`not formatted alike: ${file}`);
+  if (!named.quiet && named.verbose && ours.output !== theirs.output) console.log(`not identical: ${file}`);
 }
 process.send(counts);
 process.exit(0);

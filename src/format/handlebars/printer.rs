@@ -107,6 +107,14 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// A text that can have line breaks in it. For a block of code in Markdown, Prettier makes `literalline`s of them.
+    fn verbatim(&mut self, text: &[u8]) {
+        match self.options.is_in_markdown {
+            true => self.with_literal_lines(text, false),
+            false => self.out.text(text),
+        }
+    }
+
     /// `replaceEndOfLine(text)`
     fn with_literal_lines(&mut self, text: &[u8], is_escaped: bool) {
         for (index, line) in strings::split(text, b"\n").enumerate() {
@@ -192,7 +200,7 @@ impl<'a> Printer<'a> {
 
     /// What is ignored is printed as it is written.
     fn ignored(&mut self, node: Node) {
-        self.out.text(self.source.get(node.start as usize..node.end as usize).unwrap_or_default());
+        self.verbatim(self.source.get(node.start as usize..node.end as usize).unwrap_or_default());
     }
 
     // ───────────────────────────── statements ─────────────────────────────
@@ -227,7 +235,7 @@ impl<'a> Printer<'a> {
                 Kind::MustacheComment { value } => self.mustache_comment(node, self.text(value)),
                 Kind::Comment { value } => {
                     self.token("<!--");
-                    self.out.text(self.text(value));
+                    self.verbatim(self.text(value));
                     self.token("-->");
                 }
                 Kind::FrontMatter => self.print_front_matter(self.front_matter),
@@ -238,12 +246,12 @@ impl<'a> Printer<'a> {
 
     fn mustache_comment(&mut self, node: Node, value: &[u8]) {
         let is_tilde = |at: Option<usize>| at.and_then(|at| self.source.get(at)) == Some(&b'~');
-        let strips_left = is_tilde(self.positions.moved(node.start as usize, 2));
-        let strips_right = is_tilde(self.positions.moved(node.end as usize, -3));
+        let strips_left = is_tilde(self.positions.moved(self.source, node.start as usize, 2));
+        let strips_right = is_tilde(self.positions.moved(self.source, node.end as usize, -3));
         let dashes = if strings::contains(value, b"}}") { "--" } else { "" };
         self.token(if strips_left { "{{~!" } else { "{{!" });
         self.token(dashes);
-        self.out.text(value);
+        self.verbatim(value);
         self.token(dashes);
         self.token(if strips_right { "~}}" } else { "}}" });
     }
@@ -265,7 +273,7 @@ impl<'a> Printer<'a> {
             Some((language, value))
         });
         let Some((language, value)) = formatted else {
-            return self.out.text(raw);
+            return self.verbatim(raw);
         };
         self.out.start_indent(IndentCommand::MarkAsRoot);
         self.out.text(&raw[..3]);
@@ -619,7 +627,7 @@ impl<'a> Printer<'a> {
             if index > 0 {
                 self.token(" ");
             }
-            self.out.text(self.text(*name));
+            self.verbatim(self.text(*name));
         }
         self.token("|");
     }
@@ -653,7 +661,7 @@ impl<'a> Printer<'a> {
             // `printElseIfBlock`
             Some(outer) => {
                 self.open_mustache(outer & ast::INVERSE_OPEN != 0, "else ");
-                self.out.text(self.head_name(call).unwrap_or_default());
+                self.verbatim(self.head_name(call).unwrap_or_default());
                 self.start_indent();
                 self.out.line(Line::Space);
                 self.start_group();
@@ -791,7 +799,7 @@ impl<'a> Printer<'a> {
                 self.out.line(Line::Space);
             }
             if let Kind::HashPair { key, value } = self.tree.kind(*pair) {
-                self.out.text(self.text(key));
+                self.verbatim(self.text(key));
                 self.token("=");
                 self.expression(value, false);
             }
@@ -826,12 +834,12 @@ impl<'a> Printer<'a> {
                 let quote = preferred_quote(double, single, self.single_quote != needs_opposite_quote);
                 self.token(quote);
                 while let Some(at) = strings::index_of_char_usize(value, quote.as_bytes()[0]) {
-                    self.out.text(&value[..at]);
+                    self.verbatim(&value[..at]);
                     self.token("\\");
                     self.token(quote);
                     value = &value[at + 1..];
                 }
-                self.out.text(value);
+                self.verbatim(value);
                 self.token(quote);
             }
             Kind::Number { token } => self.number(self.text(token)),
@@ -856,7 +864,7 @@ impl<'a> Printer<'a> {
     fn path(&mut self, head: &[u8], tail: Range) {
         let tail = self.tree.names(tail);
         if tail.is_empty() && strings::contains_char(head, b'/') {
-            return self.out.text(head);
+            return self.verbatim(head);
         }
         self.path_part(head, true);
         for part in tail {
@@ -875,7 +883,7 @@ impl<'a> Printer<'a> {
         if needs_brackets {
             self.token("[");
         }
-        self.out.text(part);
+        self.verbatim(part);
         if needs_brackets {
             self.token("]");
         }

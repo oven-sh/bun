@@ -83,20 +83,41 @@ impl Positions {
         after.checked_sub(1).map_or(0, |index| self.deficits[index].1)
     }
 
-    /// `offset`, moved by so many UTF-16 code units. Where no column is too small, all that is asked for is ASCII.
-    pub(crate) fn moved(&self, offset: usize, by: i64) -> Option<usize> {
+    /// `offset` in `text`, moved by so many UTF-16 code units: where the character starts that is there. Where no
+    /// column is too small, it is moved by a few.
+    pub(crate) fn moved(&self, text: &[u8], offset: usize, by: i64) -> Option<usize> {
         let Some(&unit) = self.units.get(offset) else {
-            return usize::try_from(offset as i64 + by).ok();
+            let (mut at, mut left) = (offset, by.unsigned_abs());
+            while left > 0 && by < 0 {
+                at = at.checked_sub(1)?;
+                while at > 0 && text.get(at).is_some_and(|byte| byte & 0xC0 == 0x80) {
+                    at -= 1;
+                }
+                left = left.saturating_sub(if text.get(at).is_some_and(|byte| *byte >= 0xF0) { 2 } else { 1 });
+            }
+            while left > 0 {
+                let (len, units) = match *text.get(at)? {
+                    0xF0.. => (4, 2),
+                    0xE0.. => (3, 1),
+                    0xC0.. => (2, 1),
+                    _ => (1, 1),
+                };
+                if units > left {
+                    break;
+                }
+                (at, left) = (at + len, left - units);
+            }
+            return Some(at);
         };
         let unit = usize::try_from(i64::from(unit) + by).ok()?;
         self.offsets.get(unit).map(|offset| *offset as usize)
     }
 
     /// Where the parser takes the token to start or end that does so at `offset`.
-    pub(crate) fn of_token(&self, offset: usize) -> usize {
+    pub(crate) fn of_token(&self, text: &[u8], offset: usize) -> usize {
         match self.deficit_at(offset) {
             0 => offset,
-            deficit => self.moved(offset, -i64::from(deficit)).unwrap_or(offset),
+            deficit => self.moved(text, offset, -i64::from(deficit)).unwrap_or(offset),
         }
     }
 }

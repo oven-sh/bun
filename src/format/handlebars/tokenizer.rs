@@ -169,7 +169,7 @@ impl Builder<'_> {
     /// `this.offset()`
     fn position(&self) -> usize {
         if self.shift != 0 && self.index <= self.shifted_up_to {
-            return self.positions.moved(self.index, -i64::from(self.shift)).unwrap_or(self.index);
+            return self.positions.moved(self.source, self.index, -i64::from(self.shift)).unwrap_or(self.index);
         }
         self.index
     }
@@ -859,10 +859,10 @@ impl Builder<'_> {
             self.shifted_up_to = start + line.len();
             // It skips a character, and does not count it.
             if has_read_too_far {
-                if line.is_empty() || !line.is_ascii() {
+                if line.is_empty() {
                     return Err(Error::Syntax);
                 }
-                self.index += 1;
+                self.consume_unit()?;
                 self.shift += 1;
             }
         }
@@ -925,7 +925,7 @@ impl Builder<'_> {
         if let StatementKind::Content = statement.kind {
             return self.content(statement.start as usize, statement.end as usize);
         }
-        let [start, end] = [statement.start, statement.end].map(|offset| self.positions.of_token(offset as usize));
+        let [start, end] = [statement.start, statement.end].map(|offset| self.positions.of_token(self.source, offset as usize));
         if let StatementKind::Unsupported = statement.kind {
             return Err(Error::Syntax);
         }

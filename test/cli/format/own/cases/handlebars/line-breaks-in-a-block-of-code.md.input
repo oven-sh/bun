@@ -1,0 +1,13 @@
+- a
+
+  ```hbs
+  {{#a as |[b
+  c]|}}{{/a}}
+  <p>{{! d
+   e }} f</p> <p>{{g "h
+  i"}} j</p> <p><!-- k
+  l --> m</p>
+  {{! prettier-ignore }}
+  <p   n
+    o></p> q
+  ```

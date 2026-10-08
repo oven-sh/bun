@@ -453,6 +453,12 @@ impl Parser<'_> {
             });
         }
 
+        // `parts: head ? [head, ...tail] : tail`
+        if parts.first().is_some_and(|head| head.is_empty()) {
+            parts.remove(0);
+            has_dropped = true;
+        }
+
         let original = if is_plain {
             Text::source(start, end)
         } else {

@@ -176,8 +176,9 @@ impl Parser<'_> {
         let value = match self.is_at_end() || self.is_keyword(b"as") || self.is_keyword(b"let") {
             true => None,
             false => {
+                let first_token = self.index;
                 let operand = self.parse_pipe()?;
-                Some(self.finish(operand, false))
+                Some(self.finish(first_token, operand, false))
             }
         };
         let mut end = self.input_index();

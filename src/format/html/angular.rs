@@ -18,7 +18,7 @@ use crate::prelude::*;
 use crate::write;
 use bun_core::strings;
 use microsyntax::Part;
-use parser::{Expression, Parser};
+use parser::{Code, Expression, Parser};
 
 /// The `//` comment at the end of an expression.
 #[derive(Copy, Clone)]
@@ -67,6 +67,15 @@ impl<'c> LineComment<'c> {
             js::write_string(self.text, f);
         });
         write!(f, [line_suffix(&content), expand_parent()]);
+    }
+}
+
+/// Whether `formatAttributeValue` hugs a root that `shouldHugJsExpression` says no to. `None`: it is not called.
+fn should_hug_other_kinds(hug: Hug) -> Option<bool> {
+    match hug {
+        Hug::Always => Some(true),
+        Hug::Never | Hug::Expression => Some(false),
+        Hug::Bare => None,
     }
 }
 
@@ -166,15 +175,41 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         }
     }
 
+    /// Writes `expression`, or `ignored` in its place, and what `write_rest` writes, the way `formatAttributeValue` returns
+    /// it.
+    fn write_expression(
+        &mut self,
+        expression: &Expression,
+        ignored: Option<&[u8]>,
+        in_html: InHtml,
+        hug: Hug,
+        write_rest: &dyn for<'b> Fn(&mut Formatter<'b>),
+    ) -> bool {
+        match &expression.code {
+            Code::TypeScript { code, shown } => {
+                let expression = AngularExpression {
+                    code,
+                    shown: shown.as_deref(),
+                    ignored,
+                };
+                self.out.foreign(|f| {
+                    js::write_angular_expression(f, &expression, in_html, hug, write_rest)
+                })
+            }
+            // Nothing that `shouldHugJsExpression` hugs.
+            Code::Printed(printed) => self.write_hugged(should_hug_other_kinds(hug), |printer| {
+                printer.out.foreign(|f| {
+                    js::write_string(ignored.unwrap_or(printed), f);
+                    write_rest(f);
+                });
+                true
+            }),
+        }
+    }
+
     /// Writes an expression that is a part of what is written.
     fn write_part(&mut self, expression: &Expression, in_html: InHtml) -> bool {
-        let expression = AngularExpression {
-            code: &expression.code,
-            shown: expression.shown.as_deref(),
-            ignored: None,
-        };
-        self.out
-            .foreign(|f| js::write_angular_expression(f, &expression, in_html, Hug::Bare, &|_| {}))
+        self.write_expression(expression, None, in_html, Hug::Bare, &|_| {})
     }
 
     /// `__ng_action`, `__ng_binding`, `__ng_interpolation`
@@ -199,26 +234,14 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             .filter(|comment| comment.is_prettier_ignore())
             .map(|_| &code[range]);
         if let ([expression], false) = (&expressions[..], is_action) {
-            let expression = AngularExpression {
-                code: &expression.code,
-                shown: expression.shown.as_deref(),
-                ignored,
-            };
-            return self.out.foreign(|f| {
-                js::write_angular_expression(f, &expression, in_html, hug, &|f| {
-                    if let Some(comment) = comment {
-                        comment.write(f);
-                    }
-                })
+            return self.write_expression(expression, ignored, in_html, hug, &|f| {
+                if let Some(comment) = comment {
+                    comment.write(f);
+                }
             });
         }
-        // An `NGEmptyExpression` or an `NGChainedExpression`, which `shouldHugJsExpression` has nothing to say about.
-        let should_hug = match hug {
-            Hug::Always => Some(true),
-            Hug::Never | Hug::Expression => Some(false),
-            Hug::Bare => None,
-        };
-        self.write_hugged(should_hug, |printer| {
+        // An `NGEmptyExpression` or an `NGChainedExpression`.
+        self.write_hugged(should_hug_other_kinds(hug), |printer| {
             if !is_action {
                 return true;
             }
@@ -283,27 +306,20 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
             return false;
         };
         if let [Part::Expression { expression, alias }] = &body[..] {
-            let expression = AngularExpression {
-                code: &expression.code,
-                shown: expression.shown.as_deref(),
-                ignored: None,
-            };
             // To the formatter for JavaScript, the only expression of an `NGMicrosyntax` is what a binding is.
             let in_html = InHtml {
                 root: HtmlRoot::NgBinding,
                 ..in_html
             };
-            return self.out.foreign(|f| {
-                js::write_angular_expression(f, &expression, in_html, hug, &|f| {
-                    let Some(alias) = alias else {
-                        return;
-                    };
-                    write!(f, " as ");
-                    match is_plain_microsyntax_key(alias) {
-                        true => write!(f, text(alias)),
-                        false => f.write_built_text(|out| json_stringify(alias, out)),
-                    }
-                })
+            return self.write_expression(expression, None, in_html, hug, &|f| {
+                let Some(alias) = alias else {
+                    return;
+                };
+                write!(f, " as ");
+                match is_plain_microsyntax_key(alias) {
+                    true => write!(f, text(alias)),
+                    false => f.write_built_text(|out| json_stringify(alias, out)),
+                }
             });
         }
         // `isNgForOfTrack` reads the name of the key of the second node.
@@ -316,12 +332,7 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
         {
             return false;
         }
-        let should_hug = match hug {
-            Hug::Always => Some(true),
-            Hug::Never | Hug::Expression => Some(false),
-            Hug::Bare => None,
-        };
-        self.write_hugged(should_hug, |printer| {
+        self.write_hugged(should_hug_other_kinds(hug), |printer| {
             let mut is_written = true;
             for (index, part) in body.iter().enumerate() {
                 if is_ng_for_of(part, index) {

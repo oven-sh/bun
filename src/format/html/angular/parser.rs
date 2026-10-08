@@ -21,13 +21,22 @@ pub(crate) struct Failed;
 
 pub(crate) type Parsed<T> = Result<T, Failed>;
 
-/// An expression, as TypeScript.
+/// What is to be written for an expression.
+#[derive(Debug)]
+pub(crate) enum Code {
+    /// What Prettier prints, which is one string.
+    Printed(Vec<u8>),
+    TypeScript {
+        /// `(`, the expression, a line break and `)`.
+        code: Vec<u8>,
+        /// The same with every name as it is written, if that is not the same. It is as long.
+        shown: Option<Vec<u8>>,
+    },
+}
+
 #[derive(Debug)]
 pub(crate) struct Expression {
-    /// `(`, the expression, a line break and `)`.
-    pub(crate) code: Vec<u8>,
-    /// The same with every name as it is written, if that is not the same. It is as long.
-    pub(crate) shown: Option<Vec<u8>>,
+    pub(crate) code: Code,
     /// Prettier's `hasNgSideEffect`: there is a call or an assignment in it.
     pub(crate) has_side_effect: bool,
 }
@@ -371,7 +380,7 @@ impl<'i> Parser<'i> {
     /// Angular takes `1.2.3`, `1e2e3` and `01`.
     fn hide_what_is_no_number(&mut self, number: Token) {
         let text = self.text_of(number);
-        let exponent = text.iter().position(|byte| matches!(byte, b'e' | b'E'));
+        let exponent = strings::index_of_any(text, b"eE");
         let (mantissa, exponent) = text.split_at(exponent.unwrap_or(text.len()));
         let is_number = strings::count_char(mantissa, b'.') <= 1
             && !matches!(mantissa, [b'0', b'0'..=b'9' | b'_', ..])
@@ -394,8 +403,70 @@ impl<'i> Parser<'i> {
         }
     }
 
-    /// Makes TypeScript of `operand`, which is all that has been parsed since the last call.
-    pub(super) fn finish(&mut self, operand: Operand, has_side_effect: bool) -> Expression {
+    /// What Prettier prints for `tokens`, which are an expression, if its document for that is nothing but strings:
+    /// `a`, `a.b`, `a()`, `a.b()`, a word that stands for a value or digits, after any number of `!`. A member access
+    /// after anything but a name can be on a line of its own, as can one after `a.b`.
+    fn printed(&self, tokens: &[Token]) -> Option<Vec<u8>> {
+        let negations = tokens
+            .iter()
+            .take_while(|it| self.is_operator_token(**it, b"!"))
+            .count();
+        let is_name = |token: &Token| matches!(token.kind, Kind::Identifier | Kind::Keyword);
+        let without_call = match tokens.get(negations..)? {
+            [callee @ .., open, close]
+                if open.kind == Kind::Character(b'(') && close.kind == Kind::Character(b')') =>
+            {
+                callee
+            }
+            [literal] if literal.kind == Kind::Keyword => return Some(self.concatenated(tokens)),
+            [number] if number.kind == Kind::Number => {
+                return self
+                    .text_of(*number)
+                    .iter()
+                    .all(u8::is_ascii_digit)
+                    .then(|| self.concatenated(tokens));
+            }
+            all => all,
+        };
+        let is_printed = match without_call {
+            [name] => name.kind == Kind::Identifier,
+            [object, dot, property] => {
+                object.kind == Kind::Identifier
+                    && dot.kind == Kind::Character(b'.')
+                    && is_name(property)
+            }
+            _ => false,
+        };
+        is_printed.then(|| self.concatenated(tokens))
+    }
+
+    fn concatenated(&self, tokens: &[Token]) -> Vec<u8> {
+        let mut text = Vec::new();
+        for token in tokens {
+            text.extend_from_slice(self.text_of(*token));
+        }
+        text
+    }
+
+    /// Makes TypeScript of `operand`, which is all that has been parsed since the last call: the tokens from `first_token`
+    /// on.
+    pub(super) fn finish(
+        &mut self,
+        first_token: usize,
+        operand: Operand,
+        has_side_effect: bool,
+    ) -> Expression {
+        if let Some(printed) = self
+            .tokens
+            .get(first_token..self.index)
+            .and_then(|tokens| self.printed(tokens))
+        {
+            self.edits.clear();
+            return Expression {
+                code: Code::Printed(printed),
+                has_side_effect,
+            };
+        }
         let (start, end) = (operand.start, operand.end);
         let first_blank = self.odd_blanks.partition_point(|at| *at < start);
         for index in first_blank..self.odd_blanks.partition_point(|at| *at < end) {
@@ -442,8 +513,7 @@ impl<'i> Parser<'i> {
             shown
         });
         Expression {
-            code,
-            shown,
+            code: Code::TypeScript { code, shown },
             has_side_effect,
         }
     }
@@ -464,10 +534,10 @@ impl<'i> Parser<'i> {
         let start = self.input_index();
         let mut node = start..start;
         while !self.is_at_end() {
-            let side_effects = self.side_effects;
+            let (first_token, side_effects) = (self.index, self.side_effects);
             let operand = self.parse_pipe()?;
             let has_side_effect = self.side_effects > side_effects;
-            expressions.push(self.finish(operand, has_side_effect));
+            expressions.push(self.finish(first_token, operand, has_side_effect));
             node = self.without_parentheses(operand);
             if self.consume_optional_character(b';') {
                 if !self.is_action {
@@ -580,8 +650,10 @@ impl<'i> Parser<'i> {
                         }
                     }
                 }
-                // `a--b`, `a//b/`
-                ADDITIVE if right.shape == Shape::Sign => self.wrap(right),
+                // `a--b`, `a++b % c`, `a//b/`
+                ADDITIVE if matches!(self.input.get(right.start as usize), Some(b'+' | b'-')) => {
+                    self.wrap(right)
+                }
                 MULTIPLICATIVE
                     if right.start == operator.end
                         && self.input.get(right.start as usize) == Some(&b'/') =>

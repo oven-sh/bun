@@ -11,6 +11,45 @@ const flag = (name: string, otherwise: string) =>
 const [size, limit] = [+flag("size", "20000"), +flag("limit", "10000")];
 
 const times = (text: string, count: number) => Buffer.alloc(text.length * count, text).toString();
+const inInterpolation = (make: (n: number) => string) => (n: number) => `{{ ${make(n)} }}`;
+const inAttribute = (name: string, make: (n: number) => string) => (n: number) => `<a ${name}="${make(n)}"></a>`;
+const expressionsOfAngular: Record<string, (n: number) => string> = {
+  "parentheses": inInterpolation(n => times("(", n) + "a" + times(")", n)),
+  "a sum": inInterpolation(n => "a" + times(" + a", n)),
+  "negations": inInterpolation(n => times("!", n) + "a"),
+  "signs": inInterpolation(n => times("-", n) + "a"),
+  "conditions after the colon": inInterpolation(n => times("a ? a : ", n) + "a"),
+  "conditions after the question mark": inInterpolation(n => times("a ? ", n) + "a" + times(" : a", n)),
+  "arrays": inInterpolation(n => times("[", n) + times("]", n)),
+  "objects": inAttribute("[b]", n => times("{a:", n) + "1" + times("}", n)),
+  "arguments of a pipe": inInterpolation(n => "a | a" + times(" : a", n)),
+  "pipes in arguments of pipes": inInterpolation(n => "a" + times(" | a : (a", n) + times(")", n)),
+  "member accesses": inInterpolation(n => "a" + times(".a", n)),
+  "calls": inInterpolation(n => "a" + times("()", n)),
+  "calls in arguments": inInterpolation(n => times("a(", n) + times(")", n)),
+  "keys in keys": inInterpolation(n => "a" + times("[a", n) + times("]", n)),
+  "assertions": inInterpolation(n => "a" + times("!", n)),
+  "powers": inInterpolation(n => "a" + times(" ** a", n)),
+  "arrow functions": inInterpolation(n => times("a => ", n) + "a"),
+  "parameters": inInterpolation(n => "(" + times("a,", n) + "a) => 1"),
+  "names in parentheses that are not closed": inInterpolation(n => times("(a,", n)),
+  "parentheses in an array": inInterpolation(n => "[" + times("(a),", n) + "]"),
+  "templates in templates": inInterpolation(n => times("`${", n) + "a" + times("}`", n)),
+  "tagged templates": inInterpolation(n => "a" + times("``", n)),
+  "comparisons": inInterpolation(n => "a" + times(" < a", n)),
+  "?? next to &&": inInterpolation(n => "a" + times(" ?? a && a", n)),
+  "statements": inAttribute("(b)", n => "a()" + times("; a()", n)),
+  "assignments": inAttribute("(b)", n => times("a = ", n) + "a"),
+  "keys of a directive": inAttribute("*b", n => "a" + times("; b c", n)),
+  "variables of a directive": inAttribute("*b", n => "let a" + times("; let a = b", n)),
+  "aliases of a directive": inAttribute("*b", n => "a" + times("; a as b", n)),
+  "interpolations in an attribute": inAttribute("b", n => times("{{a}}", n)),
+  "interpolations in an attribute that do not end": inAttribute("b", n => times("{{a", n)),
+  "line breaks around a dot": inInterpolation(n => "a" + times("\n", n) + "." + times("\n", n) + "b"),
+  "escapes": inInterpolation(n => "'" + times("\\'", n) + "'"),
+  "a comment": inInterpolation(n => "a //" + times(" b", n)),
+};
+
 // The name of the file, and the text for a size.
 const shapes: Record<string, [string, (n: number) => string]> = {
   "nested blocks": ["a.html", n => times("<div>", n) + times("</div>", n)],
@@ -77,6 +116,9 @@ const shapes: Record<string, [string, (n: number) => string]> = {
   "doctypes": ["a.html", n => times("<!doctype html>", n)],
   "CDATA": ["a.html", n => "<svg>" + times("<![CDATA[a]]>", n) + "</svg>"],
   "options": ["a.html", n => "<select>" + times("<option>a", n)],
+  ...Object.fromEntries(
+    Object.entries(expressionsOfAngular).map(([name, make]) => [`Angular: ${name}`, ["a.component.html", make]]),
+  ),
 };
 
 const directory = mkdtempSync(join(resolve(scratch), "html-guards-"));

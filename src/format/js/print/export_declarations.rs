@@ -1,6 +1,7 @@
 use super::decorators::FormatDecorators;
 use super::import_declaration::{
-    format_import_and_export_source_with_clause, module_export_name, with_empty_line_before_comments,
+    FormatSpecifiers, format_import_and_export_source_with_clause, module_export_name,
+    only_specifier_has_comments,
 };
 use super::semicolon::OptionalSemicolon;
 use crate::js::format::{FormatDeclaration, write_trailing_comments_of};
@@ -88,27 +89,28 @@ pub(crate) fn write_export_named_declaration<'a>(statement: Stmt<'a>, export: Ex
 
     let needs_space = f.options().bracket_spacing.value();
     if specifiers.is_empty() {
-        let comments = f.comments().comments_before_character(span.start, b'{');
-        if !comments.is_empty() {
-            let has_line_comment = comments.iter().any(|c| c.is_line());
-            write!(
-                f,
-                [FormatTrailingComments::Comments(comments), has_line_comment.then_some(soft_line_break()), " "]
-            );
+        // The comments in an export of nothing go after the keyword.
+        if !export.has_from() && !f.is_quiet() {
+            let comments = f.comments().comments_before_character(span.start, b'}');
+            if let Some(last) = comments.last() {
+                write!(
+                    f,
+                    [
+                        FormatDanglingComments::Comments {
+                            comments,
+                            indent: DanglingIndentMode::None
+                        },
+                        last.is_line().then_some(hard_line_break()),
+                        " "
+                    ]
+                );
+            }
         }
-        write!(f, [export_kind, "{", format_dangling_comments(span).with_block_indent()]);
-    } else if specifiers.len() == 1 && f.comments().comments_before_character(span.start, b'}').is_empty() {
+        write!(f, [export_kind, "{"]);
+    } else if specifiers.len() == 1 && !only_specifier_has_comments(statement, specifiers.first().map(|it| it.span()), f) {
         write!(f, [export_kind, "{", maybe_space(needs_space), specifiers.first(), maybe_space(needs_space)]);
     } else {
-        let format_specifiers = format_with(|f| {
-            let trailing_separator = FormatTrailingCommas::ES5.trailing_separator(f.options());
-            f.join_with(soft_line_break_or_space()).entries(
-                FormatSeparatedIter::new(specifiers.iter(), ",")
-                    .with_trailing_separator(trailing_separator)
-                    .map(with_empty_line_before_comments),
-            );
-        });
-        write!(f, [export_kind, "{", group(&soft_block_indent_with_maybe_space(&format_specifiers, needs_space))]);
+        write!(f, [export_kind, "{", FormatSpecifiers(statement, specifiers)]);
     }
     write!(f, "}");
 

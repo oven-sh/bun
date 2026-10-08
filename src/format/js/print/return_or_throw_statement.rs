@@ -1,4 +1,5 @@
 use super::semicolon::OptionalSemicolon;
+use crate::js::format::{ExprOptions, write_expression, write_trailing_comments_of};
 use crate::js::utils::expression::ExpressionLeftSide;
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -37,10 +38,18 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
         let is_jsx = matches!(argument.kind(), ExprKind::Jsx(_));
 
         if !is_jsx && !f.is_quiet() && has_argument_leading_comments(argument, f) {
-            // `return ( // comment\n a, b )` is `return (\n  // comment\n  (a, b)\n)`
-            let inner = format_with(|f| match is_sequence {
-                true => write!(f, [format_leading_comments(argument.span()), "(", argument, ")"]),
-                false => write!(f, argument),
+            let is_in_yield = matches!(argument.ast_parent(), AstNodes::YieldExpression(_));
+            let inner = format_with(|f| match argument.kind() {
+                _ if is_sequence && is_in_yield => {
+                    write!(f, [format_leading_comments(argument.span()), "(", argument, ")"]);
+                }
+                // Prettier's `willReturnOrThrowStatementBreak`: these parentheses are enough.
+                ExprKind::Assign { .. } if !is_in_yield => {
+                    write!(f, format_leading_comments(argument.span()));
+                    write_expression(argument, ExprOptions::None, f);
+                    write_trailing_comments_of(argument.as_ast_nodes(), f);
+                }
+                _ => write!(f, argument),
             });
             write!(f, ["(", block_indent(&inner), ")"]);
         } else if matches!(argument.kind(), ExprKind::Binary { .. }) && !is_sequence {
@@ -49,7 +58,26 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
                 group(&format_args!(if_group_breaks(&"("), soft_block_indent(&argument), if_group_breaks(&")")))
             );
         } else if is_sequence {
+            let span = argument.span();
+            if !f.is_quiet() && f.comments().get_type_cast_comment_index(span).is_none() {
+                write!(f, format_leading_comments(span));
+            }
             write!(f, group(&format_args!("(", soft_block_indent(&argument), ")")));
+        } else if !f.is_quiet()
+            && matches!(argument.kind(), ExprKind::Assign { .. })
+            && matches!(argument.ast_parent(), AstNodes::ReturnStatement(_))
+        {
+            // Prettier's `handleParenthesizedExpressionTrailingComment`:
+            // `return (a = b /* comment */);`
+            let comments = f.comments().comments_in_range(argument.span().end, argument.outer_span().end);
+            let count = comments.iter().take_while(|comment| !comment.preceded_by_newline()).count();
+            if count == 0 {
+                return write!(f, argument);
+            }
+            write!(f, [format_leading_comments(argument.span()), "("]);
+            write_expression(argument, ExprOptions::None, f);
+            write!(f, [FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default()), ")"]);
+            write_trailing_comments_of(argument.as_ast_nodes(), f);
         } else {
             write!(f, argument);
         }

@@ -1,34 +1,36 @@
-use super::program::FormatStatements;
-use crate::js::utils::statement_body::FormatStatementBody;
+use super::program::{FormatStatements, is_next_line_empty};
+use crate::js::format::write_declaration;
 use crate::prelude::*;
 use crate::{format_args, write};
 
 pub(crate) fn write_switch_statement<'a>(
-    _statement: Stmt<'a>,
+    statement: Stmt<'a>,
     discriminant: Expr<'a>,
     cases: List<'a, Case<'a>>,
     f: &mut Formatter<'a>,
 ) {
-    let format_cases = format_with(|f| match cases.is_empty() {
-        true => write!(f, hard_line_break()),
-        false => {
-            f.join_nodes_with_hardline().entries(cases.iter());
+    write!(f, ["switch", space(), "(", group(&soft_block_indent(&discriminant)), ")", space(), "{"]);
+    if cases.is_empty() {
+        match f.comments().has_comment_before(statement.span().end) {
+            true => write!(f, format_dangling_comments(statement.span()).with_block_indent()),
+            false => write!(f, hard_line_break()),
+        }
+        return write!(f, "}");
+    }
+    let format_cases = format_with(|f| {
+        let mut previous: Option<Case<'a>> = None;
+        for case in cases.iter() {
+            if let Some(previous) = previous {
+                match is_next_line_empty(f.source_text(), previous.span().end) {
+                    true => write!(f, empty_line()),
+                    false => write!(f, hard_line_break()),
+                }
+            }
+            write!(f, case);
+            previous = Some(case);
         }
     });
-    write!(
-        f,
-        [
-            "switch",
-            space(),
-            "(",
-            group(&soft_block_indent(&discriminant)),
-            ")",
-            space(),
-            "{",
-            block_indent(&format_cases),
-            "}"
-        ]
-    );
+    write!(f, [block_indent(&format_cases), "}"]);
 }
 
 /// `case a: ..`, `default: ..`
@@ -39,18 +41,25 @@ pub(crate) fn write_switch_case<'a>(case: Case<'a>, f: &mut Formatter<'a>) {
     }
 
     let consequent = case.body();
-    let Some(first_statement) = consequent.first() else {
+    let mut statements = consequent.iter().filter(|it| !matches!(it.kind(), StmtKind::Empty));
+    let Some(first_statement) = statements.next() else {
         return;
     };
     // The `{` of a block that is all there is goes on the line of the `case`.
-    let is_single_block_statement = matches!(first_statement.kind(), StmtKind::Block(_))
-        && consequent.iter().skip(1).all(|statement| matches!(statement.kind(), StmtKind::Empty));
+    let is_single_block_statement = matches!(first_statement.kind(), StmtKind::Block(_)) && statements.next().is_none();
 
-    if case.test().is_none() && !f.is_quiet() {
-        let comments = match is_single_block_statement {
-            true => f.comments().block_comments_before(first_statement.span().start),
-            false => f.comments().end_of_line_comments_after(case.span().start + "default".len() as u32),
-        };
+    // Prettier's `handleSwitchDefaultCaseComments`: the comments on the line of `default:` stay
+    // there, but for a line comment before a block, which is written in the block.
+    if case.test().is_none() && !f.is_quiet() && consequent.first() == Some(first_statement) {
+        let mut comments = f.comments().end_of_line_comments_after(case.span().start + "default".len() as u32);
+        let mut is_comment_in_block = false;
+        if let [rest @ .., last] = comments
+            && last.is_line()
+            && matches!(first_statement.kind(), StmtKind::Block(_))
+        {
+            comments = rest;
+            is_comment_in_block = true;
+        }
         if !comments.is_empty() {
             write!(
                 f,
@@ -63,10 +72,14 @@ pub(crate) fn write_switch_case<'a>(case: Case<'a>, f: &mut Formatter<'a>) {
                 ]
             );
         }
+        if is_comment_in_block && is_single_block_statement {
+            write!(f, space());
+            return write_declaration(first_statement, f);
+        }
     }
 
     if is_single_block_statement {
-        write!(f, FormatStatementBody::new(first_statement));
+        write!(f, [space(), FormatStatements(consequent)]);
     } else {
         write!(f, indent(&format_args!(hard_line_break(), FormatStatements(consequent))));
     }

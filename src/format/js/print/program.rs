@@ -1,9 +1,10 @@
 //! The file, its `#!` line, directives, and lists of statements.
 
 use super::semicolon::OptionalSemicolon;
+use super::statements::{expression_statement_needs_semicolon, follows_type_cast_comment};
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::prelude::*;
-use crate::write;
+use crate::{format_args, write};
 
 pub(crate) fn write_program<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
     let source = file.text();
@@ -31,37 +32,153 @@ fn write_hashbang(f: &mut Formatter<'_>) {
     }
 }
 
-/// The statements of a file, a block or a function body, each on its own line. The empty lines
-/// between them are kept, but only one at a time. Empty statements are left out.
+/// `\n`, `\r\n`, `\r`, U+2028 or U+2029 at the start of `text`: what is after it.
+fn strip_line_terminator(text: &[u8]) -> Option<&[u8]> {
+    match text {
+        [b'\r', b'\n', rest @ ..] | [b'\n' | b'\r', rest @ ..] | [0xE2, 0x80, 0xA8 | 0xA9, rest @ ..] => Some(rest),
+        _ => None,
+    }
+}
+
+fn trim_blanks_start(text: &[u8]) -> &[u8] {
+    let count = text.iter().take_while(|b| matches!(b, b' ' | b'\t')).count();
+    &text[count..]
+}
+
+/// Prettier's `isNextLineEmpty`: whether the line after the one that `position` is on is empty.
+/// Commas, semicolons and comments after `position` are passed over.
+pub(crate) fn is_next_line_empty(source: SourceText<'_>, position: u32) -> bool {
+    let mut rest = source.as_bytes().get(position as usize..).unwrap_or_default();
+    loop {
+        let count = rest.iter().take_while(|b| matches!(b, b',' | b';' | b' ' | b'\t')).count();
+        rest = &rest[count..];
+        let Some(comment) = rest.strip_prefix(b"/*") else {
+            break;
+        };
+        let Some(end) = bun_core::strings::index_of(comment, b"*/") else {
+            break;
+        };
+        rest = &comment[end + 2..];
+    }
+    if rest.starts_with(b"//") {
+        let end = bun_core::strings::index_of_any(rest, b"\n\r").unwrap_or(rest.len());
+        rest = &rest[end..];
+    }
+    let rest = strip_line_terminator(rest).unwrap_or(rest);
+    strip_line_terminator(trim_blanks_start(rest)).is_some()
+}
+
+/// Whether Prettier's `locEnd` of `statement` is before the `;` at its end.
+fn ends_before_semicolon(statement: Stmt<'_>) -> bool {
+    let mut statement = statement;
+    loop {
+        statement = match statement.kind() {
+            StmtKind::If { yes, no, .. } => no.unwrap_or(yes),
+            StmtKind::For { body, .. }
+            | StmtKind::ForIn { body, .. }
+            | StmtKind::ForOf { body, .. }
+            | StmtKind::While { body, .. }
+            | StmtKind::With { body, .. }
+            | StmtKind::Labeled { body, .. } => body,
+            StmtKind::Expr(_)
+            | StmtKind::Import(_)
+            | StmtKind::ExportNamed(_)
+            | StmtKind::ExportStar { .. }
+            | StmtKind::ExportDefault(_)
+            | StmtKind::Return(_)
+            | StmtKind::Throw(_)
+            | StmtKind::DoWhile { .. }
+            | StmtKind::Break(_)
+            | StmtKind::Continue(_)
+            | StmtKind::Debugger
+            | StmtKind::Var(_) => return true,
+            _ => return false,
+        };
+    }
+}
+
+/// Whether there is an empty line after `statement`.
+fn is_next_line_empty_after<'a>(statement: Stmt<'a>, f: &Formatter<'a>) -> bool {
+    let (source, span) = (f.source_text(), statement.span());
+    if is_next_line_empty(source, span.end) {
+        return true;
+    }
+    // `a // comment\n\n;`
+    matches!(source.slice_range(span.start, span.end), [.., b'\n' | b'\r' | b' ' | b'\t' | b'/' | 0xA8 | 0xA9, b';'])
+        && ends_before_semicolon(statement)
+        && is_next_line_empty(source, f.comments().without_semicolon(span).end)
+}
+
+/// Prettier's `printStatementSequence`: the statements of a file, a block or a function body, each
+/// on its own line. An empty line after a statement is kept. Empty statements are left out.
 #[derive(Copy, Clone)]
 pub(crate) struct FormatStatements<'a>(pub(crate) List<'a, Stmt<'a>>);
 
 impl<'a> Format<'a> for FormatStatements<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let all = self.0.iter().filter(|it| !matches!(it.kind(), StmtKind::Empty));
-        let mut statements = all.clone().peekable();
-
-        // After the directives there is an empty line if there is one in the source.
-        if let Some(last_directive) = all.take_while(|it| it.directive().is_some()).last() {
-            // A comment behind the last directive is in the way of counting the line breaks.
-            let end = last_directive.span().end;
-            let check_pos = f.comments().end_of_line_comments_after(end).last().map_or(end, |c| c.span.end);
-            let need_extra_empty_line = f.source_text().lines_after(check_pos) > 1;
-
-            let mut join = f.join_nodes_with_hardline();
-            while let Some(directive) = statements.next_if(|it| it.directive().is_some()) {
-                join.entry(directive.span(), &directive);
+        let mut previous: Option<Stmt<'a>> = None;
+        let mut is_after_empty_statement = false;
+        for statement in self.0.iter() {
+            if matches!(statement.kind(), StmtKind::Empty) {
+                is_after_empty_statement = true;
+                continue;
             }
-            match need_extra_empty_line {
-                true => write!(f, empty_line()),
-                false => write!(f, hard_line_break()),
+            if let Some(previous) = previous {
+                if is_after_empty_statement && !f.is_quiet() {
+                    write_comments_after_empty_statements(previous, statement, f);
+                }
+                match is_next_line_empty_after(previous, f) {
+                    true => write!(f, empty_line()),
+                    false => write!(f, hard_line_break()),
+                }
             }
+            write_semicolon_before_type_cast_comment(statement, f);
+            write!(f, statement);
+            previous = Some(statement);
+            is_after_empty_statement = false;
         }
+    }
+}
 
-        let mut join = f.join_nodes_with_hardline();
-        for statement in statements {
-            join.entry(statement.span(), &statement);
+/// `a; // comment\n; // comment`: a comment behind an empty statement does not start its line, so
+/// it trails `previous` as well.
+#[cold]
+fn write_comments_after_empty_statements<'a>(previous: Stmt<'a>, next: Stmt<'a>, f: &mut Formatter<'a>) {
+    let mut is_after_line_comment = (f.comments().printed_comments().last())
+        .is_some_and(|comment| comment.is_line() && comment.span.start >= previous.span().start);
+    let mut has_line_suffix = is_after_line_comment;
+    for comment in f.comments().comments_before(next.span().start) {
+        if comment.preceded_by_newline() || !comment.followed_by_newline() {
+            break;
         }
+        f.comments_mut().increment_printed_count();
+        if is_after_line_comment {
+            write!(f, line_suffix(&format_args!(hard_line_break(), comment)));
+        } else if comment.is_line() || has_line_suffix {
+            write!(f, [line_suffix(&format_args!(space(), comment)), expand_parent()]);
+        } else {
+            write!(f, [space(), comment]);
+        }
+        has_line_suffix |= comment.is_line() || is_after_line_comment;
+        is_after_line_comment = comment.is_line();
+    }
+}
+
+/// Prettier's `shouldExpressionStatementPrintOwnComments`: without semicolons, the `;` that a
+/// statement has to start with goes before a type cast comment, which has to stay next to its `(`.
+fn write_semicolon_before_type_cast_comment<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
+    if f.is_quiet() || !f.comments().has_type_cast_comments() || !f.options().semicolons.is_as_needed() {
+        return;
+    }
+    let StmtKind::Expr(expression) = statement.kind() else {
+        return;
+    };
+    let start = statement.span().start;
+    if let [rest @ .., _] = f.comments().comments_before(start)
+        && follows_type_cast_comment(start, f)
+        && expression_statement_needs_semicolon(statement, expression, f)
+    {
+        write!(f, [FormatLeadingComments::Comments(rest), ";"]);
     }
 }
 

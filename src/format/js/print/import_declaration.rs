@@ -40,6 +40,12 @@ pub(crate) fn format_import_and_export_source_with_clause<'a>(statement: Stmt<'a
     }
     if let Some(with_clause) = statement.import_attributes() {
         let span = with_clause.keyword_span().to(with_clause.braces_span());
+        // The comments before the `{` trail the source, unless they start their line.
+        if !f.is_quiet() {
+            let comments = f.comments().comments_before(with_clause.braces_span().start);
+            let count = comments.iter().take_while(|comment| !comment.preceded_by_newline()).count();
+            write!(f, FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default()));
+        }
         if f.comments().has_comment_before(span.start) {
             write!(f, space());
         }
@@ -88,7 +94,7 @@ fn write_import_specifiers<'a>(statement: Stmt<'a>, import: Import<'a>, f: &mut 
 
     if named.is_empty() {
         write!(f, "{}");
-    } else if is_only_specifier && f.comments().comments_before_character(statement.span().start, b'}').is_empty() {
+    } else if is_only_specifier && !only_specifier_has_comments(statement, named.first().map(|it| it.span()), f) {
         write!(
             f,
             [
@@ -100,35 +106,85 @@ fn write_import_specifiers<'a>(statement: Stmt<'a>, import: Import<'a>, f: &mut 
             ]
         );
     } else {
-        write!(
-            f,
-            [
-                "{",
-                group(&soft_block_indent_with_maybe_space(
-                    &format_with(|f| {
-                        let trailing_separator = FormatTrailingCommas::ES5.trailing_separator(f.options());
-                        let iter = FormatSeparatedIter::new(named.iter(), ",")
-                            .with_trailing_separator(trailing_separator)
-                            .map(with_empty_line_before_comments);
-                        f.join_with(soft_line_break_or_space()).entries(iter);
-                    }),
-                    should_insert_space_around_brackets
-                )),
-                "}"
-            ]
-        );
+        write!(f, ["{", FormatSpecifiers(statement, named), "}"]);
     }
 }
 
-/// A specifier. An empty line before the comments before it is kept.
-pub(crate) fn with_empty_line_before_comments<'a>(specifier: impl Format<'a> + Spanned) -> impl Format<'a> {
-    format_with(move |f: &mut Formatter<'a>| {
-        let span = specifier.span();
+/// Whether a comment belongs to the only specifier of the import or export `statement`.
+pub(crate) fn only_specifier_has_comments<'a>(statement: Stmt<'a>, specifier: Option<Span>, f: &Formatter<'a>) -> bool {
+    !f.is_quiet()
+        && (!f.comments().comments_before_character(statement.span().start, b'}').is_empty()
+            || specifier.is_some_and(|span| !comments_before_from(span.end, statement, f).is_empty()))
+}
+
+/// `{ a } /* comment */ from "a"`: the comments that are not printed yet between `position`, where
+/// the last specifier of `statement` ends, and `from`. They trail the specifier, up to one that
+/// starts its line.
+fn comments_before_from<'a>(mut position: u32, statement: Stmt<'a>, f: &Formatter<'a>) -> &'a [Comment] {
+    let Some(source) = statement.module_specifier_span() else {
+        return &[];
+    };
+    let comments = f.comments().comments_in_range(position, source.start);
+    let count = comments
+        .iter()
+        .take_while(|comment| {
+            let gap = f.source_text().slice_range(position, comment.span.start);
+            position = comment.span.end;
+            !comment.preceded_by_newline() && !bun_core::strings::contains(gap, b"from")
+        })
+        .count();
+    comments.get(..count).unwrap_or_default()
+}
+
+/// The specifiers between the braces of the import or export in the first field.
+pub(crate) struct FormatSpecifiers<'a, T>(pub(crate) Stmt<'a>, pub(crate) List<'a, T>);
+
+impl<'a, T: Handle<'a> + Format<'a> + Spanned> Format<'a> for FormatSpecifiers<'a, T> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        let FormatSpecifiers(statement, specifiers) = *self;
+        let last_end = specifiers.last().map(|last| last.span().end);
+        let format_specifiers = format_with(|f| {
+            let trailing_separator = FormatTrailingCommas::ES5.trailing_separator(f.options());
+            let iter = specifiers.iter().map(|specifier| FormatSpecifier {
+                is_last_of: (Some(specifier.span().end) == last_end).then_some(statement),
+                specifier,
+            });
+            f.join_with(soft_line_break_or_space())
+                .entries(FormatSeparatedIter::new(iter, ",").with_trailing_separator(trailing_separator));
+        });
+        let needs_space = f.options().bracket_spacing.value();
+        write!(f, group(&soft_block_indent_with_maybe_space(&format_specifiers, needs_space)));
+    }
+}
+
+struct FormatSpecifier<'a, T> {
+    specifier: T,
+    /// The import or export that it is the last specifier of.
+    is_last_of: Option<Stmt<'a>>,
+}
+
+impl<T: Spanned> Spanned for FormatSpecifier<'_, T> {
+    fn span(&self) -> Span {
+        self.specifier.span()
+    }
+}
+
+impl<'a, T: Format<'a> + Spanned> Format<'a> for FormatSpecifier<'a, T> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        if f.is_quiet() {
+            return write!(f, self.specifier);
+        }
+        // An empty line before the comments before it is kept.
+        let span = self.specifier.span();
         if f.comments().has_comment_before(span.start) && f.lines_before(span) > 1 {
             write!(f, empty_line());
         }
-        write!(f, specifier);
-    })
+        write!(f, self.specifier);
+
+        if let Some(statement) = self.is_last_of {
+            write!(f, FormatTrailingComments::Comments(comments_before_from(span.end, statement, f)));
+        }
+    }
 }
 
 /// `a`, `a as b`, `type a`

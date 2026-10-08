@@ -2,16 +2,18 @@
 
 use super::parameters::can_avoid_parentheses;
 use super::semicolon::OptionalSemicolon;
-use crate::js::format::{identifier, write_trailing_comments_of};
+use crate::js::format::identifier;
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::utils::expression::ExpressionLeftSide;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
-use crate::js::utils::statement_body::FormatStatementBody;
+use crate::js::utils::statement_body::{FormatStatementBody, comments_before_else};
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::{format_args, write};
+use smallvec::SmallVec;
 
-/// `;`, which is only written where a statement has to be.
+/// `;`, which is only written where a statement has to be: Prettier's
+/// `isMeaningfulEmptyStatement`.
 pub(crate) fn write_empty_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     if matches!(
         statement.ast_parent(),
@@ -22,6 +24,7 @@ pub(crate) fn write_empty_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'
             | AstNodes::ForInStatement(_)
             | AstNodes::ForOfStatement(_)
             | AstNodes::WithStatement(_)
+            | AstNodes::LabeledStatement(_)
     ) {
         write!(f, ";");
     }
@@ -40,7 +43,8 @@ pub(crate) fn expression_statement_needs_semicolon<'a>(statement: Stmt<'a>, expr
             | AstNodes::ForOfStatement(_)
             | AstNodes::WithStatement(_)
             | AstNodes::LabeledStatement(_)
-    ) {
+    ) || statement.directive().is_some()
+    {
         return false;
     }
     match expression.kind() {
@@ -52,6 +56,13 @@ pub(crate) fn expression_statement_needs_semicolon<'a>(statement: Stmt<'a>, expr
 
     ExpressionLeftSide::from(expression).iter().any(|current| {
         let e = current.expr;
+        // `/** @type {T} */ (a).b` keeps its parentheses.
+        if f.comments().has_type_cast_comments()
+            && e.is_parenthesized()
+            && e.parens().any(|parentheses| follows_type_cast_comment(parentheses.start, f))
+        {
+            return true;
+        }
         if current.is_assignment_target {
             return match e.kind() {
                 ExprKind::Array(_) | ExprKind::As { .. } | ExprKind::AsConst(_) | ExprKind::Satisfies { .. } => true,
@@ -69,44 +80,98 @@ pub(crate) fn expression_statement_needs_semicolon<'a>(statement: Stmt<'a>, expr
     })
 }
 
+/// Whether the last comment before `position` is a type cast comment.
+pub(crate) fn follows_type_cast_comment(position: u32, f: &Formatter<'_>) -> bool {
+    let comments = f.comments();
+    comments.has_type_cast_comments()
+        && comments
+            .comments_before(position)
+            .last()
+            .or_else(|| comments.printed_comments().last())
+            .is_some_and(|comment| {
+                comments.is_type_cast_comment(comment)
+                    && comment.span.end <= position
+                    && f.source_text().all_bytes_match(comment.span.end, position, |b| b.is_ascii_whitespace())
+            })
+}
+
 pub(crate) fn write_expression_statement<'a>(statement: Stmt<'a>, expression: Expr<'a>, f: &mut Formatter<'a>) {
-    if f.options().semicolons.is_as_needed() && expression_statement_needs_semicolon(statement, expression, f) {
+    // Before a type cast comment, `FormatStatements` has written the `;`.
+    if f.options().semicolons.is_as_needed()
+        && expression_statement_needs_semicolon(statement, expression, f)
+        && !follows_type_cast_comment(statement.span().start, f)
+    {
         write!(f, ";");
     }
     // `statement(); // prettier-ignore`
     if !f.is_quiet() && f.comments().has_trailing_suppression_comment(statement.span().end) {
         return write!(f, FormatSuppressedNode(statement.span()));
     }
-    write!(f, [expression, OptionalSemicolon]);
+    // Prettier's `handleParenthesizedExpressionTrailingComment`: `(a /* comment */);` is
+    // `a; /* comment */`.
+    write!(f, [FormatNodeWithoutTrailingComments(&expression), OptionalSemicolon]);
 }
 
-pub(crate) fn write_do_while_statement<'a>(_statement: Stmt<'a>, body: Stmt<'a>, test: Expr<'a>, f: &mut Formatter<'a>) {
+pub(crate) fn write_do_while_statement<'a>(statement: Stmt<'a>, body: Stmt<'a>, test: Expr<'a>, f: &mut Formatter<'a>) {
     write!(f, group(&format_args!("do", FormatStatementBody::new(body))));
     match body.kind() {
         StmtKind::Block(_) => write!(f, space()),
         _ => write!(f, hard_line_break()),
     }
-    write!(f, ["while", space(), "(", FormatCondition(test, &test), ")", OptionalSemicolon]);
+    let condition = FormatCondition {
+        test,
+        head: Head::EndsWith(statement),
+    };
+    write!(f, ["while", space(), "(", condition, ")", OptionalSemicolon]);
 }
 
-/// The comments before a body that is an empty statement are written in the head:
-/// `while (test) /* comment */ ;` becomes `while (test /* comment */);`.
-struct FormatCommentForEmptyStatement<'a>(Stmt<'a>);
+/// The parentheses after the keyword of a statement.
+#[derive(Copy, Clone)]
+enum Head<'a> {
+    /// They are followed by the body of the statement.
+    Before(Stmt<'a>),
+    /// `do .. while (..);`
+    EndsWith(Stmt<'a>),
+}
 
-impl<'a> Format<'a> for FormatCommentForEmptyStatement<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        if f.is_quiet() || !matches!(self.0.kind(), StmtKind::Empty) {
-            return;
+impl<'a> Head<'a> {
+    /// A position after the `)` and before the first comment after it. That comment is not in the
+    /// head: it leads the body, or trails the statement.
+    fn end(self, f: &Formatter<'a>) -> u32 {
+        match self {
+            Head::Before(body) => {
+                let mut end = body.span().start;
+                for comment in f.comments().comments_before(end).iter().rev() {
+                    if f.source_text().bytes_contain(comment.span.end, end, b')') {
+                        break;
+                    }
+                    end = comment.span.start;
+                }
+                end
+            }
+            Head::EndsWith(statement) => f.comments().without_semicolon(statement.span()).end,
         }
-        let comments = f.comments().comments_before(self.0.span().start);
-        FormatTrailingComments::Comments(comments).fmt(f);
-        write_trailing_comments_of(self.0.as_ast_nodes(), f);
     }
 }
 
-/// Prettier's `shouldInlineCondition`: `!(a || b)` and `!!(a || b)` start right after the `(` of the
-/// statement, so that the indentation is the same as without the `!`.
-fn should_inline_condition<'a>(test: Expr<'a>, f: &Formatter<'a>) -> bool {
+/// Writes what is in the head of a statement. Meanwhile the comments after the `)` are hidden.
+struct FormatInHead<'a, 'b, T>(Head<'a>, &'b T);
+
+impl<'a, T: Format<'a>> Format<'a> for FormatInHead<'a, '_, T> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        if f.is_quiet() {
+            return self.1.fmt(f);
+        }
+        let end = self.0.end(f);
+        let previous_limit = f.comments_mut().limit_comments_up_to(end);
+        self.1.fmt(f);
+        f.comments_mut().restore_view_limit(previous_limit);
+    }
+}
+
+/// Prettier's `shouldInlineCondition`, but for the comments: `!(a || b)` and `!!(a || b)` start
+/// right after the `(` of the statement, so that the indentation is the same as without the `!`.
+fn is_negated_logical_expression(test: Expr<'_>) -> bool {
     fn logical_not_argument(e: Expr<'_>) -> Option<Expr<'_>> {
         match e.kind() {
             ExprKind::Unary {
@@ -121,55 +186,57 @@ fn should_inline_condition<'a>(test: Expr<'a>, f: &Formatter<'a>) -> bool {
     };
     let argument = logical_not_argument(argument).unwrap_or(argument);
     matches!(argument.kind(), ExprKind::Binary { op, .. } if op.is_logical())
-        && (f.is_quiet()
-            || !(f.comments().has_comment_before(test.span().start)
-                || f.comments().comments_after(test.span().end).first().is_some_and(|comment| {
-                    f.source_text().slice_range(test.span().end, comment.span.start).trim_ascii().is_empty()
-                })))
 }
 
-/// The condition `test` in the parentheses of a statement. The second field writes it.
-struct FormatCondition<'a, 'b, T>(Expr<'a>, &'b T);
-
-impl<'a, T: Format<'a>> Format<'a> for FormatCondition<'a, '_, T> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        match should_inline_condition(self.0, f) {
-            true => write!(f, self.1),
-            false => write!(f, group(&soft_block_indent(self.1))),
-        }
-    }
+/// Prettier's `printIfOrWhileConditionOrWithStatementObject`: all there is in the head of an `if`,
+/// a `while`, a `do` or a `with`.
+struct FormatCondition<'a> {
+    test: Expr<'a>,
+    head: Head<'a>,
 }
 
-struct FormatTestOfIfAndWhileStatement<'a>(Expr<'a>);
-
-impl<'a> Format<'a> for FormatTestOfIfAndWhileStatement<'a> {
+impl<'a> Format<'a> for FormatCondition<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        write!(f, FormatNodeWithoutTrailingComments(&self.0));
+        let test = self.test;
         if f.is_quiet() {
-            return;
+            return match is_negated_logical_expression(test) {
+                true => write!(f, test),
+                false => write!(f, group(&soft_block_indent(&test))),
+            };
         }
-        let comments = f.comments().comments_before_character(self.0.span().end, b')');
-        if !comments.is_empty() {
-            write!(f, [space(), FormatTrailingComments::Comments(comments)]);
+
+        let end = self.head.end(f);
+        let has_comments = f.comments().has_comment_before(test.span().start)
+            || f.comments().has_comment_in_range(test.span().end, end);
+        // All comments between the condition and the `)` trail the condition.
+        let content = format_with(|f| {
+            let previous_limit = f.comments_mut().limit_comments_up_to(end);
+            write!(f, FormatNodeWithoutTrailingComments(&test));
+            let comments = f.comments().unprinted_comments();
+            write!(f, FormatTrailingComments::Comments(comments));
+            f.comments_mut().restore_view_limit(previous_limit);
+        });
+        match !has_comments && is_negated_logical_expression(test) {
+            true => write!(f, content),
+            false => write!(f, group(&soft_block_indent(&content))),
         }
     }
+}
+
+fn write_while_or_with_statement<'a>(keyword: &'static str, test: Expr<'a>, body: Stmt<'a>, f: &mut Formatter<'a>) {
+    let condition = FormatCondition {
+        test,
+        head: Head::Before(body),
+    };
+    write!(f, group(&format_args!(keyword, space(), "(", condition, ")", FormatStatementBody::new(body))));
 }
 
 pub(crate) fn write_while_statement<'a>(_statement: Stmt<'a>, test: Expr<'a>, body: Stmt<'a>, f: &mut Formatter<'a>) {
-    write!(
-        f,
-        group(&format_args!(
-            "while",
-            space(),
-            "(",
-            FormatCondition(
-                test,
-                &format_args!(FormatTestOfIfAndWhileStatement(test), FormatCommentForEmptyStatement(body))
-            ),
-            ")",
-            FormatStatementBody::new(body)
-        ))
-    );
+    write_while_or_with_statement("while", test, body, f);
+}
+
+pub(crate) fn write_with_statement<'a>(_statement: Stmt<'a>, object: Expr<'a>, body: Stmt<'a>, f: &mut Formatter<'a>) {
+    write_while_or_with_statement("with", object, body, f);
 }
 
 /// What is in the head of a `for`: a declaration without its `;`, or an expression.
@@ -203,33 +270,85 @@ pub(crate) fn write_for_statement<'a>(
             "for",
             space(),
             "(",
-            group(&soft_block_indent(&format_args!(
-                init.map(FormatForHead),
-                (test.is_none() && update.is_none()).then_some(FormatCommentForEmptyStatement(body)),
-                ";",
-                soft_line_break_or_space(),
-                test,
-                update.is_none().then_some(FormatCommentForEmptyStatement(body)),
-                ";",
-                update.is_some().then_some(soft_line_break_or_space()),
-                update,
-                FormatCommentForEmptyStatement(body)
-            ))),
+            FormatInHead(
+                Head::Before(body),
+                &group(&soft_block_indent(&format_args!(
+                    init.map(FormatForHead),
+                    ";",
+                    soft_line_break_or_space(),
+                    test,
+                    ";",
+                    update.is_some().then_some(soft_line_break_or_space()),
+                    update,
+                )))
+            ),
             ")",
             format_body
         ))
     );
 }
 
-/// The comments on lines of their own between the left and the right side of `in` or `of` are
-/// written before the statement.
-fn write_own_line_comments_in_head<'a>(left: Stmt<'a>, right: Expr<'a>, f: &mut Formatter<'a>) {
-    if f.is_quiet() {
-        return;
-    }
-    let comments = f.comments().own_line_comments_before(right.span().start);
-    if comments.first().is_some_and(|comment| comment.span.start > left.span().end) {
-        write!(f, FormatLeadingComments::Comments(comments));
+/// `left in right`, `left of right`
+struct FormatForInOrOfHead<'a> {
+    left: Stmt<'a>,
+    keyword: &'static str,
+    right: Expr<'a>,
+}
+
+impl<'a> Format<'a> for FormatForInOrOfHead<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        let (left, right) = (FormatForHead(self.left), self.right);
+        if f.is_quiet() {
+            return write!(f, [left, space(), self.keyword, space(), right]);
+        }
+
+        let previous_limit = f.comments_mut().limit_comments_up_to(self.left.span().end);
+        write!(f, left);
+        f.comments_mut().restore_view_limit(previous_limit);
+
+        // Where Prettier attaches the comments between the two: one that starts its line leads
+        // `right`, one that ends its line trails `left`, any other belongs to the side of the
+        // keyword that it is on. So a comment that leads can be before one that trails.
+        let comments = f.comments().comments_before(right.span().start);
+        let source = f.source_text();
+        let is_blank = |start: u32, end: u32| source.all_bytes_match(start, end, |b| matches!(b, b' ' | b'\t'));
+        let mut leads: SmallVec<[bool; 8]> = SmallVec::new();
+        let mut previous: Option<(&Comment, bool)> = None;
+        for comment in comments {
+            let starts_line = comment.preceded_by_newline()
+                || previous.is_some_and(|(previous, starts_line)| {
+                    starts_line && is_blank(previous.span.end, comment.span.start)
+                });
+            leads.push(starts_line);
+            previous = Some((comment, starts_line));
+        }
+        let (mut ends_line, mut next_start) = (false, right.span().start);
+        let mut gap_end = Some(next_start);
+        for (comment, leads) in comments.iter().zip(&mut leads).rev() {
+            ends_line = comment.followed_by_newline() || (ends_line && is_blank(comment.span.end, next_start));
+            next_start = comment.span.start;
+            if *leads || ends_line {
+                continue;
+            }
+            gap_end = gap_end
+                .filter(|&end| source.all_bytes_match(comment.span.end, end, |b| b.is_ascii_whitespace() || b == b'('))
+                .map(|_| comment.span.start);
+            *leads = gap_end.is_some();
+        }
+
+        let trailing_count = leads.iter().take_while(|leads| !**leads).count();
+        if leads.iter().skip(trailing_count).all(|leads| *leads) {
+            let trailing = comments.get(..trailing_count).unwrap_or_default();
+            return write!(f, [FormatTrailingComments::Comments(trailing), space(), self.keyword, space(), right]);
+        }
+        for (comment, _) in comments.iter().zip(&leads).filter(|(_, leads)| !**leads) {
+            write!(f, FormatTrailingComments::Comments(std::slice::from_ref(comment)));
+        }
+        write!(f, [space(), self.keyword, space()]);
+        for (comment, _) in comments.iter().zip(&leads).filter(|(_, leads)| **leads) {
+            write!(f, FormatLeadingComments::Comments(std::slice::from_ref(comment)));
+        }
+        write!(f, right);
     }
 }
 
@@ -240,19 +359,18 @@ pub(crate) fn write_for_in_statement<'a>(
     body: Stmt<'a>,
     f: &mut Formatter<'a>,
 ) {
-    write_own_line_comments_in_head(left, right, f);
+    let head = FormatForInOrOfHead {
+        left,
+        keyword: "in",
+        right,
+    };
     write!(
         f,
         group(&format_args!(
             "for",
             space(),
             "(",
-            FormatForHead(left),
-            space(),
-            "in",
-            space(),
-            right,
-            FormatCommentForEmptyStatement(body),
+            FormatInHead(Head::Before(body), &head),
             ")",
             FormatStatementBody::new(body)
         ))
@@ -267,7 +385,11 @@ pub(crate) fn write_for_of_statement<'a>(
     is_await: bool,
     f: &mut Formatter<'a>,
 ) {
-    write_own_line_comments_in_head(left, right, f);
+    let head = FormatForInOrOfHead {
+        left,
+        keyword: "of",
+        right,
+    };
     write!(
         f,
         group(&format_args!(
@@ -275,11 +397,7 @@ pub(crate) fn write_for_of_statement<'a>(
             is_await.then_some(format_args!(space(), "await")),
             space(),
             "(",
-            FormatForHead(left),
-            space(),
-            "of",
-            space(),
-            right,
+            FormatInHead(Head::Before(body), &head),
             ")",
             FormatStatementBody::new(body)
         ))
@@ -293,41 +411,28 @@ pub(crate) fn write_if_statement<'a>(
     alternate: Option<Stmt<'a>>,
     f: &mut Formatter<'a>,
 ) {
-    write!(
-        f,
-        group(&format_args!(
-            "if",
-            space(),
-            "(",
-            FormatCondition(test, &FormatTestOfIfAndWhileStatement(test)),
-            ")",
-            FormatStatementBody::new(consequent),
-        ))
-    );
+    let condition = FormatCondition {
+        test,
+        head: Head::Before(consequent),
+    };
+    write!(f, group(&format_args!("if", space(), "(", condition, ")", FormatStatementBody::new(consequent))));
     let Some(alternate) = alternate else {
         return;
     };
-    let alternate_start = alternate.span().start;
-    let comments = f.comments().comments_before(alternate_start);
 
-    let has_line_comment = comments.iter().any(|comment| comment.is_line());
-    // The comments are before the `else`.
-    let has_dangling_comments = !f.is_quiet()
-        && comments.last().or(f.comments().printed_comments().last()).is_some_and(|last_comment| {
-            f.source_text().slice_range(last_comment.span.end, alternate_start).trim_ascii() == b"else"
-        });
-
-    let else_on_same_line =
-        matches!(consequent.kind(), StmtKind::Block(_)) && (!has_line_comment || !has_dangling_comments);
-    if else_on_same_line {
-        write!(f, [space(), has_dangling_comments.then(line_suffix_boundary)]);
-    } else {
+    let is_consequent_block = matches!(consequent.kind(), StmtKind::Block(_));
+    if !is_consequent_block {
         write!(f, hard_line_break());
     }
-
-    if has_dangling_comments && let Some(first_comment) = comments.first() {
-        if f.lines_before(first_comment.span) > 1 {
-            write!(f, empty_line());
+    let comments = match f.is_quiet() {
+        true => &[][..],
+        false => comments_before_else(consequent, alternate, f),
+    };
+    if let (Some(first), Some(last)) = (comments.first(), comments.last()) {
+        match f.lines_before(first.span) {
+            0 => write!(f, " "),
+            1 => write!(f, is_consequent_block.then_some(hard_line_break())),
+            _ => write!(f, empty_line()),
         }
         write!(
             f,
@@ -336,21 +441,16 @@ pub(crate) fn write_if_statement<'a>(
                 indent: DanglingIndentMode::None
             }
         );
-        match has_line_comment {
+        match last.followed_by_newline() {
             true => write!(f, hard_line_break()),
             false => write!(f, space()),
         }
+    } else if is_consequent_block {
+        write!(f, space());
     }
 
     let is_else_if = matches!(alternate.kind(), StmtKind::If { .. });
-    write!(
-        f,
-        [
-            "else",
-            line_suffix_boundary(),
-            group(&FormatStatementBody::new(alternate).with_forced_space(is_else_if))
-        ]
-    );
+    write!(f, ["else", group(&FormatStatementBody::new(alternate).with_forced_space(is_else_if))]);
 }
 
 fn write_jump<'a>(keyword: &'static str, statement: Stmt<'a>, f: &mut Formatter<'a>) {
@@ -369,22 +469,19 @@ pub(crate) fn write_break_statement<'a>(statement: Stmt<'a>, f: &mut Formatter<'
     write_jump("break", statement, f);
 }
 
-pub(crate) fn write_with_statement<'a>(_statement: Stmt<'a>, object: Expr<'a>, body: Stmt<'a>, f: &mut Formatter<'a>) {
-    write!(f, group(&format_args!("with", space(), "(", FormatCondition(object, &object), ")", FormatStatementBody::new(body))));
-}
-
 pub(crate) fn write_labeled_statement<'a>(statement: Stmt<'a>, body: Stmt<'a>, f: &mut Formatter<'a>) {
-    let comments = f.comments().line_comments_before(body.span().start);
-    FormatLeadingComments::Comments(comments).fmt(f);
+    // Prettier's `handleLabeledStatementComments`: a comment that starts or ends its line goes
+    // before the label.
+    if !f.is_quiet() {
+        let comments = f.comments().comments_before(body.span().start);
+        let count = comments.iter().rposition(|it| it.preceded_by_newline() || it.followed_by_newline());
+        let comments = comments.get(..count.map_or(0, |last| last + 1)).unwrap_or_default();
+        write!(f, FormatLeadingComments::Comments(comments));
+    }
 
     if let Some(label) = statement.label() {
         write!(f, identifier(label, statement.as_ast_nodes()));
     }
-    write!(f, ":");
-    if matches!(body.kind(), StmtKind::Empty) {
-        let empty_comments = f.comments().comments_before(statement.span().end);
-        write!(f, [FormatTrailingComments::Comments(empty_comments), maybe_space(!empty_comments.is_empty()), ";"]);
-    } else {
-        write!(f, [space(), body]);
-    }
+    let is_empty = matches!(body.kind(), StmtKind::Empty) && !f.comments().has_comment_before(body.span().start);
+    write!(f, [":", maybe_space(!is_empty), body]);
 }

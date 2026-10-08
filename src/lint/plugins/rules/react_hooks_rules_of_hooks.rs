@@ -3,6 +3,7 @@ use bun_core::strings;
 use bun_lint::code_path::{Event, Step, steps};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::source::ByName;
 use rustc_hash::FxHashMap;
 
 /// Enforces the Rules of Hooks.
@@ -395,10 +396,16 @@ impl Rule for RulesOfHooks {
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
         let mut state = State::default();
+        // A file has many times as many calls as names.
+        let mut is_name_of_hook = ByName::default();
         for e in file.exprs_of_kind(ExprTag::Call) {
-            if let Some(call) = e.as_call()
-                && is_hook(call.callee())
-            {
+            let Some(callee) = e.as_call().map(Call::callee) else {
+                continue;
+            };
+            let Some(name) = callee.as_ident().or_else(|| callee.member_name().map(|it| it.name())) else {
+                continue;
+            };
+            if is_name_of_hook.get_or_insert_with(name, || is_hook_name(name.bytes())) && is_hook(callee) {
                 state.calls.push(e);
             }
         }

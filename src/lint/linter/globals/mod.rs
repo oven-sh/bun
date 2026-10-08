@@ -22,6 +22,7 @@ use crate::ast::File;
 use crate::language::{Global, LanguageOptions, Parser, SourceType};
 use crate::span::Span;
 use bun_core::strings;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 
 const WRITABLE: u16 = 1;
@@ -255,8 +256,11 @@ pub struct CommentGlobal {
 pub(crate) struct CommentVariables {
     /// In the order they are first named.
     pub(crate) globals: Vec<CommentGlobal>,
+    /// Where each is in `globals`.
+    pub(crate) global_by_name: FxHashMap<Box<[u8]>, u32>,
     /// The names in `/* exported */` comments.
     pub(crate) exported: Vec<Box<[u8]>>,
+    pub(crate) is_exported: FxHashSet<Box<[u8]>>,
 }
 
 /// A variable of the global scope that the file does not declare.
@@ -319,16 +323,13 @@ impl<'a> File<'a> {
     pub fn global(&'a self, name: &[u8]) -> Option<GlobalVariable<'a>> {
         let config = self.language().config_globals();
         let implicit = config.setting(name);
-        let comment = self
-            .globals_in_comments()
-            .iter()
-            .find(|it| *it.name == *name);
+        let comment = self.global_in_comments(name);
         let lib = if self.uses_typescript_parser() {
             config.lib(name)
         } else {
             0
         };
-        let is_exported = self.exported_in_comments().iter().any(|it| **it == *name);
+        let is_exported = self.is_exported_in_comments(name);
         match comment.map(|it| it.setting).or(implicit) {
             None | Some(Global::Off) if lib == 0 => None,
             None | Some(Global::Off) => Some(GlobalVariable {

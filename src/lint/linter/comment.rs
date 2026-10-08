@@ -4,6 +4,10 @@ use super::space::{char_len, space_len, space_len_back, trim};
 use super::{json_v8, levn};
 use crate::options::Json;
 use bun_core::strings;
+use rustc_hash::{FxHashMap, FxHashSet};
+
+/// A list of fewer names than this is searched as it is.
+const FEW: usize = 16;
 
 /// `/* label value -- justification */`. All are slices of the text that was parsed.
 #[derive(Copy, Clone, Debug)]
@@ -61,12 +65,26 @@ pub fn parse_directive(text: &[u8]) -> Option<DirectiveComment<'_>> {
 /// `parseListConfig`: the distinct names of a list that is separated by commas, in order.
 pub fn parse_list_config(text: &[u8]) -> Vec<&[u8]> {
     let mut names: Vec<&[u8]> = Vec::new();
+    // All of them, once there are many.
+    let mut seen: FxHashSet<&[u8]> = FxHashSet::default();
     for name in strings::split(text, b",") {
         let name = match trim(name) {
             [b'\'', inner @ .., b'\''] | [b'"', inner @ .., b'"'] => inner,
             name => name,
         };
-        if !name.is_empty() && !names.contains(&name) {
+        if name.is_empty() {
+            continue;
+        }
+        let is_new = match names.len() {
+            0..FEW => !names.contains(&name),
+            len => {
+                if len == FEW {
+                    seen.extend(&names);
+                }
+                seen.insert(name)
+            }
+        };
+        if is_new {
             names.push(name);
         }
     }
@@ -101,6 +119,8 @@ pub fn parse_string_config(text: &[u8]) -> Vec<(Vec<u8>, Option<Vec<u8>>)> {
     }
     // `.split(/\s|,+/u)`
     let mut items: Vec<(Vec<u8>, Option<Vec<u8>>)> = Vec::new();
+    // Where each is in `items`, once there are many.
+    let mut places: FxHashMap<Vec<u8>, usize> = FxHashMap::default();
     let mut at = 0;
     while at < collapsed.len() {
         let start = at;
@@ -115,9 +135,21 @@ pub fn parse_string_config(text: &[u8]) -> Vec<(Vec<u8>, Option<Vec<u8>>)> {
         let mut parts = strings::split(name, b":");
         let key = parts.next().unwrap_or_default();
         let value = parts.next().map(<[u8]>::to_vec);
-        match items.iter_mut().find(|it| it.0 == key) {
+        if items.len() == FEW && places.is_empty() {
+            places.extend(items.iter().enumerate().map(|(i, it)| (it.0.clone(), i)));
+        }
+        let place = match items.len() {
+            0..FEW => items.iter().position(|it| it.0 == key),
+            _ => places.get(key).copied(),
+        };
+        match place.and_then(|it| items.get_mut(it)) {
             Some(item) => item.1 = value,
-            None => items.push((key.to_vec(), value)),
+            None => {
+                if items.len() >= FEW {
+                    places.insert(key.to_vec(), items.len());
+                }
+                items.push((key.to_vec(), value));
+            }
         }
     }
     items

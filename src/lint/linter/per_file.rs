@@ -24,7 +24,7 @@ fn variables_in(file: &File, comments: &[ConfigComment]) -> CommentVariables {
         match comment.label {
             Label::Exported => {
                 for name in parse_list_config(value) {
-                    if !variables.exported.iter().any(|it| **it == *name) {
+                    if variables.is_exported.insert(name.into()) {
                         variables.exported.push(name.into());
                     }
                 }
@@ -36,16 +36,21 @@ fn variables_in(file: &File, comments: &[ConfigComment]) -> CommentVariables {
                     else {
                         continue;
                     };
-                    match variables.globals.iter_mut().find(|it| *it.name == *name) {
+                    let known = variables.global_by_name.get(&name[..]);
+                    match known.and_then(|&at| variables.globals.get_mut(at as usize)) {
                         Some(global) => {
                             global.setting = setting;
                             global.comments.push(comment.span);
                         }
-                        None => variables.globals.push(CommentGlobal {
-                            name: name.into(),
-                            setting,
-                            comments: vec![comment.span],
-                        }),
+                        None => {
+                            let at = variables.globals.len() as u32;
+                            variables.global_by_name.insert(name.clone().into(), at);
+                            variables.globals.push(CommentGlobal {
+                                name: name.into(),
+                                setting,
+                                comments: vec![comment.span],
+                            });
+                        }
                     }
                 }
             }
@@ -85,8 +90,19 @@ impl<'a> File<'a> {
         self.comment_variables().map_or(&[], |it| &it.globals)
     }
 
+    /// The one of [`File::globals_in_comments`] that is called `name`.
+    pub fn global_in_comments(&'a self, name: &[u8]) -> Option<&'a CommentGlobal> {
+        let variables = self.comment_variables()?;
+        variables.globals.get(*variables.global_by_name.get(name)? as usize)
+    }
+
     /// The names in the `/* exported */` comments of the file.
     pub fn exported_in_comments(&'a self) -> &'a [Box<[u8]>] {
         self.comment_variables().map_or(&[], |it| &it.exported)
+    }
+
+    /// Whether `name` is one of [`File::exported_in_comments`].
+    pub fn is_exported_in_comments(&'a self, name: &[u8]) -> bool {
+        self.comment_variables().is_some_and(|it| it.is_exported.contains(name))
     }
 }

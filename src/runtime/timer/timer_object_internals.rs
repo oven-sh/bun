@@ -810,7 +810,7 @@ impl TimerObjectInternals {
                 .timer
                 .update(self.event_loop_timer(), &scheduled_time)
         };
-        self.update_flags(|f| f.set_has_cleared_timer(false));
+        debug_assert!(!self.flags.get().has_cleared_timer());
 
         // Set _idleStart to the current monotonic timestamp in milliseconds
         // This mimics Node.js's behavior where _idleStart is the libuv timestamp when the timer was scheduled

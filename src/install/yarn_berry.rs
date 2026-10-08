@@ -560,23 +560,19 @@ fn locator_dir(encoded: &[u8], depth: u8) -> Option<Vec<u8>> {
     Some(join_folder(&base, path))
 }
 
-/// `base` + `path` (which yarn writes relative to the declaring package),
-/// both project-relative with `/` separators.
+/// `base` + `path` (which yarn writes relative to the declaring package), as
+/// the project-relative path the folder resolver stores for a `file:`
+/// dependency: `.` / `..` segments resolved (so `packages/a/../shared` and
+/// `packages/b/../shared` are one folder) and `/` separators on every platform.
 fn join_folder(base: &[u8], path: &[u8]) -> Vec<u8> {
-    let rel = path.strip_prefix(b"./").unwrap_or(path);
-    let mut joined: Vec<u8> = Vec::new();
-    if !bun_paths::is_absolute(rel) && !base.is_empty() && base != b"." {
-        joined.extend_from_slice(base);
-        joined.push(b'/');
+    use bun_paths::resolve_path::{join_string_buf, platform};
+    if bun_paths::is_absolute(path) {
+        return path.to_vec();
     }
-    joined.extend_from_slice(rel);
-    // `packages/a/../shared` and `packages/b/../shared` are one folder
-    if strings::contains(&joined, b"..") || strings::contains(&joined, b"/./") {
-        use bun_paths::resolve_path::{normalize_string, platform};
-        let normalized = normalize_string::<true, platform::Posix>(&joined);
-        if !normalized.is_empty() {
-            return normalized.to_vec();
-        }
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let mut joined = join_string_buf::<platform::Auto>(&mut buf[..], &[base, path]).to_vec();
+    if cfg!(windows) {
+        bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut joined);
     }
     joined
 }

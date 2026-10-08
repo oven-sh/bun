@@ -2507,6 +2507,7 @@ impl FileBuilder {
         arena: &'s Arena,
         session: &'s Session,
     ) -> (File<'s>, FileBuilder) {
+        // Nothing is asked of the arena for an empty list: see `File::empty_in`.
         macro_rules! copied {
             ($list:expr) => {{
                 let exact = Fixed::copied_in(arena, &$list);
@@ -2541,7 +2542,8 @@ impl FileBuilder {
 }
 
 impl<'s> File<'s> {
-    /// A file without nodes.
+    /// A file without nodes. It allocates nothing, so any thread can make one for the arena of
+    /// another (`Files::free_tree`): only the thread that owns an arena can allocate in it.
     pub fn empty_in(arena: &'s Arena, session: &'s Session) -> File<'s> {
         FileBuilder::default().into_arena(arena, session).0
     }

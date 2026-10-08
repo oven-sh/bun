@@ -14,7 +14,8 @@ Not there: HTML and Markdown in templates (they are printed as they are. CSS and
 File (HIR + binder tables)                     bun_lint::ast
   └─ js::comments::collect   → [Comment]       all comments, in order, with what is around them
   └─ js::format_file         → [FormatElement] the document (IR): ir/element.rs
-  └─ ir::document::propagate_expand          a group with a forced line break in it is broken
+       └─ ir::document::Tracker                told about each element as it is written: a group with a forced line
+                                               break in it is broken, every other group is measured
   └─ ir::printer::print    → bytes           decides which groups fit on the line
 ```
 
@@ -61,6 +62,12 @@ Same name unless listed. `print/mod.rs` of oxc (1900 lines) is split:
 ### The IR
 
 `FormatElement` is 16 bytes and `Copy`. There is no arena and there are no lifetimes in it: text is a range of the source (`SourceText`), a range of `Storage::text` (`OwnedText`), or up to 14 bytes inline (`Token`). Interned content is a range of `Storage::pool`.
+
+There is no pass over a finished document. `Formatter::write_element` tells `document::Tracker` about every element, and when a group or captured content ends, what the printer has to know about it is written into its start tag or its `Skip`: whether something in it forces a line break (Prettier's `propagateBreaks`), and `Flat`: how wide it is on one line. So **every element has to go through `f.write_element` or a builder**, never `f.storage.pool.push`, and `f.elements_from(start).will_break()`, `memoized.inspect(f).will_break()` cost nothing. A document that is written without a `Formatter` (JSON) calls `document::propagate_expand` once, which replays it to a `Tracker`.
+
+The printer decides on a measured group from its width and a look at what follows it up to the next possible line break, and prints a group that fits with `print_flat`, a loop that only writes texts. A group is not measured if what it is on one line depends on the printer: content that depends on another group by id, a line suffix, a variant with a forced line break. Those are measured element by element, as in Prettier.
+
+Three frequent shapes are one element each, which the builders write by themselves: `if_group_breaks(&",")` (`TokenIfBreaks`), the `indent` + line break of `soft_block_indent`, `block_indent`, .. (`StartIndentWithLine`, `EndIndentWithLine`), and `group(&indent(&soft_line_break_or_space())).with_group_id(id)` (`IndentedLineGroup`).
 
 ### `Formatter` is concrete
 

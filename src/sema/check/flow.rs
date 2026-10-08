@@ -605,7 +605,7 @@ pub(super) enum NonNullError {
 }
 
 /// `TypeFacts`: the tests that are true for some value of a type.
-mod facts {
+pub(super) mod facts {
     pub(super) const TYPEOF_EQ_STRING: u32 = 1 << 0;
     pub(super) const TYPEOF_EQ_NUMBER: u32 = 1 << 1;
     pub(super) const TYPEOF_EQ_BIGINT: u32 = 1 << 2;
@@ -624,14 +624,14 @@ mod facts {
     pub(super) const TYPEOF_NE_HOST_OBJECT: u32 = 1 << 15;
     pub(super) const EQ_UNDEFINED: u32 = 1 << 16;
     pub(super) const EQ_NULL: u32 = 1 << 17;
-    pub(super) const EQ_UNDEFINED_OR_NULL: u32 = 1 << 18;
+    pub(in crate::check) const EQ_UNDEFINED_OR_NULL: u32 = 1 << 18;
     pub(super) const NE_UNDEFINED: u32 = 1 << 19;
     pub(super) const NE_NULL: u32 = 1 << 20;
     pub(super) const NE_UNDEFINED_OR_NULL: u32 = 1 << 21;
-    pub(super) const TRUTHY: u32 = 1 << 22;
-    pub(super) const FALSY: u32 = 1 << 23;
-    pub(super) const IS_UNDEFINED: u32 = 1 << 24;
-    pub(super) const IS_NULL: u32 = 1 << 25;
+    pub(in crate::check) const TRUTHY: u32 = 1 << 22;
+    pub(in crate::check) const FALSY: u32 = 1 << 23;
+    pub(in crate::check) const IS_UNDEFINED: u32 = 1 << 24;
+    pub(in crate::check) const IS_NULL: u32 = 1 << 25;
     pub(super) const ALL: u32 = (1 << 27) - 1;
 
     /// All eight of `TYPEOF_NE_*`.
@@ -915,7 +915,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `hasTypeFacts`
-    fn has_type_facts(&mut self, ty: TypeId, mask: u32) -> bool {
+    pub(super) fn has_type_facts(&mut self, ty: TypeId, mask: u32) -> bool {
         self.type_facts(ty, mask) != 0
     }
 
@@ -6278,7 +6278,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getContextFreeTypeOfExpression`. tsgo keeps the first result, also one that depends on the
     /// incomplete type of a loop in progress: `FlowMemo::context_free_types_in_loops`.
-    fn context_free_type_of_expression(&mut self, file: FileId, e: ExprId) -> TypeId {
+    pub(super) fn context_free_type_of_expression(&mut self, file: FileId, e: ExprId) -> TypeId {
         if let Some(kept) = self.p.context_free_expr_types.get(&self.task, &(file, e)) {
             return kept;
         }
@@ -6765,7 +6765,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getAssignmentReducedType`
-    fn assignment_reduced_type(&mut self, declared: TypeId, assigned: TypeId) -> TypeId {
+    pub(super) fn assignment_reduced_type(&mut self, declared: TypeId, assigned: TypeId) -> TypeId {
         if declared == assigned {
             return declared;
         }
@@ -7208,7 +7208,12 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getTypeWithDefault`
-    fn get_type_with_default(&mut self, file: FileId, ty: TypeId, default: ExprId) -> TypeId {
+    pub(super) fn get_type_with_default(
+        &mut self,
+        file: FileId,
+        ty: TypeId,
+        default: ExprId,
+    ) -> TypeId {
         if default.is_none() {
             return ty;
         }

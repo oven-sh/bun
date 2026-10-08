@@ -8,7 +8,8 @@
 use super::enclosing_declaration::Enclosing;
 use super::errors_declaration_emit::{EndOfChain, Meaning};
 use super::print::{YieldModuleSymbol, quoted};
-use super::visit_node::{VisitedKind, VisitedNode};
+use super::services::visited::VisitedKind;
+use super::visit_node::VisitedNode;
 use super::*;
 use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeId, ScopeKind};
 

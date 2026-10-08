@@ -66,6 +66,7 @@ pub(crate) mod regexp_scanner;
 mod relate;
 mod related;
 mod related_expected;
+pub mod services;
 mod shape;
 mod sink;
 pub mod spans;

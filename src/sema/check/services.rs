@@ -1,0 +1,686 @@
+//! `ts.TypeChecker` as those outside the checker use it: what is the type at this node, what does
+//! this name refer to, what are the properties of this type.
+//!
+//! A [`Services`] is entered for a file right after that file has been checked
+//! ([`Checker::with_services`]), and answers until it is dropped. Nothing that it hands out may be
+//! kept longer: the ids of types, signatures and names belong to the task that checks the file.
+//!
+//! - A node is a [`NodeRef`]: a file of the program and a [`Node`] of it.
+//! - A type is a `TypeId`, a signature a `SigId`.
+//! - A symbol is a [`SymbolRef`]. The checker has no one thing that is a `ts.Symbol`: what the
+//!   binder declares in a table is a `Sym`, a property of a type is a `Prop` and the mapper to read
+//!   it with, a parameter of a signature is a `SigParam`. This numbers them as they come up, so
+//!   that equal numbers are what TypeScript has one object for.
+
+mod symbol_at_location;
+mod symbols;
+mod type_at_location;
+mod types;
+pub(in crate::check) mod visited;
+mod vocabulary;
+
+pub use vocabulary::ObjectFlags;
+pub use vocabulary::*;
+
+use super::*;
+use crate::bind::{Decl, ScopeId, SymbolId};
+use crate::node::{Kind, Node, NodeData};
+use smallvec::SmallVec;
+use std::cell::OnceCell;
+use symbols::{Entry, Key};
+use visited::VisitedKind;
+
+pub struct Services<'c, 'p, 's> {
+    c: &'c mut Checker<'p, 's>,
+    file: FileId,
+    /// For the lists that are made up for an answer.
+    arena: &'c Arena,
+    symbols: Vec<Entry<'c>>,
+    symbol_ids: FxHashMap<Key<'c>, SymbolRef>,
+    /// `Checker::symbols_of_declarations` of `file`.
+    symbols_of_declarations: OnceCell<FxHashMap<Decl, SymbolId>>,
+    /// What the queries must not change for the files that the task checks next.
+    flow_analysis_was_disabled: bool,
+    had_run_out_of_stack: bool,
+}
+
+impl<'p, 's> Checker<'p, 's> {
+    /// Calls `then` with the services for `file`, which has just been checked.
+    pub fn with_services<R>(
+        &mut self,
+        file: FileId,
+        then: impl FnOnce(&mut Services<'_, 'p, 's>) -> R,
+    ) -> R {
+        let arena = Arena::new();
+        let mut services = Services {
+            flow_analysis_was_disabled: self.flow_analysis_disabled,
+            had_run_out_of_stack: self.ran_out_of_stack.get(),
+            c: self,
+            file,
+            arena: &arena,
+            symbols: Vec::new(),
+            symbol_ids: FxHashMap::default(),
+            symbols_of_declarations: OnceCell::new(),
+        };
+        then(&mut services)
+    }
+}
+
+impl Drop for Services<'_, '_, '_> {
+    fn drop(&mut self) {
+        self.c.flow_analysis_disabled = self.flow_analysis_was_disabled;
+        self.c.ran_out_of_stack.set(self.had_run_out_of_stack);
+        self.c.rechecked_exprs.clear();
+        self.c.rechecked_members.clear();
+    }
+}
+
+impl<'c, 'p, 's> Services<'c, 'p, 's> {
+    /// The checker, for what is not here.
+    #[inline]
+    pub fn checker(&mut self) -> &mut Checker<'p, 's> {
+        self.c
+    }
+
+    #[inline]
+    fn list<T: Copy>(&self, items: &[T]) -> &'c [T] {
+        match items.is_empty() {
+            true => &[],
+            false => self.arena.alloc_slice_copy(items),
+        }
+    }
+
+    /// Whether `file` is one whose tree can be read.
+    #[inline]
+    fn has_file(&self, file: FileId) -> bool {
+        (file.0 as usize) < self.c.files().modules.len()
+    }
+
+    /// `node`, if it is a node of a file of the program.
+    #[inline]
+    fn valid(&self, node: NodeRef) -> Option<(&'p hir::File<'s>, Node)> {
+        (node.node.is_some() && self.has_file(node.file)).then(|| (self.c.hir(node.file), node.node))
+    }
+
+    /// The expression that `node` is, or is the parentheses around.
+    fn expr_of(&self, node: NodeRef) -> Option<ExprId> {
+        let (hir, at) = self.valid(node)?;
+        match hir.data(at) {
+            NodeData::Expr(e) => Some(e),
+            NodeData::Paren(p) => hir.parens.get(p.idx()).map(|it| it.0),
+            // A function or a class that is an expression has the handle of its own.
+            _ => match hir.kind(at) {
+                Kind::FunctionExpression | Kind::ArrowFunction => {
+                    match self.c.bound(node.file).fns.get(hir.function_of(at).idx())?.owner {
+                        crate::bind::FnOwner::Expr(e) => Some(e),
+                        _ => None,
+                    }
+                }
+                Kind::ClassExpression => {
+                    match *self.c.bound(node.file).class_owner.get(hir.class_of(at).idx())? {
+                        crate::bind::ClassOwner::Expr(e) => Some(e),
+                        crate::bind::ClassOwner::Stmt(_) => None,
+                    }
+                }
+                _ => None,
+            },
+        }
+    }
+
+    // ───────────────────────────── the program ─────────────────────────────
+
+    pub fn compiler_options(&mut self) -> CompilerOptions {
+        let options = self.c.files().compiler_options_for_file(self.file);
+        CompilerOptions {
+            strict_null_checks: options.strict_null_checks,
+            strict_function_types: options.strict_function_types,
+            strict_bind_call_apply: options.strict_bind_call_apply,
+            strict_property_initialization: options.strict_property_initialization,
+            strict_builtin_iterator_return: options.strict_builtin_iterator_return,
+            no_implicit_any: options.no_implicit_any,
+            no_implicit_this: options.no_implicit_this,
+            no_implicit_returns: options.no_implicit_returns,
+            no_implicit_override: options.no_implicit_override,
+            use_unknown_in_catch_variables: options.use_unknown_in_catch_variables,
+            no_unchecked_indexed_access: options.no_unchecked_indexed_access,
+            no_property_access_from_index_signature: options.no_property_access_from_index_signature,
+            no_fallthrough_cases_in_switch: options.no_fallthrough_cases_in_switch,
+            exact_optional_property_types: options.exact_optional_property_types,
+            isolated_modules: options.isolated_modules,
+            isolated_declarations: options.isolated_declarations,
+            verbatim_module_syntax: options.verbatim_module_syntax,
+            erasable_syntax_only: options.erasable_syntax_only,
+            experimental_decorators: options.experimental_decorators,
+            emit_decorator_metadata: options.emit_decorator_metadata,
+            // TypeScript 7 has neither as an option: both are always on.
+            allow_synthetic_default_imports: true,
+            es_module_interop: true,
+            use_define_for_class_fields: options.use_define_for_class_fields,
+            allow_js: options.allow_js,
+            check_js: options.check_js == Some(true),
+            resolve_json_module: options.resolve_json_module,
+            preserve_const_enums: options.preserve_const_enums,
+            target: options.target,
+            module: options.module,
+        }
+    }
+
+    pub fn current_directory(&mut self) -> &'p [u8] {
+        &self.c.files().options.current_directory
+    }
+
+    #[inline]
+    pub fn current_file(&mut self) -> FileId {
+        self.file
+    }
+
+    pub fn file_info(&mut self, file: FileId) -> FileInfo<'p> {
+        if !self.has_file(file) {
+            return FileInfo {
+                file_name: b"",
+                is_default_library: false,
+                is_from_external_library: false,
+                is_declaration_file: false,
+                is_javascript: false,
+                is_external_module: false,
+                package_name: None,
+            };
+        }
+        let module = self.c.files().module(file);
+        FileInfo {
+            file_name: module.file_name(),
+            is_default_library: module.is_lib,
+            is_from_external_library: module.is_from_external_library,
+            is_declaration_file: module.hir.kind == FileKind::Declaration,
+            is_javascript: module.hir.is_js,
+            is_external_module: module.is_module(),
+            package_name: package_name_of_path(module.file_name()),
+        }
+    }
+
+    pub fn source_file(&mut self, file_name: &[u8]) -> Option<FileId> {
+        self.c.files().by_path.get(file_name)
+    }
+
+    pub fn resolve_module_name(&mut self, specifier: &[u8]) -> Option<FileId> {
+        let specifier = self.c.atoms().lookup(specifier)?;
+        let imports = &self.c.files().module(self.file).imports;
+        let mut found = imports.iter().filter(|it| it.0.0 == specifier);
+        found.next().map(|it| *it.1)
+    }
+
+    // ───────────────────────────── nodes ─────────────────────────────
+
+    /// The node of the file at hand that `location` names. `NONE` if there is none.
+    pub fn node(&mut self, location: Location) -> Node {
+        let hir = self.c.hir(self.file);
+        let row = match location.row {
+            Row::File => Node::FILE,
+            Row::Node(node) => node,
+            Row::Expr(id) => hir.node(id),
+            Row::Parenthesized(id) => hir.child(id),
+            Row::Stmt(id) => hir.node(id),
+            Row::Type(id) => hir.node(id),
+            Row::Pat(id) => hir.node(id),
+            Row::PatProp(id) => hir.node(id),
+            Row::PatElem(id) => hir.node(id),
+            Row::Fn(id) => hir.node(id),
+            Row::Class(id) => hir.node(id),
+            Row::Param(id) => hir.node(id),
+            Row::TypeParam(id) => hir.node(id),
+            Row::Member(id) => hir.node(id),
+            Row::Prop(id) => hir.node(id),
+            Row::VarDecl(id) => hir.node(id),
+            Row::Case(id) => hir.node(id),
+            Row::EnumMember(id) => hir.node(id),
+            Row::ImportSpec(id) => hir.node(id),
+            Row::ExportSpec(id) => hir.node(id),
+            Row::TupleElem(id) => hir.node(id),
+            Row::Name(id) => hir.node(id),
+            Row::NameAt(offset) => self.name_at(offset),
+        };
+        match location.part {
+            // `node.name`, which for a variable, a parameter or a binding element is a pattern.
+            Some(crate::node::Part::Name) if row.is_some() => hir.name(row),
+            Some(part) => row.with(part),
+            None => row,
+        }
+    }
+
+    /// The innermost node that starts at `offset` and has no children: a name or a literal.
+    fn name_at(&self, offset: u32) -> Node {
+        let hir = self.c.hir(self.file);
+        let (mut at, mut depth) = (Node::FILE, 0);
+        loop {
+            let mut inner = Node::NONE;
+            hir.for_each_child(at, &mut |child| {
+                let is_around = hir.start(child) <= offset && offset < self.c.end_of_node(self.file, child);
+                if is_around {
+                    inner = child;
+                }
+                is_around
+            });
+            depth += 1;
+            if inner.is_none() || depth > 4096 {
+                break;
+            }
+            at = inner;
+        }
+        match at != Node::FILE && hir.start(at) == offset {
+            true => at,
+            false => Node::NONE,
+        }
+    }
+
+    pub fn node_kind(&mut self, node: NodeRef) -> Kind {
+        self.valid(node).map_or(Kind::Unknown, |(hir, node)| hir.kind(node))
+    }
+
+    pub fn node_data(&mut self, node: NodeRef) -> NodeData {
+        self.valid(node).map_or(NodeData::None, |(hir, node)| hir.data(node))
+    }
+
+    pub fn node_parent(&mut self, node: NodeRef) -> Node {
+        match self.valid(node) {
+            Some((hir, node)) if node != Node::FILE => hir.parent(node),
+            _ => Node::NONE,
+        }
+    }
+
+    pub fn node_child(&mut self, node: NodeRef, child: Child) -> Node {
+        let Some((hir, node)) = self.valid(node) else {
+            return Node::NONE;
+        };
+        match child {
+            Child::Name => hir.name(node),
+            Child::PropertyName => hir.property_name(node),
+            Child::Expression => hir.expression(node),
+            Child::Initializer => hir.initializer(node),
+            Child::Type => hir.type_node(node),
+            Child::Body => hir.body(node),
+        }
+    }
+
+    pub fn node_children(&mut self, node: NodeRef) -> &'c [Node] {
+        let Some((hir, node)) = self.valid(node) else {
+            return &[];
+        };
+        let mut children: SmallVec<[Node; 8]> = SmallVec::new();
+        hir.for_each_child(node, &mut |child| {
+            children.push(child);
+            false
+        });
+        self.list(&children)
+    }
+
+    pub fn node_span(&mut self, node: NodeRef) -> (u32, u32) {
+        match self.valid(node) {
+            // The text of the default library is not kept, and the end of a node is found in it.
+            Some((hir, at)) if !hir.text.is_empty() => (hir.start(at), self.c.end_of_node(node.file, at)),
+            _ => (0, 0),
+        }
+    }
+
+    pub fn node_text(&mut self, node: NodeRef) -> &'p [u8] {
+        let Some((hir, node)) = self.valid(node) else {
+            return b"";
+        };
+        match hir.text(node) {
+            Atom::NONE => b"",
+            text => self.c.atoms().bytes(text),
+        }
+    }
+
+    /// `getCombinedModifierFlags`
+    pub fn node_modifier_flags(&mut self, node: NodeRef) -> ModifierFlags {
+        let Some((hir, mut at)) = self.valid(node) else {
+            return ModifierFlags::empty();
+        };
+        // `getCombinedFlags`: of a binding element, those of the declaration it is part of, and of
+        // a variable declaration also those of its list and its statement.
+        let mut depth = 0;
+        while hir.kind(at) == Kind::BindingElement && depth < 4096 {
+            at = hir.parent(hir.parent(at));
+            depth += 1;
+        }
+        let mut flags = hir.flags(at);
+        // Only the modifier `declare` is `ModifierFlags.Ambient`.
+        if flags.contains(Flags::AMBIENT) && !self.has_declare_modifier(node.file, at) {
+            flags.remove(Flags::AMBIENT);
+        }
+        ModifierFlags::from(flags)
+    }
+
+    fn has_declare_modifier(&self, file: FileId, node: Node) -> bool {
+        let hir = self.c.hir(file);
+        if hir.text.is_empty() {
+            return false;
+        }
+        let start = hir.start(node) as usize;
+        // `export declare`, `declare`
+        let text = hir.text.get(start..).unwrap_or_default();
+        let text = text.strip_prefix(b"export").map_or(text, |rest| rest.trim_ascii_start());
+        text.starts_with(b"declare") && !text.get(7).is_some_and(|&next| is_identifier_part(next))
+    }
+
+    /// `getCombinedNodeFlags`
+    pub fn node_flags(&mut self, node: NodeRef) -> NodeFlags {
+        let Some((hir, mut at)) = self.valid(node) else {
+            return NodeFlags::empty();
+        };
+        let mut flags = NodeFlags::empty();
+        if hir.is_ambient(at) {
+            flags |= NodeFlags::AMBIENT;
+        }
+        if hir.is_in_with(hir.start(at)) {
+            flags |= NodeFlags::IN_WITH_STATEMENT;
+        }
+        let mut depth = 0;
+        while hir.kind(at) == Kind::BindingElement && depth < 4096 {
+            at = hir.parent(hir.parent(at));
+            depth += 1;
+        }
+        match hir.data(at.row()) {
+            NodeData::VarDecl(declaration) => flags |= flags_of_var_kind(hir[declaration].kind),
+            NodeData::Stmt(statement) => match hir[statement].kind {
+                StmtKind::Var(declarations) => {
+                    if let Some(first) = declarations.iter().next() {
+                        flags |= flags_of_var_kind(hir[first].kind);
+                    }
+                }
+                StmtKind::Module(module) => match hir[module].name {
+                    ModuleName::Global => flags |= NodeFlags::GLOBAL_AUGMENTATION,
+                    ModuleName::Ident(_) if self.is_written_as_namespace(node.file, at) => {
+                        flags |= NodeFlags::NAMESPACE;
+                    }
+                    _ => {}
+                },
+                _ => {}
+            },
+            NodeData::Expr(e) => {
+                let chain = match hir[e].kind {
+                    ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain,
+                    ExprKind::Call(call) => hir[call].chain,
+                    _ => Chain::No,
+                };
+                if chain != Chain::No {
+                    flags |= NodeFlags::OPTIONAL_CHAIN;
+                }
+            }
+            _ => {}
+        }
+        flags
+    }
+
+    /// The keyword of the `ModuleDeclaration` is `namespace`. An inner part of `namespace a.b` has
+    /// none of its own.
+    fn is_written_as_namespace(&self, file: FileId, node: Node) -> bool {
+        let hir = self.c.hir(file);
+        let mut text = hir.text.get(hir.start(node) as usize..).unwrap_or_default();
+        for modifier in [&b"export"[..], b"declare"] {
+            text = text.strip_prefix(modifier).map_or(text, |rest| rest.trim_ascii_start());
+        }
+        !text.starts_with(b"module")
+    }
+
+    pub fn deprecation_of_node(&mut self, node: NodeRef) -> Option<&'c [u8]> {
+        let (hir, at) = self.valid(node)?;
+        if hir.text.is_empty() {
+            return None;
+        }
+        let text = self.deprecated_tag_before(node.file, hir.start(at))?;
+        Some(self.list(&text))
+    }
+
+    /// The text after `@deprecated` in the JSDoc comment that ends right before `start`.
+    fn deprecated_tag_before(&self, file: FileId, start: u32) -> Option<Vec<u8>> {
+        let text = &self.c.hir(file).text[..];
+        let before = text.get(..start as usize)?.trim_ascii_end();
+        let before = before.strip_suffix(b"*/")?;
+        let open = bun_core::strings::last_index_of(before, b"/**")?;
+        let comment = &before[open + 3..];
+        let tag = bun_core::strings::index_of(comment, b"@deprecated")?;
+        let rest = &comment[tag + b"@deprecated".len()..];
+        if rest.first().is_some_and(|&next| is_identifier_part(next)) {
+            return None;
+        }
+        // Up to the next tag, with the `*` at the start of each line removed.
+        let mut reason = Vec::new();
+        for (index, line) in bun_core::strings::split(rest, b"\n").enumerate() {
+            let mut line = line.trim_ascii();
+            if index > 0 {
+                line = line.strip_prefix(b"*").unwrap_or(line).trim_ascii();
+                if line.starts_with(b"@") {
+                    break;
+                }
+                if !reason.is_empty() && !line.is_empty() {
+                    reason.push(b'\n');
+                }
+            }
+            reason.extend_from_slice(line);
+        }
+        Some(reason)
+    }
+
+    // ───────────────────────────── from a node ─────────────────────────────
+
+    /// What `node` is, if it is an expression, an identifier or the name of a declaration.
+    fn visited_kind(&self, node: NodeRef) -> Option<VisitedKind> {
+        let own;
+        let symbols: &FxHashMap<Decl, SymbolId> = match node.file == self.file {
+            true => (self.symbols_of_declarations).get_or_init(|| self.c.symbols_of_declarations(self.file)),
+            false => {
+                own = OnceCell::new();
+                return self.c.visited_kind(node.file, node.node, &|decl| {
+                    let symbols: &FxHashMap<_, _> = own.get_or_init(|| self.c.symbols_of_declarations(node.file));
+                    symbols.get(&decl).copied()
+                });
+            }
+        };
+        self.c.visited_kind(node.file, node.node, &|decl| symbols.get(&decl).copied())
+    }
+
+    pub fn type_from_type_node(&mut self, node: NodeRef) -> TypeId {
+        match self.valid(node).map(|(hir, at)| hir.data(at)) {
+            Some(NodeData::Type(ty)) => self.c.type_from_node(node.file, ty),
+            _ => TypeId::ERROR,
+        }
+    }
+
+    pub fn contextual_type(&mut self, node: NodeRef) -> Option<TypeId> {
+        let e = self.expr_of(node)?;
+        let outer = self.c.begin_recheck();
+        let ty = self.c.contextual_type(node.file, e, ContextFlags::empty());
+        self.c.end_recheck(outer);
+        ty
+    }
+
+    pub fn apparent_type_of_contextual_type(&mut self, node: NodeRef) -> Option<TypeId> {
+        let e = self.expr_of(node)?;
+        let outer = self.c.begin_recheck();
+        let ty = self.c.apparent_type_of_contextual_type(node.file, e, ContextFlags::empty());
+        self.c.end_recheck(outer);
+        ty
+    }
+
+    pub fn contextual_type_for_argument_at_index(&mut self, call: NodeRef, index: u32) -> Option<TypeId> {
+        let e = self.expr_of(call)?;
+        let hir = self.c.hir(call.file);
+        let (ExprKind::Call(id) | ExprKind::New(id)) = hir[e].kind else {
+            return None;
+        };
+        let argument = hir.ids(hir[id].args).nth(index as usize)?;
+        let outer = self.c.begin_recheck();
+        let ty = self.c.contextual_type_for_argument(call.file, e, argument);
+        self.c.end_recheck(outer);
+        ty
+    }
+
+    pub fn resolved_signature(&mut self, call: NodeRef) -> Option<SigId> {
+        let (hir, at) = self.valid(call)?;
+        // The opening element of a JSX element is resolved as the element.
+        let at = match at.part() {
+            Some(crate::node::Part::Opening) => at.row(),
+            _ => at,
+        };
+        let e = self.expr_of(NodeRef { node: at, ..call })?;
+        let is_call_like = matches!(
+            hir[e].kind,
+            ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_) | ExprKind::Jsx(_)
+        ) || matches!(hir[e].kind, ExprKind::Binary { op: BinOp::Instanceof, .. })
+            || matches!(self.c.bound(call.file).expr_parent.get(e.idx()), Some(crate::bind::Parent::Decorator(..)));
+        if !is_call_like {
+            return None;
+        }
+        self.c.resolved_signature(call.file, e).sig
+    }
+
+    pub fn signature_from_declaration(&mut self, node: NodeRef) -> Option<SigId> {
+        let (hir, at) = self.valid(node)?;
+        if !hir.kind(at).is_function_like() {
+            return None;
+        }
+        let function = hir.function_of(at).some()?;
+        Some(self.c.sig_of_fn(node.file, function))
+    }
+
+    pub fn accessed_property_name(&mut self, node: NodeRef) -> Option<&'p [u8]> {
+        let (hir, at) = self.valid(node)?;
+        let name = match hir.data(at) {
+            NodeData::Expr(e) => match hir[e].kind {
+                ExprKind::Dot { name, .. } => name,
+                ExprKind::Index { index, .. } => match hir[index].kind {
+                    ExprKind::String(text) => text,
+                    ExprKind::Number(number) => self.c.number_name(*hir.numbers.get(number as usize)?),
+                    _ => {
+                        let ty = self.c.type_of_expr(node.file, index);
+                        self.c.property_name_of_type(ty)?
+                    }
+                },
+                _ => return None,
+            },
+            NodeData::PatProp(p) => match hir[p].key {
+                PropKey::Name(name) => name,
+                PropKey::Computed(e) => {
+                    let ty = self.c.type_of_expr(node.file, e);
+                    self.c.property_name_of_type(ty)?
+                }
+                _ => return None,
+            },
+            // The index of the element in its pattern, of the parameter in its list.
+            NodeData::PatElem(element) => {
+                let pattern = hir.parent(at);
+                let mut index = 0;
+                let mut found = None;
+                hir.for_each_child(pattern, &mut |child| {
+                    if child == hir.node(element) {
+                        found = Some(index);
+                    }
+                    index += 1;
+                    found.is_some()
+                });
+                self.c.number_name(f64::from(found?))
+            }
+            NodeData::Param(parameter) => {
+                let function = *self.c.bound(node.file).param_fn.get(parameter.idx())?;
+                self.c.number_name(f64::from(parameter.0.checked_sub(hir[function].params.start)?))
+            }
+            _ => return None,
+        };
+        Some(self.c.atoms().bytes(name))
+    }
+
+    pub fn constant_value(&mut self, node: NodeRef) -> Option<LiteralValue<'p>> {
+        let (hir, at) = self.valid(node)?;
+        let value = match hir.data(at) {
+            NodeData::EnumMember(member) => self.c.enum_member_value(node.file, member)?,
+            // `getConstantValue`: an access to a member of an enum.
+            NodeData::Expr(e) if matches!(hir[e].kind, ExprKind::Dot { .. } | ExprKind::Index { .. }) => {
+                let ty = self.c.type_of_expr(node.file, e);
+                match *self.c.data(ty) {
+                    TypeData::EnumLit { value, .. } => value,
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
+        Some(match value {
+            EnumValue::String(text) => LiteralValue::String(self.c.atoms().bytes(text)),
+            EnumValue::Number(bits) => LiteralValue::Number(f64::from_bits(bits)),
+        })
+    }
+
+    pub fn is_const_context(&mut self, node: NodeRef) -> bool {
+        self.expr_of(node).is_some_and(|e| self.c.is_const_context(node.file, e))
+    }
+
+    pub fn flow_type_of_reference(&mut self, node: NodeRef, declared: TypeId) -> TypeId {
+        match self.expr_of(node) {
+            Some(e) => self.c.flow_type_of_reference(node.file, e, declared),
+            None => declared,
+        }
+    }
+
+    pub fn context_free_type_of_expression(&mut self, node: NodeRef) -> TypeId {
+        match self.expr_of(node) {
+            Some(e) => self.c.context_free_type_of_expression(node.file, e),
+            None => TypeId::ERROR,
+        }
+    }
+
+    pub fn type_with_default(&mut self, ty: TypeId, default: NodeRef) -> TypeId {
+        match self.expr_of(default) {
+            Some(e) => self.c.get_type_with_default(default.file, ty, e),
+            None => ty,
+        }
+    }
+
+    /// The scope that names at `node` are resolved from.
+    fn scope_at(&self, node: NodeRef) -> Option<ScopeId> {
+        let (hir, mut at) = self.valid(node)?;
+        let bound = self.c.bound(node.file);
+        let mut depth = 0;
+        while at.is_some() && depth < 4096 {
+            let scope = match hir.data(at.row()) {
+                NodeData::File => return Some(ScopeId(0)),
+                NodeData::Expr(e) => Some(self.c.enclosing_scope_of_expr(node.file, e)),
+                NodeData::Pat(pat) => Some(self.c.enclosing_scope_of_pat(node.file, pat)),
+                NodeData::Member(m) => Some(self.c.enclosing_scope_of_member(node.file, m)),
+                NodeData::Prop(p) => Some(self.c.enclosing_scope_of_property(node.file, p)),
+                NodeData::Type(t) => bound.type_scope.get(t.idx()).copied(),
+                NodeData::Stmt(s) => bound.stmt_scope.get(s.idx()).copied(),
+                _ => None,
+            };
+            if let Some(scope) = scope.filter(|scope| scope.is_some()) {
+                return Some(scope);
+            }
+            at = hir.parent(at);
+            depth += 1;
+        }
+        Some(ScopeId(0))
+    }
+}
+
+fn flags_of_var_kind(kind: VarKind) -> NodeFlags {
+    match kind {
+        VarKind::Var => NodeFlags::empty(),
+        VarKind::Let => NodeFlags::LET,
+        VarKind::Const => NodeFlags::CONST,
+        VarKind::Using => NodeFlags::USING,
+        VarKind::AwaitUsing => NodeFlags::AWAIT_USING,
+    }
+}
+
+/// `getPackageNameFromTypesPackageName` is not applied: `node_modules/@types/a/index.d.ts` is in
+/// `@types/a`.
+fn package_name_of_path(path: &[u8]) -> Option<&[u8]> {
+    const NODE_MODULES: &[u8] = b"/node_modules/";
+    let at = bun_core::strings::last_index_of(path, NODE_MODULES)?;
+    let rest = &path[at + NODE_MODULES.len()..];
+    let first = bun_core::strings::index_of_char_usize(rest, b'/')?;
+    if rest.first() != Some(&b'@') {
+        return Some(&rest[..first]);
+    }
+    let second = bun_core::strings::index_of_char_usize(&rest[first + 1..], b'/')?;
+    Some(&rest[..first + 1 + second])
+}

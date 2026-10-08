@@ -1391,6 +1391,16 @@ pub(crate) fn around_jsx_children<'a>(
     }
 }
 
+/// What is written from here on is the node at `span`, up to [`extend_node`]. For a node that writes
+/// the comments around it itself.
+#[inline]
+pub(crate) fn enter_node(span: Span, f: &mut Formatter<'_>) {
+    if f.context().cursor.is_active() {
+        let cursor = f.context().cursor;
+        cursor.enter(span, f);
+    }
+}
+
 /// What has been written since the node at `span` is part of what Prettier prints for that node:
 /// the `;` after a member.
 #[inline]
@@ -1559,11 +1569,19 @@ fn bytes_before_cursor_by_count(old: &[u8], cursor: usize, new: &[u8]) -> usize 
     new.len()
 }
 
-/// The end of Prettier's `coreFormat`: where the cursor is in `formatted`.
+/// Where the cursor is in a text.
+#[derive(Copy, Clone)]
+struct Offset {
+    bytes: u32,
+    /// It is between the two UTF-16 code units of the character there.
+    is_in_character: bool,
+}
+
+/// The end of Prettier's `coreFormat`: where the cursor is in `formatted`, in UTF-16 code units.
 ///
 /// `offset`: where it is in `source`. `marks`: where the start and the end of `region` are in
 /// `formatted`, if the printer came by both.
-fn resolve(source: &[u8], offset: u32, region: Region, formatted: &[u8], marks: Option<(u32, u32)>) -> u32 {
+fn resolve(source: &[u8], offset: Offset, region: Region, formatted: &[u8], marks: Option<(u32, u32)>) -> usize {
     let whole = (Span::new(0, source.len() as u32), Span::new(0, formatted.len() as u32));
     let (old_span, new_span) = match marks {
         // An empty text counts as none.
@@ -1580,27 +1598,29 @@ fn resolve(source: &[u8], offset: u32, region: Region, formatted: &[u8], marks: 
     };
     let old_text = source.get(old_span.start as usize..old_span.end as usize).unwrap_or_default();
     let new_text = formatted.get(new_span.start as usize..new_span.end as usize).unwrap_or_default();
-    let cursor = (offset.saturating_sub(old_span.start) as usize).min(old_text.len());
+    let new_start = count_units(formatted.get(..new_span.start as usize).unwrap_or_default());
+    let cursor = (offset.bytes.saturating_sub(old_span.start) as usize).min(old_text.len());
     let (before_cursor, after_cursor) = old_text.split_at(cursor);
 
     // Prettier compares with the text that it parses, in which every line break is `\n`.
     let mut old_units = Vec::with_capacity(old_text.len() + 1);
     push_units(before_cursor, true, &mut old_units);
-    let units_before = old_units.len();
+    let units_before = old_units.len() + usize::from(offset.is_in_character);
     push_units(after_cursor, true, &mut old_units);
+    let units_before = units_before.min(old_units.len());
     let mut new_units = Vec::with_capacity(new_text.len());
     push_units(new_text, false, &mut new_units);
     if old_units == new_units {
-        return new_span.start + units_to_bytes(new_text, units_before) as u32;
+        return new_start + units_before;
     }
     old_units.insert(units_before, CURSOR);
 
     const MAX_DIFFERENCES: i64 = 20_000;
-    let bytes = match units_before_cursor(&old_units, &new_units, MAX_DIFFERENCES) {
-        Some(units) => units_to_bytes(new_text, units),
-        None => bytes_before_cursor_by_count(old_text, cursor, new_text),
-    };
-    new_span.start + bytes as u32
+    new_start
+        + units_before_cursor(&old_units, &new_units, MAX_DIFFERENCES).unwrap_or_else(|| {
+            let bytes = bytes_before_cursor_by_count(old_text, cursor, new_text);
+            count_units(new_text.get(..bytes).unwrap_or(new_text))
+        })
 }
 
 /// How many UTF-16 code units `text` is.
@@ -1612,15 +1632,23 @@ fn count_units(text: &[u8]) -> usize {
 /// `options.cursor_offset`, which counts UTF-16 code units, as an offset in `source`. Prettier's
 /// `normalizeInputAndOptions`: `None` if it is not in the text, of which a byte order mark is no
 /// part.
-fn offset_in(source: &[u8], options: &FormatOptions) -> Option<u32> {
+fn offset_in(source: &[u8], options: &FormatOptions) -> Option<Offset> {
     let units = options.cursor_offset? as usize;
-    let offset = units_to_bytes(source, units);
-    if count_units(source.get(..offset)?) != units || (units == 0 && source.starts_with(b"\xEF\xBB\xBF")) {
+    if units > count_units(source) || (units == 0 && source.starts_with(b"\xEF\xBB\xBF")) {
         return None;
+    }
+    // The bytes of the characters that end at or before it.
+    let mut offset = units_to_bytes(source, units);
+    let is_in_character = count_units(source.get(..offset)?) > units;
+    if is_in_character {
+        offset = offset.saturating_sub(4);
     }
     // After `\r\n` has become `\n`, an offset between the two is behind it.
     let is_in_line_break = offset > 0 && source.get(offset - 1..=offset) == Some(b"\r\n");
-    Some((offset + usize::from(is_in_line_break)) as u32)
+    Some(Offset {
+        bytes: (offset + usize::from(is_in_line_break)) as u32,
+        is_in_character,
+    })
 }
 
 /// Appends the formatted text of `file` to `out`. Returns where the cursor, which is at
@@ -1649,8 +1677,8 @@ pub(crate) fn format_with<'a>(
 ) -> Result<Option<u32>, FormatError> {
     let source = file.text();
     let offset = offset_in(source, options).filter(|_| !source.trim_ascii().is_empty());
-    let items = offset.map(|offset| locate_items(file, offset));
-    let cursor = offset.zip(items).map_or(CursorRegion::NONE, |(offset, items)| CursorRegion::new(offset, items));
+    let items = offset.map(|offset| locate_items(file, offset.bytes));
+    let cursor = offset.zip(items).map_or(CursorRegion::NONE, |(offset, items)| CursorRegion::new(offset.bytes, items));
 
     let start = out.len();
     let [mut first, mut second] = crate::ir::run::format_with_marks(file, options, cursor, scratch, out, write)?;
@@ -1675,6 +1703,5 @@ pub(crate) fn format_with<'a>(
         return Ok(None);
     };
     let formatted = out.get(start..).unwrap_or_default();
-    let new_offset = resolve(source, offset, locate(file, offset), formatted, first.zip(second)) as usize;
-    Ok(Some(count_units(formatted.get(..new_offset).unwrap_or(formatted)) as u32))
+    Ok(Some(resolve(source, offset, locate(file, offset.bytes), formatted, first.zip(second)) as u32))
 }

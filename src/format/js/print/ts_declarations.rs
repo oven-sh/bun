@@ -55,21 +55,16 @@ pub(crate) fn write_ts_interface_declaration<'a>(
             };
             // A comment after `extends` on its line leads the type. All others trail what is before.
             is_member || {
-                let previous_end = type_params
+                let previous = type_params
                     .angle_brackets_span()
-                    .unwrap_or_else(|| id.span())
-                    .end;
-                let comments = f
-                    .comments()
-                    .comments_in_range(previous_end, first.span().start);
+                    .unwrap_or_else(|| id.span());
+                let comments = f.comments().comments_in(previous.between(first.span()));
                 comments
                     .iter()
                     .any(|comment| comment.preceded_by_newline() || comment.followed_by_newline())
                     || comments.first().is_some_and(|comment| {
                         f.source_text()
-                            .all_bytes_match(previous_end, comment.span.start, |b| {
-                                b.is_ascii_whitespace()
-                            })
+                            .all_bytes(previous.between(comment.span), |b| b.is_ascii_whitespace())
                     })
             }
         });
@@ -326,7 +321,7 @@ fn write_comments_after_type_alias_left_side<'a>(
         .map_or_else(|| alias.name().span().end, |it| it.end);
     if !f
         .comments()
-        .has_any_comment_in_range(left_end, alias.ty().span().start)
+        .has_any_comment_in(Span::before(left_end, alias.ty().span()))
     {
         return (&[], false);
     }

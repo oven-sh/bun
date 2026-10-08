@@ -76,7 +76,9 @@ impl<'a> OperandComments<'a> {
         }
         let split = |before: Operand<'a>, after: Operand<'a>, operator: u8| {
             let start = before.span().end;
-            let comments = f.comments().comments_in_range(start, after.span().start);
+            let comments = f
+                .comments()
+                .comments_in(before.span().between(after.span()));
             comments
                 .split_at_checked(trailing_count(comments, start, operator, f.source_text()))
                 .unwrap_or((comments, &[]))
@@ -127,14 +129,14 @@ fn trailing_count(
 ) -> usize {
     let mut first_after_operator = None;
     for (index, comment) in comments.iter().enumerate() {
-        if source_text.contains_newline_between(start, comment.span.start) {
+        if source_text.contains_newline(Span::before(start, comment.span)) {
             return index;
         }
         if comment.is_line() || comment.followed_by_newline() {
             return index + 1;
         }
         if first_after_operator.is_none()
-            && source_text.bytes_contain(start, comment.span.start, operator)
+            && source_text.contains_byte(Span::before(start, comment.span), operator)
         {
             first_after_operator = Some(index);
         }

@@ -233,8 +233,8 @@ impl<'a> FormatTypeArguments<'a> {
             AstNodes::TSTypeParameterInstantiation(self.owner).span(),
             only.span(),
         );
-        let before = f.comments().comments_in_range(outer.start, inner.start);
-        let after = f.comments().comments_in_range(inner.end, outer.end);
+        let before = f.comments().comments_in(Span::before(outer.start, inner));
+        let after = f.comments().comments_in(Span::after(inner, outer.end));
         before.iter().chain(after).any(|comment| comment.is_line())
             || after
                 .last()

@@ -200,12 +200,14 @@ fn comments_before_from<'a>(
     let Some(source) = statement.module_specifier_span() else {
         return &[];
     };
-    let comments = f.comments().comments_in_range(position, source.start);
+    let comments = f.comments().comments_in(Span::before(position, source));
     let mut is_before_from = true;
     let count = comments
         .iter()
         .take_while(|comment| {
-            let gap = f.source_text().slice_range(position, comment.span.start);
+            let gap = f
+                .source_text()
+                .text_for(&Span::before(position, comment.span));
             position = comment.span.end;
             is_before_from &= !bun_core::strings::contains(gap, b"from");
             comment.followed_by_newline() || (is_before_from && !comment.preceded_by_newline())
@@ -274,7 +276,7 @@ impl<'a, T: Format<'a> + Spanned> Format<'a> for FormatSpecifier<'a, T> {
             let is_leading = |it: &&Comment| it.preceded_by_newline() && !it.followed_by_newline();
             Some(
                 f.comments()
-                    .comments_in_range(end, source.start)
+                    .comments_in(self.specifier.span().between(source))
                     .iter()
                     .find(is_leading)?
                     .span
@@ -432,7 +434,7 @@ fn write_import_attributes<'a>(entries: List<'a, Prop<'a>>, braces: Span, f: &mu
         ))
         .should_expand(
             f.source_text()
-                .contains_newline_between(braces.start, first.span().start)
+                .contains_newline(Span::before(braces.start, first.span()))
         )
     );
 }

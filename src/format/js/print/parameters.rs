@@ -187,13 +187,13 @@ pub(crate) fn follows_name_or_type_parameters(func: Func<'_>) -> bool {
         }
 }
 
-/// The comments from `start` to `end`, whether they are printed or not. For what is asked several
-/// times while a node is written, and has to get the same answer.
+/// The comments in `span`, whether they are printed or not. For what is asked several times while
+/// a node is written, and has to get the same answer.
 pub(crate) fn comments_between<'a>(
-    start: u32,
-    end: u32,
+    span: Span,
     f: &Formatter<'a>,
 ) -> impl Iterator<Item = &'a Comment> + use<'a> {
+    let Span { start, end } = span;
     let printed = f
         .comments()
         .printed_comments()
@@ -422,7 +422,7 @@ pub(crate) fn should_hug_function_parameters<'a>(
             }
             _ => span.start,
         };
-        let mut comments = comments_between(start, span.end, f).peekable();
+        let mut comments = comments_between(Span::new(start, span.end), f).peekable();
         if comments.peek().is_none() {
             return false;
         }

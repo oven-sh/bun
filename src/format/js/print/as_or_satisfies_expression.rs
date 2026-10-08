@@ -104,7 +104,7 @@ pub(crate) fn write_as_or_satisfies_expression<'a>(e: Expr<'a>, f: &mut Formatte
             true => &[][..],
             false => f
                 .comments()
-                .comments_in_range(expression.span().end, type_start),
+                .comments_in(Span::after(expression.span(), type_start)),
         };
         if !comments.is_empty() && comments_stay_around_cast_operator(f) {
             let is_union = type_annotation.is_some_and(|ty| {

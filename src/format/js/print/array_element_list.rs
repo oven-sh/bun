@@ -42,7 +42,7 @@ impl<'a> Format<'a> for ArrayElementList<'a> {
             !f.is_quiet()
                 && (f
                     .comments()
-                    .comments_in_range(last.span().end, self.array.span().end)
+                    .comments_in(Span::after(last.span(), self.array.span().end))
                     .first())
                 .is_some_and(|comment| comment.preceded_by_newline())
         });

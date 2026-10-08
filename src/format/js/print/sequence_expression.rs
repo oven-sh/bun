@@ -68,7 +68,7 @@ pub(crate) fn write_comments_before_closing_parenthesis<'a>(e: Expr<'a>, f: &mut
     }
     let comments = f
         .comments()
-        .comments_in_range(e.span().end, e.outer_span().end);
+        .comments_in(Span::after(e.span(), e.outer_span().end));
     let count = comments
         .iter()
         .take_while(|comment| !comment.preceded_by_newline())

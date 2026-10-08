@@ -20,7 +20,7 @@ pub(crate) fn write_array_expression<'a>(
         let has_line_comment = !f.is_quiet()
             && elements.iter().all(Expr::is_missing)
             && f.comments()
-                .comments_in_range(e.span().start, e.span().end)
+                .comments_in(e.span())
                 .iter()
                 .any(|comment| comment.is_line());
         // Where the comma ends that follows the last element that is no hole, if holes follow it.

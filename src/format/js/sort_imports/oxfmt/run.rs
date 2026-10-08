@@ -74,11 +74,11 @@ impl<'a> Written<'a> {
             };
             let comment = f
                 .comments()
-                .comments_in_range(position, source.start)
+                .comments_in(Span::before(position, source))
                 .iter()
                 .find(|comment| {
                     is_after_from |= bun_core::strings::contains(
-                        f.file().slice(Span::new(position, comment.span.start)),
+                        f.file().slice(Span::before(position, comment.span)),
                         b"from",
                     );
                     position = comment.span.end;
@@ -94,7 +94,7 @@ impl<'a> Written<'a> {
                 .filter(|_| import.default().is_none());
             written.has_comment_for_default = star.is_some_and(|star| {
                 !f.comments()
-                    .comments_in_range(keyword_end, star.start)
+                    .comments_in(Span::before(keyword_end, star))
                     .is_empty()
             });
         }

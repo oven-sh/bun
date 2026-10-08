@@ -307,9 +307,10 @@ fn has_leading_comment<'a>(e: Expr<'a>, is_callee: bool, f: &Formatter<'a>) -> b
         .is_some_and(|comment| {
             comment.end() <= start
                 && (!is_callee || comment.start() >= e.outer_span().start)
-                && f.source_text().all_bytes_match(comment.end(), start, |b| {
-                    b.is_ascii_whitespace() || b == b'('
-                })
+                && f.source_text()
+                    .all_bytes(Span::before(comment.end(), e.span()), |b| {
+                        b.is_ascii_whitespace() || b == b'('
+                    })
         })
 }
 
@@ -327,13 +328,11 @@ fn has_dangling_comments<'a>(
     };
     let params = FormatFormalParameters(arrow).span();
     let signature_end = arrow.return_type().map_or(params.end, |ty| ty.span().end);
-    comments_between(signature_end, arrow_token.start, f)
+    comments_between(Span::before(signature_end, arrow_token), f)
         .next()
         .is_some()
         || (arrow.params_with_this().next().is_none()
-            && comments_between(params.start, params.end, f)
-                .next()
-                .is_some())
+            && comments_between(params, f).next().is_some())
 }
 
 /// Prettier's `hasLeadingOwnLineComment` for the body of `arrow`: then the body goes on the next
@@ -361,8 +360,9 @@ fn has_leading_own_line_comment<'a>(
         comment.start() >= FormatFormalParameters(arrow).span().start
             && comment.end() <= arrow_token.start
     };
-    let mut comments = comments_between(start, AstNodes::FunctionBody(arrow).span().start, f)
-        .filter(|comment| has_preceding_node || !is_before_arrow_token(comment));
+    let mut comments =
+        comments_between(Span::before(start, AstNodes::FunctionBody(arrow).span()), f)
+            .filter(|comment| has_preceding_node || !is_before_arrow_token(comment));
     match arrow.body() {
         FnBody::Expr(body) if matches!(body.kind(), ExprKind::Jsx(_)) => {
             comments.any(|comment| f.comments().is_suppression_comment(comment))
@@ -618,7 +618,7 @@ fn write_expression_body<'a>(body: Expr<'a>, f: &mut Formatter<'a>) {
     if matches!(body.kind(), ExprKind::Cond { .. }) {
         let comments = f
             .comments()
-            .comments_in_range(body.span().end, body.outer_span().end);
+            .comments_in(Span::after(body.span(), body.outer_span().end));
         let count = comments
             .iter()
             .take_while(|comment| !comment.preceded_by_newline())

@@ -971,7 +971,7 @@ impl<'a> AssignmentLike<'a> {
             }
         };
         f.comments()
-            .has_any_comment_in_range(left_end, right_start)
+            .has_any_comment_in(Span::new(left_end, right_start))
             .then(|| {
                 (
                     left_end,
@@ -1105,15 +1105,12 @@ fn is_poorly_breakable_member_or_call_chain<'a>(
                 {
                     let comments = f
                         .comments()
-                        .comments_in_range(obj.outer_span().end, name.span().start);
+                        .comments_in(obj.outer_span().between(name.span()));
                     has_comment_between_links |= comments.iter().any(|comment| {
                         comment.preceded_by_newline()
                             || comment.followed_by_newline()
-                            || f.source_text().bytes_contain(
-                                comment.span.end,
-                                name.span().start,
-                                b'.',
-                            )
+                            || f.source_text()
+                                .contains_byte(comment.span.between(name.span()), b'.')
                     });
                 }
                 current.object()

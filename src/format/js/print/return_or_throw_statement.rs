@@ -83,7 +83,7 @@ impl<'a> Format<'a> for FormatAdjacentArgument<'a> {
             let is_return = matches!(argument.ast_parent(), AstNodes::ReturnStatement(_));
             let limit = (f
                 .comments()
-                .comments_in_range(span.end, argument.outer_span().end)
+                .comments_in(Span::after(span, argument.outer_span().end))
                 .iter())
             .find(|comment| !is_return || comment.preceded_by_newline())
             .map_or_else(|| argument.outer_span().end, |comment| comment.span.start);
@@ -127,7 +127,7 @@ pub(crate) fn has_argument_leading_comments<'a>(argument: Expr<'a>, f: &Formatte
         if let ExprKind::Dot { obj, name, .. } = left_side.expr.kind()
             && !name.bytes().starts_with(b"#")
             && comments
-                .comments_in_range(obj.span().end, name.span().end)
+                .comments_in(Span::after(obj.span(), name.span().end))
                 .iter()
                 .any(|comment| {
                     // Prettier's `handleMemberExpressionComments`: it leads the member expression.

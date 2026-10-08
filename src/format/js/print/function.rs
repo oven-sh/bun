@@ -175,7 +175,7 @@ pub(crate) fn write_called_function_with_comments<'a>(
         _ => true,
     };
     let count_trailing = |f: &Formatter<'a>| {
-        let comments = f.comments().comments_in_range(span.end, end);
+        let comments = f.comments().comments_in(Span::after(span, end));
         comments
             .iter()
             .take_while(|it| !(is_followed && it.preceded_by_newline()))

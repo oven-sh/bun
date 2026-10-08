@@ -55,7 +55,9 @@ pub(crate) fn write_try_statement<'a>(
             let count = comments
                 .iter()
                 .take_while(|comment| {
-                    let gap = f.source_text().slice_range(position, comment.span.start);
+                    let gap = f
+                        .source_text()
+                        .text_for(&Span::before(position, comment.span));
                     position = comment.span.end;
                     gap.trim_ascii().is_empty()
                 })
@@ -134,9 +136,7 @@ fn write_catch_parameter<'a>(param: VarDecl<'a>, body: Stmt<'a>, f: &mut Formatt
         .iter()
         .any(|comment| comment.is_line() || comment.followed_by_newline());
     // Those before the `)`, and of those after it the ones that start or end their line.
-    let before_body = f
-        .comments()
-        .comments_in_range(param.span().end, body.span().start);
+    let before_body = f.comments().comments_in(param.span().between(body.span()));
     let count = f
         .comments()
         .comments_before_character(param.span().end, b')')

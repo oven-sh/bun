@@ -2,6 +2,7 @@ use super::decorators::FormatDecorators;
 use super::function::{
     FormatCommentsBehindParenthesis, FormatFunctionBody, should_group_function_parameters,
 };
+use super::function_type::write_accessor_keyword;
 use super::parameters::FormatFormalParameters;
 use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
@@ -105,11 +106,7 @@ fn write_method_definition<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
             }
         }
     }
-    match member.kind() {
-        MemberKind::Getter => write!(f, ["get", space()]),
-        MemberKind::Setter => write!(f, ["set", space()]),
-        _ => {}
-    }
+    write_accessor_keyword(member.kind(), f);
     write!(
         f,
         [
@@ -603,7 +600,8 @@ fn count_comments_trailing_in_head(
 ) -> usize {
     let is_before = |comment: &Comment, keyword: &[u8]| {
         bun_core::strings::contains(
-            f.source_text().slice_range(comment.end(), next_start),
+            f.source_text()
+                .text_for(&Span::new(comment.end(), next_start)),
             keyword,
         )
     };
@@ -685,8 +683,10 @@ fn should_group<'a>(
 
     // A comment trails the name or the type parameters, or is around the super class.
     let counts = |gap: HeadGapAt| {
-        gap.map_or((0, 0), |(end, next_start, gap)| {
-            let comments = f.comments().comments_in_range(end, next_start);
+        gap.map_or((0, 0), |(previous_end, next_start, gap)| {
+            let comments = f
+                .comments()
+                .comments_in(Span::new(previous_end, next_start));
             (
                 comments.len(),
                 count_comments_trailing_in_head(comments, gap, next_start, f),

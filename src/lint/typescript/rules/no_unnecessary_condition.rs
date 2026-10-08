@@ -12,7 +12,9 @@ use bun_lint::types::utils::{
     is_type_unknown_type,
 };
 use bun_lint::types::{Literal, SymbolFlags, Type, TypeFlags};
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::eslint_utils::StaticValue;
+use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
@@ -30,11 +32,16 @@ enum AllowConstantLoopConditions {
     OnlyAllowedLiterals,
 }
 
-/// The compiler options that the rule depends on.
-#[derive(Copy, Clone)]
-pub struct CompilerFlags {
+pub struct State<'a> {
+    /// The compiler options that the rule depends on.
     is_strict_null_checks: bool,
     is_no_unchecked_indexed_access: bool,
+    /// [`is_only_used_for_truthiness`]
+    only_used_for_truthiness: AncestorMemo<'a, bool>,
+    /// [`option_chain_contains_option_array_index`], for links of long chains.
+    chains_with_option_array_index: FxHashMap<Expr<'a>, bool>,
+    /// For a type with many properties: whether the first of each name is optional.
+    optional_properties: FxHashMap<Type<'a>, FxHashMap<&'a [u8], bool>>,
 }
 
 type Context<'a> = Cx<'a, NoUnnecessaryCondition>;
@@ -173,35 +180,32 @@ fn big_int_comparison(left: Type, operator: BinOp, right: Type) -> Option<bool> 
     })
 }
 
-fn is_only_used_for_truthiness(mut node: Expr<'_>) -> bool {
-    loop {
-        match node.parent() {
-            Node::Expr(parent) => match parent.kind() {
-                ExprKind::Cond { test, .. } => return test == node,
-                ExprKind::Binary {
-                    op: BinOp::And,
-                    left,
-                    ..
-                } if left == node => return true,
-                ExprKind::Binary {
-                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
-                    ..
-                } => node = parent,
-                ExprKind::Unary { op, .. } => return op == UnOp::Not,
-                _ => return false,
-            },
-            Node::Stmt(parent) => {
-                return match parent.kind() {
-                    StmtKind::DoWhile { test, .. }
-                    | StmtKind::If { test, .. }
-                    | StmtKind::While { test, .. } => test == node,
-                    StmtKind::For { test, .. } => test == Some(node),
-                    _ => false,
-                };
-            }
-            _ => return false,
-        }
-    }
+fn is_only_used_for_truthiness<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
+    let decide = |node: Node<'a>, parent: Node<'a>| match parent {
+        Node::Expr(parent) => match parent.kind() {
+            ExprKind::Cond { test, .. } => Some(Node::Expr(test) == node),
+            ExprKind::Binary {
+                op: BinOp::And,
+                left,
+                ..
+            } if Node::Expr(left) == node => Some(true),
+            ExprKind::Binary {
+                op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                ..
+            } => None,
+            ExprKind::Unary { op, .. } => Some(op == UnOp::Not),
+            _ => Some(false),
+        },
+        Node::Stmt(parent) => Some(match parent.kind() {
+            StmtKind::DoWhile { test, .. }
+            | StmtKind::If { test, .. }
+            | StmtKind::While { test, .. } => Node::Expr(test) == node,
+            StmtKind::For { test, .. } => test.map(Node::Expr) == Some(node),
+            _ => false,
+        }),
+        _ => Some(false),
+    };
+    known.find(Node::Expr(node), decide).unwrap_or(false)
 }
 
 /// ESLint's `Literal`.
@@ -269,17 +273,28 @@ fn is_nullable_property_type<'a>(obj_type: Type<'a>, property_type: Type<'a>) ->
 }
 
 /// `node` is a member access.
-fn is_nullable_member_expression(node: Expr) -> bool {
+fn is_nullable_member_expression<'a>(node: Expr<'a>, cx: &mut Context<'a>) -> bool {
     match node.kind() {
         ExprKind::Index { obj, index, .. } => is_nullable_property_type(obj.ty(), index.ty()),
         ExprKind::Dot { obj, name, .. } => {
             // As it is written, which for `this.#prop` is the name of the symbol.
             let property_name = node.file().slice(name.span());
-            obj.ty()
-                .get_properties()
-                .iter()
-                .find(|prop| prop.name() == property_name)
-                .is_some_and(|prop| prop.has_flags(SymbolFlags::OPTIONAL))
+            let object_type = obj.ty();
+            let properties = object_type.get_properties();
+            if properties.len() <= 16 {
+                return properties
+                    .iter()
+                    .find(|prop| prop.name() == property_name)
+                    .is_some_and(|prop| prop.has_flags(SymbolFlags::OPTIONAL));
+            }
+            let by_name = cx.state.optional_properties.entry(object_type).or_insert_with(|| {
+                let mut by_name = FxHashMap::default();
+                for prop in properties {
+                    by_name.entry(prop.name()).or_insert_with(|| prop.has_flags(SymbolFlags::OPTIONAL));
+                }
+                by_name
+            });
+            by_name.get(property_name).copied().unwrap_or(false)
         }
         _ => false,
     }
@@ -311,55 +326,83 @@ fn has_possibly_non_nullish_computed_member_property(node: Expr) -> bool {
 /// the types of the rest: in `[{ x: { y: "z" } }][n]?.x?.y` the second `?.` looks unnecessary.
 ///
 /// `node` is a call or a member access, whether or not it is the whole of the chain.
-fn option_chain_contains_option_array_index(mut node: Expr) -> bool {
-    loop {
-        let lhs_node = match node.kind() {
-            ExprKind::Call(call) => call.callee(),
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
-            _ => return false,
+///
+/// The answer for a link is the answer for all the links that the search passes. `known` has it for those that are far from
+/// where a search began, so that to ask it of each link of a chain takes time in proportion to the length of the chain.
+fn option_chain_contains_option_array_index<'a>(node: Expr<'a>, known: &mut FxHashMap<Expr<'a>, bool>) -> bool {
+    const PLAIN_STEPS: usize = 32;
+    let lhs_of = |node: Expr<'a>| match node.kind() {
+        ExprKind::Call(call) => Some(call.callee()),
+        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => Some(obj),
+        _ => None,
+    };
+    let (mut at, mut steps) = (node, 0);
+    let answer = loop {
+        if steps >= PLAIN_STEPS
+            && let Some(&known) = known.get(&at)
+        {
+            break known;
+        }
+        let Some(lhs_node) = lhs_of(at) else {
+            break false;
         };
-        if node.is_optional() && is_array_index_expression(lhs_node) {
-            return true;
+        if at.is_optional() && is_array_index_expression(lhs_node) {
+            break true;
         }
         if lhs_node.is_chain_root() {
-            return false;
+            break false;
         }
-        node = lhs_node;
+        at = lhs_node;
+        steps += 1;
+    };
+    let mut passed = Some(node);
+    for step in 0..steps {
+        let Some(it) = passed else {
+            break;
+        };
+        if step >= PLAIN_STEPS {
+            known.insert(it, answer);
+        }
+        passed = lhs_of(it);
     }
+    answer
 }
 
 /// Reports `expression` if its type is always truthy or always falsy.
-fn check_node<'a>(expression: Expr<'a>, cx: &Context<'a>) {
-    let node = expression;
-    let (mut expression, mut is_unary_not_argument) = (expression, false);
-    while let ExprKind::Unary {
-        op: UnOp::Not,
-        operand,
-    } = expression.kind()
-    {
-        expression = operand;
-        is_unary_not_argument = !is_unary_not_argument;
-    }
-
-    // The type of an element of an array does not tell that the index may be out of bounds.
-    if !cx.state.is_no_unchecked_indexed_access && is_array_index_expression(expression) {
-        return;
-    }
-
-    // The left side has been checked as the left side of a logical expression. The right side is
-    // a condition only if the whole is one. Not so for `??`: `nullBool ?? true` is common, so the
-    // type of the whole is looked at.
-    if let ExprKind::Binary {
-        op: BinOp::And | BinOp::Or,
-        right,
-        ..
-    } = expression.kind()
-    {
-        if is_only_used_for_truthiness(expression) {
-            check_node(right, cx);
+fn check_node<'a>(expression: Expr<'a>, cx: &mut Context<'a>) {
+    let mut node = expression;
+    let (expression, is_unary_not_argument) = loop {
+        let (mut expression, mut is_unary_not_argument) = (node, false);
+        while let ExprKind::Unary {
+            op: UnOp::Not,
+            operand,
+        } = expression.kind()
+        {
+            expression = operand;
+            is_unary_not_argument = !is_unary_not_argument;
         }
-        return;
-    }
+
+        // The type of an element of an array does not tell that the index may be out of bounds.
+        if !cx.state.is_no_unchecked_indexed_access && is_array_index_expression(expression) {
+            return;
+        }
+
+        // The left side has been checked as the left side of a logical expression. The right side is
+        // a condition only if the whole is one. Not so for `??`: `nullBool ?? true` is common, so the
+        // type of the whole is looked at.
+        let ExprKind::Binary {
+            op: BinOp::And | BinOp::Or,
+            right,
+            ..
+        } = expression.kind()
+        else {
+            break (expression, is_unary_not_argument);
+        };
+        if !is_only_used_for_truthiness(expression, &mut cx.state.only_used_for_truthiness) {
+            return;
+        }
+        node = right;
+    };
 
     let ty = get_constrained_type_at_location(expression);
     if is_conditional_always_necessary(ty) {
@@ -377,7 +420,7 @@ fn check_node<'a>(expression: Expr<'a>, cx: &Context<'a>) {
     cx.report(node, message);
 }
 
-fn check_node_for_nullish<'a>(node: Expr<'a>, cx: &Context<'a>) {
+fn check_node_for_nullish<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
     let ty = get_constrained_type_at_location(node);
     if is_type_flag_set(ty, ANY_UNKNOWN_OR_TYPE_VARIABLE_FLAG) {
         return;
@@ -387,14 +430,14 @@ fn check_node_for_nullish<'a>(node: Expr<'a>, cx: &Context<'a>) {
     let message = if is_type_flag_set(ty, TypeFlags::NEVER) {
         NEVER
     } else if !is_possibly_nullish(ty)
-        && (is_chain_expression || !is_nullable_member_expression(node))
+        && (is_chain_expression || !is_nullable_member_expression(node, cx))
     {
         // The type of an element of an array does not tell that the index may be out of bounds.
         if !cx.state.is_no_unchecked_indexed_access
             && (is_array_index_expression(node)
                 || is_chain_expression
                     && !matches!(node.kind(), ExprKind::NonNull(_))
-                    && option_chain_contains_option_array_index(node))
+                    && option_chain_contains_option_array_index(node, &mut cx.state.chains_with_option_array_index))
         {
             return;
         }
@@ -519,7 +562,7 @@ fn is_optionable_expression<'a>(node: Expr<'a>, cx: &Context<'a>) -> bool {
         }
 }
 
-fn check_optional_chain<'a>(node: Expr<'a>, cx: &Context<'a>) {
+fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
     // Only this step of the chain is of interest.
     if !node.is_optional() {
         return;
@@ -531,7 +574,9 @@ fn check_optional_chain<'a>(node: Expr<'a>, cx: &Context<'a>) {
         _ => return,
     };
     // The type of an element of an array does not tell that the index may be out of bounds.
-    if !cx.state.is_no_unchecked_indexed_access && option_chain_contains_option_array_index(node) {
+    if !cx.state.is_no_unchecked_indexed_access
+        && option_chain_contains_option_array_index(node, &mut cx.state.chains_with_option_array_index)
+    {
         return;
     }
     if is_optionable_expression(node_to_check, cx) {
@@ -548,7 +593,7 @@ fn check_optional_chain<'a>(node: Expr<'a>, cx: &Context<'a>) {
 }
 
 impl NoUnnecessaryCondition {
-    fn check_if_loop_is_necessary_conditional<'a>(&self, test: Expr<'a>, cx: &Context<'a>) {
+    fn check_if_loop_is_necessary_conditional<'a>(&self, test: Expr<'a>, cx: &mut Context<'a>) {
         let is_allowed = match self.allow_constant_loop_conditions {
             AllowConstantLoopConditions::OnlyAllowedLiterals => match test.kind() {
                 ExprKind::True | ExprKind::False => true,
@@ -565,7 +610,7 @@ impl NoUnnecessaryCondition {
         }
     }
 
-    fn check_type_predicate<'a>(node: Expr<'a>, cx: &Context<'a>) {
+    fn check_type_predicate<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
         if let Some(truthiness_asserted_argument) = find_truthiness_asserted_argument(node) {
             check_node(truthiness_asserted_argument, cx);
         }
@@ -591,7 +636,7 @@ impl NoUnnecessaryCondition {
         }
     }
 
-    fn check_call_expression<'a>(&self, node: Expr<'a>, cx: &Context<'a>) {
+    fn check_call_expression<'a>(&self, node: Expr<'a>, cx: &mut Context<'a>) {
         if self.check_type_predicates {
             Self::check_type_predicate(node, cx);
         }
@@ -656,7 +701,7 @@ impl Rule for NoUnnecessaryCondition {
         .has_suggestions()
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = CompilerFlags;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -676,9 +721,9 @@ impl Rule for NoUnnecessaryCondition {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> CompilerFlags {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
         let compiler_options = file.type_checker().compiler_options();
-        let flags = CompilerFlags {
+        let flags = State {
             is_strict_null_checks: is_strict_compiler_option_enabled(
                 compiler_options,
                 CompilerOption::StrictNullChecks,
@@ -687,6 +732,9 @@ impl Rule for NoUnnecessaryCondition {
                 compiler_options,
                 CompilerOption::NoUncheckedIndexedAccess,
             ),
+            only_used_for_truthiness: AncestorMemo::default(),
+            chains_with_option_array_index: FxHashMap::default(),
+            optional_properties: FxHashMap::default(),
         };
         if !flags.is_strict_null_checks
             && !self.allow_rule_to_run_without_strict_null_checks_i_know_what_i_am_doing

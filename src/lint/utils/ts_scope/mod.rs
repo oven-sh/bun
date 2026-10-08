@@ -27,7 +27,11 @@
 //! | `isSelfReference`, `isInsideOneOf` | [`get_self_reference_ranges`] |
 //! | `isReadForItself`, `getRhsNode`, `isUnusedExpression` | [`is_read_for_itself`], [`get_rhs_node`], [`is_unused_expression`] |
 //! | `isInsideOfStorableFunction`, `isStorableFunction` | [`is_inside_of_storable_function`], [`is_storable_function`] |
+//! | `analyzeClassMemberUsage`, `ClassScopeResult` | [`analyze_class_member_usage`], [`ClassMemberUsage`], [`ClassScopeResult`] |
+//! | `Member`, `MemberNode` of `class-scope-analyzer` | [`ClassMember`], [`MemberNode`] |
+//! | `extractNameForMember`, `extractNameForMemberExpression`, `ExtractedName` | [`extract_name_for_member`], [`extract_name_for_member_expression`], [`ExtractedName`] |
 
+mod class_scope_analyzer;
 mod collect_unused_variables;
 mod estree;
 mod explicit_return_type_utils;
@@ -37,6 +41,7 @@ mod reference_contains_type_predicate;
 mod reference_contains_type_query;
 mod scope_utils;
 
+pub use class_scope_analyzer::*;
 pub use collect_unused_variables::*;
 pub use explicit_return_type_utils::*;
 pub use is_type_import::*;

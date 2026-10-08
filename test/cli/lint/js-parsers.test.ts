@@ -290,3 +290,175 @@ describe.concurrent("bun lint with processors", () => {
     timeout,
   );
 });
+
+const oxlintrc = JSON.stringify({
+  categories: { correctness: "off" },
+  rules: {
+    "no-var": "error",
+    "no-debugger": "error",
+    eqeqeq: "error",
+    "no-unused-vars": "error",
+    "no-undef": "error",
+    "no-unused-labels": "error",
+    "prefer-const": "error",
+  },
+});
+
+// `file line:column rule` of oxlint's JSON.
+const diagnostics = (json: string) =>
+  JSON.parse(json)
+    .diagnostics.map((it: any) => `${it.filename} ${it.labels[0].span.line}:${it.labels[0].span.column} ${it.code}`)
+    .sort()
+    .join("\n");
+
+const scripts = {
+  ".oxlintrc.json": oxlintrc,
+  "a.vue": `<template>
+  <div @click="go(x == 1)">{{ msg }}</div>
+  <!-- <script>var inComment = 1</script> -->
+</template>
+
+<script lang="ts">
+var a: number = 1;
+debugger;
+export default { name: "a" };
+</script>
+
+<script setup lang="ts" generic="T extends Record<string, string>">
+import { ref } from "vue";
+const props = defineProps<{ x: number }>();
+let msg = ref("é"); var unused = 2;
+if (msg.value == "1") undefinedThing();
+// oxlint-disable-next-line no-debugger
+debugger;
+</script>
+
+<script>
+var third = 1; debugger;
+</script>
+`,
+  "b.svelte": `<script module lang="ts">
+  export var m: number = 1;
+</script>
+<script-like>var no = 1;</script-like>
+<script>
+  let count = 0;
+  $: doubled = count * 2;
+  var v = 1; debugger;
+</script>
+<button on:click={() => count == 1}>{doubled}</button>
+`,
+  "c.astro": `---
+let title: string = "x"; var y = 1;
+debugger;
+---
+<html><body>{title}
+<script>var z = 1; debugger;</script>
+<script type="application/json">{"a": 1}</script>
+<script is:inline src="x.js" />
+</body></html>
+`,
+  // No language that is known: nothing from there on is linted.
+  "d.vue": `<script lang="coffee">
+x = 1
+</script>
+<script setup>
+debugger;
+</script>
+`,
+};
+
+describe.concurrent("bun lint with an .oxlintrc.json", () => {
+  test("lints the scripts in .vue, .svelte and .astro files, as oxlint does", async () => {
+    const result = await lint(scripts, ["-f", "json"]);
+    // What oxlint 1.80 reports.
+    expect(diagnostics(result.raw)).toMatchInlineSnapshot(`
+      "a.vue 14:15 eslint(no-undef)
+      a.vue 15:22 eslint(no-var)
+      a.vue 16:15 eslint(eqeqeq)
+      a.vue 16:23 eslint(no-undef)
+      a.vue 7:1 eslint(no-var)
+      a.vue 8:1 eslint(no-debugger)
+      b.svelte 2:10 eslint(no-var)
+      b.svelte 7:6 eslint(no-undef)
+      b.svelte 8:14 eslint(no-debugger)
+      b.svelte 8:3 eslint(no-var)
+      c.astro 2:26 eslint(no-var)
+      c.astro 2:5 eslint(prefer-const)
+      c.astro 3:1 eslint(no-debugger)
+      c.astro 6:20 eslint(no-debugger)
+      c.astro 6:9 eslint(no-var)"
+    `);
+    expect(JSON.parse(result.raw).number_of_files).toBe(4);
+    expect(result.exitCode).toBe(1);
+  });
+
+  test("--fix fixes the scripts where they are", async () => {
+    const result = await lint(scripts, ["--fix", "-f", "json"], ["a.vue", "b.svelte", "c.astro", "d.vue"]);
+    expect(result.files).toMatchInlineSnapshot(`
+      {
+        "a.vue": 
+      "<template>
+        <div @click="go(x == 1)">{{ msg }}</div>
+        <!-- <script>var inComment = 1</script> -->
+      </template>
+
+      <script lang="ts">
+      let a: number = 1;
+      debugger;
+      export default { name: "a" };
+      </script>
+
+      <script setup lang="ts" generic="T extends Record<string, string>">
+      import { ref } from "vue";
+      const props = defineProps<{ x: number }>();
+      let msg = ref("é"); let unused = 2;
+      if (msg.value == "1") undefinedThing();
+      // oxlint-disable-next-line no-debugger
+      debugger;
+      </script>
+
+      <script>
+      var third = 1; debugger;
+      </script>
+      "
+      ,
+        "b.svelte": 
+      "<script module lang="ts">
+        export var m: number = 1;
+      </script>
+      <script-like>var no = 1;</script-like>
+      <script>
+        let count = 0;
+        $: doubled = count * 2;
+        let v = 1; debugger;
+      </script>
+      <button on:click={() => count == 1}>{doubled}</button>
+      "
+      ,
+        "c.astro": 
+      "---
+      const title: string = "x"; const y = 1;
+      debugger;
+      ---
+      <html><body>{title}
+      <script>const z = 1; debugger;</script>
+      <script type="application/json">{"a": 1}</script>
+      <script is:inline src="x.js" />
+      </body></html>
+      "
+      ,
+        "d.vue": 
+      "<script lang="coffee">
+      x = 1
+      </script>
+      <script setup>
+      debugger;
+      </script>
+      "
+      ,
+      }
+    `);
+    expect(result.exitCode).toBe(1);
+  });
+});

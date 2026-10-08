@@ -119,6 +119,7 @@ Where an `.oxlintrc.json` is the configuration, `bun lint` behaves like oxlint:
 - The default format is `pretty`, and `-f json` prints oxlint's JSON, so scripts that read `diagnostics` keep working.
 - An argument that matches nothing is not an error, as long as there is a file to lint. If there is none, the exit code is `1`.
 - `--report-unused-disable-directives` warns.
+- The `<script>` blocks of `.vue` and `.svelte` files are linted, and the frontmatter and the `<script>` blocks of `.astro` files. Each block is linted by itself. The template is not read, so `no-unused-vars` is off in these files, and `prefer-const` is off in `.vue` and `.svelte` files.
 
 | Instead of                 | Run                          |
 | -------------------------- | ---------------------------- |

@@ -18,6 +18,7 @@ use bun_lint::rule::Kind;
 use bun_lint_graph::Graph;
 use bun_sema::atom::Intern;
 use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
+use bun_sema::resolve::ScriptKind;
 use bun_sema::session::Session;
 use std::sync::Arc;
 use std::time::Instant;
@@ -46,6 +47,9 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) memory: &'c Session,
 }
 
+/// ESLint's `ruleFilter`.
+pub(crate) type RuleFilter<'f> = dyn Fn(&RuleId, Severity) -> bool + Sync + 'f;
+
 /// How a text is linted, if not like a file.
 #[derive(Copy, Clone, Default)]
 struct How<'h> {
@@ -55,6 +59,8 @@ struct How<'h> {
     without_fixes: bool,
     /// See [`LintOptions::physical_path_len`].
     physical_path_len: Option<usize>,
+    /// It is a script in a file: its language, and which rules run.
+    script: Option<(ScriptKind, &'h RuleFilter<'h>)>,
 }
 
 fn only_errors(_: &RuleId, severity: Severity) -> bool {
@@ -168,6 +174,22 @@ impl Context<'_, '_> {
         self.verify_as(path, text, config, how)
     }
 
+    /// The same for a script in the file at `path`, in the language `kind`. Only the rules run of which `filter` says so.
+    pub(crate) fn verify_script(
+        &self,
+        path: &[u8],
+        text: &[u8],
+        config: &ResolvedConfig,
+        kind: ScriptKind,
+        filter: &RuleFilter,
+    ) -> LintResult {
+        let how = How {
+            script: Some((kind, filter)),
+            ..How::default()
+        };
+        self.verify_as(path, text, config, how)
+    }
+
     /// Lints a file again that `modules` names when all files are linted.
     pub(crate) fn lint_again(&self, result: &mut FileResult) -> Result<(), Fatal> {
         let Some(config) = result.linted.as_ref().map(|it| Arc::clone(&it.config)) else {
@@ -221,7 +243,7 @@ impl Context<'_, '_> {
             how.dialect,
             (arena, session),
             path,
-            how.script_kind,
+            as_what.script.map(|it| it.0).or(how.script_kind),
             text,
             self.atoms.of_this_thread(),
             how.experimental_decorators,
@@ -251,6 +273,7 @@ impl Context<'_, '_> {
                     again: as_what.again,
                     wants_fixes: options.wants_fixes && !as_what.without_fixes,
                     physical_path_len: as_what.physical_path_len,
+                    rule_filter: as_what.script.map(|it| it.1).or(options.rule_filter),
                     ..options
                 };
                 let mut result = self.linter.lint(&file, config, &options);
@@ -358,6 +381,16 @@ impl Context<'_, '_> {
         })?;
         self.timing.add(&self.timing.read, started);
         let shown = paths::to_native(target.path.clone());
+        if let Some(framework) = target.framework() {
+            return Ok(Some(self.verify_text_by(
+                shown,
+                &target.path,
+                text,
+                config,
+                on_circular_fixes,
+                &mut |text| self.verify_scripts(framework, &target.path, text, config),
+            )));
+        }
         if target.has_processor() {
             return Ok(Some(self.verify_processed_text(
                 &target.loaded,

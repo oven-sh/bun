@@ -363,6 +363,21 @@ impl Run<'_> {
             paths::to_native(path.clone())
         };
         let on_circular_fixes = |path: &[u8]| warn_about_circular_fixes(loader, path);
+        if let Some(framework) = loaded.framework(&path) {
+            let result = context.verify_text_by(
+                shown,
+                &path,
+                text,
+                config,
+                &on_circular_fixes,
+                &mut |text| context.verify_scripts(framework, &path, text, config),
+            );
+            return Ok(Linted {
+                results: vec![result],
+                files: 1,
+                listed: None,
+            });
+        }
         if loaded.routes(config, &path) == Route::Processor {
             let result = context.verify_processed_text(
                 &loaded,
@@ -523,7 +538,7 @@ impl Run<'_> {
                 without_types.push(target);
                 continue;
             };
-            if target.has_processor() {
+            if target.has_processor() || target.framework().is_some() {
                 without_types.push(target);
                 continue;
             }

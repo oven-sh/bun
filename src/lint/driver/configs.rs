@@ -5,6 +5,7 @@
 //! counts. Configurations are not merged.
 
 use crate::cli::Options;
+use crate::embedded::Framework;
 use crate::gitignore::{self, Chain};
 use crate::run::{Environment, Fatal};
 use crate::{evaluate, fs, paths};
@@ -81,6 +82,11 @@ pub(crate) struct Loaded {
 }
 
 impl Loaded {
+    /// What kind of file with scripts in it the file at `path` is, if these are what is linted: oxlint does that.
+    pub(crate) fn framework(&self, path: &[u8]) -> Option<Framework> {
+        Framework::of(path).filter(|_| self.flavor == Flavor::Oxlint)
+    }
+
     /// How the file at `path`, which has `config`, is linted. Only an `eslint.config.js` has processors.
     pub(crate) fn routes(&self, config: &ResolvedConfig, path: &[u8]) -> Route {
         match config.route(path) {

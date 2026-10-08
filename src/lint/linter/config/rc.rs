@@ -12,7 +12,7 @@ use crate::js_plugin;
 use crate::linter::registry::Registry;
 use crate::linter::space::trim_end;
 use crate::options::Json;
-use crate::rule::Plugin;
+use crate::rule::{Meta, Plugin};
 use bun_core::strings;
 use std::sync::Arc;
 
@@ -43,6 +43,23 @@ pub fn oxlint_category(plugin: Plugin, name: &str) -> Option<&'static str> {
         .iter()
         .find(|it| has(it.1))
         .map(|it| it.0)
+}
+
+/// Whether oxlint runs the rule on code that is TypeScript, or on code that is not: its `should_run`, as far as that goes by the
+/// language.
+pub fn oxlint_runs_on(meta: &Meta, is_typescript: bool) -> bool {
+    let lists = match is_typescript {
+        true => categories::NOT_TYPESCRIPT,
+        false => categories::TYPESCRIPT_ONLY,
+    };
+    // oxlint has most of the rules that typescript-eslint extends under the names of ESLint.
+    let is_of = |plugin: Plugin| {
+        plugin == meta.plugin
+            || (plugin == Plugin::Eslint && meta.extends_base_rule == Some(meta.name))
+    };
+    !(lists.iter())
+        .filter(|it| Plugin::of_prefix(it.0.as_bytes()).is_some_and(is_of))
+        .any(|it| strings::split(it.1.as_bytes(), b" ").any(|it| it == meta.name.as_bytes()))
 }
 
 /// Whether oxlint has a rule that is called `name`, in whatever plugin.
@@ -79,6 +96,8 @@ const PLUGIN_NAMES: [&[u8]; 23] = [
 
 /// The files that are linted if nothing else says so.
 const LINTED_FILES: &[u8] = b"**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}";
+/// By oxlint, which lints the scripts in the last three.
+const LINTED_FILES_OF_OXLINT: &[u8] = b"**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx,vue,svelte,astro}";
 
 /// `convertIgnorePatternToMinimatch` of `@eslint/compat`: a pattern of a `.gitignore` as a pattern
 /// for `ignores`.
@@ -570,7 +589,10 @@ impl Config {
             overrides: Vec::new(),
         };
         rc.reader.objects.push(ConfigObject {
-            files: Some(vec![vec![Pattern::new(LINTED_FILES)]]),
+            files: Some(vec![vec![Pattern::new(match flavor {
+                RcFlavor::Eslint => LINTED_FILES,
+                RcFlavor::Oxlint => LINTED_FILES_OF_OXLINT,
+            })]]),
             ..ConfigObject::default()
         });
         // What each ignores by itself. For ESLint these are patterns of a `.gitignore`.

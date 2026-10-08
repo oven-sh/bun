@@ -5,6 +5,7 @@
 //! threads, one level of the tree at a time, and one that the configuration ignores is not entered.
 
 use crate::configs::{Flavor, Loaded, Loader};
+use crate::embedded::Framework;
 use crate::gitignore::{self, Chain};
 use crate::run::{Fatal, Pool};
 use crate::{fs, paths};
@@ -44,6 +45,11 @@ pub(crate) struct Target {
 }
 
 impl Target {
+    /// What kind of file with scripts in it this is, if these are what is linted.
+    pub(crate) fn framework(&self) -> Option<Framework> {
+        self.loaded.framework(&self.path)
+    }
+
     /// Whether a processor is to take the code out of it.
     pub(crate) fn has_processor(&self) -> bool {
         match &self.status {

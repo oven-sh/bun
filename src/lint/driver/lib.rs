@@ -13,6 +13,7 @@ pub mod cli;
 mod configs;
 mod deprecated;
 mod discover;
+mod embedded;
 mod evaluate;
 pub mod fmt;
 pub mod for_tests;

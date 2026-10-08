@@ -13,7 +13,7 @@ use bun_lint::options::{Json, Options};
 use bun_lint::rule::Plugin;
 use bun_lint::runner::{Enabled, run};
 use bun_sema::atom::Interner;
-use bun_sema::bind::{BindOptions, bind};
+use bun_sema::bind::{BindOptions, bind_for_lint};
 use bun_sema::session::Session;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::time::Instant;
@@ -87,7 +87,7 @@ fn rules(args: &[String]) {
             before_es2020: false,
             before_es2017: false,
         };
-        let bound = bind(&hir, bind_options, &atoms, arena);
+        let bound = bind_for_lint(&hir, bind_options, &atoms, arena);
         front_end.fetch_add(started.elapsed().as_nanos() as u64, Relaxed);
         // On a file of which nothing is computed yet, then once more: how long each takes, and how much is reported.
         let measure = |rules: &[Enabled]| {

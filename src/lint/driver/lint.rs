@@ -15,7 +15,7 @@ use bun_lint::linter::{Again, LintMessage, LintOptions, LintResult, Linter, Reso
 use bun_lint_graph::Graph;
 use bun_lint::rule::Kind;
 use bun_sema::atom::Intern;
-use bun_sema::bind::{BindOptions, bind};
+use bun_sema::bind::{BindOptions, bind_for_lint};
 use bun_sema::session::Session;
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -176,7 +176,7 @@ impl Context<'_, '_> {
             before_es2020: false,
             before_es2017: false,
         };
-        let bound = bind(&hir, bind_options, atoms, arena);
+        let bound = bind_for_lint(&hir, bind_options, atoms, arena);
         let parsed = self.timing.add(&self.timing.parse, started);
         if hir.ran_out_of_stack || bound.ran_out_of_stack {
             return LintResult {

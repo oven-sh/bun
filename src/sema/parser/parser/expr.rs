@@ -880,7 +880,8 @@ impl Parser<'_> {
 
     /// `parseTypeArgumentsInExpression`, in a `tryParse`.
     fn try_type_arguments_in_expression(&mut self) -> Option<IdList<TypeNodeId>> {
-        self.try_parse(|p| {
+        let less_than = self.pos() as usize;
+        let type_arguments = self.try_parse(|p| {
             // `ReScanLessThanToken`
             if p.token() == T::LessThanLessThan {
                 p.lx.token = T::LessThan;
@@ -914,7 +915,39 @@ impl Parser<'_> {
                 }
             };
             follows.then(|| p.take_ids(base))
-        })
+        });
+        // TypeScript reports an error in a type and goes on. What it goes on with can end with a `>`,
+        // and then these are type arguments with an error in them.
+        if type_arguments.is_none() && self.was_abandoned_at.is_some() {
+            let rest = self.lx.src.get(less_than..).unwrap_or_default();
+            let statement = rest.get(..256).unwrap_or(rest);
+            let statement = match bun_core::strings::index_of_char_usize(statement, b';') {
+                Some(end) => &statement[..end],
+                None => statement,
+            };
+            // `canFollowTypeArgumentsInExpression`
+            let ends_a_list = |at: usize| {
+                let after = statement.get(at + 1..).unwrap_or_default();
+                let next = after.iter().find(|c| !matches!(c, b' ' | b'\t'));
+                statement.get(at.wrapping_sub(1)) != Some(&b'=')
+                    && !matches!(after.first(), Some(b'>' | b'='))
+                    && !next.is_some_and(|c| {
+                        c.is_ascii_alphanumeric() || b"_$\"'{[<+-~#@".contains(c) || *c >= 0x80
+                    })
+            };
+            let mut from = 0;
+            while let Some(found) = statement
+                .get(from..)
+                .and_then(|rest| bun_core::strings::index_of_char_usize(rest, b'>'))
+            {
+                if ends_a_list(from + found) {
+                    self.refuse(Refusal::Reported);
+                    break;
+                }
+                from += found + 1;
+            }
+        }
+        type_arguments
     }
 
     /// `parsePrimaryExpression`

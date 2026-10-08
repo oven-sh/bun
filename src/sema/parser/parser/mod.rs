@@ -160,6 +160,10 @@ pub(crate) struct Parser<'a> {
     speculations: u32,
     /// `report` was called in one of them.
     has_reported: bool,
+    /// The token at which `fail` was called last.
+    failed_at: T,
+    /// The last `try_parse` was abandoned because of that call.
+    pub(crate) was_abandoned_at: Option<T>,
     stack_check: bun_core::StackCheck,
 }
 
@@ -203,6 +207,8 @@ impl<'a> Parser<'a> {
             last_nullable_type: (TypeNodeId::NONE, 0),
             speculations: 0,
             has_reported: false,
+            failed_at: T::Eof,
+            was_abandoned_at: None,
             stack_check: bun_core::StackCheck::init(),
         };
         this.source_file();
@@ -347,6 +353,9 @@ impl<'a> Parser<'a> {
     #[inline(never)]
     #[track_caller]
     pub(crate) fn fail(&mut self) {
+        if !self.has_failed() {
+            self.failed_at = self.lx.token;
+        }
         self.lx.refuse(Refusal::Syntax);
     }
 
@@ -541,8 +550,11 @@ impl<'a> Parser<'a> {
                 }
                 return result;
             }
-            None => {}
-            Some(Refusal::Syntax) => self.lx.refusal = None,
+            None => self.was_abandoned_at = None,
+            Some(Refusal::Syntax) => {
+                self.lx.refusal = None;
+                self.was_abandoned_at = Some(self.failed_at);
+            }
             // The file is given up.
             Some(_) => return None,
         }

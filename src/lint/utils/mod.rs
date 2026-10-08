@@ -23,6 +23,7 @@
 //! | `node.type`, `node.range`, `node.parent`, `ChainExpression`, `SequenceExpression`, patterns in assignments | [`estree_compat`], re-exported from here | `utils::estree_type_name(node)`, `utils::estree_type_at(file, offset)`, `utils::sequence_expressions(e)`, `utils::Target` |
 //! | `array.sort((a, b) => a > b ? 1 : -1)`, a comparison that never answers 0 | [`array`] | `utils::array_sort_by(&mut items, \|a, b\| ..)` |
 //! | `a.localeCompare(b)`, `new Intl.Collator("en", { numeric: true, sensitivity: "base" })` | [`collation`] | `collation::locale_compare(a, b)`, `collation::collator_compare_numeric_base(a, b)` |
+//! | a `Literal` / `TemplateLiteral` listener that looks at strings: keys, module specifiers and literal types are not expressions here | [`string_literals`] | `impl StringLiterals for MyRule`, `on_string_literals(on)` beside `on.exprs([ExprTag::String, ExprTag::Template], ..)` |
 //! | methods of `String`, `/\s/`, `escapeRegExp` | [`text`] | `text::trim(bytes)`, `text::utf16_len(bytes)` |
 //!
 //! A function that takes two handles has one lifetime for both, `fn f<'a>(a: Expr<'a>, b: Expr<'a>)`:
@@ -90,6 +91,7 @@ pub mod ignore;
 pub mod keywords;
 pub mod naming;
 pub mod regular_expressions;
+pub mod string_literals;
 pub mod string_utils;
 pub mod text;
 pub mod ts_scope;

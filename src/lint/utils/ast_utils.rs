@@ -1490,6 +1490,10 @@ enum FunctionParent<'a> {
 
 impl<'a> FunctionParent<'a> {
     fn of(func: Func<'a>) -> Self {
+        // The parent of a function type is a `TSTypeAnnotation` or another type.
+        if matches!(func.owner(), Node::Type(_)) {
+            return FunctionParent::Other;
+        }
         match estree_parent(Node::Func(func)) {
             Node::Member(member) if member.flags().contains(Flags::ABSTRACT) => {
                 FunctionParent::Other

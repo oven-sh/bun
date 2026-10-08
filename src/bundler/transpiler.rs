@@ -1487,6 +1487,7 @@ impl<'a> Transpiler<'a> {
                     is_entry_point: false,
                     tolerant: false,
                     is_javascript: false,
+                    dialect: Default::default(),
                 };
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;

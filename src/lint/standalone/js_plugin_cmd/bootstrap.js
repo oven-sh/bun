@@ -1,4 +1,4 @@
-// What a process for JavaScript plugins is started with: see `pipes.rs`. Messages are read from the file descriptor 3 and
+// What a process for JavaScript plugins is started with: see `processes.rs`. Messages are read from the file descriptor 3 and
 // written to 4. The program itself is too long for a command line: it is the first message.
 const { readSync, writeSync } = require("node:fs");
 

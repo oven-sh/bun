@@ -1,10 +1,10 @@
-//! What a worker is told when it starts.
+//! The program, and what it is told when it starts.
 
 use super::ast::STRINGS;
 use crate::estree::NodeType;
 use crate::linter::write_json_string;
 
-/// The program of a worker: the names of its parts in `worker/`, and what is in them. They share one scope.
+/// The program: the names of its parts in `worker/`, and what is in them. They share one scope.
 pub const PROGRAM: &[(&str, &str)] = &[
     ("ast.js", include_str!("worker/ast.js")),
     ("tokens.js", include_str!("worker/tokens.js")),

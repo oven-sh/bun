@@ -1,25 +1,30 @@
-//! Realms that are processes of their own, talked to through pipes.
+//! Realms for JavaScript plugins that are processes of their own, talked to through pipes. Bun has a VM on each thread
+//! instead: this is for the harness, which has no JavaScript in it.
 //!
 //! A message is a header of two numbers, the length of what follows and what it is, and then that many bytes. To a process:
 //! the program ([`PROGRAM`]), a call (its kind), the answer to what it asked for (0). From a process: what it asks for (its
 //! kind), what a call returns ([`RESULT`]).
 
-use super::engine::{Engine, Serve, Vm};
+use bun_lint::js_plugin::{Engine, Serve, Vm};
 use bun_threading::{Condition, Guarded};
 
 const PROGRAM: u32 = 100;
 const RESULT: u32 = 100;
 
+/// What a process is started with: `bun -e BOOTSTRAP`. It reads what [`Channel::send`] sends from the file descriptor 3, and
+/// what it writes to 4 is for [`Channel::receive`]. Both are pipes that block.
+pub(crate) const BOOTSTRAP: &str = include_str!("bootstrap.js");
+
 /// Both ends of the pipes to a process. Dropping it closes them, at which the process ends.
-pub trait Channel: Send {
+pub(crate) trait Channel: Send {
     /// Writes all of `bytes`.
     fn send(&mut self, bytes: &[u8]) -> Result<(), Vec<u8>>;
     /// Reads until `into` is full.
     fn receive(&mut self, into: &mut [u8]) -> Result<(), Vec<u8>>;
 }
 
-/// Starts the running executable with [`BOOTSTRAP`](super::BOOTSTRAP).
-pub type Spawn<'e> = dyn Fn() -> Result<Box<dyn Channel>, Vec<u8>> + Sync + 'e;
+/// Starts `bun` with [`BOOTSTRAP`].
+pub(crate) type Spawn<'e> = dyn Fn() -> Result<Box<dyn Channel>, Vec<u8>> + Sync + 'e;
 
 struct Process {
     channel: Box<dyn Channel>,
@@ -73,7 +78,7 @@ struct State {
 }
 
 /// Some processes. None is started before it is needed.
-pub struct Processes<'e> {
+pub(crate) struct Processes<'e> {
     spawn: &'e Spawn<'e>,
     program: Vec<u8>,
     max: usize,
@@ -83,18 +88,18 @@ pub struct Processes<'e> {
 
 impl<'e> Processes<'e> {
     /// `max`: how many there can be at a time.
-    pub fn new(spawn: &'e Spawn<'e>, max: usize) -> Processes<'e> {
+    pub(crate) fn new(spawn: &'e Spawn<'e>, max: usize) -> Processes<'e> {
         Processes {
             spawn,
-            program: super::PROGRAM.iter().flat_map(|it| it.1.bytes()).collect(),
+            program: bun_lint::js_plugin::PROGRAM.iter().flat_map(|it| it.1.bytes()).collect(),
             max: max.max(1),
             state: Guarded::new(State::default()),
             is_idle: Condition::default(),
         }
     }
 
-    /// Another program than [`PROGRAM`](super::PROGRAM).
-    pub fn set_program(&mut self, program: Vec<u8>) {
+    /// Another program than [`bun_lint::js_plugin::PROGRAM`].
+    pub(crate) fn set_program(&mut self, program: Vec<u8>) {
         self.program = program;
     }
 

@@ -2,7 +2,6 @@
 
 use super::engine::{Engine, Vm};
 use super::offsets::Offsets;
-use super::pipes::{Processes, Spawn};
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
 use super::wire::{self, ask, call, result};
 use super::{ast, schema, scopes, tokens};
@@ -83,14 +82,9 @@ struct State {
     selector_numbers: FxHashMap<Box<[u8]>, u32>,
 }
 
-enum Engines<'e> {
-    Given(&'e dyn Engine),
-    Processes(Processes<'e>),
-}
-
 /// The plugins of a run. All threads share it.
 pub struct Host<'e> {
-    engine: Engines<'e>,
+    engine: &'e dyn Engine,
     cwd: Vec<u8>,
     state: Guarded<State>,
 }
@@ -158,26 +152,15 @@ impl<'e> Host<'e> {
     /// `cwd`: ESLint's `context.cwd`.
     pub fn with_engine(engine: &'e dyn Engine, cwd: &[u8]) -> Host<'e> {
         Host {
-            engine: Engines::Given(engine),
+            engine,
             cwd: cwd.to_vec(),
             state: Guarded::new(State::default()),
         }
     }
 
-    /// The same with at most `max_workers` processes for an engine.
-    pub fn new(spawn: &'e Spawn<'e>, cwd: &[u8], max_workers: usize) -> Host<'e> {
-        Host {
-            engine: Engines::Processes(Processes::new(spawn, max_workers)),
-            cwd: cwd.to_vec(),
-            state: Guarded::new(State::default()),
-        }
-    }
-
-    fn engine(&self) -> &dyn Engine {
-        match &self.engine {
-            Engines::Given(engine) => *engine,
-            Engines::Processes(processes) => processes,
-        }
+    /// Whether any plugin has been loaded.
+    pub fn has_plugins(&self) -> bool {
+        !self.state.lock().plugins.is_empty()
     }
 
     /// Loads a plugin. `specifier`: a path, relative to `directory`, or the name of a package, which
@@ -214,7 +197,7 @@ impl<'e> Host<'e> {
             return Ok(plugin);
         }
         let mut loaded = Err(OUT_OF_STEP.to_vec());
-        self.engine().with_vm(&mut |vm| loaded = self.load_in(vm, &location, None))?;
+        self.engine.with_vm(&mut |vm| loaded = self.load_in(vm, &location, None))?;
         let described = crate::json::parse(&loaded?).ok_or(OUT_OF_STEP)?;
         let mut state = self.state.lock();
         // Another thread was faster.
@@ -301,7 +284,7 @@ impl<'e> Host<'e> {
         wants_fixes: bool,
     ) -> Result<Vec<Report>, Failure> {
         let mut outcome = Err(Failure::from(OUT_OF_STEP.to_vec()));
-        self.engine().with_vm(&mut |vm| outcome = self.run_in(vm, file, settings, enabled, wants_fixes))?;
+        self.engine.with_vm(&mut |vm| outcome = self.run_in(vm, file, settings, enabled, wants_fixes))?;
         outcome
     }
 

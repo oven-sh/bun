@@ -6,9 +6,12 @@
 //!   `{ id, filename, code, languageOptions, settings, rules }`, of which only `id` and `code` are required. Prints
 //!   `{ id, messages }` or `{ id, failure }`, a line for each.
 
-use bun_lint::js_plugin::{BOOTSTRAP, Channel, Configured, FileSettings, Host, Plugin, Processes, Report};
+mod processes;
+
+use bun_lint::js_plugin::{Configured, FileSettings, Host, Plugin, Report};
 use bun_lint::language::LanguageOptions;
 use bun_lint::options::Json;
+use processes::{BOOTSTRAP, Channel, Processes};
 use std::io::{Read, Write};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Arc;
@@ -38,7 +41,7 @@ impl Drop for Process {
 }
 
 /// Starts a worker with the `bun` that is in `PATH`.
-pub(crate) fn spawn() -> Result<Box<dyn Channel>, Vec<u8>> {
+fn spawn() -> Result<Box<dyn Channel>, Vec<u8>> {
     let bun = std::env::var("BUN_LINT_BUN").unwrap_or_else(|_| "bun".to_owned());
     let mut command = Command::new("sh");
     command.args(["-c", "exec \"$0\" \"$@\" 3<&0 4>&1 1>&2 </dev/null", &bun, "-e", BOOTSTRAP]);

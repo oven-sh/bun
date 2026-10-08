@@ -13,6 +13,26 @@ fn should_nestle_adjacent_doc_comments(current: &Comment, next: &Comment) -> boo
     current.span.end == next.span.start && current.is_indentable_block() && next.is_indentable_block()
 }
 
+/// 0 if something is before `comment` on its line, 1 if nothing is, 2 if the line before is empty
+/// as well: Prettier's `hasNewline(.., { backwards: true })` and `isPreviousLineEmpty`.
+fn lines_before(comment: &Comment, f: &Formatter<'_>) -> usize {
+    fn without_blanks(text: &[u8]) -> &[u8] {
+        let blanks = text.iter().rev().take_while(|b| matches!(b, b' ' | b'\t')).count();
+        &text[..text.len() - blanks]
+    }
+    fn without_line_break(text: &[u8]) -> Option<&[u8]> {
+        match text {
+            [rest @ .., b'\r', b'\n'] | [rest @ .., b'\n' | b'\r'] | [rest @ .., 0xE2, 0x80, 0xA8 | 0xA9] => Some(rest),
+            _ => None,
+        }
+    }
+    let before = f.source_text().slice_range(0, comment.span.start);
+    match without_line_break(without_blanks(before)) {
+        None => 0,
+        Some(before) => 1 + usize::from(without_line_break(without_blanks(before)).is_some()),
+    }
+}
+
 /// The comments before the node at `span`.
 #[inline]
 pub(crate) const fn format_leading_comments<'a>(span: Span) -> FormatLeadingComments<'a> {
@@ -59,7 +79,7 @@ fn write_leading_comments<'a>(comments: &'a [Comment], node_start: u32, f: &mut 
                         .is_some_and(|next| should_nestle_adjacent_doc_comments(comment, next));
                     write!(f, maybe_space(!should_nestle));
                 }
-                1 if f.lines_before(comment.span) == 0 => write!(f, soft_line_break_or_space()),
+                1 if lines_before(comment, f) == 0 => write!(f, soft_line_break_or_space()),
                 1 => write!(f, hard_line_break()),
                 _ => write!(f, empty_line()),
             },
@@ -113,7 +133,7 @@ fn write_trailing_comments<'a>(comments: &'a [Comment], f: &mut Formatter<'a>) {
     for comment in comments {
         f.comments_mut().increment_printed_count();
 
-        let lines_before = f.lines_before(comment.span);
+        let lines_before = lines_before(comment, f);
         total_lines_before += lines_before;
 
         let should_nestle = previous_comment

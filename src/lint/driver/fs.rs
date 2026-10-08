@@ -71,7 +71,7 @@ pub(crate) fn read(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
 pub(crate) fn read_sized(path: &[u8], size: u64) -> bun_sys::Result<Vec<u8>> {
     let file = File::openat(Fd::cwd(), path, O::RDONLY, 0)?;
     // One more, so that the end of the file is seen without growing.
-    let mut text = Vec::with_capacity(size as usize + 1);
+    let mut text = Vec::with_capacity((size as usize).min(64 << 20) + 1);
     file.read_to_end_into(&mut text)?;
     Ok(text)
 }

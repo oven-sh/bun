@@ -53,7 +53,7 @@ const NAMES: [(&[u8], Flavor, Syntax); 11] = [
 
 /// What is linted, and how, if there is no configuration file.
 const BUILT_IN: &[u8] = br#"[
-    { "ignores": ["**/.git/"] },
+    { "ignores": ["**/.git/", "**/*.min.js"] },
     { "files": ["**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}"] },
     {
         "extends": ["eslint:recommended"],
@@ -291,7 +291,7 @@ impl<'l> Loader<'l> {
                 }
                 None => entries.push((key.to_vec(), Json::Array(add))),
             };
-            if !options.ignore_pattern.is_empty() {
+            if !options.ignore_pattern.is_empty() && options.ignore {
                 put(b"ignorePatterns", options.ignore_pattern.iter().cloned().map(Json::String).collect());
             }
             let mut last = vec![(&b"files"[..], Json::Array(vec![Json::String(b"**/*".to_vec())]))];
@@ -307,7 +307,8 @@ impl<'l> Loader<'l> {
             if last.len() > 1 {
                 put(b"overrides", vec![object(last)]);
             }
-            if !options.ignore {
+            // oxlint's `--no-ignore` is about the command line and `.eslintignore` only.
+            if !options.ignore && flavor == RcFlavor::Eslint {
                 entries.retain(|it| it.0 != b"ignorePatterns");
             }
             apply_filters(entries, &options.filters);
@@ -471,6 +472,8 @@ impl<'l> Loader<'l> {
                 None => self.load(b"", self.cwd()),
             };
         }
+        // oxlint's `--disable-nested-config`: that of the working directory is for everything.
+        let directory = if self.options.disable_nested_config { self.cwd() } else { directory };
         let mut asked: Vec<&[u8]> = Vec::new();
         let mut found = None;
         for ancestor in paths::ancestors(directory) {
@@ -500,7 +503,7 @@ impl<'l> Loader<'l> {
         names: impl Iterator<Item = &'n [u8]>,
         inherited: &Arc<Loaded>,
     ) -> Found {
-        if self.has_one_configuration() {
+        if self.has_one_configuration() || self.options.disable_nested_config {
             return Ok(Arc::clone(inherited));
         }
         match Self::pick(names) {
@@ -520,7 +523,13 @@ impl<'l> Loader<'l> {
 
     /// Whether `.gitignore` counts for what has the configuration `loaded`.
     pub(crate) fn reads_ignore_files(&self, loaded: &Loaded) -> bool {
-        loaded.flavor == Flavor::Oxlint && self.options.ignore
+        loaded.flavor == Flavor::Oxlint || (loaded.flavor == Flavor::BuiltIn && self.options.ignore)
+    }
+
+    /// The names of the ignore files that count in a directory, the one that overrides the other
+    /// last.
+    pub(crate) fn ignore_file_names(&self) -> &'static [&'static [u8]] {
+        if self.options.ignore { &[b".gitignore", b".eslintignore"] } else { &[b".gitignore"] }
     }
 
     /// The ignore files that count in `directory`, where a search starts.
@@ -528,8 +537,8 @@ impl<'l> Loader<'l> {
         if !self.reads_ignore_files(loaded) {
             return None;
         }
-        let chain = gitignore::above_and_in(directory);
-        match &self.options.ignore_path {
+        let chain = gitignore::above_and_in(directory, self.ignore_file_names());
+        match self.options.ignore_path.as_ref().filter(|_| self.options.ignore) {
             Some(path) => gitignore::with_file(chain, self.cwd(), &paths::resolve(self.cwd(), &paths::from_native(path))),
             None => chain,
         }

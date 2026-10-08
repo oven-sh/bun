@@ -90,7 +90,7 @@ impl Context<'_> {
                 }
             }
         };
-        FileResult::ignored(path.to_vec(), message)
+        FileResult::ignored(paths::to_native(path.to_vec()), message)
     }
 
     /// Parses `text` as the file at `path` and lints it, without types.
@@ -170,6 +170,7 @@ impl Context<'_> {
             text: (is_fixed || (self.keeps_text && is_reported)).then_some(text),
             messages: result.messages,
             suppressed: result.suppressed,
+            suppressed_by_file: 0,
             is_fixed,
             is_ignored: false,
             config: Some(Arc::clone(config)),
@@ -191,7 +192,7 @@ impl Context<'_> {
         let text = fs::read_sized(&target.path, target.size)
             .map_err(|error| Fatal([b"Cannot read ", &target.path[..], b": ", &fs::describe(&error)].concat()))?;
         self.timing.add(&self.timing.read, started);
-        Ok(Some(self.verify_text(target.path.clone(), &target.path, text, config, on_circular_fixes)))
+        Ok(Some(self.verify_text(paths::to_native(target.path.clone()), &target.path, text, config, on_circular_fixes)))
     }
 }
 

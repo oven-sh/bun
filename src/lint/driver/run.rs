@@ -6,6 +6,7 @@ use crate::discover::{self, Status, Target};
 use crate::format::{self, Format};
 use crate::lint::{Context, elapsed};
 use crate::results::{Counts, FileResult};
+use crate::suppressions::{self, Suppressions};
 use crate::typed::{self, Typed};
 use crate::{fs, paths};
 use bstr::BStr;
@@ -192,6 +193,14 @@ impl Run<'_> {
                 format!("The --ext option arguments cannot be empty strings. Found an empty string at index {index}.")
                     .into_bytes(),
             );
+        } else if options.suppress_all && options.suppress_rule.is_some() {
+            b"The --suppress-all option and the --suppress-rule option cannot be used together."
+        } else if options.suppress_all && options.prune_suppressions {
+            b"The --suppress-all option and the --prune-suppressions option cannot be used together."
+        } else if options.suppress_rule.is_some() && options.prune_suppressions {
+            b"The --suppress-rule option and the --prune-suppressions option cannot be used together."
+        } else if options.stdin && (options.suppress_all || options.suppress_rule.is_some() || options.prune_suppressions) {
+            b"The --suppress-all, --suppress-rule, and --prune-suppressions options cannot be used with piped-in code."
         } else if let Some(flag) = options.without_effect.iter().find(|flag| **flag != b"cache") {
             return Some([b"bun lint does not support --", *flag, b"."].concat());
         } else {
@@ -218,8 +227,25 @@ impl Run<'_> {
         if let Some(error) = &config.error {
             return Err(Fatal(error.clone()));
         }
-        let shown = if path.ends_with(b"__placeholder__.js") { b"<text>".to_vec() } else { path.clone() };
+        let shown = if path.ends_with(b"__placeholder__.js") { b"<text>".to_vec() } else { paths::to_native(path.clone()) };
         let on_circular_fixes = |path: &[u8]| warn_about_circular_fixes(loader, path);
+        let needs_types = name.is_some()
+            && loader.wants_types(&loaded, config)
+            && config.rules.iter().any(|it| it.severity != Severity::Off && it.entry.meta.requires_types);
+        if needs_types {
+            let file = Typed {
+                path: &path,
+                config,
+                text: Some(text.clone()),
+            };
+            if let Some(Some(result)) = typed::lint(context, self.environment, &[file], &on_circular_fixes).pop() {
+                return Ok(Linted {
+                    results: vec![result],
+                    files: 1,
+                    listed: None,
+                });
+            }
+        }
         Ok(Linted {
             results: vec![context.verify_text(shown, &path, text, config, &on_circular_fixes)],
             files: 1,
@@ -288,7 +314,14 @@ impl Run<'_> {
             let mut needing = config.rules.iter().filter(|it| it.severity != Severity::Off && it.entry.meta.requires_types);
             if loader.wants_types(&target.loaded, config) {
                 match needing.next() {
-                    Some(_) => with_types.push((target, Typed { path: &target.path, config })),
+                    Some(_) => with_types.push((
+                        target,
+                        Typed {
+                            path: &target.path,
+                            config,
+                            text: None,
+                        },
+                    )),
                     None => without_types.push(target),
                 }
                 continue;
@@ -406,19 +439,33 @@ impl Run<'_> {
         };
         if let Some(listed) = listed {
             for path in listed {
-                self.out.stdout.extend_from_slice(&path);
+                self.out.stdout.extend_from_slice(&paths::to_native(path));
                 self.out.stdout.push(b'\n');
             }
             return self.out;
         }
 
+        let mut fixed = 0;
         if options.fix {
-            for result in results.iter().filter(|it| it.is_fixed) {
-                let text = result.text.as_deref().unwrap_or_default();
-                if let Err(error) = fs::write_atomically(&result.path, text) {
-                    let error = [b"Cannot write ", &result.path[..], b": ", &fs::describe(&error)].concat();
-                    return self.fail(&error);
+            let changed: Vec<&FileResult> = results.iter().filter(|it| it.is_fixed).collect();
+            let mut failure = Guarded::new(None);
+            pool.for_each(changed.len(), 1, &|index| {
+                let result = changed[index];
+                if let Err(error) = fs::write_atomically(&result.path, result.text.as_deref().unwrap_or_default()) {
+                    failure.lock().get_or_insert([b"Cannot write ", &result.path[..], b": ", &fs::describe(&error)].concat());
                 }
+            });
+            if let Some(error) = failure.get_mut().take() {
+                return self.fail(&error);
+            }
+            fixed = changed.len();
+        }
+
+        let mut has_unused_suppressions = false;
+        if !options.stdin {
+            match self.apply_suppressions(&mut results) {
+                Ok(has_unused) => has_unused_suppressions = has_unused,
+                Err(Fatal(error)) => return self.fail(&error),
             }
         }
 
@@ -460,10 +507,17 @@ impl Run<'_> {
             self.error(text.as_bytes());
         }
         if !options.stdin && !options.silent {
-            self.write_summary(counts, files);
+            self.write_summary(counts, files, fixed);
         }
         if options.timing {
             self.write_timing(&timing, &phases, &pool);
+        }
+        if has_unused_suppressions && !options.pass_on_unpruned_suppressions {
+            self.error(
+                b"There are suppressions left that do not occur anymore. To resolve this, re-run the command with `--prune-suppressions` to remove unused suppressions. To ignore unused suppressions, use `--pass-on-unpruned-suppressions`.",
+            );
+            self.out.exit_code = 2;
+            return self.out;
         }
         self.out.exit_code = if options.exit_on_fatal_error && counts.fatal_errors > 0 {
             2
@@ -473,18 +527,50 @@ impl Run<'_> {
         self.out
     }
 
-    fn write_summary(&mut self, counts: Counts, files: usize) {
+    /// What ESLint's `cli.execute` does about `eslint-suppressions.json`. Returns whether that has
+    /// what does not occur.
+    fn apply_suppressions(&self, results: &mut [FileResult]) -> Result<bool, Fatal> {
+        let (options, cwd) = (self.options, &self.environment.cwd);
+        let location = options.suppressions_location.as_deref().map(paths::from_native);
+        let path = paths::resolve(cwd, location.as_deref().unwrap_or(suppressions::DEFAULT_FILE_NAME));
+        let writes = options.suppress_all || options.suppress_rule.is_some();
+        let exists = fs::is_file(&path);
+        if location.is_some() && !exists && !writes {
+            return Err(Fatal(
+                b"The suppressions file does not exist. Please run the command with `--suppress-all` or `--suppress-rule` to create it.".to_vec(),
+            ));
+        }
+        if !writes && !options.prune_suppressions && !exists {
+            return Ok(false);
+        }
+        let mut suppressed = Suppressions::load(&path)?;
+        if writes {
+            suppressed.suppress(results, cwd, options.suppress_rule.as_deref());
+            suppressed.save(&path)?;
+        }
+        let unused = suppressed.apply(results, cwd);
+        if options.prune_suppressions {
+            suppressed.prune(&unused, cwd);
+            suppressed.save(&path)?;
+            return Ok(false);
+        }
+        Ok(!unused.is_empty())
+    }
+
+    /// `fixed`: how many files were written.
+    fn write_summary(&mut self, counts: Counts, files: usize, fixed: usize) {
         let colors = self.environment.stderr.colors;
         let took = bun_core::output::Elapsed {
             colors,
             ms: self.began.elapsed().as_secs_f64() * 1000.0,
         };
         let noun = if files == 1 { "file" } else { "files" };
+        let fixed = if fixed > 0 { format!(", fixed {fixed}") } else { String::new() };
         let out = &mut self.out.stderr;
         if counts.errors + counts.warnings == 0 {
-            pretty!(out, colors, "<green>\u{2713}<r> No problems<d> in {} {} {}<r>\n", files, noun, took);
+            pretty!(out, colors, "<green>\u{2713}<r> No problems<d> in {} {}{} {}<r>\n", files, noun, fixed, took);
         } else {
-            pretty!(out, colors, "<d>Linted {} {} {}<r>\n", files, noun, took);
+            pretty!(out, colors, "<d>Linted {} {}{} {}<r>\n", files, noun, fixed, took);
         }
     }
 

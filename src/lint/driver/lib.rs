@@ -21,6 +21,7 @@ mod paths;
 mod print_config;
 mod results;
 mod run;
+mod suppressions;
 mod typed;
 
 pub use args::Param;

@@ -197,7 +197,7 @@ impl Run<'_> {
     }
 
     /// Prettier's `formatFiles`
-    fn format_files(mut self, configs: &Configs, mut ignored: Ignored) -> Outcome {
+    fn format_files(mut self, configs: &Configs, ignored: &mut Ignored) -> Outcome {
         let (options, cwd) = (self.options, &self.environment.cwd);
         // Files are written unless a flag says otherwise.
         let only_looks = (options.check || options.list_different) && !options.write;
@@ -208,7 +208,7 @@ impl Run<'_> {
         let dot = [b".".to_vec()];
         let patterns = if options.patterns.is_empty() { &dot[..] } else { &options.patterns[..] };
         let started = Instant::now();
-        let expanded = match files::expand(configs, &pool, &mut ignored, patterns, options.error_on_unmatched_pattern) {
+        let expanded = match files::expand(configs, &pool, ignored, patterns, options.error_on_unmatched_pattern) {
             Ok(expanded) => expanded,
             Err(Fatal(error)) => return self.fail(&error),
         };
@@ -218,7 +218,7 @@ impl Run<'_> {
         let mut others = 0;
         let is_wanted = |target: &Target| {
             let of_config = target.scope.config.as_ref().map_or(&None, |it| &it.ignores);
-            !ignored.ignores_file(&target.path, of_config)
+            !target.is_named || !ignored.ignores_file(&target.path, of_config)
         };
         let mut work: Vec<(usize, &Target)> = Vec::new();
         let mut done: Vec<Option<Done>> = Vec::with_capacity(expanded.len());
@@ -366,10 +366,10 @@ impl Run<'_> {
                 }
             };
         }
-        let ignored = Ignored::new(options, &environment.cwd);
+        let mut ignored = Ignored::new(options, &environment.cwd);
         match &options.stdin_filepath {
             Some(name) => self.format_stdin(&configs, &ignored, name),
-            None => self.format_files(&configs, ignored),
+            None => self.format_files(&configs, &mut ignored),
         }
     }
 }

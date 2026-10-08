@@ -1,0 +1,193 @@
+---
+title: "Formatting"
+description: "Format JavaScript and TypeScript with bun format, a fast formatter that is compatible with Prettier"
+---
+
+`bun format` formats JavaScript and TypeScript the way [Prettier](https://prettier.io) does. It reads your `.prettierrc`, and uses every CPU core.
+
+```bash terminal icon="terminal"
+bun format
+```
+
+```txt
+src/index.ts
+src/server.ts
+Formatted 2 files, 118 unchanged [21.00ms]
+```
+
+`bun format` writes the files it changes and prints their names. You don't need the `prettier` package, and you don't need a configuration file.
+
+To find out whether files are formatted without changing them, use `--check`.
+
+```bash terminal icon="terminal"
+bun format --check
+```
+
+```txt
+Checking formatting...
+[warn] src/index.ts
+[warn] Code style issues found in the above file. Run bun format to fix.
+```
+
+## Replace Prettier
+
+`bun format` reads the same configuration, formats the same files, and takes the same flags. The one difference: it writes unless you tell it not to.
+
+| Instead of                       | Run                             |
+| -------------------------------- | ------------------------------- |
+| `prettier --write .`             | `bun format`                    |
+| `prettier --write src test`      | `bun format src test`           |
+| `prettier --check .`             | `bun format --check`            |
+| `prettier -l .`                  | `bun format -l`                 |
+| `prettier --stdin-filepath a.ts` | `bun format --stdin-filepath a.ts` |
+
+`bun format` formats `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, and `.tsx` files. It leaves CSS, JSON, Markdown, YAML, HTML, and other files as they are, and tells you how many it skipped. Keep Prettier for those:
+
+```json package.json icon="file-json"
+{
+  "scripts": {
+    "format": "bun format && prettier --write \"**/*.{css,json,md,yml}\""
+  }
+}
+```
+
+## Replace oxfmt
+
+`bun format` reads `.oxfmtrc.json` and `.oxfmtrc.jsonc`, including `overrides` and `ignorePatterns`. With one of these, lines are 100 columns wide unless `printWidth` says otherwise, as in oxfmt.
+
+## Configuration
+
+For each file, `bun format` uses the nearest configuration file: it looks in the directory of the file, then in each parent directory. In a directory with several, the first of this list counts:
+
+1. `"prettier"` in `package.json` or `package.yaml`
+2. `.prettierrc`, in JSON or YAML
+3. `.prettierrc.json`, `.yml`, `.yaml`, `.json5`
+4. `.prettierrc.js`, `prettier.config.js`, and the same with `.ts`, `.mjs`, `.mts`, `.cjs`, `.cts`
+5. `.prettierrc.toml`
+6. `.oxfmtrc.json`, `.oxfmtrc.jsonc`
+
+```json .prettierrc icon="file-json"
+{
+  "semi": false,
+  "singleQuote": true,
+  "overrides": [{ "files": "*.test.ts", "options": { "printWidth": 120 } }]
+}
+```
+
+See [Prettier's options](https://prettier.io/docs/options) for what each option does. `experimentalTernaries` and `experimentalOperatorPosition: "start"` are not supported yet. Plugins do not load.
+
+A flag overrides the configuration file:
+
+```bash terminal icon="terminal"
+bun format --no-semi --print-width 100
+```
+
+### `.editorconfig`
+
+`bun format` reads `indent_style`, `indent_size`, `tab_width`, `max_line_length`, and `end_of_line` from `.editorconfig`, like Prettier. A configuration file overrides them. Use `--no-editorconfig` to ignore `.editorconfig`.
+
+## Choose what to format
+
+Pass files, directories, or glob patterns. Without arguments, `bun format` formats the current directory.
+
+```bash terminal icon="terminal"
+bun format src/index.ts
+bun format src test
+bun format "src/**/*.ts" "!src/generated/**"
+```
+
+`bun format` skips `node_modules`, `.git`, and what `.gitignore` and `.prettierignore` in the current directory ignore. Use `--ignore-path` to name other files.
+
+```txt .prettierignore
+dist
+src/generated
+```
+
+To keep a piece of code as it is, put a `// prettier-ignore` comment before it.
+
+## Run in CI
+
+`bun format --check` exits with code `1` if a file is not formatted, and `2` if something went wrong, for example a syntax error.
+
+```yaml .github/workflows/format.yml icon="file-code"
+name: Format
+on: [push, pull_request]
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun format --check
+```
+
+If your configuration file imports a package, run `bun install` first.
+
+## Format before you commit
+
+With [lint-staged](https://github.com/lint-staged/lint-staged):
+
+```json package.json icon="file-json"
+{
+  "lint-staged": {
+    "*.{js,jsx,ts,tsx}": "bun format"
+  }
+}
+```
+
+## Format in your editor
+
+An editor that can run a command on save can pipe the file through `bun format`. It prints the formatted code on stdout.
+
+```bash terminal icon="terminal"
+bun format --stdin-filepath src/index.ts < src/index.ts
+```
+
+The path decides the language, the configuration, and whether the file is ignored. The file does not have to exist.
+
+## If `package.json` has a `format` script
+
+Your script wins. `bun format` runs it, like `bun run format`. Inside that script, and in any script it starts, `bun format` is the formatter, so `"format": "bun format"` works.
+
+## Differences from Prettier
+
+`bun format` aims to print exactly what Prettier 3 prints. If it prints something else, that is a bug in Bun. [Open an issue on GitHub](https://github.com/oven-sh/bun/issues) with code that shows the difference.
+
+These differences are intentional:
+
+- **It writes by default.** `prettier` without `--write` prints the formatted code. `--write` is accepted and changes nothing.
+- **No arguments means the current directory.**
+- **Only changed files are printed**, without the time each took, and a summary line goes to stderr.
+- **JavaScript and TypeScript only.** Other files are skipped with a warning. Code embedded in them is not formatted either.
+- **Plugins do not load.**
+- **An unknown flag is an error.** Prettier warns and goes on.
+- **A file is checked before it is written.** `bun format` parses what it is about to write and compares it with what it read. If the two are not the same program, it leaves the file as it is and reports a bug.
+- **`--cache` has no effect.** Every run formats every file.
+
+## CLI usage
+
+```bash
+bun format [flags] [...files, directories or patterns]
+```
+
+| Flag                              | Description                                                             |
+| --------------------------------- | ----------------------------------------------------------------------- |
+| `-c`, `--check`                   | Do not write. Exit with `1` if a file is not formatted                  |
+| `-l`, `--list-different`          | Do not write. Print the files that are not formatted                    |
+| `--stdin-filepath <path>`         | Format standard input as that file, and print the result                |
+| `--config <path>`                 | Use this configuration file instead of looking for one                  |
+| `--no-config`                     | Do not look for a configuration file                                    |
+| `--no-editorconfig`               | Do not read `.editorconfig`                                             |
+| `--config-precedence <which>`     | `cli-override` (default), `file-override`, or `prefer-file`             |
+| `--ignore-path <path>`            | Files with patterns to ignore. Default: `.gitignore`, `.prettierignore` |
+| `--with-node-modules`             | Format files in `node_modules` too                                      |
+| `--no-error-on-unmatched-pattern` | Do not fail if an argument matches no file                              |
+| `-u`, `--ignore-unknown`          | Say nothing about a file that there is no parser for                    |
+| `--find-config-path <path>`       | Print the configuration file of a file, and format nothing              |
+| `--log-level <level>`             | `silent`, `error`, `warn`, `log` (default), or `debug`                  |
+| `--print-width`, `--no-semi`…     | Any formatting option, as for `prettier`. Overrides the configuration   |
+| `--threads <n>`                   | Number of threads. Default: one per CPU core                            |
+| `--timing`                        | Print how long each phase took                                          |
+| `--cwd <path>`                    | Set the working directory                                               |
+| `-h`, `--help`                    | Print the help menu                                                     |

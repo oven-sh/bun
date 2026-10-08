@@ -1,5 +1,6 @@
 //! `.gitignore` and the files in its format. ESLint does not read them. oxlint does, so they count
-//! where an `.oxlintrc.json` is the configuration.
+//! where an `.oxlintrc.json` is the configuration, and where there is none. Prettier reads those of
+//! the working directory.
 
 use crate::{fs, paths};
 use bun_core::strings;
@@ -120,12 +121,10 @@ pub(crate) fn with_file(chain: Chain, directory: &[u8], path: &[u8]) -> Chain {
     }
 }
 
-/// The names of the ignore files of a directory, the one that overrides the other last.
-pub(crate) const NAMES: [&[u8]; 2] = [b".gitignore", b".eslintignore"];
-
 /// What counts in `directory`, which is where a search starts: the files in it and above it, up to
-/// the root of the repository.
-pub(crate) fn above_and_in(directory: &[u8]) -> Chain {
+/// the root of the repository. `names`: what they are called, the one that overrides the other
+/// last.
+pub(crate) fn above_and_in(directory: &[u8], names: &[&[u8]]) -> Chain {
     let is_root = |directory: &&[u8]| [&b".git"[..], b".jj"].iter().any(|name| bun_sys::exists(&paths::join(directory, name)));
     let mut directories: Vec<&[u8]> = paths::ancestors(directory).collect();
     // Outside of a repository, all the way up.
@@ -137,7 +136,7 @@ pub(crate) fn above_and_in(directory: &[u8]) -> Chain {
         chain = with_file(chain, root, &paths::join(root, b".git/info/exclude"));
     }
     for directory in directories.iter().rev() {
-        for name in NAMES {
+        for name in names {
             chain = with_file(chain, directory, &paths::join(directory, name));
         }
     }

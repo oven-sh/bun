@@ -19,6 +19,18 @@ pub fn from_native(path: &[u8]) -> Vec<u8> {
     path
 }
 
+/// A path as the system writes it, which is how ESLint prints it.
+pub(crate) fn to_native(mut path: Vec<u8>) -> Vec<u8> {
+    if cfg!(windows) {
+        for byte in &mut path {
+            if *byte == b'/' {
+                *byte = b'\\';
+            }
+        }
+    }
+    path
+}
+
 pub(crate) fn is_absolute(path: &[u8]) -> bool {
     path.starts_with(b"/")
         || (cfg!(windows) && matches!(path, [drive, b':', b'/', ..] if drive.is_ascii_alphabetic()))

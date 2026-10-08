@@ -45,11 +45,12 @@ impl Problem<'_> {
 
 /// Relative to the working directory, or absolute when that would need two or more `../`.
 fn display_path(path: &[u8], cwd: &[u8]) -> Vec<u8> {
-    if !paths::is_absolute(path) {
-        return path.to_vec();
+    let path = paths::from_native(path);
+    if !paths::is_absolute(&path) {
+        return path;
     }
-    let relative = paths::relative(cwd, path);
-    if relative.starts_with(b"../../") { path.to_vec() } else { relative }
+    let relative = paths::relative(cwd, &path);
+    if relative.starts_with(b"../../") { path } else { relative }
 }
 
 /// The lines `from..=to` of `text`, counted from 1 as ESLint counts them, without their ends.
@@ -317,7 +318,8 @@ pub(super) fn write_github(out: &mut Vec<u8>, results: &[FileResult], meta: &Met
             out.push(b'\n');
         }
         let Problem { result, message } = problem;
-        let path = if paths::is_absolute(&result.path) { paths::relative(from, &result.path) } else { result.path.clone() };
+        let path = paths::from_native(&result.path);
+        let path = if paths::is_absolute(&path) { paths::relative(from, &path) } else { path };
         let (end_line, end_column) = message.end.unwrap_or((message.line, message.column));
         let _ = write!(
             out,

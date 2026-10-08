@@ -20,6 +20,8 @@ pub(crate) struct Target {
     pub(crate) scope: Arc<Scope>,
     /// It is in a directory that is an argument: nothing is said if there is no parser for it.
     pub(crate) ignores_unknown: bool,
+    /// It is an argument itself, so nothing has been asked yet about the directories that it is in.
+    pub(crate) is_named: bool,
 }
 
 /// What the arguments stand for, in the order in which Prettier comes to it.
@@ -203,6 +205,7 @@ fn search(
                         size: listing.size_of(&entry.name),
                         scope: Arc::clone(&scope),
                         ignores_unknown: false,
+                        is_named: false,
                     });
                 }
             }
@@ -272,6 +275,7 @@ pub(crate) fn expand(
                         path,
                         size,
                         ignores_unknown: false,
+                        is_named: true,
                     }],
                 };
                 (found, b"Explicitly specified file was ignored due to negative glob patterns")

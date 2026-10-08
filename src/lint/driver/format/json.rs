@@ -5,7 +5,9 @@ use crate::results::FileResult;
 use bun_lint::linter::{LintMessage, Utf16Offsets, write_json_string as write_string};
 use std::io::Write;
 
-fn write_messages(out: &mut Vec<u8>, messages: &[LintMessage], text: &[u8]) {
+/// `by_file`: so many of the last are hidden by `eslint-suppressions.json`.
+fn write_messages(out: &mut Vec<u8>, messages: &[LintMessage], text: &[u8], by_file: usize) {
+    const BY_COMMENT: &[u8] = b"[{\"kind\":\"directive\",\"justification\":\"\"}]}";
     let mut offsets = Utf16Offsets::new(text);
     out.push(b'[');
     for (i, message) in messages.iter().enumerate() {
@@ -13,6 +15,10 @@ fn write_messages(out: &mut Vec<u8>, messages: &[LintMessage], text: &[u8]) {
             out.push(b',');
         }
         message.write_json(out, &mut offsets);
+        if i + by_file >= messages.len() && out.ends_with(BY_COMMENT) {
+            out.truncate(out.len() - BY_COMMENT.len());
+            out.extend_from_slice(b"[{\"kind\":\"file\",\"justification\":\"\"}]}");
+        }
     }
     out.push(b']');
 }
@@ -36,9 +42,9 @@ fn write_result(out: &mut Vec<u8>, result: &FileResult) {
     } else {
         let text = result.text.as_deref().unwrap_or_default();
         out.extend_from_slice(b",\"messages\":");
-        write_messages(out, &result.messages, text);
+        write_messages(out, &result.messages, text, 0);
         out.extend_from_slice(b",\"suppressedMessages\":");
-        write_messages(out, &result.suppressed, text);
+        write_messages(out, &result.suppressed, text, result.suppressed_by_file);
         let _ = write!(
             out,
             ",\"errorCount\":{},\"fatalErrorCount\":{},\"warningCount\":{},\"fixableErrorCount\":{},\"fixableWarningCount\":{}",

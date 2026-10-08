@@ -28,6 +28,34 @@ const project = {
   "vendor/node_modules/pkg/j.js": "debugger;\n",
 };
 
+const typed = {
+  "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, target: "es2022", module: "esnext", moduleResolution: "bundler", noEmit: true, types: [] }, include: ["src"] }),
+  "eslint.config.mjs": `import tseslint from "typescript-eslint";
+export default tseslint.config(
+  ...tseslint.configs.recommendedTypeChecked,
+  { languageOptions: { parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname } } },
+  { files: ["**/*.mjs"], ...tseslint.configs.disableTypeChecked },
+);
+`,
+  "src/a.ts": `import { later } from "./b";
+export function run() {
+  later();
+  const x: any = 1;
+  const y: string = x;
+  return y as string;
+}
+export async function nothing() {
+  return 1;
+}
+`,
+  "src/b.ts": `export async function later(): Promise<number> {
+  return await Promise.resolve(1);
+}
+const s = "a" as string;
+export const t = s as string;
+`,
+};
+
 export const cases = [
   // ───────────── which files ─────────────
   { name: "no arguments", files: project, args: [] },
@@ -595,6 +623,93 @@ export const cases = [
     files: { "eslint.config.js": basic, "a.js": "// eslint-disable-next-line no-debugger\nexport const a = 1;\n" },
     args: ["--fix", "a.js"],
   },
+
+  // ───────────── rules that need types (set BUN_SEMA_TS_LIB for the harness) ─────────────
+  { name: "typed", files: typed, args: ["."] },
+  { name: "typed one file", files: typed, args: ["src/a.ts"] },
+  { name: "typed from a subdirectory", files: typed, cwd: "src", args: ["."] },
+  { name: "typed fix", files: typed, args: ["--fix", "."] },
+  { name: "typed fix-dry-run", files: typed, args: ["--fix-dry-run", "."] },
+  { name: "typed quiet", files: typed, args: ["--quiet", "."] },
+  { name: "typed stdin", files: typed, args: ["--stdin", "--stdin-filename", "src/a.ts"], stdin: 'import { later } from "./b";\nlater();\n' },
+  { name: "typed declaration file", files: { ...typed, "src/c.d.ts": "declare function f(options?: string | undefined): void;\ntype T = string | string;\n" }, args: ["src/c.d.ts"] },
+  { name: "typed syntax error in another file", files: { ...typed, "src/z.ts": "const = 1;\n" }, args: ["src/a.ts", "src/b.ts"] },
+  { name: "typed with a type error", files: { ...typed, "src/z.ts": 'export const z: number = "";\n' }, args: ["."] },
+  { name: "typed disable comments", files: { ...typed, "src/a.ts": 'import { later } from "./b";\n// eslint-disable-next-line @typescript-eslint/no-floating-promises\nlater();\n// eslint-disable-next-line @typescript-eslint/no-floating-promises\nexport {};\n' }, args: ["."] },
+  {
+    name: "typed two projects",
+    files: {
+      "eslint.config.mjs": typed["eslint.config.mjs"],
+      "p/tsconfig.json": typed["tsconfig.json"],
+      "p/src/a.ts": "export async function f() { return 1; }\nf();\n",
+      "q/tsconfig.json": typed["tsconfig.json"],
+      "q/src/b.ts": 'const s = "a" as string;\nexport const t = s as string;\n',
+    },
+    args: ["."],
+  },
+
+  // ───────────── bulk suppressions ─────────────
+  { name: "suppress-all", files: project, args: ["--suppress-all", "."], reads: ["eslint-suppressions.json"] },
+  { name: "suppress-rule", files: project, args: ["--suppress-rule", "no-debugger", "."], reads: ["eslint-suppressions.json"] },
+  {
+    name: "suppress-rule twice",
+    files: project,
+    args: ["--suppress-rule", "no-debugger", "--suppress-rule", "semi", "."],
+    reads: ["eslint-suppressions.json"],
+  },
+  {
+    name: "suppressions are applied",
+    files: { ...project, "eslint-suppressions.json": JSON.stringify({ "a.js": { "no-debugger": { count: 1 }, semi: { count: 1 } }, "src/c.js": { "no-debugger": { count: 1 } } }) },
+    args: ["."],
+  },
+  {
+    name: "suppressions json",
+    files: { ...project, "eslint-suppressions.json": JSON.stringify({ "a.js": { "no-debugger": { count: 1 } } }) },
+    args: ["-f", "json", "--rule", "eqeqeq: off", "--rule", "no-var: off", "a.js"],
+  },
+  {
+    name: "more errors than suppressed",
+    files: { "eslint.config.js": basic, "a.js": "debugger;\ndebugger;\n", "eslint-suppressions.json": JSON.stringify({ "a.js": { "no-debugger": { count: 1 } } }) },
+    args: ["."],
+  },
+  {
+    name: "fewer errors than suppressed",
+    files: { "eslint.config.js": basic, "a.js": "debugger;\n", "eslint-suppressions.json": JSON.stringify({ "a.js": { "no-debugger": { count: 2 } } }) },
+    args: ["."],
+  },
+  {
+    name: "fewer errors than suppressed, passed",
+    files: { "eslint.config.js": basic, "a.js": "debugger;\n", "eslint-suppressions.json": JSON.stringify({ "a.js": { "no-debugger": { count: 2 } } }) },
+    args: ["--pass-on-unpruned-suppressions", "."],
+  },
+  {
+    name: "a suppressed rule that reports nothing",
+    files: { "eslint.config.js": basic, "a.js": "debugger;\n", "eslint-suppressions.json": JSON.stringify({ "a.js": { eqeqeq: { count: 2 } } }) },
+    args: ["."],
+  },
+  {
+    name: "warnings are not suppressed",
+    files: { "eslint.config.js": basic, "a.js": "var a = 1;\nexport { a };\n", "eslint-suppressions.json": JSON.stringify({ "a.js": { "no-var": { count: 1 } } }) },
+    args: ["--pass-on-unpruned-suppressions", "."],
+  },
+  {
+    name: "prune-suppressions",
+    files: {
+      "eslint.config.js": basic,
+      "a.js": "debugger;\n",
+      "eslint-suppressions.json": JSON.stringify({ "a.js": { "no-debugger": { count: 3 }, eqeqeq: { count: 1 } }, "gone.js": { semi: { count: 1 } }, "eslint.config.js": { semi: { count: 1 } } }),
+    },
+    args: ["--prune-suppressions", "."],
+    reads: ["eslint-suppressions.json"],
+  },
+  { name: "suppressions-location", files: project, args: ["--suppress-all", "--suppressions-location", "src/s.json", "a.js"], reads: ["src/s.json"] },
+  { name: "suppressions-location that does not exist", files: project, args: ["--suppressions-location", "nothing.json", "a.js"] },
+  { name: "suppress-all and suppress-rule", files: project, args: ["--suppress-all", "--suppress-rule", "semi", "a.js"] },
+  { name: "suppress-all and prune", files: project, args: ["--suppress-all", "--prune-suppressions", "a.js"] },
+  { name: "suppress-rule and prune", files: project, args: ["--suppress-rule", "semi", "--prune-suppressions", "a.js"] },
+  { name: "suppress-all and stdin", files: project, args: ["--suppress-all", "--stdin"], stdin: bad },
+  { name: "suppressions from a subdirectory", files: { ...project, "src/eslint-suppressions.json": JSON.stringify({ "c.js": { "no-debugger": { count: 1 } } }) }, cwd: "src", args: ["c.js"] },
+  { name: "suppressions file is invalid", files: { ...project, "eslint-suppressions.json": "{" }, args: ["a.js"] },
 
   // ───────────── other commands ─────────────
   { name: "print-config and a file", files: project, args: ["--print-config", "a.js", "b.js"] },

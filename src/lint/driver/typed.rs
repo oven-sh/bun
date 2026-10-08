@@ -26,6 +26,8 @@ use std::sync::Arc;
 pub(crate) struct Typed<'t> {
     pub(crate) path: &'t [u8],
     pub(crate) config: &'t Arc<ResolvedConfig>,
+    /// Its text, if that is not what is on the disk: standard input.
+    pub(crate) text: Option<Vec<u8>>,
 }
 
 /// What is reported about a file, and its text if that is needed.
@@ -137,7 +139,11 @@ pub(crate) fn lint(
     on_circular_fixes: &dyn Fn(&[u8]),
 ) -> Vec<Option<FileResult>> {
     let mut done: Vec<Option<FileResult>> = files.iter().map(|_| None).collect();
-    let mut states: Vec<Fixing> = files.iter().map(|_| Fixing::default()).collect();
+    let state = |file: &Typed| Fixing {
+        current: file.text.clone(),
+        ..Fixing::default()
+    };
+    let mut states: Vec<Fixing> = files.iter().map(state).collect();
     let mut pending: Vec<usize> = (0..files.len()).collect();
     while !pending.is_empty() {
         let changed = states.iter().zip(files).filter_map(|(state, file)| Some((from_native(file.path), state.current.clone()?)));
@@ -152,7 +158,7 @@ pub(crate) fn lint(
                 (None, None) => continue,
             };
             let mut finish = |result: LintResult, text: Option<Vec<u8>>, is_fixed: bool| {
-                done[index] = Some(context.result(file.path.to_vec(), result, text.unwrap_or_default(), is_fixed, file.config));
+                done[index] = Some(context.result(crate::paths::to_native(file.path.to_vec()), result, text.unwrap_or_default(), is_fixed, file.config));
             };
             let has_fixes = context.fixes() && !state.is_over && result.messages.iter().any(|it| it.fix.is_some());
             let (true, Some(text)) = (has_fixes, &text) else {

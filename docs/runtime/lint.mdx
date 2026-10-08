@@ -24,7 +24,7 @@ You don't need the `eslint` package, and you don't need a configuration file.
 
 ## Without a configuration file
 
-`bun lint` uses `eslint:recommended`, plus `typescript-eslint/recommended` for TypeScript files. It lints `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, and `.tsx` files, and knows the globals of browsers, Node.js, and Bun.
+`bun lint` uses `eslint:recommended`, plus `typescript-eslint/recommended` for TypeScript files. It lints `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, and `.tsx` files, and knows the globals of browsers, Node.js, and Bun. It skips `node_modules`, `*.min.js`, and what `.gitignore` ignores.
 
 To change a rule, add a configuration file:
 
@@ -167,6 +167,20 @@ bun lint --fix --fix-type layout,suggestion
 
 `--fix-dry-run` fixes without writing. With `-f json`, the fixed code is in `output`.
 
+## Adopt a rule in an old codebase
+
+Turn the rule on as an error, then record the errors that exist today. `bun lint` tolerates those and reports new ones, like ESLint's [bulk suppressions](https://eslint.org/docs/latest/use/suppressions).
+
+```bash terminal icon="terminal"
+bun lint --suppress-rule @typescript-eslint/no-explicit-any
+```
+
+That writes `eslint-suppressions.json`. Commit it. When you have fixed some of the errors, `bun lint` exits with code `2` until you remove them from the file:
+
+```bash terminal icon="terminal"
+bun lint --prune-suppressions
+```
+
 ## Run in CI
 
 ```yaml .github/workflows/lint.yml icon="file-code"
@@ -279,8 +293,7 @@ These differences are intentional:
 - **A rule that needs types never stops the run.** If the configuration does not ask for types, typescript-eslint throws. `bun lint` skips the rule and says so.
 - **`parserOptions.project` is a switch.** Any value turns types on. Each file is checked with its nearest `tsconfig.json`, and a file that no `tsconfig.json` includes is still linted.
 - **Types are those of TypeScript 7**, as in `bun check`, whichever version of `typescript` you have installed.
-- **`--cache` has no effect.** Every run lints every file.
-- **Bulk suppressions are not supported.** `--suppress-all` and the related flags are refused, and `eslint-suppressions.json` is not read.
+- **`--cache` and `--stats` have no effect.** Every run lints every file.
 - **`--print-config` leaves out the default options of rules.**
 - **A summary line on stderr** says how many files were linted and how long it took.
 
@@ -314,6 +327,8 @@ bun lint [flags] [...files, directories or patterns]
 | `--color`, `--no-color`                   | Always or never use colors                                         |
 | `--no-inline-config`                      | Ignore `eslint-disable` and other configuration comments           |
 | `--report-unused-disable-directives`      | Report `eslint-disable` comments that disable nothing              |
+| `--suppress-all`, `--suppress-rule <rule>` | Record the errors that exist in `eslint-suppressions.json`        |
+| `--prune-suppressions`                    | Remove from that file what no longer occurs                        |
 | `--no-error-on-unmatched-pattern`         | Do not fail if an argument matches no file                         |
 | `--pass-on-no-patterns`                   | Exit with `0` if there are no arguments                            |
 | `--exit-on-fatal-error`                   | Exit with `2` if a file cannot be parsed                           |

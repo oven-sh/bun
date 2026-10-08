@@ -117,6 +117,9 @@ describe.concurrent("bun lint", () => {
         "b.ts": "export const a: any = 1;\nundefinedName();\n",
         "c.jsx": "export default () => <div />;\n",
         "node_modules/pkg/index.js": "debugger;\n",
+        "dist/bundle.js": "debugger;\n",
+        "vendor.min.js": "debugger;\n",
+        ".gitignore": "dist\n",
       },
       [],
     );
@@ -564,6 +567,46 @@ describe.concurrent("bun lint", () => {
         ["error: The --fix-type option requires either --fix or --fix-dry-run.", 2],
         ["error: The --fix option is not available for piped-in code; use --fix-dry-run instead.", 2],
       ]);
+    });
+  });
+
+  describe("bulk suppressions", () => {
+    const files = {
+      "eslint.config.js": config({ "no-debugger": "error" }),
+      "a.js": "debugger;\ndebugger;\n",
+      "b.js": "debugger;\n",
+    };
+    const suppressions = (a: number, b: number) =>
+      JSON.stringify({ "a.js": { "no-debugger": { count: a } }, "b.js": { "no-debugger": { count: b } } });
+
+    test("--suppress-all records the errors that there are, and tolerates them", async () => {
+      const result = await lint(files, ["--suppress-all"], { reads: ["eslint-suppressions.json"] });
+      expect(JSON.parse(result.files["eslint-suppressions.json"]!)).toEqual(JSON.parse(suppressions(2, 1)));
+      expect(result.raw).toBe("");
+      expect(result.exitCode).toBe(0);
+    });
+
+    test("eslint-suppressions.json is applied, and more errors than it has are all reported", async () => {
+      const result = await lint({ ...files, "eslint-suppressions.json": suppressions(1, 1) }, ["-f", "unix"]);
+      expect(result.stdout).toMatchInlineSnapshot(`
+        "<dir>/a.js:1:1: Unexpected 'debugger' statement. [Error/no-debugger]
+        <dir>/a.js:2:1: Unexpected 'debugger' statement. [Error/no-debugger]
+
+        2 problems"
+      `);
+      expect(result.exitCode).toBe(1);
+    });
+
+    test("fewer errors than it has fail with 2, until --prune-suppressions", async () => {
+      const stale = { ...files, "eslint-suppressions.json": suppressions(2, 3) };
+      const [plain, passed, pruned] = await Promise.all([
+        lint(stale, []),
+        lint(stale, ["--pass-on-unpruned-suppressions"]),
+        lint(stale, ["--prune-suppressions"], { reads: ["eslint-suppressions.json"] }),
+      ]);
+      expect(plain.stderr).toContain("There are suppressions left that do not occur anymore.");
+      expect({ plain: plain.exitCode, passed: passed.exitCode, pruned: pruned.exitCode }).toEqual({ plain: 2, passed: 0, pruned: 0 });
+      expect(JSON.parse(pruned.files["eslint-suppressions.json"]!)).toEqual(JSON.parse(suppressions(2, 1)));
     });
   });
 

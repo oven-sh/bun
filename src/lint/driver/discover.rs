@@ -186,8 +186,11 @@ fn search(loader: &Loader, pool: &Pool, search: &Search, found: &mut Vec<Target>
             };
             let reads_ignore_files = loader.reads_ignore_files(&own);
             let mut ignores = directory.ignores.clone();
-            if reads_ignore_files && !directory.relative.is_empty() {
-                for name in gitignore::NAMES.iter().filter(|name| entries.iter().any(|it| it.name == **name)) {
+            if reads_ignore_files && !loader.reads_ignore_files(&directory.inherited) {
+                // They start to count here.
+                ignores = loader.ignore_files_at(&directory.path, &own);
+            } else if reads_ignore_files && !directory.relative.is_empty() {
+                for name in loader.ignore_file_names().iter().filter(|name| entries.iter().any(|it| it.name == **name)) {
                     ignores = gitignore::with_file(ignores, &directory.path, &paths::join(&directory.path, name));
                 }
             }
@@ -196,7 +199,7 @@ fn search(loader: &Loader, pool: &Pool, search: &Search, found: &mut Vec<Target>
                 let path = paths::join(&directory.path, &entry.name);
                 // oxlint follows links.
                 if entry.is_link && own.flavor == Flavor::Oxlint && fs::kind(&path) == Some(fs::Kind::Directory) {
-                    let is_loop = fs::real_path(&path).is_none_or(|real| directory.path.starts_with(&real));
+                    let is_loop = fs::real_path(&path).is_none_or(|real| real == directory.path || paths::inside(&real, &directory.path).is_some());
                     if is_loop {
                         continue;
                     }

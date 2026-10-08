@@ -2,6 +2,8 @@
 
 use super::{MAX_DEPTH, Names, is_symbol_from_default_library};
 use crate::types::{SymbolFlags, Type, TypeFlags};
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 /// `isPromiseLike(program, type)`: `Promise`, or a class that extends it.
 pub fn is_promise_like(ty: Type) -> bool {
@@ -83,28 +85,74 @@ pub fn is_builtin_symbol_like_recurser<'a>(
     ty: Type<'a>,
     mut predicate: impl FnMut(Type<'a>) -> Option<bool>,
 ) -> bool {
-    recurse(ty, &mut predicate, 0)
+    recurse(ty, &mut predicate, 0, &mut BaseTypeAnswers::default())
+}
+
+/// The answers to one question about the types that extend several, where the answer for a type is made of those for its base
+/// types, and is "no" below [`MAX_DEPTH`]. Where interfaces extend each other in the shape of diamonds, the paths to a base type
+/// are two to the power of their number.
+#[derive(Default)]
+pub(crate) struct BaseTypeAnswers<'a> {
+    /// The answer, and at which depth it was found.
+    known: FxHashMap<Type<'a>, (bool, u32)>,
+    /// The types that are being asked about, from the outermost.
+    open: SmallVec<[Type<'a>; 4]>,
+    /// The first of `open` that has been come across again since the last of them was begun with.
+    first_reopened: Option<usize>,
+}
+
+impl<'a> BaseTypeAnswers<'a> {
+    /// The answer for `ty` at `depth`. `ask` finds it out if it is not known.
+    pub(crate) fn get_or_ask(&mut self, ty: Type<'a>, depth: u32, ask: impl FnOnce(&mut Self) -> bool) -> bool {
+        // Closer to the limit of the depth, less is found.
+        match self.known.get(&ty) {
+            Some(&(true, at)) if depth <= at => return true,
+            Some(&(false, at)) if depth >= at => return false,
+            _ => {}
+        }
+        // It extends itself. What it extends besides is still to come where it was begun with.
+        if let Some(reopened) = self.open.iter().position(|it| *it == ty) {
+            self.first_reopened = Some(self.first_reopened.map_or(reopened, |first| first.min(reopened)));
+            return false;
+        }
+        let reopened_before = self.first_reopened.take();
+        let index = self.open.len();
+        self.open.push(ty);
+        let answer = ask(self);
+        self.open.pop();
+        let reopened_around = self.first_reopened.filter(|&first| first < index);
+        // A "no" for want of the answer for a type that is still open is not the answer elsewhere.
+        if answer || reopened_around.is_none() {
+            self.known.insert(ty, (answer, depth));
+        }
+        self.first_reopened = match (reopened_before, reopened_around) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        answer
+    }
 }
 
 fn recurse<'a>(
     ty: Type<'a>,
     predicate: &mut dyn FnMut(Type<'a>) -> Option<bool>,
     depth: u32,
+    known: &mut BaseTypeAnswers<'a>,
 ) -> bool {
     if depth > MAX_DEPTH {
         return false;
     }
     let flags = ty.flags();
     if flags.contains(TypeFlags::INTERSECTION) {
-        return ty.types().iter().any(|t| recurse(t, predicate, depth + 1));
+        return ty.types().iter().any(|t| recurse(t, predicate, depth + 1, known));
     }
     if flags.contains(TypeFlags::UNION) {
-        return ty.types().iter().all(|t| recurse(t, predicate, depth + 1));
+        return ty.types().iter().all(|t| recurse(t, predicate, depth + 1, known));
     }
     if flags.contains(TypeFlags::TYPE_PARAMETER) {
         // `type.getConstraint()`
         let constraint = ty.get_base_constraint_of_type();
-        return constraint.is_some_and(|t| recurse(t, predicate, depth + 1));
+        return constraint.is_some_and(|t| recurse(t, predicate, depth + 1, known));
     }
     if let Some(predicate_result) = predicate(ty) {
         return predicate_result;
@@ -112,10 +160,17 @@ fn recurse<'a>(
     let Some(symbol) = ty.get_symbol() else {
         return false;
     };
-    symbol.has_flags(SymbolFlags::CLASS | SymbolFlags::INTERFACE)
-        && symbol
-            .get_declared_type()
-            .get_base_types()
+    if !symbol.has_flags(SymbolFlags::CLASS | SymbolFlags::INTERFACE) {
+        return false;
+    }
+    let base_types = symbol.get_declared_type().get_base_types();
+    let mut ask = |known: &mut BaseTypeAnswers<'a>| {
+        base_types
             .iter()
-            .any(|base_type| recurse(base_type, predicate, depth + 1))
+            .any(|base_type| recurse(base_type, predicate, depth + 1, known))
+    };
+    match base_types.len() > 1 {
+        true => known.get_or_ask(ty, depth, ask),
+        false => ask(known),
+    }
 }

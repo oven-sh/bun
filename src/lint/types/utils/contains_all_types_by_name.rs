@@ -1,5 +1,6 @@
 //! `containsAllTypesByName.ts`
 
+use super::builtin_symbol_likes::BaseTypeAnswers;
 use super::{MAX_DEPTH, Names, is_type_flag_set};
 use crate::types::tsutils::{is_type_reference, is_union_or_intersection_type};
 use crate::types::{Type, TypeFlags};
@@ -16,15 +17,17 @@ pub fn contains_all_types_by_name(
     allowed_names: impl Names,
     match_any_instead: bool,
 ) -> bool {
-    contains(ty, allow_any, allowed_names, match_any_instead, 0)
+    let mut known = BaseTypeAnswers::default();
+    contains(ty, allow_any, allowed_names, match_any_instead, 0, &mut known)
 }
 
-fn contains(
-    mut ty: Type,
+fn contains<'a>(
+    mut ty: Type<'a>,
     allow_any: bool,
     allowed_names: impl Names,
     match_any_instead: bool,
     depth: u32,
+    known: &mut BaseTypeAnswers<'a>,
 ) -> bool {
     if depth > MAX_DEPTH {
         return false;
@@ -41,16 +44,21 @@ fn contains(
     {
         return true;
     }
-    let predicate = |t: Type| contains(t, allow_any, allowed_names, match_any_instead, depth + 1);
-    if is_union_or_intersection_type(ty) {
-        return match match_any_instead {
-            true => ty.types().iter().any(predicate),
-            false => ty.types().iter().all(predicate),
-        };
-    }
-    let bases = ty.get_base_types();
-    match match_any_instead {
-        true => bases.iter().any(predicate),
-        false => !bases.is_empty() && bases.iter().all(predicate),
+    let is_constituents = is_union_or_intersection_type(ty);
+    let types = match is_constituents {
+        true => ty.types(),
+        false => ty.get_base_types(),
+    };
+    let ask = |known: &mut BaseTypeAnswers<'a>| {
+        let predicate =
+            |t: Type<'a>| contains(t, allow_any, allowed_names, match_any_instead, depth + 1, known);
+        match match_any_instead {
+            true => types.iter().any(predicate),
+            false => (is_constituents || !types.is_empty()) && types.iter().all(predicate),
+        }
+    };
+    match !is_constituents && types.len() > 1 {
+        true => known.get_or_ask(ty, depth, ask),
+        false => ask(known),
     }
 }

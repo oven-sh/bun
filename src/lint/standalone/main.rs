@@ -14,6 +14,10 @@ mod semantic_cmd;
 mod tokens_cmd;
 mod types_cmd;
 mod utils_eslint_cmd;
+mod utils_tsscope_cmd;
+mod utils_ts_cmd;
+mod utils_core_cmd;
+mod utils_small_cmd;
 
 use bun_lint::ast::File;
 use bun_lint::context::{Diagnostic, Severity};
@@ -384,6 +388,10 @@ fn main() {
         Some("linter") => linter_cmd::run(&args[1..]),
         Some("format") => format_cmd::run(&args[1..]),
         Some("utils-eslint") => utils_eslint_cmd::run(&args[1..]),
+        Some("utils-tsscope") => utils_tsscope_cmd::run(&args[1..]),
+        Some("utils-ts") => utils_ts_cmd::run(&args[1..]),
+        Some("utils-core") => utils_core_cmd::run(&args[1..]),
+        Some("utils-small") => utils_small_cmd::run(&args[1..]),
         _ => println!("usage: bun-lint conformance <fixtures> | bun-lint run <rule> <file> [options]"),
     }
 }

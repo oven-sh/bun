@@ -3,7 +3,9 @@ use bun_lint::types::tsutils::{CompilerOption, is_strict_compiler_option_enabled
 use bun_lint::types::utils::{
     is_rest_parameter_declaration, is_type_any_type, is_type_flag_set, is_type_unknown_type,
 };
-use bun_lint::types::{SymbolFlags, Type, TypeFlags};
+use bun_lint::types::{SymbolFlags, TupleTarget, Type, TypeFlags};
+use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::{SmallVec, smallvec};
 
 /// Disallow default values that will never be used.
 pub struct NoUselessDefaultAssignment {
@@ -68,15 +70,42 @@ fn get_property_name<'a>(key: Key<'a>) -> Option<&'a [u8]> {
     (!name.is_empty()).then_some(name)
 }
 
-fn has_property_in_all_branches<'a>(expression: Expr<'a>, property_name: &'a [u8]) -> bool {
-    match expression.kind() {
-        ExprKind::Object(properties) => {
-            properties.iter().any(|prop| prop.key().and_then(get_property_name) == Some(property_name))
+/// The names for which upstream's `hasPropertyInAllBranches(expression, name)` holds: those of the properties that every branch
+/// of `expression` has, if all of them are object literals.
+fn get_properties_in_all_branches<'a>(expression: Expr<'a>) -> FxHashSet<&'a [u8]> {
+    // For each name, how many branches have it, and the last of them.
+    let mut found: FxHashMap<&'a [u8], (u32, u32)> = FxHashMap::default();
+    let mut branches = 0;
+    let mut rest: SmallVec<[Expr<'a>; 8]> = smallvec![expression];
+    while let Some(branch) = rest.pop() {
+        match branch.kind() {
+            ExprKind::Object(properties) => {
+                branches += 1;
+                for name in properties.iter().filter_map(|prop| prop.key().and_then(get_property_name)) {
+                    let (count, last) = found.entry(name).or_insert((0, 0));
+                    if *last != branches {
+                        (*count, *last) = (*count + 1, branches);
+                    }
+                }
+            }
+            ExprKind::Cond { yes, no, .. } => rest.extend([yes, no]),
+            _ => return FxHashSet::default(),
         }
-        ExprKind::Cond { yes, no, .. } => {
-            has_property_in_all_branches(yes, property_name) && has_property_in_all_branches(no, property_name)
-        }
-        _ => false,
+    }
+    found.into_iter().filter(|(_, (count, _))| *count == branches).map(|(name, _)| name).collect()
+}
+
+/// The index of `item` in `list`, whose elements are in the order of the source.
+fn index_in<'a, T: Handle<'a> + Spanned + PartialEq>(list: List<'a, T>, item: T) -> Option<usize> {
+    let index = list.index_of_start(item.span().start).filter(|&index| list.get(index) == Some(item));
+    index.or_else(|| list.iter().position(|it| it == item))
+}
+
+/// The index of `param` among all that is written between the parentheses of `func`.
+fn index_of_parameter<'a>(func: Func<'a>, param: Param<'a>) -> Option<usize> {
+    match func.this_param() {
+        Some(this_param) if this_param == param => Some(0),
+        this_param => Some(index_in(func.params(), param)? + usize::from(this_param.is_some())),
     }
 }
 
@@ -92,18 +121,18 @@ fn is_conditional_or_logical(expression: Expr) -> bool {
 }
 
 /// The type of the property that `property` of an object pattern reads.
-fn get_type_of_property<'a>(property: PatProp<'a>) -> Option<Type<'a>> {
+fn get_type_of_property<'a>(property: PatProp<'a>, cx: &mut Context<'a>) -> Option<Type<'a>> {
     let Node::Pat(object_pattern) = property.parent() else {
         return None;
     };
-    let source_type = get_source_type_for_pattern(object_pattern)?;
+    let source_type = get_source_type_for_pattern(object_pattern, cx)?;
     let property_name = get_property_name(property.key()?)?;
     let symbol = source_type.get_property(property_name)?;
     if symbol.has_flags(SymbolFlags::OPTIONAL)
         && let Node::VarDecl(declarator) = object_pattern.parent()
         && let Some(init) = declarator.init()
         && is_conditional_or_logical(init)
-        && !has_property_in_all_branches(init, property_name)
+        && !cx.state.entry(init).or_insert_with(|| get_properties_in_all_branches(init)).contains(property_name)
     {
         return None;
     }
@@ -111,19 +140,19 @@ fn get_type_of_property<'a>(property: PatProp<'a>) -> Option<Type<'a>> {
 }
 
 /// The type of what the object or array pattern `pattern` destructures.
-fn get_source_type_for_pattern<'a>(pattern: Pat<'a>) -> Option<Type<'a>> {
+fn get_source_type_for_pattern<'a>(pattern: Pat<'a>, cx: &mut Context<'a>) -> Option<Type<'a>> {
     match pattern.parent() {
         Node::VarDecl(declarator) => Some(declarator.init()?.ty()),
         Node::Param(param) if !param.is_rest() && !param.is_parameter_property() => {
             let func = param.func().filter(|it| it.has_body())?;
-            let mut param_index = func.params_with_this().position(|it| it == param)?;
+            let mut param_index = index_of_parameter(func, param)?;
             let signature = func.signature()?;
             if signature.this_parameter().is_some() {
                 param_index = param_index.checked_sub(1)?;
             }
             Some(signature.get_parameters().get(param_index)?.get_type())
         }
-        Node::PatProp(property) if !property.is_rest() => get_type_of_property(property),
+        Node::PatProp(property) if !property.is_rest() => get_type_of_property(property, cx),
         Node::PatElem(element) if !element.is_rest() => {
             let Node::Pat(array_pattern) = element.parent() else {
                 return None;
@@ -131,8 +160,8 @@ fn get_source_type_for_pattern<'a>(pattern: Pat<'a>) -> Option<Type<'a>> {
             let PatKind::Array(elements) = array_pattern.kind() else {
                 return None;
             };
-            let array_type = get_source_type_for_pattern(array_pattern)?;
-            get_array_element_type(array_type, elements.iter().position(|it| it == element)?)
+            let array_type = get_source_type_for_pattern(array_pattern, cx)?;
+            get_array_element_type(array_type, index_in(elements, element)?)
         }
         _ => None,
     }
@@ -176,7 +205,7 @@ fn check_parameter<'a>(param: Param<'a>, cx: &Context<'a>) {
     let Node::Expr(function_expression) = func.owner() else {
         return;
     };
-    let Some(param_index) = func.params_with_this().position(|it| it == param) else {
+    let Some(param_index) = index_of_parameter(func, param) else {
         return;
     };
     let Some(contextual_type) = function_expression.contextual_type() else {
@@ -203,20 +232,27 @@ fn check_parameter<'a>(param: Param<'a>, cx: &Context<'a>) {
     }
 }
 
-fn check_property<'a>(property: PatProp<'a>, cx: &Context<'a>) {
+fn check_property<'a>(property: PatProp<'a>, cx: &mut Context<'a>) {
     let Some(right) = property.default() else {
         return;
     };
     let removal = Span::new(property.value().span().end, property.span().end);
     if right.is_ident("undefined") {
         report_useless(USELESS_UNDEFINED, right, removal, "property", cx);
-    } else if get_type_of_property(property).is_some_and(|ty| !can_be_undefined(ty)) {
+    } else if get_type_of_property(property, cx).is_some_and(|ty| !can_be_undefined(ty)) {
         report_useless(USELESS_DEFAULT_ASSIGNMENT, right, removal, "property", cx);
     }
 }
 
-/// `element`: the one at `element_index` of `array_pattern`.
-fn check_element<'a>(array_pattern: Pat<'a>, element_index: usize, element: PatElem<'a>, cx: &Context<'a>) {
+/// `element`: the one at `element_index` of `array_pattern`. `source`: the type of what `array_pattern` destructures, once it
+/// has been asked for, if that is a tuple type.
+fn check_element<'a>(
+    array_pattern: Pat<'a>,
+    element_index: usize,
+    element: PatElem<'a>,
+    source: &mut Option<Option<(Type<'a>, TupleTarget<'a>)>>,
+    cx: &mut Context<'a>,
+) {
     let (Some(left), Some(right)) = (element.pat(), element.default()) else {
         return;
     };
@@ -225,10 +261,12 @@ fn check_element<'a>(array_pattern: Pat<'a>, element_index: usize, element: PatE
         report_useless(USELESS_UNDEFINED, right, removal, "property", cx);
         return;
     }
-    let Some(source_type) = get_source_type_for_pattern(array_pattern) else {
-        return;
-    };
-    let Some(target) = source_type.tuple_target().filter(|_| source_type.is_tuple_type()) else {
+    let source = source.get_or_insert_with(|| {
+        let source_type = get_source_type_for_pattern(array_pattern, cx)?;
+        let target = source_type.tuple_target().filter(|_| source_type.is_tuple_type())?;
+        Some((source_type, target))
+    });
+    let Some((source_type, target)) = *source else {
         return;
     };
     let tuple_args = source_type.get_type_arguments();
@@ -249,7 +287,8 @@ impl Rule for NoUselessDefaultAssignment {
         .has_suggestions()
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    /// [`get_properties_in_all_branches`] of what has been asked about.
+    type State<'a> = FxHashMap<Expr<'a>, FxHashSet<&'a [u8]>>;
 
     fn new(options: &Options) -> Self {
         NoUselessDefaultAssignment {
@@ -259,7 +298,7 @@ impl Rule for NoUselessDefaultAssignment {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
         let compiler_options = file.type_checker().compiler_options();
         if !is_strict_compiler_option_enabled(compiler_options, CompilerOption::StrictNullChecks)
             && !self.allow_rule_to_run_without_strict_null_checks_i_know_what_i_am_doing
@@ -273,8 +312,9 @@ impl Rule for NoUselessDefaultAssignment {
         on.pats([PatTag::Object, PatTag::Array], |_, pattern, cx| match pattern.kind() {
             PatKind::Object(properties) => properties.iter().for_each(|it| check_property(it, cx)),
             PatKind::Array(elements) => {
+                let mut source = None;
                 for (element_index, element) in elements.iter().enumerate() {
-                    check_element(pattern, element_index, element, cx);
+                    check_element(pattern, element_index, element, &mut source, cx);
                 }
             }
             _ => {}
@@ -294,5 +334,6 @@ impl Rule for NoUselessDefaultAssignment {
                 report_useless(USELESS_UNDEFINED, value, removal, "property", cx);
             }
         });
+        FxHashMap::default()
     }
 }

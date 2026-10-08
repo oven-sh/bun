@@ -785,6 +785,97 @@ fn differences(full: &bun_sema::bind::Bound, lint: &bun_sema::bind::Bound) -> Ve
     different
 }
 
+/// What is wrong with the tables that only `bind_for_lint` has.
+fn problems_of_lint_tables(hir: &bun_sema::hir::File, full: &bun_sema::bind::Bound, lint: &bun_sema::bind::Bound) -> Vec<String> {
+    use bun_sema::bind::{Decl, NOT_REACHED, Parent, ScopeKind, ScopeNode};
+    use bun_sema::hir::{Chain, ExprKind};
+    let mut problems = Vec::new();
+    let mut counts = vec![0u32; 2 * ExprTag::COUNT];
+    if lint.expr_kinds.len() != hir.exprs.len() || lint.ident_scope.len() != hir.exprs.len() {
+        return vec!["expr_kinds: or ident_scope: not as long as the expressions".to_owned()];
+    }
+    for (i, e) in hir.exprs.iter().enumerate() {
+        let is_reached = lint.expr_parent[i] != Parent::None && !matches!(e.kind, ExprKind::Missing);
+        let chain = match e.kind {
+            ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain,
+            ExprKind::Call(call) => hir.calls[call.idx()].chain,
+            _ => Chain::No,
+        };
+        let expected = match is_reached {
+            true => 2 * e.kind.tag() as u8 + u8::from(chain != Chain::No),
+            false => NOT_REACHED,
+        };
+        if is_reached {
+            counts[expected as usize] += 1;
+        }
+        if lint.expr_kinds[i] != expected {
+            problems.push(format!("expr_kinds: at {i}: {} and not {expected}, {:?}", lint.expr_kinds[i], e.kind));
+        }
+        if lint.ident_scope[i].is_some() != (is_reached && matches!(e.kind, ExprKind::Ident(_))) {
+            problems.push(format!("ident_scope of what is no identifier, or none: at {i}: {:?}", e.kind));
+        }
+    }
+    if lint.expr_kind_counts[..] != counts[..] {
+        problems.push("expr_kind_counts".to_owned());
+    }
+    // What `bind` says of the names that it leaves to the checker.
+    for &(e, scope) in full.free_idents.iter().chain(full.alias_idents.iter()) {
+        if lint.ident_scope[e.idx()] != scope {
+            problems.push(format!("ident_scope is another: of {e:?}: {:?} and not {scope:?}", lint.ident_scope[e.idx()]));
+        }
+    }
+    let mut times: HashMap<Decl, u32> = HashMap::new();
+    for &(symbol, decl, scope) in lint.declared.iter() {
+        *times.entry(decl).or_insert(0) += 1;
+        if !lint.symbols.get(symbol.idx()).is_some_and(|it| it.decls.as_slice().contains(&decl)) {
+            problems.push(format!("declared: not a declaration of the symbol: {decl:?}"));
+        }
+        if scope.idx() >= lint.scopes.len() {
+            problems.push(format!("declared: in no scope: {decl:?}"));
+        }
+    }
+    for (decl, times) in times.iter().filter(|it| *it.1 > 1) {
+        let name: String = format!("{decl:?}").chars().take_while(|c| c.is_alphabetic()).collect();
+        problems.push(format!("declared {times} times, a {name}: {decl:?}"));
+    }
+    // What `semantic` makes variables of.
+    for decl in lint.symbols.iter().flat_map(|it| it.decls.as_slice()) {
+        let is_of_a_variable = matches!(
+            decl,
+            Decl::Var(_) | Decl::Param(_) | Decl::Require(_) | Decl::Fn(_) | Decl::Class(_) | Decl::Interface(_)
+                | Decl::Alias(_) | Decl::Enum(_) | Decl::EnumMember(_) | Decl::Module(_) | Decl::TypeParam(_)
+                | Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_) | Decl::ImportEquals(_)
+        );
+        // Its symbol is in no table.
+        let has_no_name = match *decl {
+            Decl::Class(class) => hir.classes[class.idx()].name.is_none(),
+            Decl::Fn(func) => hir.fns[func.idx()].name.is_none(),
+            Decl::Module(module) => {
+                let module = &hir.modules[module.idx()];
+                matches!(module.name, bun_sema::hir::ModuleName::String(_))
+                    || module.flags.contains(bun_sema::hir::Flags::CLASS_ELEMENT)
+            }
+            _ => false,
+        };
+        if is_of_a_variable && !has_no_name && !times.contains_key(decl) {
+            let name: String = format!("{decl:?}").chars().take_while(|c| c.is_alphabetic()).collect();
+            problems.push(format!("declared lacks a {name}: {decl:?}"));
+        }
+    }
+    if lint.scope_node.len() != lint.scopes.len() {
+        problems.push("scope_node: not as long as the scopes".to_owned());
+    }
+    for (scope, node) in lint.scopes.iter().zip(lint.scope_node.iter()) {
+        if matches!(scope.kind, ScopeKind::Block | ScopeKind::TypeParams) != (*node != ScopeNode::None) {
+            problems.push(format!("scope_node: {node:?} of a {:?}", scope.kind));
+        }
+    }
+    if !full.expr_kinds.is_empty() || !full.ident_scope.is_empty() || !full.declared.is_empty() || !full.scope_node.is_empty() {
+        problems.push("bind has what is for a linter".to_owned());
+    }
+    problems
+}
+
 /// The same for `ours`, from `bind_for_format`: of the nodes that `bind` reaches.
 fn differences_for_format(full: &bun_sema::bind::Bound, ours: &bun_sema::bind::Bound) -> Vec<String> {
     use bun_sema::bind::{ClassOwner, FnOwner, MemberOwner, Parent, PatParent};
@@ -866,7 +957,12 @@ fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool) {
             let full = bind(&hir, options, &atoms, arena);
             match is_for_format {
                 true => differences_for_format(&full, &bind_for_format(&hir, options, &atoms, arena)),
-                false => differences(&full, &bind_for_lint(&hir, options, &atoms, arena)),
+                false => {
+                    let lint = bind_for_lint(&hir, options, &atoms, arena);
+                    let mut different = differences(&full, &lint);
+                    different.extend(problems_of_lint_tables(&hir, &full, &lint));
+                    different
+                }
             }
         }));
         let different = outcome.unwrap_or_else(|_| vec!["panic".to_owned()]);

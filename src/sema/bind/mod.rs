@@ -1037,6 +1037,46 @@ pub struct BoundIn<S: Storage> {
     /// Number of flow nodes the binder encountered. `flow` omits the labels that nothing follows,
     /// and has a single start node for all the functions without a body.
     pub flow_places: u32,
+    /// From here on: only from [`bind_for_lint`], empty otherwise.
+    ///
+    /// For each expression `2 * ExprTag + 1` if it is a `Dot`, an `Index` or a `Call` whose `Chain` is
+    /// not `No`, `2 * ExprTag` if it is anything else. [`NOT_REACHED`] if the binder does not get to
+    /// it, as where `expr_parent` is `Parent::None`, or if it is `ExprKind::Missing`.
+    pub expr_kinds: S::List<u8>,
+    /// How many of `expr_kinds` are 0, 1, 2 and so on, up to `2 * ExprTag::COUNT`.
+    pub expr_kind_counts: S::List<u32>,
+    /// For each expression that is an identifier the binder gets to, the scope that it is resolved
+    /// from. `NONE` for everything else.
+    pub ident_scope: S::List<ScopeId>,
+    /// What is declared among the locals of a scope, the exports of a file, a namespace or an enum, or
+    /// as a type parameter, in the order it is bound: the symbol that the declaration got, which for
+    /// one that is refused is a symbol of its own, and the scope. Of the two symbols of what is
+    /// exported it is the one among the exports. Each declaration is here once. What is in no table,
+    /// so that no name refers to it, is not here: a class or a function expression without a name,
+    /// `declare module "m"`.
+    pub declared: S::List<(SymbolId, Decl, ScopeId)>,
+    /// For each of `scopes`, what makes it, where `ScopeKind` does not tell.
+    pub scope_node: S::List<ScopeNode>,
+}
+
+/// See [`BoundIn::expr_kinds`].
+pub const NOT_REACHED: u8 = u8::MAX;
+
+/// What makes a scope whose kind is `ScopeKind::Block` or `ScopeKind::TypeParams`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ScopeNode {
+    /// `ScopeKind` tells.
+    None,
+    /// A block, a `for`, `for`-`in` or `for`-`of` statement, the case block of a `switch` statement, or
+    /// the `catch` clause of a `try` statement.
+    Stmt(StmtId),
+    /// The name of a function expression, around the function.
+    NameOfFn(FnId),
+    /// The name of a class expression, around the class.
+    NameOfClass(ClassId),
+    /// A conditional type, for its `infer` type parameters, a mapped type, or an `infer` outside of
+    /// any conditional type.
+    Type(TypeNodeId),
 }
 
 /// The side tables of a file that has been loaded.
@@ -1837,6 +1877,11 @@ impl BoundBuilder {
             flow_edges: copy_to_arena(&mut self.flow_edges, arena),
             flow_shared: copy_to_arena(&mut self.flow_shared, arena),
             flow_places: self.flow_places,
+            expr_kinds: copy_to_arena(&mut self.expr_kinds, arena),
+            expr_kind_counts: copy_to_arena(&mut self.expr_kind_counts, arena),
+            ident_scope: copy_to_arena(&mut self.ident_scope, arena),
+            declared: copy_to_arena(&mut self.declared, arena),
+            scope_node: copy_to_arena(&mut self.scope_node, arena),
         }
     }
 }
@@ -1878,6 +1923,8 @@ pub fn bind<'s>(
 /// There is no flow graph. Where `bind` has a flow node in `stmt_flow`, `case_fallthrough`,
 /// `FnInfo::end` and `FnInfo::exit`, this has [`REACHABLE`]. [`UNREACHABLE`] and `FlowId::NONE` are
 /// where `bind` has them.
+///
+/// Only here: `expr_kinds`, `expr_kind_counts`, `ident_scope`, `declared`, `scope_node`.
 ///
 /// Empty: the tables of names, `expr_flow`, `stmt_scope`, `type_by_alias`, `expr_scope`,
 /// `free_idents`, `alias_idents`, `assignments`, and what is listed for the checker to skip, to

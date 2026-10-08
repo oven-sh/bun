@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use smallvec::{SmallVec, smallvec};
 
 /// Disallow unused expressions.
 pub struct NoUnusedExpressions {
@@ -34,45 +35,60 @@ impl Config {
 
     /// Whether evaluating `e` has no side effects. What is not known counts as having some.
     fn is_disallowed(self, e: Expr) -> bool {
-        match e.kind() {
-            ExprKind::Array(_)
-            | ExprKind::Fn(_)
-            | ExprKind::Class(_)
-            | ExprKind::Ident(_)
-            | ExprKind::String(_)
-            | ExprKind::Number(_)
-            | ExprKind::BigInt(_)
-            | ExprKind::Regex(_)
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::Null
-            | ExprKind::Dot { .. }
-            | ExprKind::Index { .. }
-            | ExprKind::ImportMeta
-            | ExprKind::NewTarget
-            | ExprKind::Object(_)
-            | ExprKind::Template(_)
-            | ExprKind::This => true,
-            ExprKind::Binary {
-                op: BinOp::And | BinOp::Or | BinOp::Nullish,
-                right,
-                ..
-            } => !self.allow_short_circuit || self.is_disallowed(right),
-            ExprKind::Binary { .. } => true,
-            ExprKind::Cond { yes, no, .. } => {
-                !self.allow_ternary || self.is_disallowed(yes) || self.is_disallowed(no)
+        // It is disallowed if one of these is.
+        let mut parts: SmallVec<[Expr; 4]> = smallvec![e];
+        while let Some(e) = parts.pop() {
+            let is_disallowed = match e.kind() {
+                ExprKind::Array(_)
+                | ExprKind::Fn(_)
+                | ExprKind::Class(_)
+                | ExprKind::Ident(_)
+                | ExprKind::String(_)
+                | ExprKind::Number(_)
+                | ExprKind::BigInt(_)
+                | ExprKind::Regex(_)
+                | ExprKind::True
+                | ExprKind::False
+                | ExprKind::Null
+                | ExprKind::Dot { .. }
+                | ExprKind::Index { .. }
+                | ExprKind::ImportMeta
+                | ExprKind::NewTarget
+                | ExprKind::Object(_)
+                | ExprKind::Template(_)
+                | ExprKind::This => true,
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                    right,
+                    ..
+                } => {
+                    parts.push(right);
+                    !self.allow_short_circuit
+                }
+                ExprKind::Binary { .. } => true,
+                ExprKind::Cond { yes, no, .. } => {
+                    parts.extend([yes, no]);
+                    !self.allow_ternary
+                }
+                ExprKind::Jsx(_) => self.enforce_for_jsx,
+                ExprKind::TaggedTemplate(_) => !self.allow_tagged_templates,
+                ExprKind::Unary { op, .. } => {
+                    matches!(op, UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::Typeof)
+                }
+                ExprKind::As { expr, .. }
+                | ExprKind::AsConst(expr)
+                | ExprKind::NonNull(expr)
+                | ExprKind::Instantiation { expr, .. } => {
+                    parts.push(expr);
+                    false
+                }
+                _ => false,
+            };
+            if is_disallowed {
+                return true;
             }
-            ExprKind::Jsx(_) => self.enforce_for_jsx,
-            ExprKind::TaggedTemplate(_) => !self.allow_tagged_templates,
-            ExprKind::Unary { op, .. } => {
-                matches!(op, UnOp::Plus | UnOp::Minus | UnOp::BitNot | UnOp::Not | UnOp::Typeof)
-            }
-            ExprKind::As { expr, .. }
-            | ExprKind::AsConst(expr)
-            | ExprKind::NonNull(expr)
-            | ExprKind::Instantiation { expr, .. } => self.is_disallowed(expr),
-            _ => false,
         }
+        false
     }
 }
 
@@ -80,13 +96,22 @@ fn looks_like_directive(statement: Stmt) -> bool {
     matches!(statement.kind(), StmtKind::Expr(e) if e.as_string().is_some())
 }
 
+/// What has been asked about last, with where its first statement that does not look like a
+/// directive starts.
+#[derive(Default)]
+pub struct Prologue<'a>(Option<(Node<'a>, u32)>);
+
 /// Whether `statement` is where a directive can be, even if the parser does not say that it is
 /// one, as for ES3.
-fn is_in_directive_prologue(statement: Stmt) -> bool {
+fn is_in_directive_prologue<'a>(statement: Stmt<'a>, known: &mut Prologue<'a>) -> bool {
     if !looks_like_directive(statement) || !ast_utils::is_top_level_expression_statement(statement) {
         return false;
     }
-    let siblings = match statement.parent() {
+    let parent = statement.parent();
+    if let Some((_, end)) = known.0.filter(|it| it.0 == parent) {
+        return statement.span().start < end;
+    }
+    let siblings = match parent {
         Node::File(file) => Some(file.body()),
         Node::Func(func) => func.body_statements(),
         Node::Stmt(parent) => match parent.kind() {
@@ -95,21 +120,21 @@ fn is_in_directive_prologue(statement: Stmt) -> bool {
         },
         _ => None,
     };
-    siblings.is_some_and(|siblings| {
-        siblings
-            .iter()
-            .take_while(|it| *it != statement)
-            .all(looks_like_directive)
-    })
+    let Some(siblings) = siblings else {
+        return false;
+    };
+    let end = siblings.iter().find(|it| !looks_like_directive(*it)).map_or(u32::MAX, |it| it.span().start);
+    known.0 = Some((parent, end));
+    statement.span().start < end
 }
 
 /// The whole rule, for an expression statement. typescript-eslint's rule of the same name is no
 /// different.
-pub fn check<'a, R: Rule>(config: Config, statement: Stmt<'a>, cx: &Cx<'a, R>) {
+pub fn check<'a, R: Rule>(config: Config, statement: Stmt<'a>, prologue: &mut Prologue<'a>, cx: &Cx<'a, R>) {
     if let StmtKind::Expr(e) = statement.kind()
         && config.is_disallowed(e)
         && !ast_utils::is_directive(statement)
-        && !(config.ignore_directives && is_in_directive_prologue(statement))
+        && !(config.ignore_directives && is_in_directive_prologue(statement, prologue))
     {
         cx.report(statement, UNUSED_EXPRESSION);
     }
@@ -117,7 +142,7 @@ pub fn check<'a, R: Rule>(config: Config, statement: Stmt<'a>, cx: &Cx<'a, R>) {
 
 impl Rule for NoUnusedExpressions {
     const META: Meta = Meta::eslint("no-unused-expressions", Kind::Suggestion);
-    type State<'a> = ();
+    type State<'a> = Prologue<'a>;
 
     fn new(options: &Options) -> Self {
         NoUnusedExpressions {
@@ -125,7 +150,12 @@ impl Rule for NoUnusedExpressions {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Expr], |rule, statement, cx| check(rule.config, statement, cx));
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Prologue<'a> {
+        on.stmts([StmtTag::Expr], |rule, statement, cx| {
+            let mut prologue = std::mem::take(&mut cx.state);
+            check(rule.config, statement, &mut prologue, cx);
+            cx.state = prologue;
+        });
+        Prologue::default()
     }
 }

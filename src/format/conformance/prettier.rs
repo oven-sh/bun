@@ -355,7 +355,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 let ours = parser_of(&case.name, language);
                 // JSON or a style sheet: the parser is not left to the name of the file.
                 let first_parser = case.parsers.first().map(Vec::as_slice);
-                let named_parser = first_parser.filter(|it| it.starts_with(b"json") || matches!(*it, b"css" | b"less" | b"scss"));
+                let named_parser = first_parser.filter(|it| it.starts_with(b"json") || matches!(*it, b"css" | b"less" | b"scss" | b"graphql"));
                 // Another language.
                 if !case.parsers.is_empty() && named_parser.is_none() && !case.parsers.iter().any(|it| is_javascript_parser(it)) {
                     continue;

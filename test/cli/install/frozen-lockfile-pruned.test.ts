@@ -721,14 +721,21 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
 
   // electron is on the default trusted list and its preinstall writes preinstall.txt. The only
   // package.json that turns the default list off is the one missing from the pruned checkout.
-  test.concurrent.each(["absent", "intact"] as const)(
-    "a missing workspace that declared an empty trustedDependencies list keeps the default list off (node_modules %s)",
-    async nodeModules => {
+  // The lifecycle hook is a diff of its own, so that install also copies the list from the manifests.
+  test.concurrent.each([
+    ["absent", "no other diff"],
+    ["intact", "no other diff"],
+    ["absent", "a lifecycle hook in the surviving workspace"],
+    ["intact", "a lifecycle hook in the surviving workspace"],
+  ] as const)(
+    "a missing workspace that declared an empty trustedDependencies list keeps the default list off (node_modules %s, %s)",
+    async (nodeModules, otherDiff) => {
+      const hook = otherDiff === "no other diff" ? {} : { scripts: { postinstall: "echo ok" } };
       const tree: Tree = {
         root: { name: "mono", workspaces: ["packages/*"] },
         packages: {
           "packages/declares": { name: "declares", trustedDependencies: [] },
-          "packages/uses": { name: "uses", dependencies: { electron: "1.0.0" } },
+          "packages/uses": { name: "uses", dependencies: { electron: "1.0.0" }, ...hook },
         },
       };
       const { fullDir, full } = await fullInstall(linker, tree);

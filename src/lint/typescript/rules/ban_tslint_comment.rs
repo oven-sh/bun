@@ -66,11 +66,8 @@ impl Rule for BanTslintComment {
                         line: start.line,
                         column: start.column.saturating_sub(1),
                     });
-                    let range_end = file.offset(Position {
-                        line: end.line,
-                        column: end.column + 1,
-                    });
-                    fixer.remove(Span::new(range_start, range_end.min(file.span().end)))
+                    // One more than the end, also at the end of the text.
+                    fixer.remove(Span::new(range_start, file.offset(end) + 1))
                 });
             }
         });

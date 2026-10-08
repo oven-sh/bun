@@ -124,12 +124,14 @@ pub fn apply_fixes(text: &[u8], fixes: &mut Vec<&Fix>) -> Option<Vec<u8>> {
     let mut applied = false;
     for fix in fixes.iter() {
         let (start, end) = (fix.span.start as usize, fix.span.end as usize);
-        if last >= start as i64 || start > end || end > text.len() {
+        if last >= start as i64 || start > end {
             continue;
         }
+        // A range can go beyond the text, as for `String.prototype.slice`.
+        let start = start.min(text.len());
         out.extend_from_slice(&text[at.min(start)..start]);
         out.extend_from_slice(&fix.text);
-        at = end;
+        at = end.min(text.len());
         last = end as i64;
         applied = true;
     }

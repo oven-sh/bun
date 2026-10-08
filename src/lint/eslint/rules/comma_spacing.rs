@@ -35,6 +35,7 @@ fn add_null_elements_to_ignore_list<'a>(
 impl CommaSpacing {
     fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
+        cx.state.sort_unstable();
         let mut tokens = file.tokens().with_comments().peekable();
         let mut previous: Option<Token<'a>> = None;
         while let Some(token) = tokens.next() {
@@ -43,7 +44,7 @@ impl CommaSpacing {
                     && !ast_utils::is_comma_token(&previous)
                     && self.before != (previous.end() < token.start())
                     && ast_utils::is_token_on_same_line(file, previous, token)
-                    && !cx.state.contains(&token.start())
+                    && cx.state.binary_search(&token.start()).is_err()
                 {
                     self.report_before(token, previous, cx);
                 }

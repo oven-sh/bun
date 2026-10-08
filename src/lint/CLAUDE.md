@@ -1,6 +1,6 @@
 # `bun lint`
 
-A linter that is compatible with ESLint and typescript-eslint: the same rule names, options, messages, report locations, fixes and `eslint-disable` comments. Rules are written in Rust against the HIR and binder output that `bun check` already produces. **Nothing is converted to ESTree.** Design goals, in order: correct (matches ESLint), fast, pleasant to write rules in.
+A linter that is compatible with ESLint and typescript-eslint: the same rule names, options, messages, report locations, fixes and `eslint-disable` comments. Rules are written in Rust against the HIR and binder output that `bun check` already produces. **Nothing is converted to ESTree**, and no rule or helper may build or query an ESTree tree or esquery selectors: that is for a later JavaScript plugin API. (The ESTree serializer in `standalone/` is a test oracle for the syntax layer.) Design goals, in order: correct (matches ESLint), fast, pleasant to write rules in.
 
 ## Layout
 

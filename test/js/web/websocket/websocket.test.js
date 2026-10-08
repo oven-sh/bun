@@ -699,6 +699,22 @@ describe.concurrent("websocket in subprocess", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("can be made inside a ShadowRealm", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `console.log(new ShadowRealm().evaluate("new WebSocket('ws://127.0.0.1:1/').readyState"));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe(String(WebSocket.CONNECTING));
+    expect(exitCode).toBe(0);
+  });
+
   it("should exit after killed", async () => {
     await using subprocess = Bun.spawn({
       cmd: [bunExe(), import.meta.dir + "/websocket-subprocess.ts", TEST_WEBSOCKET_HOST],
@@ -878,7 +894,7 @@ describe("WebSocket tls option does not leak SSLConfig on error paths", () => {
     // 256 KiB duped per SSLConfig -> ~128 MiB per path if every iteration leaks.
     const bigCA = Buffer.alloc(256 * 1024, "A").toString();
     const tls = { ca: bigCA, rejectUnauthorized: false };
-    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+    const rss = process.memoryUsage.rss;
 
     function hit() {
       // Path 1: getter on a later option throws after the SSLConfig has

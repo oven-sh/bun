@@ -20,7 +20,7 @@ use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser};
 use bun_lint::modules::{Declaration, Flavor, Import, ModuleId, Modules, Request, RequestKind, Resolved, requests_of};
 use bun_sema::atom::Interner;
-use bun_sema::bind::{BindOptions, bind_for_lint};
+use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
 use bun_sema::config::{Project, find_config, load_overriding, without_config};
 use bun_sema::hir::ResolutionMode;
 use bun_sema::json::Json;
@@ -124,11 +124,12 @@ pub fn with_file<R>(
         before_es2020: false,
         before_es2017: false,
     };
-    let bound = bind_for_lint(&hir, bind_options, &atoms, arena);
+    let mut recycled = Recycled::of_this_thread();
+    let bound = bind_for_lint_in(&hir, bind_options, &atoms, &mut recycled);
     if hir.ran_out_of_stack || bound.ran_out_of_stack {
         return None;
     }
-    let file = File::new(path, &hir, &bound, &atoms, language, None);
+    let file = File::new(path, &hir, bound, &atoms, language, None);
     if let Some(modules) = modules {
         file.set_modules(modules);
     }
@@ -265,7 +266,8 @@ impl<'h> Graph<'h> {
                 is_dynamic: it.kind == RequestKind::Dynamic,
                 is_only_importing_types: it.is_only_importing_types,
             };
-            Some((self.resolve_path(&path, it.specifier, it.kind == RequestKind::Other)?.0, declaration, it.kind))
+            let resolved = self.resolve_path(&path, it.specifier, it.kind == RequestKind::Other)?.0;
+            (!(it.may_be_itself && *resolved == *path)).then_some((resolved, declaration, it.kind))
         });
         Recorded {
             requests: resolved.collect(),

@@ -10,7 +10,7 @@
 //!
 //! The model is `ExportMap.imports` of eslint-plugin-import, or the module records of oxlint: [`Flavor`].
 
-use crate::ast::{ExprKind, ExprTag, File, Name, StmtKind};
+use crate::ast::{ExprKind, ExprTag, File, Name, StmtKind, StmtTag};
 use crate::options::Json;
 use crate::span::Span;
 use crate::utils::text::find_line_break;
@@ -67,6 +67,9 @@ pub struct Request<'a> {
     pub kind: RequestKind,
     /// `import type`, `import { type A, type B }`, `export type * from`. What else counts depends on the [`Flavor`].
     pub is_only_importing_types: bool,
+    /// With [`Flavor::Oxlint`]: a statement with this specifier exports names, `export { a } from "m"` or `export * as a from "m"`.
+    /// A module may do that with itself: that is no import then.
+    pub may_be_itself: bool,
 }
 
 /// A [`Request`] of a module that is known.
@@ -152,6 +155,7 @@ pub fn requests_of<'a>(file: &'a File<'a>, flavor: Flavor) -> Vec<Request<'a>> {
                 line: source.span().start,
                 kind: RequestKind::Dynamic,
                 is_only_importing_types: false,
+                may_be_itself: false,
             });
         }
     }
@@ -201,6 +205,7 @@ fn add_static_requests<'a>(file: &'a File<'a>, requests: &mut Vec<Request<'a>>) 
                 line: span.start,
                 kind: RequestKind::Static,
                 is_only_importing_types,
+                may_be_itself: false,
             });
         }
     }
@@ -211,8 +216,8 @@ fn add_static_requests<'a>(file: &'a File<'a>, requests: &mut Vec<Request<'a>>) 
 /// `import {} from "m"` and `export * from "m"` have no names.
 fn add_static_requests_of_oxlint<'a>(file: &'a File<'a>, requests: &mut Vec<Request<'a>>) {
     let first = requests.len();
-    // For each request: the specifier, whether the statement has names, and whether one of them is a value.
-    let mut names: SmallVec<[(Name<'a>, bool, bool); 32]> = SmallVec::new();
+    // For each request: the specifier, whether the statement has names, whether one of them is a value, and whether it exports them.
+    let mut names: SmallVec<[(Name<'a>, bool, bool, bool); 32]> = SmallVec::new();
     for stmt in file.body() {
         let (specifier, types, values) = match stmt.kind() {
             StmtKind::Import(import) => {
@@ -233,19 +238,21 @@ fn add_static_requests_of_oxlint<'a>(file: &'a File<'a>, requests: &mut Vec<Requ
             _ => continue,
         };
         if let (Some(specifier), Some(span)) = (specifier, stmt.module_specifier_span()) {
-            names.push((specifier, types + values > 0, values > 0));
+            names.push((specifier, types + values > 0, values > 0, types + values > 0 && stmt.tag() != StmtTag::Import));
             requests.push(Request {
                 specifier: specifier.bytes(),
                 span,
                 line: span.start,
                 kind: RequestKind::Static,
                 is_only_importing_types: false,
+                may_be_itself: false,
             });
         }
     }
     for (request, &(specifier, ..)) in requests[first..].iter_mut().zip(&names) {
         let mut same = names.iter().filter(|it| it.0 == specifier);
-        request.is_only_importing_types = same.clone().any(|it| it.1) && !same.any(|it| it.2);
+        request.is_only_importing_types = same.clone().any(|it| it.1) && !same.clone().any(|it| it.2);
+        request.may_be_itself = same.any(|it| it.3);
     }
 }
 

@@ -77,6 +77,7 @@ impl Rule for NoCycle {
             line: it.importer.start,
             kind: RequestKind::Other,
             is_only_importing_types: false,
+            may_be_itself: false,
         }));
         set_lines(file.text(), &mut requests[known..]);
         // Where the components do not tell.

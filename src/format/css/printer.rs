@@ -25,6 +25,8 @@ pub(crate) struct Printer<'t, 'a> {
     pub(crate) css_stack: Vec<&'t CssNode<'a>>,
     /// The nodes of the value that what is being printed is in.
     pub(crate) value_stack: Vec<&'t ValueNode<'a>>,
+    /// Prettier throws an error for what has been printed.
+    pub(crate) has_failed: bool,
 }
 
 fn owned<'t>(text: Cow<'_, [u8]>, original: &'t [u8]) -> Doc<'t> {
@@ -264,7 +266,11 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     }
 
     /// Whether there is no semicolon behind `node`, which is being printed.
-    fn has_no_semicolon(&self, node: &CssNode<'a>) -> bool {
+    fn has_no_semicolon(&mut self, node: &CssNode<'a>) -> bool {
+        // What Prettier makes of `--a: { .. }` has no `raws` to look at.
+        if matches!(self.css_stack[..], [.., parent, _] if matches!(parent.value, Value::Rule(_))) {
+            self.has_failed = true;
+        }
         matches!(self.css_stack[..], [.., parent, _] if !parent.semicolon)
             && node.end.checked_sub(1).and_then(|at| self.text.get(at)) != Some(&b';')
     }

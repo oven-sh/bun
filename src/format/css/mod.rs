@@ -206,8 +206,12 @@ fn parse_and_print<R>(
         trailing_comma: !matches!(options.trailing_commas, TrailingCommas::None),
         css_stack: Vec::new(),
         value_stack: Vec::new(),
+        has_failed: false,
     };
     let mut document = printer.print_root(&root);
+    if printer.has_failed {
+        return Err(FormatError::SyntaxError);
+    }
     if let Some(front_matter) = front_matter {
         let has_nodes = root.nodes.as_ref().is_some_and(|nodes| !nodes.is_empty());
         // Prettier's `printEmbedFrontMatter`, for front matter that is empty.

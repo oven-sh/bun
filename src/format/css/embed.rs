@@ -57,6 +57,23 @@ fn count_placeholders(doc: &Doc<'_>, count: usize) -> Option<usize> {
 struct Writer<'a> {
     has_placeholders: bool,
     template: Template<'a>,
+    /// What is written is in an item of a `fill`, and in no group in that.
+    is_directly_in_fill: bool,
+    is_in_line_suffix: bool,
+}
+
+/// Whether there is a `breakParent` in `doc` that is in no group in it.
+fn has_break_parent_outside_of_groups(doc: &Doc<'_>) -> bool {
+    match doc {
+        Doc::BreakParent => true,
+        Doc::Array(parts) | Doc::Fill(parts) => parts.iter().any(has_break_parent_outside_of_groups),
+        Doc::Indent(contents) | Doc::Dedent(contents) => has_break_parent_outside_of_groups(contents),
+        Doc::IfBreak {
+            break_contents,
+            flat_contents,
+        } => has_break_parent_outside_of_groups(break_contents) || has_break_parent_outside_of_groups(flat_contents),
+        Doc::Text(_) | Doc::Group { .. } | Doc::LineSuffix(_) | Doc::LineSuffixBoundary | Doc::Line(_) => false,
+    }
 }
 
 impl<'a> Writer<'a> {
@@ -113,6 +130,20 @@ impl<'a> Writer<'a> {
                         index += 4;
                         continue;
                     }
+                    // The group is broken, so this is two line breaks as well.
+                    if let [Doc::Line(Line::Hard), Doc::BreakParent, Doc::Line(Line::Space | Line::Soft), ..] = parts[index..] {
+                        f.write_element(FormatElement::Line(LineMode::Empty));
+                        index += 3;
+                        continue;
+                    }
+                    // `(` and `)` with nothing in between.
+                    if let [Doc::Indent(contents), Doc::Line(Line::Soft), ..] = &parts[index..]
+                        && matches!(**contents, Doc::Line(Line::Soft))
+                    {
+                        f.write_element(FormatElement::Line(LineMode::SoftEmpty));
+                        index += 2;
+                        continue;
+                    }
                     self.write(part, f);
                     index += 1;
                 }
@@ -127,14 +158,23 @@ impl<'a> Writer<'a> {
                 should_break,
             } => {
                 let mode = if *should_break { GroupMode::Expand } else { GroupMode::Flat };
+                let is_directly_in_fill = std::mem::replace(&mut self.is_directly_in_fill, false);
                 self.write_between(Tag::StartGroup(Group::new().with_mode(mode)), contents, Tag::EndGroup, f);
+                self.is_directly_in_fill = is_directly_in_fill;
             }
             Doc::Fill(parts) => {
+                // For Prettier, a `breakParent` is about the groups around it, and says nothing about
+                // whether an item fits.
+                if !self.is_directly_in_fill && parts.iter().any(has_break_parent_outside_of_groups) {
+                    f.write_element(FormatElement::ExpandParent);
+                }
+                let is_directly_in_fill = std::mem::replace(&mut self.is_directly_in_fill, true);
                 f.write_element(FormatElement::Tag(Tag::StartFill));
                 for part in parts {
                     self.write_between(Tag::StartEntry, part, Tag::EndEntry, f);
                 }
                 f.write_element(FormatElement::Tag(Tag::EndFill));
+                self.is_directly_in_fill = is_directly_in_fill;
             }
             Doc::IfBreak {
                 break_contents,
@@ -147,8 +187,15 @@ impl<'a> Writer<'a> {
                     }
                 }
             }
-            Doc::LineSuffix(contents) => self.write_between(Tag::StartLineSuffix, contents, Tag::EndLineSuffix, f),
+            // One in another comes to the same as one.
+            Doc::LineSuffix(contents) if self.is_in_line_suffix => self.write(contents, f),
+            Doc::LineSuffix(contents) => {
+                self.is_in_line_suffix = true;
+                self.write_between(Tag::StartLineSuffix, contents, Tag::EndLineSuffix, f);
+                self.is_in_line_suffix = false;
+            }
             Doc::LineSuffixBoundary => f.write_element(FormatElement::LineSuffixBoundary),
+            Doc::BreakParent if self.is_directly_in_fill => {}
             Doc::BreakParent => f.write_element(FormatElement::ExpandParent),
             Doc::Line(Line::Space) => f.write_element(FormatElement::Line(LineMode::SoftOrSpace)),
             Doc::Line(Line::Soft) => f.write_element(FormatElement::Line(LineMode::Soft)),
@@ -181,7 +228,7 @@ fn print_embed_css<'a>(template: Template<'a>, options: &FormatOptions, action: 
     let text = super::normalize_end_of_line(&text);
     let result = super::parse_and_print(&text, super::Parser::Scss, options, |document| {
         let document = doc::strip_trailing_hardline(doc::clean(document));
-        if count > 0 && count_placeholders(&document, count) != Some(count) {
+        if document.is_empty_text() || (count > 0 && count_placeholders(&document, count) != Some(count)) {
             return false;
         }
         if let Action::Write(f) = action {
@@ -191,6 +238,8 @@ fn print_embed_css<'a>(template: Template<'a>, options: &FormatOptions, action: 
             let mut writer = Writer {
                 has_placeholders: count > 0,
                 template,
+                is_directly_in_fill: false,
+                is_in_line_suffix: false,
             };
             writer.write(&document, f);
             f.write_element(FormatElement::Tag(Tag::EndIndent));

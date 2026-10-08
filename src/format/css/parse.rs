@@ -355,7 +355,11 @@ impl<'a> Context<'a> {
                     true => Cow::Borrowed(self.of(raw.selector)),
                     false => self.concat(&[raw.selector, raw.between]),
                 };
-                if !text::trim(&node.raw_selector).is_empty() {
+                // Prettier has no way to print a selector that is still a string.
+                if text::trim(&node.raw_selector).is_empty() {
+                    return Err(SyntaxError);
+                }
+                {
                     let clean = raw.clean_selector.as_deref().unwrap_or_else(|| self.of(raw.selector));
                     node.is_scss_nested_property = self.syntax == Syntax::Scss && is_scss_nested_property(clean);
                     node.selector = Some(parse_selector(node.raw_selector.clone()));

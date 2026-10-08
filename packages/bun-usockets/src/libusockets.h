@@ -655,9 +655,8 @@ struct us_iovec_t {
 
 /* Vectored variant of us_socket_raw_write: same closed/shutdown gating and
  * partial-write poll handling, one writev for all chunks (sequential sends
- * on platforms without writev). Returns total bytes written. Reports a fatal
- * send error through *fatal_write_error, as us_socket_write_check_error does. */
-int us_socket_raw_writev(us_socket_r s, const struct us_iovec_t *iov, int count, int *fatal_write_error);
+ * on platforms without writev). Returns total bytes written. */
+int us_socket_raw_writev(us_socket_r s, const struct us_iovec_t *iov, int count) nonnull_fn_decl;
 /* Vectored us_socket_write: through TLS if `s->ssl` is set, with the records of all chunks in one write. */
 int us_socket_writev(us_socket_r s, const struct us_iovec_t *iov, int count) nonnull_fn_decl;
 

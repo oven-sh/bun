@@ -2879,10 +2879,7 @@ impl H2FrameParser {
             // takes it.
             return 0;
         }
-        // A latched fatal write still needs this tick to close the transport.
-        if !self.transport_write_fatal.get() {
-            self.unregister_auto_flush();
-        }
+        self.unregister_auto_flush();
         bun_output::scoped_log!(H2FrameParser, "uncork {:p}", corked_ptr);
         // The slot's ref on `self`, released once the corked bytes are written.
         let _slot_ref = Self::set_corked(None);
@@ -3145,9 +3142,6 @@ impl H2FrameParser {
                         return 0usize;
                     }
                     let w = socket.get().write_vectored_raw(iov);
-                    if Self::is_transport_fatal_write_result(w) {
-                        self.note_transport_write_fatal(w);
-                    }
                     if w < 0 { 0 } else { w as usize }
                 }),
             _ => {

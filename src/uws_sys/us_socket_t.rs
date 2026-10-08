@@ -417,21 +417,17 @@ impl us_socket_t {
     /// sends on platforms without it). Same closed/shutdown gating and
     /// partial-write poll handling as `raw_write`. Plain-TCP only by contract:
     /// raw writes bypass TLS framing.
-    pub(crate) fn raw_writev(&mut self, iov: &[UsIoVec]) -> (i32, i32) {
+    pub(crate) fn raw_writev(&mut self, iov: &[UsIoVec]) -> i32 {
         bun_core::scoped_log!(uws, "us_socket_raw_writev({:p}, {})", self, iov.len());
-        let mut fatal: i32 = 0;
         // SAFETY: iov entries reference memory owned by the caller for the
         // duration of this call; the C side only reads them synchronously.
-        let written = unsafe {
+        unsafe {
             c::us_socket_raw_writev(
                 self,
                 iov.as_ptr(),
                 i32::try_from(iov.len()).expect("int cast"),
-                &raw mut fatal,
             )
-        };
-        // (bytes written, fatal send error) as in `write_check_error`.
-        (written, fatal)
+        }
     }
 
     /// Bypass TLS — raw bytes to the fd even if `is_tls()`.
@@ -562,7 +558,6 @@ mod c {
             s: *mut us_socket_t,
             iov: *const super::UsIoVec,
             count: i32,
-            fatal_write_error: *mut i32,
         ) -> i32;
         pub(super) fn us_socket_raw_write(s: *mut us_socket_t, data: *const u8, length: i32)
         -> i32;

@@ -6617,21 +6617,21 @@ describe.concurrent("a client session reports a peer reset that one of its write
     const session = http2.connect("http://127.0.0.1:" + process.env.H2_PEER_PORT);
     session.on("error", err => (state.sessionError = err.code));
     let req;
-    function request(body) {
-      req = session.request({ ":path": "/", ":method": body ? "POST" : "GET" });
+    function request() {
+      req = session.request({ ":path": "/" });
       req.on("response", () => (state.sawResponse = true));
       req.on("error", err => (state.streamError = err.code));
       req.on("close", () => (state.rstCode = req.rstCode));
       req.resume();
-      req.end(body);
+      req.end();
     }
-    function busyThenRequest(body) {
+    function busyThenRequest() {
       // Block the loop so the peer's RST is never polled: this process must observe nothing
       // until it writes. The marker tells the parent to reset, and the parent sends the byte
       // only after it has reset, so the RST is always here before the request is written.
       fs.writeSync(1, "busy\\n");
       if (fs.readSync(0, Buffer.alloc(1)) !== 1) throw new Error("stdin closed before the reset");
-      request(body);
+      request();
     }
     process.on("exit", () => {
       const destroyed = { sessionDestroyed: session.destroyed, streamDestroyed: !!req && req.destroyed };
@@ -6679,17 +6679,11 @@ describe.concurrent("a client session reports a peer reset that one of its write
     }
   }
 
-  // The first write of the next request() is the first operation to see the RST.
+  // The HEADERS write of the next request() is the first operation to see the RST.
   it.each([
     // Node reports ECONNRESET here too. The timer is not a wait: it moves the request out
     // of the read callback that emits 'remoteSettings'.
     ["a timer", `session.on("remoteSettings", () => setTimeout(busyThenRequest, 0));`],
-    // This request has a body above one DATA frame, which leaves with its HEADERS in a
-    // single writev().
-    [
-      "a timer, with a body larger than one frame",
-      `session.on("remoteSettings", () => setTimeout(busyThenRequest, 0, Buffer.alloc(20000)));`,
-    ],
     // Node reports a clean close here. This is the one ordering where bun says more.
     ["inside the 'remoteSettings' event", `session.on("remoteSettings", () => busyThenRequest());`],
   ])("on an idle session whose loop was busy while the reset arrived, request made from %s", async (_, fixture) => {

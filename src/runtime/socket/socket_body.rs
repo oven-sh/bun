@@ -2687,11 +2687,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if SSL && self.flags.get().contains(Flags::REJECTED) {
             return -1;
         }
-        let (res, fatal_errno) = socket.raw_writev(iov);
-        if fatal_errno != 0 {
-            // The negative errno of a fatal send, as `write_maybe_corked` returns it.
-            return -fatal_errno;
-        }
+        let res = socket.raw_writev(iov);
         let uwrote: usize = usize::try_from(res.max(0)).expect("int cast");
         self.bytes_written
             .set(self.bytes_written.get() + uwrote as u64);

@@ -47,6 +47,7 @@ impl NoDupeKeys {
             return;
         }
         cx.state.clear();
+        let mut is_pattern = None;
         for prop in props {
             let defines = match prop.kind() {
                 PropKind::Spread => continue,
@@ -70,7 +71,7 @@ impl NoDupeKeys {
             if !is_duplicate {
                 continue;
             }
-            if is_assignment_target(object) {
+            if *is_pattern.get_or_insert_with(|| is_assignment_target(object)) {
                 return;
             }
             cx.report(key.inner_span(cx.file()), UNEXPECTED)

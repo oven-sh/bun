@@ -267,7 +267,7 @@ define_length_units! {
 impl LengthValue {
     pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
         let location = input.current_source_location();
-        let token = input.next()?.clone();
+        let token = *input.next()?;
         match &token {
             Token::Dimension(dim) => {
                 if let Some(v) = Self::from_unit_ci(dim.unit, dim.num.value) {

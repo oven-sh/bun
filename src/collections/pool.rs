@@ -402,7 +402,7 @@ where
         // SAFETY: `node` was created via `heap::alloc` in `push`/`get` and
         // is exclusively owned by the caller. `data` is initialized: `destroy_node`
         // is only reached from `release()` (caller had a usable node, so `data`
-        // was written) or `delete_all()` (free-list nodes, always initialized).
+        // was written).
         unsafe {
             (*node).data.assume_init_drop();
             drop(bun_core::heap::take(node));

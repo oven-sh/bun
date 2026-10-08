@@ -412,10 +412,6 @@ impl<'bump> DeclarationHandler<'bump> {
         if let Some(direction) = self.direction.take() {
             self.decls.push(css::Property::Direction(direction));
         }
-        // if (this.unicode_bidi) |unicode_bidi| {
-        //     this.unicode_bidi = null;
-        //     this.decls.append(context.arena, css.Property{ .unicode_bidi = unicode_bidi }) catch |err| bun.handleOom(err);
-        // }
 
         self.background.finalize(&mut self.decls, context);
         self.border.finalize(&mut self.decls, context);

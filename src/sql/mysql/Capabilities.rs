@@ -44,7 +44,6 @@ macro_rules! capabilities {
                         f.write_str(stringify!($name))?;
                     }
                 )*
-                let _ = first;
                 Ok(())
             }
         }

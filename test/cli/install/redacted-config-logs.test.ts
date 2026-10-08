@@ -3,10 +3,12 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 
-test("registry url password is masked in request error output", async () => {
+test("registry url password is sent as Basic auth and left out of request error output", async () => {
+  const authorizations: (string | null)[] = [];
   await using server = Bun.serve({
     port: 0,
-    fetch() {
+    fetch(req) {
+      authorizations.push(req.headers.get("authorization"));
       return new Response(JSON.stringify({ error: "unauthorized" }), {
         status: 401,
         headers: { "content-type": "application/json" },
@@ -32,10 +34,34 @@ test("registry url password is masked in request error output", async () => {
 
   const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(err).toContain(`401 Unauthorized: http://user:**********@${server.hostname}:${server.port}/is-number`);
+  expect(authorizations).toEqual([`Basic ${Buffer.from("user:secretpass").toString("base64")}`]);
+  expect(err).toContain(`401 Unauthorized: http://${server.hostname}:${server.port}/is-number`);
   expect(err).not.toContain("secretpass");
   expect(out).not.toContain("secretpass");
   expect(exitCode).toBe(1);
+});
+
+test("url password is masked in the verbose request line", async () => {
+  await using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response("ok");
+    },
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `await fetch("http://user:secretpass@${server.hostname}:${server.port}/pkg")`],
+    env: { ...bunEnv, NO_COLOR: "1", BUN_CONFIG_VERBOSE_FETCH: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(err).toContain(`GET http://user:**********@${server.hostname}:${server.port}/pkg`);
+  expect(err).not.toContain("secretpass");
+  expect(out).not.toContain("secretpass");
+  expect(exitCode).toBe(0);
 });
 
 test("registry port is not mistaken for a credential when the package is scoped", async () => {
@@ -73,6 +99,48 @@ test("registry port is not mistaken for a credential when the package is scoped"
   expect(exitCode).toBe(1);
 });
 
+test("bunfig password value is masked in config error output", async () => {
+  using dir = tempDir("redacted-bunfig-password", {
+    "bunfig.toml": `l;password = "supersecretvalue"`,
+    "package.json": "{}",
+  });
+
+  await using plain = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: { ...bunEnv, NO_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [plainOut, plainErr, plainExit] = await Promise.all([plain.stdout.text(), plain.stderr.text(), plain.exited]);
+
+  expect(plainOut).not.toContain("supersecretvalue");
+  expect(plainErr).not.toContain("supersecretvalue");
+  expect(plainErr).toContain(`l;password = "****************"`);
+
+  await using colored = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [coloredOut, coloredErr, coloredExit] = await Promise.all([
+    colored.stdout.text(),
+    colored.stderr.text(),
+    colored.exited,
+  ]);
+
+  expect(coloredOut).not.toContain("supersecretvalue");
+  expect(coloredErr).not.toContain("supersecretvalue");
+  expect(coloredErr).toContain("****************");
+
+  expect(plainExit).toBe(1);
+  expect(coloredExit).toBe(1);
+});
+
 describe.concurrent("redact", async () => {
   const tests = [
     {
@@ -89,6 +157,11 @@ describe.concurrent("redact", async () => {
       title: "small string",
       bunfig: `l;token = "1"`,
       expected: `"*"`,
+    },
+    {
+      title: "registry password",
+      bunfig: `l;password = "hunter2"`,
+      expected: `"*******"`,
     },
     {
       title: "random UUID",

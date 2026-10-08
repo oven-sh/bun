@@ -37,6 +37,111 @@ test("weird headers", async () => {
   }
 });
 
+// https://fetch.spec.whatwg.org/#concept-header-value
+// Header values are ByteStrings: U+00E9 goes out as the single byte 0xE9, not as
+// UTF-8 0xC3 0xA9. The bytes must not depend on whether JSC stores the string as
+// 8-bit (a literal) or 16-bit (TextDecoder, normalize(), JSON.parse output).
+describe("response header values are isomorphic-encoded on the wire", () => {
+  const eightBit = "caf\u00e9-\u0080\u00ff";
+  // A utf-16le decode always yields a 16-bit string, even for latin-1 content.
+  const sixteenBit = new TextDecoder("utf-16le").decode(new Uint16Array([0x63, 0x61, 0x66, 0xe9, 0x2d, 0x80, 0xff]));
+  const expectedHex = "63 61 66 e9 2d 80 ff";
+
+  async function rawResponse(port: number, path: string): Promise<string> {
+    const socket = net.connect(port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+      let raw = "";
+      await new Promise<void>(resolve => {
+        socket.on("data", chunk => (raw += chunk.toString("latin1")));
+        socket.on("close", resolve);
+      });
+      return raw;
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  function headerHex(raw: string, name: string): string[] {
+    const head = raw.split("\r\n\r\n")[0];
+    return head
+      .split("\r\n")
+      .filter(line => line.toLowerCase().startsWith(name + ":"))
+      .map(line =>
+        [...Buffer.from(line.slice(name.length + 2), "latin1")].map(c => c.toString(16).padStart(2, "0")).join(" "),
+      );
+  }
+
+  test("Response headers", async () => {
+    expect(sixteenBit).toBe(eightBit);
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch(req) {
+        const value = new URL(req.url).pathname === "/16" ? sixteenBit : eightBit;
+        return new Response("ok", { headers: { "x-t": value } });
+      },
+    });
+
+    expect(headerHex(await rawResponse(server.port, "/8"), "x-t")).toEqual([expectedHex]);
+    expect(headerHex(await rawResponse(server.port, "/16"), "x-t")).toEqual([expectedHex]);
+
+    // A fetch() client reads the same value back, not mojibake.
+    const res = await fetch(`http://127.0.0.1:${server.port}/16`);
+    expect(res.headers.get("x-t")).toBe(eightBit);
+  });
+
+  test("Set-Cookie headers", async () => {
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch(req) {
+        const value = new URL(req.url).pathname === "/16" ? sixteenBit : eightBit;
+        const headers = new Headers();
+        headers.append("set-cookie", `a=${value}`);
+        headers.append("set-cookie", `b=${value}`);
+        return new Response("ok", { headers });
+      },
+    });
+
+    const expected = ["61 3d " + expectedHex, "62 3d " + expectedHex];
+    expect(headerHex(await rawResponse(server.port, "/8"), "set-cookie")).toEqual(expected);
+    expect(headerHex(await rawResponse(server.port, "/16"), "set-cookie")).toEqual(expected);
+  });
+
+  test("long values and values that start with a non-ASCII char", async () => {
+    // 300 ASCII code units, then latin-1, then digits: longer than the writer's inline buffer.
+    const units = Array.from({ length: 300 }, (_, i) => 0x41 + (i % 26));
+    units.push(0xe9, 0x80, 0xff, ...Array.from({ length: 100 }, (_, i) => 0x30 + (i % 10)));
+    const values: Record<string, Uint16Array> = {
+      long: new Uint16Array(units),
+      lead: new Uint16Array([0xe9, 0x61]),
+      ascii: new Uint16Array([0x61, 0x62, 0x63]),
+    };
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      fetch(req) {
+        const url = new URL(req.url);
+        const codeUnits = values[url.pathname.slice(1)];
+        const value =
+          url.searchParams.get("bits") === "16"
+            ? new TextDecoder("utf-16le").decode(codeUnits)
+            : String.fromCharCode(...codeUnits);
+        return new Response("ok", { headers: { "x-t": value } });
+      },
+    });
+
+    for (const [name, codeUnits] of Object.entries(values)) {
+      const expected = [[...codeUnits].map(c => c.toString(16).padStart(2, "0")).join(" ")];
+      expect(headerHex(await rawResponse(server.port, `/${name}?bits=8`), "x-t")).toEqual(expected);
+      expect(headerHex(await rawResponse(server.port, `/${name}?bits=16`), "x-t")).toEqual(expected);
+    }
+  });
+});
+
 // RFC 9112 §9.6: a server that sends "Connection: close" MUST close the
 // connection after that response. Bun was emitting the header but leaving the
 // socket in the keep-alive pool, servicing further requests on the "closed"

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 const { HTTPParser, ConnectionsList, methods, allMethods } = process.binding("http_parser");
 const { parsers } = require("node:_http_common");
 
@@ -48,6 +49,40 @@ describe("HTTPParser.prototype.close", () => {
     expect(parser.getCurrentBuffer()).toBeUndefined();
     expect(parser.duration()).toBeUndefined();
     expect(parser.headersCompleted()).toBeUndefined();
+  });
+});
+
+describe("HTTPParser before initialize()", () => {
+  test("execute() and finish() throw instead of running over uninitialised state", () => {
+    // Churn the parser heap first so a fresh cell is likely to land on reused memory.
+    let junk = [];
+    for (let i = 0; i < 500; i++) {
+      const q = new HTTPParser();
+      q.initialize(HTTPParser.REQUEST, {});
+      q.execute(Buffer.from(`GET /${"a".repeat(i % 50)} HTTP/1.1\r\nHost: a\r\nX: b\r\n\r\n`));
+      junk.push(q);
+    }
+    junk = null;
+    Bun.gc(true);
+
+    for (let i = 0; i < 50; i++) {
+      const parser = new HTTPParser();
+      expect(() => parser.execute(Buffer.from("GET / HTTP/1.1\r\nHost: a\r\n\r\n"))).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_STATE" }),
+      );
+      expect(() => parser.finish()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+      expect(parser.pause()).toBeUndefined();
+      expect(parser.resume()).toBeUndefined();
+      expect(parser.getCurrentBuffer()).toEqual(Buffer.alloc(0));
+      expect(parser.headersCompleted()).toBe(false);
+    }
+
+    // and the parser is still usable once initialised
+    const parser = new HTTPParser();
+    expect(() => parser.finish()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+    parser.initialize(HTTPParser.REQUEST, {});
+    const input = Buffer.from("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
+    expect(parser.execute(input)).toBe(input.length);
   });
 });
 
@@ -149,6 +184,108 @@ describe("HTTPParser.prototype.execute", () => {
     expect(executed).toBe(inputLength);
   });
 
+  // A callback can shrink a resizable ArrayBuffer, or grow a WebAssembly.Memory, while llhttp is
+  // still scanning the input. Both unmap the input bytes, which a pin does not stop, so each case
+  // runs in a child process: the parse must finish on bytes that stay mapped.
+  const head = "POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n";
+  const tail = "0\r\n\r\n";
+  const payloadSize = 1024;
+  const chunkSize = `${payloadSize.toString(16)}\r\n`.length + payloadSize + "\r\n".length;
+  // A resizable ArrayBuffer of its own, or one WebAssembly.Memory page.
+  const inputSizes = { resizable: 1024 * 1024, wasm: 64 * 1024 };
+  // A signaling wasm memory reserves its maximum up front and commits pages in place as it grows,
+  // which leaves the input mapped. Only a bounds checked memory releases the block it grew out of,
+  // so the wasm case asks JSC for that mode instead of counting on a full signaling memory pool.
+  const modeEnv = { resizable: bunEnv, wasm: { ...bunEnv, BUN_JSC_useWasmFastMemory: "0" } };
+
+  const fixture = (mode: keyof typeof inputSizes) => `
+    const { HTTPParser } = process.binding("http_parser");
+
+    let bytes, mutate;
+    if (${JSON.stringify(mode)} === "resizable") {
+      const size = ${inputSizes.resizable};
+      const buffer = new ArrayBuffer(size, { maxByteLength: size });
+      bytes = new Uint8Array(buffer);
+      // resize() decommits the trimmed pages.
+      mutate = () => buffer.resize(0);
+    } else {
+      const memory = new WebAssembly.Memory({ initial: 1, maximum: 2 });
+      bytes = new Uint8Array(memory.buffer);
+      // grow() detaches the old buffer and releases the block it held.
+      mutate = () => memory.grow(1);
+    }
+
+    const payload = Buffer.alloc(${payloadSize}, 0x61);
+    const chunk = Buffer.concat([Buffer.from(${JSON.stringify(`${payloadSize.toString(16)}\r\n`)}), payload, Buffer.from("\\r\\n")]);
+    const head = Buffer.from(${JSON.stringify(head)});
+    const tail = Buffer.from(${JSON.stringify(tail)});
+
+    bytes.set(head, 0);
+    let end = head.byteLength;
+    while (end + chunk.byteLength + tail.byteLength <= bytes.byteLength) {
+      bytes.set(chunk, end);
+      end += chunk.byteLength;
+    }
+    bytes.set(tail, end);
+    end += tail.byteLength;
+
+    const parser = new HTTPParser();
+    parser.initialize(HTTPParser.REQUEST, {});
+
+    let mutated = false;
+    let bodyBytes = 0;
+    let bodyMatches = true;
+    let complete = false;
+    let currentBuffer = -1;
+    parser[HTTPParser.kOnHeadersComplete] = () => 0;
+    parser[HTTPParser.kOnBody] = received => {
+      bodyBytes += received.byteLength;
+      if (!received.equals(payload.subarray(0, received.byteLength))) bodyMatches = false;
+      if (!mutated) {
+        mutated = true;
+        mutate();
+        // getCurrentBuffer() copies out of the same bytes llhttp is reading.
+        currentBuffer = parser.getCurrentBuffer().byteLength;
+      }
+    };
+    parser[HTTPParser.kOnMessageComplete] = () => {
+      complete = true;
+    };
+
+    const executed = parser.execute(bytes.subarray(0, end));
+    console.log(JSON.stringify({ executed, bodyBytes, bodyMatches, complete, mutated, currentBuffer: currentBuffer === end }));
+  `;
+
+  test.each(Object.keys(inputSizes) as (keyof typeof inputSizes)[])(
+    "finishes the parse when a callback unmaps the input (%s)",
+    async mode => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture(mode)],
+        env: modeEnv[mode],
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const chunks = Math.floor((inputSizes[mode] - head.length - tail.length) / chunkSize);
+
+      // `executed` covers the whole request, so llhttp read every chunk that follows the callback
+      // which unmapped the input, and each one held the bytes the request was built with.
+      expect({ stdout: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
+        stdout: {
+          executed: head.length + chunks * chunkSize + tail.length,
+          bodyBytes: chunks * payloadSize,
+          bodyMatches: true,
+          complete: true,
+          mutated: true,
+          currentBuffer: true,
+        },
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test("rejects re-entrant execute, even after a nested finish()", async () => {
     const parser = new HTTPParser();
     parser.initialize(HTTPParser.REQUEST, {});
@@ -176,6 +313,46 @@ describe("HTTPParser.prototype.execute", () => {
     // Once the outer execute() has returned, the parser accepts new data again.
     expect(parser.execute(input)).toBe(input.length);
   });
+});
+
+describe("a callback that throws stops the parse", () => {
+  const kOnMessageBegin = HTTPParser.kOnMessageBegin;
+  const kOnBody = HTTPParser.kOnBody;
+  const kOnMessageComplete = HTTPParser.kOnMessageComplete;
+  // Two pipelined requests so that a parser that kept going after the throw would reach the second one.
+  const input = Buffer.from(
+    "POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\nA" +
+      "POST /b HTTP/1.1\r\nHost: x\r\nContent-Length: 1\r\n\r\nB",
+  );
+  for (const throwing of ["begin", "headersComplete", "body", "complete"] as const) {
+    test(throwing, () => {
+      const parser = new HTTPParser();
+      parser.initialize(HTTPParser.REQUEST, {});
+      const calls: string[] = [];
+      const err = new Error(throwing + " threw");
+      const hook = (name: string) => () => {
+        calls.push(name);
+        if (name === throwing) throw err;
+        return 0;
+      };
+      parser[kOnMessageBegin] = hook("begin");
+      parser[kOnHeadersComplete] = hook("headersComplete");
+      parser[kOnBody] = hook("body");
+      parser[kOnMessageComplete] = hook("complete");
+      let caught;
+      try {
+        parser.execute(input);
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBe(err);
+      // Nothing ran after the callback that threw.
+      expect(calls.at(-1)).toBe(throwing);
+      expect(calls.filter(c => c === "begin").length).toBe(1);
+      // The parser is left in the errored state.
+      expect(parser.execute(Buffer.from("GET / HTTP/1.1\r\n\r\n"))).toBeInstanceOf(Error);
+    });
+  }
 });
 
 test("HTTPParser.prototype.getCurrentBuffer", async () => {
@@ -264,6 +441,57 @@ describe("ConnectionsList", () => {
     expect(list.all()).toEqual([p1, p4, p3]);
   });
 });
+
+test("subclasses of HTTPParser and ConnectionsList return instances of the subclass", () => {
+  class RequestParser extends HTTPParser {
+    start(list) {
+      this.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+      return this;
+    }
+  }
+  class ParserList extends ConnectionsList {
+    count() {
+      return this.all().length;
+    }
+  }
+
+  const list = new ParserList();
+  expect(Object.getPrototypeOf(list)).toBe(ParserList.prototype);
+  expect(list).toBeInstanceOf(ConnectionsList);
+
+  const parser = new RequestParser().start(list);
+  expect(Object.getPrototypeOf(parser)).toBe(RequestParser.prototype);
+  expect(parser).toBeInstanceOf(HTTPParser);
+
+  expect(list.count()).toBe(1);
+  expect(list.all()).toEqual([parser]);
+  parser.execute(Buffer.from("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n"));
+  expect(parser.headersCompleted()).toBe(true);
+});
+
+// In a subprocess: llhttp 9.4.2 never returns from execute() here, and nothing in the process can interrupt that.
+test.concurrent.each(["REQUEST", "RESPONSE"])(
+  "a NUL in a header value is an error in relaxed mode (%s)",
+  async type => {
+    const head = type === "REQUEST" ? "POST / HTTP/1.1" : "HTTP/1.1 200 OK";
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { HTTPParser } = process.binding("http_parser");
+       const parser = new HTTPParser();
+       parser.initialize(HTTPParser.${type}, {}, 0, HTTPParser.kLenientHeaderValueRelaxed);
+       console.log(parser.execute(Buffer.from(${JSON.stringify(head + "\r\nX: a\x01b\r\nY: a\0b\r\n\r\n")})).code);`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "HPE_INVALID_HEADER_TOKEN\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  },
+);
 
 describe("parserOnHeaders maxHeaderPairs clamp (nodejs/node#61285)", () => {
   test("only fills remaining capacity instead of pushing the whole batch", () => {

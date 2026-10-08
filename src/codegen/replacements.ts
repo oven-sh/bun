@@ -8,7 +8,6 @@ import { registerNativeCall } from "./generate-js2native";
 export const replacements: ReplacementRule[] = [
   { from: /\bthrow new TypeError\b/g, to: "$throwTypeError" },
   { from: /\bthrow new RangeError\b/g, to: "$throwRangeError" },
-  { from: /\bthrow new OutOfMemoryError\b/g, to: "$throwOutOfMemoryError" },
   { from: /\bnew TypeError\b/g, to: "$makeTypeError" },
   { from: /\bexport\s*default/g, to: "$exports =" },
 ];
@@ -62,7 +61,6 @@ export const globalsToPrefix = [
   "ArrayBuffer",
   "Buffer",
   "Infinity",
-  "Loader",
   "Promise",
   "ReadableByteStreamController",
   "ReadableStream",
@@ -74,7 +72,6 @@ export const globalsToPrefix = [
   "TransformStreamDefaultController",
   "Uint8Array",
   "String",
-  "Buffer",
   "RegExp",
   "WritableStream",
   "WritableStreamDefaultController",
@@ -136,13 +133,6 @@ export const define: Record<string, string> = {
   "process.env.NODE_ENV": JSON.stringify(debug ? "development" : "production"),
   "IS_BUN_DEVELOPMENT": String(debug),
 
-  $streamClosed: "1",
-  $streamClosing: "2",
-  $streamErrored: "3",
-  $streamReadable: "4",
-  $streamWaiting: "5",
-  $streamWritable: "6",
-
   "process.platform": JSON.stringify(Bun.env.TARGET_PLATFORM ?? process.platform),
   "process.arch": JSON.stringify(Bun.env.TARGET_ARCH ?? process.arch),
 };
@@ -169,7 +159,6 @@ export interface ReplacementRule {
   from: RegExp;
   to?: string;
   toRaw?: string;
-  global?: boolean;
 }
 
 export const function_replacements = [

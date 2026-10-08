@@ -132,7 +132,7 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
         if let ReactiveValue::Instruction(InstructionValue::DeclareContext { lvalue, .. }) =
             &instruction.value
         {
-            let maybe_non_hoisted = convert_hoisted_lvalue_kind(lvalue.kind);
+            let maybe_non_hoisted = lvalue.kind.unhoisted();
             if let Some(non_hoisted) = maybe_non_hoisted {
                 if non_hoisted == InstructionKind::Function
                     && state.uninitialized.contains_key(lvalue.place.identifier)
@@ -181,15 +181,5 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
 
         self.visit_instruction(instruction, state)?;
         Ok(Transformed::Keep)
-    }
-}
-
-/// Corresponds to TS `convertHoistedLValueKind` — returns None for non-hoisted kinds.
-fn convert_hoisted_lvalue_kind(kind: InstructionKind) -> Option<InstructionKind> {
-    match kind {
-        InstructionKind::HoistedLet => Some(InstructionKind::Let),
-        InstructionKind::HoistedConst => Some(InstructionKind::Const),
-        InstructionKind::HoistedFunction => Some(InstructionKind::Function),
-        _ => None,
     }
 }

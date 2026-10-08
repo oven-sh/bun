@@ -309,14 +309,7 @@ pub fn each_instruction_value_operand_with_functions(
 pub fn each_call_argument(args: &[PlaceOrSpread]) -> Vec<Place> {
     let mut result = Vec::new();
     for arg in args {
-        match arg {
-            PlaceOrSpread::Place(place) => {
-                result.push(place.clone());
-            }
-            PlaceOrSpread::Spread(spread) => {
-                result.push(spread.place.clone());
-            }
-        }
+        result.push(arg.place().clone());
     }
     result
 }
@@ -1011,12 +1004,6 @@ impl ScopeBlockTraversal {
     }
 }
 
-impl Default for ScopeBlockTraversal {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 // =============================================================================
 // Convenience wrappers: extract IdentifierIds from Places
 // =============================================================================
@@ -1265,10 +1252,7 @@ pub fn for_each_instruction_value_operand_mut(
 /// In-place mutation of call arguments.
 pub fn for_each_call_argument_mut(args: &mut [PlaceOrSpread], f: &mut impl FnMut(&mut Place)) {
     for arg in args.iter_mut() {
-        match arg {
-            PlaceOrSpread::Place(place) => f(place),
-            PlaceOrSpread::Spread(spread) => f(&mut spread.place),
-        }
+        f(arg.place_mut());
     }
 }
 
@@ -1396,10 +1380,7 @@ pub fn each_operand(v: &InstructionValue, mut f: impl FnMut(&Place)) {
         | InstructionValue::CallExpression { callee, args, .. } => {
             f(callee);
             for arg in args {
-                match arg {
-                    PlaceOrSpread::Place(p) => f(p),
-                    PlaceOrSpread::Spread(s) => f(&s.place),
-                }
+                f(arg.place());
             }
         }
         InstructionValue::MethodCall {
@@ -1411,10 +1392,7 @@ pub fn each_operand(v: &InstructionValue, mut f: impl FnMut(&Place)) {
             f(receiver);
             f(property);
             for arg in args {
-                match arg {
-                    PlaceOrSpread::Place(p) => f(p),
-                    PlaceOrSpread::Spread(s) => f(&s.place),
-                }
+                f(arg.place());
             }
         }
         InstructionValue::BinaryExpression { left, right, .. } => {

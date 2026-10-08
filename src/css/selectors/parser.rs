@@ -572,7 +572,7 @@ fn parse_selector<Impl: BunSelectorImpl>(
             let source_location = input.current_source_location();
             if let Ok(next) = input.next() {
                 return Err(source_location.new_custom_error(
-                    SelectorParseErrorKind::UnexpectedSelectorAfterPseudoElement(next.clone())
+                    SelectorParseErrorKind::UnexpectedSelectorAfterPseudoElement(*next)
                         .into_default_parser_error(),
                 ));
             }
@@ -673,11 +673,19 @@ fn parse_selector<Impl: BunSelectorImpl>(
         }
     }
 
-    let has_pseudo_element = state.contains(SelectorParsingState::AFTER_PSEUDO_ELEMENT)
-        || state.contains(SelectorParsingState::AFTER_UNKNOWN_PSEUDO_ELEMENT);
-    let slotted = state.contains(SelectorParsingState::AFTER_SLOTTED);
-    let part = state.contains(SelectorParsingState::AFTER_PART);
-    let result = builder.build(has_pseudo_element, slotted, part);
+    let mut flags = SelectorFlags::empty();
+    if state.contains(SelectorParsingState::AFTER_PSEUDO_ELEMENT)
+        || state.contains(SelectorParsingState::AFTER_UNKNOWN_PSEUDO_ELEMENT)
+    {
+        flags |= SelectorFlags::HAS_PSEUDO;
+    }
+    if state.contains(SelectorParsingState::AFTER_SLOTTED) {
+        flags |= SelectorFlags::HAS_SLOTTED;
+    }
+    if state.contains(SelectorParsingState::AFTER_PART) {
+        flags |= SelectorFlags::HAS_PART;
+    }
+    let result = builder.build(flags);
     Ok(GenericSelector {
         specificity_and_flags: result.specificity_and_flags,
         components: result.components,
@@ -1214,7 +1222,7 @@ impl<'a> SelectorParser<'a> {
         // `::View-Transition-Group(..)` fall through to `CustomFunction`,
         // so look up `name` verbatim with no case folding.
         //
-        // PERF: 6 entries with near-unique lengths (3/10/19/19/21/26) —
+        // PERF: 8 entries with near-unique lengths (3/6/10/19/19/21/26/30) —
         // a length-gated `match` rejects the overwhelmingly-common miss path
         // (unknown `::-webkit-foo(...)` etc.) on a single `usize` compare,
         // versus a hash lookup's hash + table load + slice compare. Only
@@ -1228,6 +1236,11 @@ impl<'a> SelectorParser<'a> {
                     selector: Box::new(Selector::parse(self, input)?),
                 });
             }
+            6 if name == b"picker" => {
+                return Ok(PseudoElement::PickerFunction {
+                    identifier: Ident::parse(input)?,
+                });
+            }
             10 if name == b"cue-region" => {
                 return Ok(PseudoElement::CueRegionFunction {
                     selector: Box::new(Selector::parse(self, input)?),
@@ -1236,24 +1249,29 @@ impl<'a> SelectorParser<'a> {
             19 => match name {
                 b"view-transition-old" => {
                     return Ok(PseudoElement::ViewTransitionOld {
-                        part_name: ViewTransitionPartName::parse(input)?,
+                        part: ViewTransitionPartSelector::parse(self, input)?,
                     });
                 }
                 b"view-transition-new" => {
                     return Ok(PseudoElement::ViewTransitionNew {
-                        part_name: ViewTransitionPartName::parse(input)?,
+                        part: ViewTransitionPartSelector::parse(self, input)?,
                     });
                 }
                 _ => {}
             },
             21 if name == b"view-transition-group" => {
                 return Ok(PseudoElement::ViewTransitionGroup {
-                    part_name: ViewTransitionPartName::parse(input)?,
+                    part: ViewTransitionPartSelector::parse(self, input)?,
                 });
             }
             26 if name == b"view-transition-image-pair" => {
                 return Ok(PseudoElement::ViewTransitionImagePair {
-                    part_name: ViewTransitionPartName::parse(input)?,
+                    part: ViewTransitionPartSelector::parse(self, input)?,
+                });
+            }
+            30 if name == b"view-transition-group-children" => {
+                return Ok(PseudoElement::ViewTransitionGroupChildren {
+                    part: ViewTransitionPartSelector::parse(self, input)?,
                 });
             }
             _ => {}
@@ -1334,7 +1352,7 @@ impl<'a> SelectorParser<'a> {
                 // the underlying `&'static [u8]` payload directly.
                 let languages = parser.parse_comma_separated(|p| -> CResult<Str> {
                     let loc = p.current_source_location();
-                    let tok = p.next()?.clone();
+                    let tok = *p.next()?;
                     match tok {
                         Token::Ident(i) | Token::QuotedString(i) => Ok(i),
                         t => Err(loc.new_unexpected_token_error(t)),
@@ -1544,6 +1562,9 @@ fn lookup_pseudo_element(name: &[u8]) -> Option<PseudoElement> {
         b"-webkit-scrollbar-corner" => PE::WebkitScrollbar(WS::Corner),
         b"-webkit-resizer" => PE::WebkitScrollbar(WS::Resizer),
         b"view-transition" => PE::ViewTransition,
+        b"details-content" => PE::DetailsContent,
+        b"picker-icon" => PE::PickerIcon,
+        b"checkmark" => PE::Checkmark,
         _ => return None,
     } })
 }
@@ -1561,18 +1582,6 @@ impl<Impl: SelectorImpl> Default for GenericSelectorList<Impl> {
     fn default() -> Self {
         Self {
             v: SmallList::default(),
-        }
-    }
-}
-
-impl<Impl: SelectorImpl> Default for GenericSelector<Impl> {
-    fn default() -> Self {
-        Self {
-            specificity_and_flags: SpecificityAndFlags {
-                specificity: 0,
-                flags: SelectorFlags::empty(),
-            },
-            components: Vec::new_in(ArenaPtr::global()),
         }
     }
 }
@@ -1611,13 +1620,6 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
             }
         }
         true
-    }
-
-    /// Do not call this! Use `serializer::serialize_selector_list()` or
-    /// `tocss_servo::to_css_selector_list()` instead.
-    #[deprecated = "use serializer::serialize_selector_list()"]
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_selector_list()");
     }
 
     pub fn parse(
@@ -1659,61 +1661,45 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
         recovery: ParseErrorRecovery,
         nesting_requirement: NestingRequirement,
     ) -> CResult<Self> {
-        let original_state = *state;
-        let mut values: SmallList<GenericSelector<Impl>, 1> = SmallList::default();
-
-        loop {
-            // For borrowck, the closure captures a local `saw_nesting` flag
-            // and applies it to `state` after it returns (no raw `*mut`).
-            let mut saw_nesting = false;
-            let selector =
-                input.parse_until_before(css::Delimiters::COMMA, |input2: &mut CssParser| {
-                    let mut selector_state = original_state;
-                    let result = parse_selector::<Impl>(
-                        parser,
-                        input2,
-                        &mut selector_state,
-                        nesting_requirement,
-                    );
-                    if selector_state.contains(SelectorParsingState::AFTER_NESTING) {
-                        saw_nesting = true;
-                    }
-                    result
-                });
-            if saw_nesting {
-                state.insert(SelectorParsingState::AFTER_NESTING);
-            }
-
-            let was_ok = selector.is_ok();
-            match selector {
-                Ok(sel) => {
-                    values.append(sel);
-                }
-                Err(e) => match recovery {
-                    ParseErrorRecovery::DiscardList => return Err(e),
-                    ParseErrorRecovery::IgnoreInvalidSelector => {}
-                },
-            }
-
-            if let Ok(tok) = input.next() {
-                if matches!(tok, Token::Comma) {
-                    continue;
-                }
-                // Shouldn't have got a selector if getting here.
-                debug_assert!(!was_ok);
-            }
-            return Ok(Self { v: values });
-        }
+        Self::parse_list_with_state(
+            parser,
+            input,
+            state,
+            recovery,
+            nesting_requirement,
+            parse_selector::<Impl>,
+        )
     }
 
-    // Same shape as `parse_with_state()` but parses each item with
-    // `parse_relative_selector()` instead of `parse_selector()`.
     pub(crate) fn parse_relative_with_state(
         parser: &mut SelectorParser,
         input: &mut CssParser,
         state: &mut SelectorParsingState,
         recovery: ParseErrorRecovery,
         nesting_requirement: NestingRequirement,
+    ) -> CResult<Self> {
+        Self::parse_list_with_state(
+            parser,
+            input,
+            state,
+            recovery,
+            nesting_requirement,
+            parse_relative_selector::<Impl>,
+        )
+    }
+
+    fn parse_list_with_state(
+        parser: &mut SelectorParser,
+        input: &mut CssParser,
+        state: &mut SelectorParsingState,
+        recovery: ParseErrorRecovery,
+        nesting_requirement: NestingRequirement,
+        parse_one: fn(
+            &mut SelectorParser,
+            &mut CssParser,
+            &mut SelectorParsingState,
+            NestingRequirement,
+        ) -> CResult<GenericSelector<Impl>>,
     ) -> CResult<Self> {
         let original_state = *state;
         let mut values: SmallList<GenericSelector<Impl>, 1> = SmallList::default();
@@ -1725,12 +1711,8 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
             let selector =
                 input.parse_until_before(css::Delimiters::COMMA, |input2: &mut CssParser| {
                     let mut selector_state = original_state;
-                    let result = parse_relative_selector::<Impl>(
-                        parser,
-                        input2,
-                        &mut selector_state,
-                        nesting_requirement,
-                    );
+                    let result =
+                        parse_one(parser, input2, &mut selector_state, nesting_requirement);
                     if selector_state.contains(SelectorParsingState::AFTER_NESTING) {
                         saw_nesting = true;
                     }
@@ -1785,19 +1767,6 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
     }
 }
 
-impl<Impl: BunSelectorImpl> CssEql for GenericSelectorList<Impl> {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        self.eql(other)
-    }
-}
-impl<Impl: BunSelectorImpl> CssHash for GenericSelectorList<Impl> {
-    #[inline]
-    fn hash(&self, hasher: &mut Wyhash) {
-        self.hash(hasher)
-    }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // GenericSelector
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1828,13 +1797,6 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     pub fn parse(parser: &mut SelectorParser, input: &mut CssParser) -> CResult<Self> {
         let mut state = SelectorParsingState::empty();
         parse_selector::<Impl>(parser, input, &mut state, NestingRequirement::None)
-    }
-
-    /// Do not call this! Use `serializer::serialize_selector()` or
-    /// `tocss_servo::to_css_selector()` instead.
-    #[deprecated = "use serializer::serialize_selector()"]
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_selector()");
     }
 
     pub(crate) fn append(&mut self, component: GenericComponent<Impl>) {
@@ -1903,7 +1865,7 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
         } else {
             builder.push_simple_selector(component);
         }
-        let result = builder.build(false, false, false);
+        let result = builder.build(SelectorFlags::empty());
         Self {
             specificity_and_flags: result.specificity_and_flags,
             components: result.components,
@@ -2286,13 +2248,6 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
         matches!(self, Self::Combinator(_))
     }
 
-    /// Do not call this! Use `serializer::serialize_component()` or
-    /// `tocss_servo::to_css_component()` instead.
-    #[deprecated = "use serializer::serialize_component()"]
-    pub fn to_css(&self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_component()");
-    }
-
     pub(crate) fn hash(&self, hasher: &mut Wyhash) {
         use GenericComponent as C;
         // Hash a variant tag, then the payload.
@@ -2422,19 +2377,6 @@ impl<Impl: BunSelectorImpl> GenericComponent<Impl> {
             }
             C::Nesting => tag!(27),
         }
-    }
-}
-
-impl<Impl: BunSelectorImpl> CssEql for GenericComponent<Impl> {
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        self.eql(other)
-    }
-}
-impl<Impl: BunSelectorImpl> CssHash for GenericComponent<Impl> {
-    #[inline]
-    fn hash(&self, hasher: &mut Wyhash) {
-        self.hash(hasher)
     }
 }
 
@@ -2822,13 +2764,6 @@ pub enum Combinator {
 impl Combinator {
     // hash — via `#[derive(CssHash)]`.
 
-    /// Do not call this! Use `serializer::serialize_combinator()` or
-    /// `tocss_servo::to_css_combinator()` instead.
-    #[deprecated = "use serializer::serialize_combinator()"]
-    pub fn to_css(self, _dest: &mut Printer) -> Result<(), PrintErr> {
-        unreachable!("use serializer::serialize_combinator()");
-    }
-
     pub(crate) fn is_tree_combinator(self) -> bool {
         matches!(
             self,
@@ -2981,23 +2916,39 @@ pub enum PseudoElement {
     ViewTransition,
     /// The [::view-transition-group()](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition-group-pt-name-selector) functional pseudo element.
     ViewTransitionGroup {
-        /// A part name selector.
-        part_name: ViewTransitionPartName,
+        /// A part selector.
+        part: ViewTransitionPartSelector,
     },
     /// The [::view-transition-image-pair()](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition-image-pair-pt-name-selector) functional pseudo element.
     ViewTransitionImagePair {
-        /// A part name selector.
-        part_name: ViewTransitionPartName,
+        /// A part selector.
+        part: ViewTransitionPartSelector,
     },
     /// The [::view-transition-old()](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition-old-pt-name-selector) functional pseudo element.
     ViewTransitionOld {
-        /// A part name selector.
-        part_name: ViewTransitionPartName,
+        /// A part selector.
+        part: ViewTransitionPartSelector,
     },
     /// The [::view-transition-new()](https://w3c.github.io/csswg-drafts/css-view-transitions-1/#view-transition-new-pt-name-selector) functional pseudo element.
     ViewTransitionNew {
-        /// A part name selector.
-        part_name: ViewTransitionPartName,
+        /// A part selector.
+        part: ViewTransitionPartSelector,
+    },
+    /// The [::view-transition-group-children()](https://drafts.csswg.org/css-view-transitions-2/#::view-transition-group-children) functional pseudo element.
+    ViewTransitionGroupChildren {
+        /// A part selector.
+        part: ViewTransitionPartSelector,
+    },
+    /// The [::details-content](https://drafts.csswg.org/css-pseudo-4/#details-content-pseudo) pseudo element.
+    DetailsContent,
+    /// The [::picker-icon](https://drafts.csswg.org/css-forms-1/#picker-icon-pseudo) pseudo element.
+    PickerIcon,
+    /// The [::checkmark](https://drafts.csswg.org/css-forms-1/#checkmark-pseudo) pseudo element.
+    Checkmark,
+    /// The [::picker()](https://drafts.csswg.org/css-forms-1/#picker-pseudo) functional pseudo element.
+    PickerFunction {
+        /// The identifier argument, e.g. `select` in `::picker(select)`.
+        identifier: Ident,
     },
     /// An unknown pseudo element.
     Custom {
@@ -3096,6 +3047,7 @@ impl PseudoElement {
                 | PE::ViewTransitionImagePair { .. }
                 | PE::ViewTransitionNew { .. }
                 | PE::ViewTransitionOld { .. }
+                | PE::ViewTransitionGroupChildren { .. }
         )
     }
 
@@ -3128,6 +3080,11 @@ impl fmt::Display for PseudoElement {
             Self::ViewTransitionImagePair { .. } => "view_transition_image_pair",
             Self::ViewTransitionOld { .. } => "view_transition_old",
             Self::ViewTransitionNew { .. } => "view_transition_new",
+            Self::ViewTransitionGroupChildren { .. } => "view_transition_group_children",
+            Self::DetailsContent => "details_content",
+            Self::PickerIcon => "picker_icon",
+            Self::Checkmark => "checkmark",
+            Self::PickerFunction { .. } => "picker_function",
             Self::Custom { .. } => "custom",
             Self::CustomFunction { .. } => "custom_function",
         })
@@ -3263,7 +3220,7 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
     let token_location = input.current_source_location();
     let token_loc = input.position();
     let token = match input.next_including_whitespace() {
-        Ok(v) => v.clone(),
+        Ok(v) => *v,
         Err(_) => {
             input.reset(&start);
             return Ok(None);
@@ -3301,8 +3258,8 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
         Token::Colon => {
             let location = input.current_source_location();
             let (is_single_colon, next_token): (bool, Token) =
-                match input.next_including_whitespace()?.clone() {
-                    Token::Colon => (false, input.next_including_whitespace()?.clone()),
+                match *input.next_including_whitespace()? {
+                    Token::Colon => (false, *input.next_including_whitespace()?),
                     t => (true, t),
                 };
             let (name, is_functional): (Str, bool) = match next_token {
@@ -3402,7 +3359,7 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                     ));
                 }
                 let location = input.current_source_location();
-                let class = match input.next_including_whitespace()?.clone() {
+                let class = match *input.next_including_whitespace()? {
                     Token::Ident(class) => class,
                     t => {
                         let e = SelectorParseErrorKind::ClassNeedsIdent(t);
@@ -3471,7 +3428,7 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
     let location = input.current_source_location();
     let operator: attrs::AttrSelectorOperator = 'operator: {
         let tok = match input.next() {
-            Ok(v) => v.clone(),
+            Ok(v) => *v,
             Err(_) => {
                 // [foo]
                 let local_name_lower: *const [u8] = arena_lowercase(input.arena(), local_name);
@@ -3525,7 +3482,7 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
     // Clone the token so the borrow is released before we re-borrow.
     let value_str: Str = {
         let value_loc = input.current_source_location();
-        let tok = input.next()?.clone();
+        let tok = *input.next()?;
         match tok {
             Token::Ident(v) | Token::QuotedString(v) => v,
             t => {
@@ -3913,7 +3870,7 @@ pub(crate) fn parse_qualified_name<Impl: BunSelectorImpl>(
     let start = input.state();
 
     let tok = match input.next_including_whitespace() {
-        Ok(v) => v.clone(),
+        Ok(v) => *v,
         Err(e) => {
             input.reset(&start);
             return Err(e);
@@ -4020,7 +3977,7 @@ fn parse_qualified_name_eplicit_namespace_helper<Impl: BunSelectorImpl>(
     in_attr_selector: bool,
 ) -> CResult<OptionalQName<Impl>> {
     let location = input.current_source_location();
-    let t = input.next_including_whitespace()?.clone();
+    let t = *input.next_including_whitespace()?;
     match &t {
         Token::Ident(local_name) => return Ok(OptionalQName::Some(namespace, Some(*local_name))),
         // `*` is only a valid local name outside of attribute selectors;
@@ -4162,27 +4119,13 @@ pub enum ViewTransitionPartName {
     All,
     /// <custom-ident>
     Name(CustomIdent),
-    /// .<custom-ident>
-    Class(CustomIdent),
 }
 
 impl ViewTransitionPartName {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // `CustomIdentFns::to_css` is CSS-modules-gated via
-        // `Printer::{css_module,write_ident}`; inline the
-        // `write_ident(v, false)` body (CSS-modules custom-ident scoping is a
-        // serializer concern, not a grammar concern — the gated impl just
-        // toggles the second arg).
-        let write_ci = |name: &CustomIdent, dest: &mut Printer| -> Result<(), PrintErr> {
-            dest.serialize_identifier(name.v())
-        };
         match self {
             Self::All => dest.write_str("*"),
-            Self::Name(name) => write_ci(name, dest),
-            Self::Class(name) => {
-                dest.write_char(b'.')?;
-                write_ci(name, dest)
-            }
+            Self::Name(name) => name.to_css(dest),
         }
     }
 
@@ -4191,18 +4134,13 @@ impl ViewTransitionPartName {
             return Ok(Self::All);
         }
 
-        // Try to parse a class selector (.<custom-ident>)
-        if input.try_parse(|i| i.expect_delim(b'.')).is_ok() {
-            return Ok(Self::Class(CustomIdent::parse(input)?));
-        }
-
         Ok(Self::Name(CustomIdent::parse(input)?))
     }
 
     pub fn eql(&self, rhs: &Self) -> bool {
         match (self, rhs) {
             (Self::All, Self::All) => true,
-            (Self::Name(a), Self::Name(b)) | (Self::Class(a), Self::Class(b)) => a.eql(b),
+            (Self::Name(a), Self::Name(b)) => a.eql(b),
             _ => false,
         }
     }
@@ -4214,10 +4152,98 @@ impl ViewTransitionPartName {
                 hasher.update(&1u32.to_ne_bytes());
                 n.hash(hasher);
             }
-            Self::Class(n) => {
-                hasher.update(&2u32.to_ne_bytes());
-                n.hash(hasher);
+        }
+    }
+}
+
+/// A [view transition part selector](https://w3c.github.io/csswg-drafts/css-view-transitions-2/#typedef-pt-name-and-class-selector).
+#[derive(Clone)]
+pub struct ViewTransitionPartSelector {
+    /// The view transition part name.
+    pub name: Option<ViewTransitionPartName>,
+    /// The view transition classes, each written as `.<custom-ident>`.
+    pub classes: Box<[<impl_::Selectors as SelectorImpl>::LocalIdentifier]>,
+}
+
+impl ViewTransitionPartSelector {
+    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        if let Some(name) = &self.name {
+            name.to_css(dest)?;
+        }
+        for class in self.classes.iter() {
+            dest.write_char(b'.')?;
+            dest.write_ident_or_ref(*class, dest.css_module.is_some())?;
+        }
+        Ok(())
+    }
+
+    pub fn parse(
+        parser: &mut SelectorParser<'_>,
+        input: &mut CssParser,
+    ) -> CResult<ViewTransitionPartSelector> {
+        input.skip_whitespace();
+        let name = input.try_parse(ViewTransitionPartName::parse);
+
+        // White space is not allowed between the name and a class, or inside the classes.
+        let mut classes = Vec::new();
+        loop {
+            let start = input.state();
+            let loc = input.position();
+            let is_dot = matches!(
+                input.next_including_whitespace(),
+                Ok(Token::Delim(d)) if *d == u32::from(b'.')
+            );
+            if !is_dot {
+                input.reset(&start);
+                break;
             }
+            let location = input.current_source_location();
+            let class = match *input.next_including_whitespace()? {
+                Token::Ident(class) => class,
+                t => {
+                    let e = SelectorParseErrorKind::ClassNeedsIdent(t);
+                    return Err(location.new_custom_error(e.into_default_parser_error()));
+                }
+            };
+            if crate::values::ident::is_reserved_custom_ident(class) {
+                return Err(location.new_unexpected_token_error(Token::Ident(class)));
+            }
+            classes.push(parser.new_local_identifier(input, css::CssRefTag::CLASS, class, loc));
+        }
+
+        let name = match name {
+            Ok(name) => Some(name),
+            Err(e) if classes.is_empty() => return Err(e),
+            Err(_) => None,
+        };
+        Ok(ViewTransitionPartSelector {
+            name,
+            classes: classes.into_boxed_slice(),
+        })
+    }
+
+    pub fn eql(&self, rhs: &Self) -> bool {
+        let names_eql = match (&self.name, &rhs.name) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.eql(b),
+            _ => false,
+        };
+        names_eql
+            && self.classes.len() == rhs.classes.len()
+            && self
+                .classes
+                .iter()
+                .zip(rhs.classes.iter())
+                .all(|(a, b)| a.eql(b))
+    }
+
+    pub(crate) fn hash(&self, hasher: &mut Wyhash) {
+        if let Some(name) = &self.name {
+            name.hash(hasher);
+        }
+        for class in self.classes.iter() {
+            hasher.update(&2u32.to_ne_bytes());
+            class.hash(hasher);
         }
     }
 }
@@ -4225,7 +4251,7 @@ impl ViewTransitionPartName {
 pub(crate) fn parse_attribute_flags(input: &mut CssParser) -> CResult<AttributeFlags> {
     let location = input.current_source_location();
     let token = match input.next() {
-        Ok(v) => v.clone(),
+        Ok(v) => *v,
         Err(_) => {
             // Selectors spec says language-defined; HTML says it depends on the
             // exact attribute name.

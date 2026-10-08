@@ -13,11 +13,8 @@ use bun_wyhash::Wyhash11;
 
 use crate::npm;
 use crate::{
-    DependencyID, ExtractData, ExtractTarball, NetworkTask, PackageManager, PatchTask, Repository,
-    RepositoryExt as _, Resolution,
+    DependencyID, ExtractData, ExtractTarball, NetworkTask, PackageManager, PatchTask, Resolution,
 };
-
-use bun_dotenv as dot_env;
 
 /// `'a` is forced by LIFETIMES.tsv (BORROW_PARAM on `Request::*.network`).
 /// TODO: lifetime — Task lives in an intrusive cross-thread queue
@@ -40,6 +37,8 @@ pub struct Task<'a> {
     pub(crate) package_manager: Option<bun_ptr::ParentRef<PackageManager, bun_ptr::Mut>>,
     /// default: `None`
     pub(crate) apply_patch_task: Option<Box<PatchTask>>,
+    /// The filesystem tail of a clone or checkout task; `callback` runs it. default: `None`
+    pub(crate) git_finalize: Option<crate::git_runner::Finalize>,
     /// INTRUSIVE — `bun.UnboundedQueue(Task, .next)`
     /// default: null
     pub(crate) next: bun_threading::Link<Task<'a>>,
@@ -73,6 +72,7 @@ pub(crate) fn uninit() -> Task<'static> {
         },
         err: None,
         apply_patch_task: None,
+        git_finalize: None,
         next: bun_threading::Link::new(),
     }
 }
@@ -150,6 +150,15 @@ impl Id {
         hasher.update(resolved);
         Id((5u64 << 61) | (hasher.final_() & ((1u64 << 61) - 1)))
     }
+
+    /// Not persisted: only keys the in-memory `git_commits` cache and `task_queue`.
+    pub(crate) fn for_git_commit(url: &[u8], committish: &[u8]) -> Id {
+        let mut hasher = Wyhash11::init(0);
+        hasher.update(url);
+        hasher.update(b"#");
+        hasher.update(committish);
+        Id((6u64 << 61) | (hasher.final_() & ((1u64 << 61) - 1)))
+    }
 }
 
 impl<'a> Task<'a> {
@@ -163,12 +172,14 @@ impl<'a> Task<'a> {
         PackageManifest => request_package_manifest @ package_manifest: PackageManifestRequest<'a>, mut request_package_manifest_mut;
         Extract         => request_extract          @ extract:          ExtractRequest<'a>,         mut request_extract_mut;
         GitClone        => request_git_clone        @ git_clone:        GitCloneRequest,            mut request_git_clone_mut;
+        GitCommit       => request_git_commit       @ git_commit:       GitCommitRequest,           mut request_git_commit_mut;
         GitCheckout     => request_git_checkout     @ git_checkout:     GitCheckoutRequest,         mut request_git_checkout_mut;
         LocalTarball    => request_local_tarball    @ local_tarball:    LocalTarballRequest,        mut request_local_tarball_mut;
     }
 
     bun_core::extern_union_accessors! {
         tag: tag as Tag, value: data;
+        GitCommit       => data_git_commit       @ git_commit:       Vec<u8>,     mut data_git_commit_mut;
         GitCheckout     => data_git_checkout     @ git_checkout:     ExtractData, mut data_git_checkout_mut;
     }
 
@@ -202,6 +213,10 @@ impl<'a> Task<'a> {
                 }
                 Tag::GitClone => {
                     ManuallyDrop::drop(&mut self.request.git_clone);
+                }
+                Tag::GitCommit => {
+                    ManuallyDrop::drop(&mut self.request.git_commit);
+                    ManuallyDrop::drop(&mut self.data.git_commit);
                 }
                 Tag::GitCheckout => {
                     ManuallyDrop::drop(&mut self.request.git_checkout);
@@ -324,7 +339,7 @@ impl<'a> Task<'a> {
                         loaded_manifest,
                         // SAFETY: see `manager` decl — short-lived `&mut` at call
                         // boundary only (callee touches `cache_directory` /
-                        // `temporary_directory` lazily).
+                        // `get_temporary_directory` lazily).
                         unsafe { &mut *manager },
                         is_extended_manifest,
                     ) {
@@ -400,115 +415,11 @@ impl<'a> Task<'a> {
                     };
                     this.status = Status::Success;
                 }
-                Tag::GitClone => {
-                    // SAFETY: tag == GitClone discriminates the union
-                    let req = unsafe { &mut *this.request.git_clone };
-                    let name = req.name.slice();
-                    let url = req.url.slice();
-                    let mut attempt: u8 = 1;
-
-                    let dir = 'brk: {
-                        if let Some(https) = Repository::try_https(url) {
-                            match Repository::download(
-                                req.env,
-                                &mut this.log,
-                                // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
-                                unsafe { &mut *manager }.get_cache_directory(),
-                                this.id,
-                                name,
-                                https,
-                                attempt,
-                            ) {
-                                Ok(d) => break 'brk Some(d),
-                                Err(err) => {
-                                    // Exit early if git checked and could
-                                    // not find the repository, skip ssh
-                                    if err == crate::Error::RepositoryNotFound {
-                                        this.err = Some(err);
-                                        this.status = Status::Fail;
-                                        this.data = Data {
-                                            git_clone: ManuallyDrop::new(Fd::invalid()),
-                                        };
-                                        break 'body;
-                                    }
-
-                                    this.err = Some(err);
-                                    this.status = Status::Fail;
-                                    this.data = Data {
-                                        git_clone: ManuallyDrop::new(Fd::invalid()),
-                                    };
-                                    attempt += 1;
-                                    break 'brk None;
-                                }
-                            }
-                        }
-                        None
-                    };
-
-                    let dir = match dir {
-                        Some(d) => d,
-                        None => {
-                            if let Some(ssh) = Repository::try_ssh(url) {
-                                match Repository::download(
-                                    req.env,
-                                    &mut this.log,
-                                    // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
-                                    unsafe { &mut *manager }.get_cache_directory(),
-                                    this.id,
-                                    name,
-                                    ssh,
-                                    attempt,
-                                ) {
-                                    Ok(d) => d,
-                                    Err(err) => {
-                                        this.err = Some(err);
-                                        this.status = Status::Fail;
-                                        this.data = Data {
-                                            git_clone: ManuallyDrop::new(Fd::invalid()),
-                                        };
-                                        break 'body;
-                                    }
-                                }
-                            } else {
-                                break 'body;
-                            }
-                        }
-                    };
-
-                    this.err = None;
-                    this.data = Data {
-                        git_clone: ManuallyDrop::new(dir.into_raw()),
-                    };
-                    this.status = Status::Success;
+                Tag::GitClone | Tag::GitCheckout => {
+                    crate::git_runner::Finalize::run(this);
                 }
-                Tag::GitCheckout => {
-                    // SAFETY: tag == GitCheckout discriminates the union
-                    let git_checkout = unsafe { &mut *this.request.git_checkout };
-                    let data = match Repository::checkout(
-                        git_checkout.env,
-                        &mut this.log,
-                        // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
-                        unsafe { &mut *manager }.get_cache_directory(),
-                        git_checkout.repo_dir,
-                        git_checkout.name.slice(),
-                        git_checkout.url.slice(),
-                        git_checkout.resolved.slice(),
-                    ) {
-                        Ok(v) => v,
-                        Err(err) => {
-                            this.err = Some(err);
-                            this.status = Status::Fail;
-                            this.data = Data {
-                                git_checkout: ManuallyDrop::new(ExtractData::default()),
-                            };
-                            break 'body;
-                        }
-                    };
-
-                    this.data = Data {
-                        git_checkout: ManuallyDrop::new(data),
-                    };
-                    this.status = Status::Success;
+                Tag::GitCommit => {
+                    unreachable!("a commit lookup completes on the install thread (git_runner.rs)")
                 }
                 Tag::LocalTarball => {
                     // `tarball_path` and `normalize` are computed on the main thread when the
@@ -551,7 +462,7 @@ impl<'a> Task<'a> {
         if this.status == Status::Success {
             if let Some(mut pt) = this.apply_patch_task.take() {
                 // `defer pt.deinit()` → Box<PatchTask> drops at end of this block
-                pt.apply().expect("OOM"); // bun.handleOom → panic on OOM
+                bun_core::handle_oom(pt.apply());
                 // `apply_patch_task` is only ever populated with the Apply
                 // variant (see `new_apply_patch_hash`), so destructure it.
                 let crate::patch_install::Callback::Apply(apply) = &mut pt.callback else {
@@ -611,6 +522,8 @@ pub enum Tag {
     GitClone = 2,
     GitCheckout = 3,
     LocalTarball = 4,
+    /// `git log`: resolve a committish of a cloned repository to a commit SHA.
+    GitCommit = 5,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -625,6 +538,8 @@ pub union Data {
     pub(crate) package_manifest: ManuallyDrop<npm::PackageManifest>,
     pub(crate) extract: ManuallyDrop<ExtractData>,
     pub(crate) git_clone: ManuallyDrop<Fd>,
+    /// The commit SHA.
+    pub(crate) git_commit: ManuallyDrop<Vec<u8>>,
     pub(crate) git_checkout: ManuallyDrop<ExtractData>,
 }
 
@@ -635,6 +550,7 @@ pub union Request<'a> {
     pub(crate) package_manifest: ManuallyDrop<PackageManifestRequest<'a>>,
     pub(crate) extract: ManuallyDrop<ExtractRequest<'a>>,
     pub(crate) git_clone: ManuallyDrop<GitCloneRequest>,
+    pub(crate) git_commit: ManuallyDrop<GitCommitRequest>,
     pub(crate) git_checkout: ManuallyDrop<GitCheckoutRequest>,
     pub(crate) local_tarball: ManuallyDrop<LocalTarballRequest>,
 }
@@ -656,11 +572,15 @@ pub struct ExtractRequest<'a> {
 pub struct GitCloneRequest {
     pub(crate) name: StringOrTinyString,
     pub(crate) url: StringOrTinyString,
-    // `Map` owns its storage; store a
-    // `&'static` into the global `Repository.shared_env` instead — see `SharedEnv::get`.
-    pub(crate) env: &'static dot_env::Map,
-    pub(crate) dep_id: DependencyID,
     pub(crate) res: Resolution,
+}
+
+pub struct GitCommitRequest {
+    /// The clone task whose bare repository is searched.
+    pub(crate) clone_id: Id,
+    pub(crate) name: StringOrTinyString,
+    pub(crate) url: StringOrTinyString,
+    pub(crate) committish: StringOrTinyString,
 }
 
 pub struct GitCheckoutRequest {
@@ -670,18 +590,11 @@ pub struct GitCheckoutRequest {
     pub(crate) url: StringOrTinyString,
     pub(crate) resolved: StringOrTinyString,
     pub(crate) resolution: Resolution,
-    // See the note on `GitCloneRequest.env`.
-    pub(crate) env: &'static dot_env::Map,
 }
 
 pub struct LocalTarballRequest {
     pub(crate) tarball: ExtractTarball,
-    /// Path to read the tarball from. May be the same as `tarball.url` (when
-    /// `normalize` is true) or an absolute path joined with a workspace
-    /// directory. Computed on the main thread in `enqueueLocalTarball` because
-    /// resolving it requires reading `lockfile.packages` / `string_bytes`,
-    /// which can be reallocated concurrently by the main thread while this
-    /// task runs on a ThreadPool worker.
+    /// Resolved by `enqueue_local_tarball` on the main thread; the worker must not read the lockfile.
     pub(crate) tarball_path: StringOrTinyString,
     /// When true, `tarball_path` is a user-provided path resolved relative to
     /// cwd. When false, it is already an absolute path.

@@ -1,4 +1,4 @@
-pub use _impl::{Context, NativeZstd};
+pub(crate) use _impl::NativeZstd;
 
 mod _impl {
     use core::cell::Cell;
@@ -35,18 +35,20 @@ mod _impl {
     // to `&T` so the impls below compile against either.
     #[bun_jsc::JsClass]
     #[derive(bun_ptr::CellRefCounted)]
-    pub struct NativeZstd {
+    pub(crate) struct NativeZstd {
         // Intrusive single-thread refcount.
         pub(crate) ref_count: Cell<u32>,
         // LIFETIMES.tsv: JSC_BORROW. The global outlives this m_ctx payload;
         // `BackRef` centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         /// How the pool thread delivers a finished write to the VM.
-        pub loop_handle: bun_jsc::LoopHandle,
+        pub ticket: Cell<Option<bun_jsc::Ticket>>,
         pub stream: JsCell<Context>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
         pub write_in_progress: Cell<bool>,
+        /// bit 0: the pending input's ArrayBuffer is pinned; bit 1: the pending output's. A held bufferless view sets neither.
+        pub pinned_buffers: Cell<u8>,
         pub pending_close: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
@@ -60,9 +62,6 @@ mod _impl {
         pub(crate) estimated_external_size: usize,
     }
 
-    // `pub const ref/deref = RefCount.ref/deref;` — wired via `CompressionStreamImpl::{ref_,deref}`
-    // below; deref-to-zero reconstitutes the Box (running Drop) and frees, mirroring `bun.destroy`.
-    //
     // `pub const js = jsc.Codegen.JSNativeZstd; toJS/fromJS/fromJSDirect = js.*;` — provided by
     // `#[bun_jsc::JsClass]` derive (wires to_js / from_js / from_js_direct).
     //
@@ -110,11 +109,12 @@ mod _impl {
                 // JSC_BORROW — the JSGlobalObject outlives this payload (the C++
                 // wrapper is owned by that global's heap).
                 global_this: bun_ptr::BackRef::new(global),
-                loop_handle: global.bun_vm().loop_handle(),
+                ticket: Cell::new(None),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
+                pinned_buffers: Cell::new(0),
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),
                 // WorkPoolTask { callback: undefined } — callback is overwritten by
@@ -290,9 +290,7 @@ mod _impl {
         }
     }
 
-    // Called by RefCount when the count hits 0. `poll_ref` and `this_value`
-    // (Strong) cleanup are handled by their own Drop impls; the Box free is
-    // handled by IntrusiveRc dropping the Box.
+    // `poll_ref` and `this_value` (Strong) clean up via their own Drop impls.
     impl Drop for NativeZstd {
         fn drop(&mut self) {
             self.stream.with_mut(|s| match s.mode {
@@ -302,7 +300,7 @@ mod _impl {
         }
     }
 
-    pub struct Context {
+    pub(crate) struct Context {
         pub(crate) mode: NodeMode,
         // LIFETIMES.tsv: FFI → Option<*mut c_void> (ZSTD_createCCtx/DCtx; freed in deinit_state)
         pub(crate) state: Option<*mut c_void>,
@@ -460,7 +458,7 @@ mod _impl {
             }
         }
 
-        pub fn reset(&mut self) -> Error {
+        pub(crate) fn reset(&mut self) -> Error {
             // Matches node's `ZstdContext::ResetStream()`, which calls `Init()`
             // with its default (empty) dictionary — a reset drops the dictionary.
             // `init` frees the previous context itself.
@@ -480,7 +478,7 @@ mod _impl {
             self.state = None;
         }
 
-        pub fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
+        pub(crate) fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
             self.input.src = in_.map_or(ptr::null(), |p| p.as_ptr().cast());
             self.input.size = in_.map_or(0, |p| p.len());
             self.input.pos = 0;
@@ -497,11 +495,11 @@ mod _impl {
             self.output.pos = 0;
         }
 
-        pub fn flush_value_is_valid(flush: u32) -> bool {
+        pub(crate) fn flush_value_is_valid(flush: u32) -> bool {
             flush <= 2
         }
 
-        pub fn set_flush(&mut self, flush: c_int) {
+        pub(crate) fn set_flush(&mut self, flush: c_int) {
             self.flush = flush;
         }
 
@@ -528,7 +526,7 @@ mod _impl {
                     && head[1..n] == Self::ZSTD_MAGIC_SKIPPABLE[1..n])
         }
 
-        pub fn do_work(&mut self) {
+        pub(crate) fn do_work(&mut self) {
             // A handle driven before `init()` has no CCtx/DCtx; zstd
             // dereferences the context pointer unconditionally.
             if self.state.is_none() {
@@ -574,12 +572,12 @@ mod _impl {
             } as u64;
         }
 
-        pub fn update_write_result(&self, avail_in: &mut u32, avail_out: &mut u32) {
+        pub(crate) fn update_write_result(&self, avail_in: &mut u32, avail_out: &mut u32) {
             *avail_in = u32::try_from(self.input.size - self.input.pos).expect("int cast");
             *avail_out = u32::try_from(self.output.size - self.output.pos).expect("int cast");
         }
 
-        pub fn get_error_info(&mut self) -> Error {
+        pub(crate) fn get_error_info(&mut self) -> Error {
             // Compute result, then clear `remaining`, then return.
             let err = c::ZSTD_getErrorCode(self.remaining as usize);
             let result = if err == 0 {
@@ -644,7 +642,7 @@ mod _impl {
             result
         }
 
-        pub fn close(&mut self) {
+        pub(crate) fn close(&mut self) {
             // Idempotent: a handle that was never (successfully) initialized,
             // or that was already closed, has no CCtx/DCtx to reset or free.
             if self.state.is_none() {

@@ -165,9 +165,9 @@ describe("a header list does not write into an array that the caller keeps", () 
     });
   });
 
-  // `res.headers = list` is a Bun extension.
+  // `res.headers =` is a Bun extension. Each form takes a copy of an array value.
   describe("res.headers =", () => {
-    const lists: [string, Respond][] = [
+    const forms: [string, Respond][] = [
       [
         "a list of pairs",
         (res, kept, sid) =>
@@ -184,8 +184,15 @@ describe("a header list does not write into an array that the caller keeps", () 
             ["set-cookie", sid],
           ])),
       ],
+      [
+        "a plain object, then appendHeader()",
+        (res, kept, sid) => {
+          res.headers = { "Set-Cookie": kept };
+          res.appendHeader("Set-Cookie", sid);
+        },
+      ],
     ];
-    test.each(lists)("%s", async (_name, respond) => {
+    test.each(forms)("%s", async (_name, respond) => {
       expect(await cookiesPerUser(respond)).toEqual(ownCookieOnly);
     });
   });

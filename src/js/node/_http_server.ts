@@ -3199,6 +3199,7 @@ Object.defineProperty(ServerResponse.prototype, "headers", {
     throwIfServerHeadersSent(this, "set");
     this[kOutHeaders] = null;
     if (!value) return;
+    // Every form stores a copy of an array value, so that no appendHeader pushes into the caller's array.
     if ($isArray(value)) {
       // Array of [name, value] pairs, like the WHATWG Headers sequence init.
       for (const { 0: key, 1: val } of value) {
@@ -3211,7 +3212,8 @@ Object.defineProperty(ServerResponse.prototype, "headers", {
     } else {
       const keys = ObjectKeys(value);
       for (let i = 0; i < keys.length; i++) {
-        this.setHeader(keys[i], value[keys[i]]);
+        const val = value[keys[i]];
+        this.setHeader(keys[i], typeof val === "object" && $isArray(val) ? copyHeaderValueArray(val) : val);
       }
     }
   },

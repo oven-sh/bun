@@ -85,6 +85,20 @@ export const cases = [
     args: [...flags, "."],
   })),
 
+  // ───────────── other languages ─────────────
+  {
+    name: "css and graphql",
+    files: {
+      "a.css": "a{color:RED;margin:0 0 0 0}\n@media (max-width:100px){b{c:d}}\n",
+      "b.scss": "$a:1px;a{b{c:$a}}\n",
+      "c.less": "@a:1px;a{b{c:@a}}\n",
+      "d.graphql": "query Q($a:Int){b(c:$a){d e}}\n",
+      "e.gql": "type A{b:Int!}\n",
+    },
+    args: ["."],
+  },
+  { name: "the parser option", files: { "a.txt": '{"a":1}', "b.js": ugly }, args: ["--parser", "json", "a.txt"] },
+
   // ───────────── ignoring ─────────────
   { name: "prettierignore", files: { ...project, ".prettierignore": "src/deep\n*.mjs\n/a.js\n" }, args: ["-l", "."] },
   { name: "prettierignore, the file is named", files: { ...project, ".prettierignore": "a.js\n" }, args: ["-l", "a.js", "src/c.ts"] },

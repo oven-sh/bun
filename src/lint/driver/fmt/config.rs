@@ -227,6 +227,39 @@ pub(crate) struct Resolved {
     pub(crate) omits_final_newline: bool,
 }
 
+/// Adds what the `tsconfig.json` at `path` says about JSX, after what the files that it extends say.
+fn read_tsconfig(path: &[u8], settings: &mut Settings, depth: u32) {
+    let Some(json) = fs::read(path).ok().and_then(|text| bun_lint::json::parse(&text)) else {
+        return;
+    };
+    let extended: Vec<&[u8]> = match json.get(b"extends") {
+        Some(Json::String(one)) => vec![one],
+        Some(Json::Array(all)) => all.iter().filter_map(Json::as_str).collect(),
+        _ => Vec::new(),
+    };
+    let directory = paths::dirname(path);
+    for name in extended.into_iter().filter(|_| depth < 16) {
+        let candidates = |base: Vec<u8>| [base.clone(), [&base[..], b".json"].concat(), paths::join(&base, b"tsconfig.json")];
+        let found = match name.starts_with(b".") || paths::is_absolute(name) {
+            true => candidates(paths::resolve(directory, name)).into_iter().find(|it| fs::is_file(it)),
+            // A package.
+            false => paths::ancestors(directory)
+                .flat_map(|it| candidates(paths::join(&paths::join(it, b"node_modules"), name)))
+                .find(|it| fs::is_file(it)),
+        };
+        if let Some(found) = found {
+            read_tsconfig(&found, settings, depth + 1);
+        }
+    }
+    for name in [&b"jsx"[..], b"jsxFactory", b"jsxFragmentFactory", b"reactNamespace"] {
+        if let Some(value) = json.get(b"compilerOptions").and_then(|it| it.get(name)).and_then(Json::as_str) {
+            let name = [b"tsconfig.", name].concat();
+            settings.retain(|it| it.0 != name);
+            settings.push((name, value.to_vec()));
+        }
+    }
+}
+
 pub(crate) type Found = Result<Arc<Scope>, Fatal>;
 
 pub(crate) struct Configs<'c> {
@@ -236,6 +269,8 @@ pub(crate) struct Configs<'c> {
     /// `--config`
     named: Option<Result<Arc<Config>, Fatal>>,
     pub(crate) flavor: Flavor,
+    /// By directory: see [`Configs::tsconfig_of`].
+    tsconfigs: Guarded<FxHashMap<Vec<u8>, Arc<Settings>>>,
     /// How to sort imports, by the options that say so: they are read once, not for every file.
     sort_imports: Guarded<Vec<(SortSettings, Option<Arc<SortImports>>)>>,
     /// With oxfmt, the one `.editorconfig` that counts: the nearest to the working directory.
@@ -252,6 +287,7 @@ impl<'c> Configs<'c> {
             by_directory: Guarded::new(FxHashMap::default()),
             named: None,
             flavor: Flavor::Prettier,
+            tsconfigs: Guarded::new(FxHashMap::default()),
             sort_imports: Guarded::new(Vec::new()),
             editorconfig_of_oxfmt: None,
             warnings: Guarded::new(Vec::new()),
@@ -414,6 +450,16 @@ impl<'c> Configs<'c> {
         }
     }
 
+    /// Whether the option `parser` is set for the file at `path`, which has `scope`.
+    pub(crate) fn names_parser_for(&self, scope: &Scope, path: &[u8]) -> bool {
+        let is_about_parser = |it: &(Vec<u8>, Vec<u8>)| it.0 == b"parser";
+        let may_be_set = self.options.format.iter().any(|it| it.0 == b"parser")
+            || self.config_of(scope).ok().flatten().is_some_and(|config| {
+                config.settings.iter().any(is_about_parser) || config.overrides.iter().any(|it| it.settings.iter().any(is_about_parser))
+            });
+        may_be_set && self.options_for(scope, path).is_ok_and(|it| it.options.parser.is_some())
+    }
+
     /// Prettier's `getOptionsForFile`: how to format the file at `path`, which has `scope`.
     pub(crate) fn options_for(&self, scope: &Scope, path: &[u8]) -> Result<Resolved, Fatal> {
         let config = self.config_of(scope)?;
@@ -451,7 +497,10 @@ impl<'c> Configs<'c> {
             // It sorts the keys of a `package.json` unless it is told not to.
             let _ = resolved.options.set(b"sortPackageJson", b"true");
         }
+        // `prettier-plugin-organize-imports` asks TypeScript, which asks the `tsconfig.json`.
+        let mut organizes_imports = false;
         for (name, value) in all {
+            organizes_imports |= name.starts_with(b"organizeImports") || (name == b"plugins" && strings::contains(value, b"prettier-plugin-organize-imports"));
             match name {
                 name if sort.set(name, value) => {}
                 b"insertFinalNewline" if self.flavor == Flavor::Oxfmt => resolved.omits_final_newline = value == b"false",
@@ -467,8 +516,29 @@ impl<'c> Configs<'c> {
                 _ => {}
             }
         }
+        if organizes_imports {
+            for (name, value) in self.tsconfig_of(paths::dirname(path)).iter() {
+                sort.set(name, value);
+            }
+        }
         resolved.options.sort_imports = self.sort_imports(sort)?;
         Ok(resolved)
+    }
+
+    /// What the `tsconfig.json` nearest to `directory` says about JSX, as settings for the sorting
+    /// of imports.
+    fn tsconfig_of(&self, directory: &[u8]) -> Arc<Settings> {
+        if let Some(known) = self.tsconfigs.lock().get(directory) {
+            return Arc::clone(known);
+        }
+        let nearest = paths::ancestors(directory).map(|it| paths::join(it, b"tsconfig.json")).find(|it| fs::is_file(it));
+        let mut settings = Settings::new();
+        if let Some(path) = nearest {
+            read_tsconfig(&path, &mut settings, 0);
+        }
+        let settings = Arc::new(settings);
+        self.tsconfigs.lock().insert(directory.to_vec(), Arc::clone(&settings));
+        settings
     }
 
     fn sort_imports(&self, settings: SortSettings) -> Result<Option<Arc<SortImports>>, Fatal> {

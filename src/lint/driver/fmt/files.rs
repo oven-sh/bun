@@ -35,7 +35,7 @@ pub(crate) enum Expanded {
 /// What kind of file a name stands for.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Language {
-    /// JavaScript, TypeScript, JSON, or a style sheet.
+    /// The formatter has it: see [`Kind`].
     Supported,
     /// Prettier formats it. This formatter does not.
     Other,
@@ -43,16 +43,46 @@ pub(crate) enum Language {
     Unknown,
 }
 
+/// A language that the formatter has.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) enum Kind {
+    /// JavaScript or TypeScript.
+    Script,
+    Json(bun_format::json::Parser),
+    Css(bun_format::css::Parser),
+    GraphQl,
+}
+
+impl Kind {
+    /// Of the file at `path`. `parser`: Prettier's option of that name, which decides if it is set.
+    pub(crate) fn of(path: &[u8], parser: Option<&[u8]>) -> Option<Kind> {
+        if let Some(parser) = parser {
+            let json = || bun_format::json::Parser::from_name(parser).map(Kind::Json);
+            let css = || bun_format::css::Parser::from_name(parser).map(Kind::Css);
+            let graphql = || (parser == b"graphql").then_some(Kind::GraphQl);
+            return Some(json().or_else(css).or_else(graphql).unwrap_or(Kind::Script));
+        }
+        let name = paths::basename(path);
+        let extension = strings::last_index_of_char(name, b'.').map_or(&b""[..], |dot| &name[dot + 1..]);
+        if matches!(extension, b"js" | b"mjs" | b"cjs" | b"jsx" | b"ts" | b"mts" | b"cts" | b"tsx") {
+            return Some(Kind::Script);
+        }
+        let json = || bun_format::json::parser_for_path(path).map(Kind::Json);
+        let css = || bun_format::css::parser_for_path(path).map(Kind::Css);
+        let graphql = || bun_format::graphql::is_graphql_path(path).then_some(Kind::GraphQl);
+        json().or_else(css).or_else(graphql)
+    }
+}
+
 pub(crate) fn language_of(path: &[u8]) -> Language {
-    let name = paths::basename(path);
-    if bun_format::json::parser_for_path(path).is_some() || bun_format::css::parser_for_path(path).is_some() {
+    if Kind::of(path, None).is_some() {
         return Language::Supported;
     }
+    let name = paths::basename(path);
     let extension = strings::last_index_of_char(name, b'.').map_or(&b""[..], |dot| &name[dot + 1..]);
     match extension {
-        b"js" | b"mjs" | b"cjs" | b"jsx" | b"ts" | b"mts" | b"cts" | b"tsx" => Language::Supported,
         b"md" | b"markdown" | b"mdx"
-        | b"yaml" | b"yml" | b"html" | b"htm" | b"xhtml" | b"vue" | b"graphql" | b"gql" | b"graphqls" | b"hbs" | b"handlebars"
+        | b"yaml" | b"yml" | b"html" | b"htm" | b"xhtml" | b"vue" | b"hbs" | b"handlebars"
         | b"es6" | b"jsm" | b"wxs" | b"mjml" => Language::Other,
         _ if matches!(name, b".prettierrc" | b".lintstagedrc" | b".stylelintrc" | b".clang-format") => {
             Language::Other

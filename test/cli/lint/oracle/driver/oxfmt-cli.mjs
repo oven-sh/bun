@@ -161,7 +161,7 @@ function run(command, root, test, args) {
   });
   const files = {};
   for (const name of Object.keys(test.files)) {
-    if (!/\.([cm]?[jt]sx?|jsonc?|json5|css|scss|less)$/.test(name) || /config\.ts$/.test(name)) continue;
+    if (!/\.([cm]?[jt]sx?|jsonc?|json5|css|scss|less|graphql|gql)$/.test(name) || /config\.ts$/.test(name)) continue;
     try {
       files[name] = fs.readFileSync(path.join(root, name), "utf8");
     } catch {}

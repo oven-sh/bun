@@ -24,7 +24,7 @@ use bun_sema::session::Session;
 use bun_threading::Guarded;
 use cli::{LogLevel, Options};
 use config::{Configs, Flavor, Resolved};
-use files::{Expanded, Ignored, Language, Target};
+use files::{Expanded, Ignored, Kind, Language, Target};
 use std::borrow::Cow;
 use std::io::Write;
 use std::time::Instant;
@@ -120,6 +120,7 @@ struct Scratches {
     js: Scratch,
     json: bun_format::json::Scratch,
     css: bun_format::css::Scratch,
+    graphql: bun_format::graphql::Scratch,
 }
 
 fn without_final_newline(out: &mut Vec<u8>) {
@@ -146,27 +147,26 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, atoms: &dyn Intern, scr
         Err(FormatError::NestedTooDeeply) => Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec())),
         Err(FormatError::InvalidDocument) => Err(Failure::Bug("the formatter failed")),
     };
-    let json = match &options.parser {
-        Some(parser) => bun_format::json::Parser::from_name(parser),
-        None => bun_format::json::parser_for_path(name),
-    };
-    if let Some(parser) = json {
-        let (mut sorted, mut out) = (Vec::new(), Vec::new());
-        let text = match options.sort_package_json.filter(|_| paths::basename(name) == b"package.json") {
-            Some(sort) if bun_format::json::sort_package_json(text, sort, &mut sorted) => &sorted[..],
-            _ => text,
-        };
-        let done = bun_format::json::format(text, parser, options, &mut scratch.json, &mut out);
-        return finish(done, out, "JSON");
-    }
-    let css = match &options.parser {
-        Some(parser) => bun_format::css::Parser::from_name(parser),
-        None => bun_format::css::parser_for_path(name),
-    };
-    if let Some(parser) = css {
-        let mut out = Vec::new();
-        let done = bun_format::css::format(text, parser, options, &mut scratch.css, &mut out);
-        return finish(done, out, "a style sheet");
+    let mut out = Vec::new();
+    match Kind::of(name, options.parser.as_deref()) {
+        Some(Kind::Script) | None => {}
+        Some(Kind::Json(parser)) => {
+            let mut sorted = Vec::new();
+            let text = match options.sort_package_json.filter(|_| paths::basename(name) == b"package.json") {
+                Some(sort) if bun_format::json::sort_package_json(text, sort, &mut sorted) => &sorted[..],
+                _ => text,
+            };
+            let done = bun_format::json::format(text, parser, options, &mut scratch.json, &mut out);
+            return finish(done, out, "JSON");
+        }
+        Some(Kind::Css(parser)) => {
+            let done = bun_format::css::format(text, parser, options, &mut scratch.css, &mut out);
+            return finish(done, out, "a style sheet");
+        }
+        Some(Kind::GraphQl) => {
+            let done = bun_format::graphql::format(text, options, &mut scratch.graphql, &mut out);
+            return finish(done, out, "GraphQL");
+        }
     }
     let text = match bun_format::pragma::before_parsing(text, options) {
         BeforeParsing::LeaveAsItIs => return Ok((text.to_vec(), options.cursor_offset)),
@@ -312,8 +312,9 @@ impl Run<'_> {
         let path = paths::resolve(&self.environment.cwd, &paths::from_native(name));
         let found = configs.for_directory(paths::dirname(&path)).and_then(|scope| {
             let of_config = scope.config.as_ref().map_or(&None, |it| &it.ignores);
-            let is_left_alone = ignored.ignores_file(&path, of_config) || files::language_of(&path) == Language::Other;
-            Ok((!is_left_alone).then_some(configs.options_for(&scope, &path)?))
+            let options = configs.options_for(&scope, &path)?;
+            let is_another_language = files::language_of(&path) == Language::Other && options.options.parser.is_none();
+            Ok((!ignored.ignores_file(&path, of_config) && !is_another_language).then_some(options))
         });
         let options = match found {
             Ok(Some(options)) => options,
@@ -323,7 +324,7 @@ impl Run<'_> {
             }
             Err(Fatal(error)) => return self.fail(&error),
         };
-        if files::language_of(&path) == Language::Unknown {
+        if files::language_of(&path) == Language::Unknown && options.options.parser.is_none() {
             return self.fail(&[b"No parser could be inferred for file \"", &path[..], b"\"."].concat());
         }
         let names = Session::new();
@@ -383,6 +384,8 @@ impl Run<'_> {
             };
             match files::language_of(&target.path) {
                 _ if !is_wanted(target) => {}
+                // The `parser` option says what it is.
+                Language::Other | Language::Unknown if configs.names_parser_for(&target.scope, &target.path) => work.push((index, target)),
                 Language::Supported => work.push((index, target)),
                 Language::Other => {
                     let name = paths::basename(&target.path);

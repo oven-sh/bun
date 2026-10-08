@@ -1,5 +1,5 @@
 use bun_lint::prelude::*;
-use bun_lint::utils::ts_scope::is_reference_to_global_function;
+use crate::rules::no_wrapper_object_types::{GlobalFunctions, is_reference_to_global};
 
 /// Enforce specifying generic type arguments on type annotation or constructor name of a
 /// constructor call.
@@ -141,7 +141,7 @@ impl ConsistentGenericConstructors {
             return;
         };
         if type_name != callee_name
-            || type_name.is_any(&BUILT_IN_ARRAYS) && is_reference_to_global_function(type_name, lhs)
+            || type_name.is_any(&BUILT_IN_ARRAYS) && is_reference_to_global(type_name, lhs, &mut cx.state)
             || Object::of(Some(&cx.language().parser_options)).bool_or("isolatedDeclarations", false)
         {
             return;
@@ -169,7 +169,7 @@ impl Rule for ConsistentGenericConstructors {
     const META: Meta = Meta::typescript("consistent-generic-constructors", Kind::Suggestion)
         .fixable(Fixable::Code)
         .presets(Presets::STYLISTIC);
-    type State<'a> = ();
+    type State<'a> = GlobalFunctions<'a>;
 
     fn new(options: &Options) -> Self {
         ConsistentGenericConstructors {
@@ -177,7 +177,8 @@ impl Rule for ConsistentGenericConstructors {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> GlobalFunctions<'a> {
         on.exprs([ExprTag::New], Self::check);
+        GlobalFunctions::default()
     }
 }

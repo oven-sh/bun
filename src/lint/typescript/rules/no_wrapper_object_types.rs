@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ts_scope::is_reference_to_global_function;
+use rustc_hash::FxHashMap;
 
 /// Disallow using confusing built-in primitive class wrappers.
 pub struct NoWrapperObjectTypes;
@@ -8,6 +9,14 @@ const BANNED_CLASS_TYPE: Message = Message::new(
     "bannedClassType",
     "Prefer using the primitive `{{preferred}}` as a type name, rather than the upper-cased `{{typeName}}`.",
 );
+
+/// What [`is_reference_to_global_function`] answers for a name in a scope.
+pub(crate) type GlobalFunctions<'a> = FxHashMap<(Scope<'a>, Name<'a>), bool>;
+
+/// [`is_reference_to_global_function`], which looks at all references of the scope, once for a name and a scope.
+pub(crate) fn is_reference_to_global<'a>(name: Name<'a>, ty: TypeNode<'a>, known: &mut GlobalFunctions<'a>) -> bool {
+    *known.entry((Node::Type(ty).scope(), name)).or_insert_with(|| is_reference_to_global_function(name, ty))
+}
 
 /// It is what a class implements or what an interface extends, where a primitive cannot be.
 fn is_heritage(ty: TypeNode<'_>) -> bool {
@@ -23,15 +32,15 @@ impl Rule for NoWrapperObjectTypes {
     const META: Meta = Meta::typescript("no-wrapper-object-types", Kind::Problem)
         .fixable(Fixable::Code)
         .recommended();
-    type State<'a> = ();
+    type State<'a> = GlobalFunctions<'a>;
 
     fn new(_: &Options) -> Self {
         NoWrapperObjectTypes
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> GlobalFunctions<'a> {
         if !file.mentions_any(&["BigInt", "Boolean", "Number", "Object", "String", "Symbol"]) {
-            return;
+            return GlobalFunctions::default();
         }
         on.types([TypeTag::Ref], |_, ty, cx| {
             let TypeKind::Ref { name, .. } = ty.kind() else {
@@ -49,7 +58,7 @@ impl Rule for NoWrapperObjectTypes {
                 b"Symbol" => "symbol",
                 _ => return,
             };
-            if !is_reference_to_global_function(name.name(), ty) {
+            if !is_reference_to_global(name.name(), ty, &mut cx.state) {
                 return;
             }
             cx.report(name, BANNED_CLASS_TYPE)
@@ -57,5 +66,6 @@ impl Rule for NoWrapperObjectTypes {
                 .data("typeName", name)
                 .fix(|fixer| (!is_heritage(ty)).then(|| fixer.replace(name, preferred)));
         });
+        GlobalFunctions::default()
     }
 }

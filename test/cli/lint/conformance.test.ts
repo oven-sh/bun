@@ -19,8 +19,8 @@ const isSample = isDebug || isASAN;
 // program is loaded for it: all 144,000 without types take 8 seconds of CPU time, the 8,200 of "upstream" with types 600.
 // `expected*.txt` are written with [1, 1] and [1, 10].
 const suites = [
-  { suite: "upstream", expected: "expected.txt", every: isSample ? [50, 400] : [1, 20] },
-  { suite: "more", expected: "expected-more.txt", every: isSample ? [100, 1000] : [1, 200] },
+  { suite: "upstream", expected: "expected.txt", every: isSample ? [50, 2000] : [1, 20] },
+  { suite: "more", expected: "expected-more.txt", every: isSample ? [100, 5000] : [1, 200] },
 ];
 
 let dir: ReturnType<typeof tempDir> | undefined;

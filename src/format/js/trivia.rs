@@ -3,18 +3,14 @@
 //! [`Comments`](super::comments::Comments) tells which comments belong where. This writes them,
 //! with the spaces and line breaks around them, and marks them as printed.
 
-use super::comments::{Comment, CommentKind};
+use super::comments::{Comment, CommentKind, lines};
 use crate::prelude::*;
 use crate::write;
 
-/// JSDoc has a form in which several `/** .. */` directly follow each other, for the overloads of
-/// a function. They have to stay that way.
+/// Prettier's `mergeNestledJsdocComments`. JSDoc has a form in which several `/** .. */` directly
+/// follow each other, for the overloads of a function. They have to stay that way.
 fn should_nestle_adjacent_doc_comments(current: &Comment, next: &Comment) -> bool {
-    current.is_jsdoc()
-        && next.is_jsdoc()
-        && current.is_multiline_block()
-        && next.is_multiline_block()
-        && current.span.end == next.span.start
+    current.span.end == next.span.start && current.is_indentable_block() && next.is_indentable_block()
 }
 
 /// The comments before the node at `span`.
@@ -128,16 +124,19 @@ fn write_trailing_comments<'a>(comments: &'a [Comment], f: &mut Formatter<'a>) {
         if total_lines_before > 0 || is_after_line_comment {
             write!(
                 f,
-                line_suffix(&format_with(|f| {
-                    match lines_before {
-                        _ if should_nestle => {}
-                        0 if is_after_line_comment => write!(f, hard_line_break()),
-                        0 => write!(f, space()),
-                        1 => write!(f, hard_line_break()),
-                        _ => write!(f, empty_line()),
-                    }
-                    write!(f, comment);
-                }))
+                [
+                    line_suffix(&format_with(|f| {
+                        match lines_before {
+                            _ if should_nestle => {}
+                            0 if is_after_line_comment => write!(f, hard_line_break()),
+                            0 => write!(f, space()),
+                            1 => write!(f, hard_line_break()),
+                            _ => write!(f, empty_line()),
+                        }
+                        write!(f, comment);
+                    })),
+                    expand_parent()
+                ]
             );
         } else {
             let content = format_with(|f| write!(f, [maybe_space(!should_nestle), comment]));
@@ -245,59 +244,35 @@ fn write_dangling_comments<'a>(
     }
 }
 
-/// The lines of `text`, which end with `\n`, `\r\n`, `\r`, U+2028 or U+2029.
-fn lines(text: &[u8]) -> impl Iterator<Item = &[u8]> {
-    let mut rest = Some(text);
-    std::iter::from_fn(move || {
-        let text = rest?;
-        let mut from = 0;
-        while let Some(at) = bun_core::strings::index_of_any(&text[from..], b"\n\r\xE2") {
-            let at = from + at;
-            let len = match &text[at..] {
-                [b'\r', b'\n', ..] => 2,
-                [b'\n' | b'\r', ..] => 1,
-                [0xE2, 0x80, 0xA8 | 0xA9, ..] => 3,
-                _ => {
-                    from = at + 1;
-                    continue;
-                }
-            };
-            rest = Some(&text[at + len..]);
-            return Some(&text[..at]);
-        }
-        rest = None;
-        Some(text)
-    })
-}
-
-/// Prettier's `isIndentableBlockComment`: every line but the first starts with a `*`, so the
-/// stars can be lined up.
-pub(crate) fn is_alignable_comment(text: &[u8]) -> bool {
-    lines(text).skip(1).all(|line| line.trim_ascii_start().starts_with(b"*"))
-}
-
 impl<'a> Format<'a> for Comment {
+    /// Prettier's `printComment`.
     fn fmt(&self, f: &mut Formatter<'a>) {
         let content = f.source_text().text_for(&self.span);
-        if !self.is_multiline_block() {
+        if self.is_line() {
             return write!(f, text(content.trim_ascii_end()));
         }
-        let mut lines = lines(content);
-        let first = lines.next().unwrap_or_default().trim_ascii_end();
-        if is_alignable_comment(content) {
-            write!(f, text(first));
-            for line in lines {
-                write!(f, [hard_line_break(), " ", text(line.trim_ascii())]);
+        if self.is_indentable_block() {
+            // In Markdown, two spaces at the end of a line are a line break.
+            let is_jsdoc = content.starts_with(b"/**") && content.get(3) != Some(&b'*');
+            let mut lines = lines(content).peekable();
+            write!(f, text(lines.next().unwrap_or_default().trim_ascii_end()));
+            while let Some(line) = lines.next() {
+                let trimmed = line.trim_ascii();
+                write!(f, [hard_line_break(), " ", text(trimmed)]);
+                if is_jsdoc && trimmed != b"*" && line.ends_with(b"  ") && lines.peek().is_some() {
+                    // A line break in a text keeps the spaces before it. The one that follows
+                    // only indents.
+                    write!(f, text(b"  \n"));
+                }
             }
-        } else if !bun_core::strings::contains_char(content, b'\r')
-            && first.len() == bun_core::strings::index_of_char_usize(content, b'\n').unwrap_or(0)
-        {
+        } else if !bun_core::strings::contains_char(content, b'\r') {
             write!(f, text(content));
         } else {
             f.write_built_text(|out| {
-                out.extend_from_slice(first);
-                for line in lines {
-                    out.push(b'\n');
+                for (index, line) in lines(content).enumerate() {
+                    if index > 0 {
+                        out.push(b'\n');
+                    }
                     out.extend_from_slice(line);
                 }
             });

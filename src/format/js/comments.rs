@@ -32,7 +32,7 @@ pub(crate) struct Comment {
 
 const PRECEDED_BY_NEWLINE: u8 = 1 << 0;
 const FOLLOWED_BY_NEWLINE: u8 = 1 << 1;
-const JSDOC: u8 = 1 << 2;
+const INDENTABLE: u8 = 1 << 2;
 const TYPE_CAST: u8 = 1 << 3;
 
 impl Comment {
@@ -72,10 +72,11 @@ impl Comment {
         self.flags & FOLLOWED_BY_NEWLINE != 0
     }
 
-    /// `/** .. */`, except `/***/` and one that has `@license` or `@preserve` in it.
+    /// Prettier's `isIndentableBlockComment`: it has several lines, and every line but the first
+    /// starts with a `*`, so the stars can be lined up.
     #[inline]
-    pub(crate) fn is_jsdoc(self) -> bool {
-        self.flags & JSDOC != 0
+    pub(crate) fn is_indentable_block(self) -> bool {
+        self.flags & INDENTABLE != 0
     }
 }
 
@@ -107,29 +108,55 @@ pub(crate) fn collect<'a>(file: &'a File<'a>, comments: &mut Vec<Comment>) {
         if kind == CommentKind::Line || source.has_line_terminator_after(span.end) {
             flags |= FOLLOWED_BY_NEWLINE;
         }
-        if kind != CommentKind::Line
-            && content.starts_with(b"*")
-            && !content.iter().all(|&b| b == b'*')
-            && !bun_core::strings::contains(content, b"@license")
-            && !bun_core::strings::contains(content, b"@preserve")
-        {
-            flags |= JSDOC;
-            if is_type_cast_text(content) {
-                flags |= TYPE_CAST;
-            }
+        if kind == CommentKind::MultiLineBlock && is_indentable_text(content) {
+            flags |= INDENTABLE;
+        }
+        if kind != CommentKind::Line && content.starts_with(b"*") && is_type_cast_text(content) {
+            flags |= TYPE_CAST;
         }
         comments.push(Comment { span, kind, flags });
     }
 }
 
-/// `@type` or `@satisfies`, followed by whitespace or a `{`.
+/// The lines of `text`, which end with `\n`, `\r\n` or `\r`.
+pub(crate) fn lines(text: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let mut rest = Some(text);
+    std::iter::from_fn(move || {
+        let text = rest?;
+        let Some(at) = bun_core::strings::index_of_any(text, b"\n\r") else {
+            rest = None;
+            return Some(text);
+        };
+        let len = if text[at..].starts_with(b"\r\n") { 2 } else { 1 };
+        rest = Some(&text[at + len..]);
+        Some(&text[..at])
+    })
+}
+
+/// `content`: what is between `/*` and `*/`.
+fn is_indentable_text(content: &[u8]) -> bool {
+    let mut lines = lines(content).skip(1).peekable();
+    if lines.peek().is_none() {
+        return false;
+    }
+    while let Some(line) = lines.next() {
+        let line = line.trim_ascii_start();
+        // The last line goes on with the `*` of `*/`.
+        if !line.starts_with(b"*") && !(line.is_empty() && lines.peek().is_none()) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Prettier's `/@(?:type|satisfies)\b/`.
 fn is_type_cast_text(content: &[u8]) -> bool {
     let mut rest = content;
     while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'@') {
         rest = &rest[at + 1..];
         for tag in [&b"type"[..], b"satisfies"] {
             if let Some(after) = rest.strip_prefix(tag)
-                && after.first().is_some_and(|&b| b.is_ascii_whitespace() || b == b'{')
+                && !after.first().is_some_and(|&b| b.is_ascii_alphanumeric() || b == b'_')
             {
                 return true;
             }
@@ -311,6 +338,16 @@ impl<'a> Comments<'a> {
     #[inline]
     pub(crate) fn has_comment_before(&self, start: u32) -> bool {
         self.unprinted_comments().first().is_some_and(|c| c.span.end <= start)
+    }
+
+    /// Whether a comment, printed or not, is in `outer` and not in `inner`, which is a part of
+    /// `outer`. If `inner` is the only child of `outer`, this is Prettier's `hasComment(inner)`.
+    pub(crate) fn has_comment_around(&self, inner: Span, outer: Span) -> bool {
+        let starts_in = |start: u32, end: u32| {
+            let at = self.inner.partition_point(|comment| comment.span.start < start);
+            self.inner.get(at).is_some_and(|comment| comment.span.start < end)
+        };
+        !self.inner.is_empty() && (starts_in(outer.start, inner.start) || starts_in(inner.end, outer.end))
     }
 
     /// Whether a comment before `start` ends its line.

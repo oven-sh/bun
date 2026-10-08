@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
 use smallvec::SmallVec;
+use std::hash::{Hash, Hasher};
 
 /// Disallow two overloads that could be unified into one with a union or an optional/rest parameter.
 pub struct UnifiedSignatures {
@@ -69,6 +70,37 @@ enum OverloadInfo<'a> {
 struct Overload<'a> {
     key: OverloadKey<'a>,
     signature: Func<'a>,
+}
+
+/// A signature, with what is asked about it for each of the other overloads.
+struct Signature<'a> {
+    func: Func<'a>,
+    parameters: SmallVec<[Param<'a>; 8]>,
+    /// Any of the outer type parameters are used in it.
+    uses_type_parameter: bool,
+    /// With `ignoreOverloadsWithDifferentJSDoc`: the last block comment before its declaration.
+    block_comment: Option<&'a [u8]>,
+}
+
+/// The type parameters of the class or the interface that the overloads are in.
+struct OuterTypeParameters<'a> {
+    list: Option<List<'a, TypeParam<'a>>>,
+    /// Their names, if they are many.
+    names: Option<FxHashSet<Name<'a>>>,
+}
+
+impl<'a> OuterTypeParameters<'a> {
+    fn new(list: Option<List<'a, TypeParam<'a>>>) -> Self {
+        let names = list.filter(|it| it.len() > 8).map(|it| it.iter().map(|it| it.name().name()).collect());
+        OuterTypeParameters { list, names }
+    }
+
+    fn has(&self, name: Name<'a>) -> bool {
+        match &self.names {
+            Some(names) => names.contains(&name),
+            None => self.list.is_some_and(|it| it.iter().any(|it| it.name().name() == name)),
+        }
+    }
 }
 
 /// typescript-eslint's `getOverloadInfo` for the `key` of a method.
@@ -244,14 +276,10 @@ fn type_parameters_are_equal<'a>(a: TypeParam<'a>, b: TypeParam<'a>) -> bool {
 }
 
 /// Whether `ty` is one of `outer`, or an array of it, or `keyof` or `readonly` of it, and so on.
-fn type_contains_type_parameter<'a>(mut ty: TypeNode<'a>, outer: List<'a, TypeParam<'a>>) -> bool {
+fn type_contains_type_parameter<'a>(mut ty: TypeNode<'a>, outer: &OuterTypeParameters<'a>) -> bool {
     loop {
         ty = match ty.kind() {
-            TypeKind::Ref { name, .. } => {
-                return name
-                    .as_ident()
-                    .is_some_and(|name| outer.iter().any(|it| it.name().name() == name.name()));
-            }
+            TypeKind::Ref { name, .. } => return name.as_ident().is_some_and(|name| outer.has(name.name())),
             TypeKind::Array(inner) | TypeKind::Keyof(inner) | TypeKind::Readonly(inner) => inner,
             TypeKind::Mapped(mapped) => match mapped.ty() {
                 Some(inner) => inner,
@@ -263,13 +291,12 @@ fn type_contains_type_parameter<'a>(mut ty: TypeNode<'a>, outer: List<'a, TypePa
 }
 
 /// True if any of the outer type parameters are used in a signature.
-fn signature_uses_type_parameter<'a>(parameters: &[Param<'a>], outer: Option<List<'a, TypeParam<'a>>>) -> bool {
-    outer.is_some_and(|outer| {
-        parameters
+fn signature_uses_type_parameter<'a>(parameters: &[Param<'a>], outer: &OuterTypeParameters<'a>) -> bool {
+    outer.list.is_some()
+        && parameters
             .iter()
             .filter_map(|it| get_parameter_type_annotation(*it))
             .any(|ty| type_contains_type_parameter(ty, outer))
-    })
 }
 
 /// The last block comment before the declaration of `signature`.
@@ -347,14 +374,35 @@ fn signatures_differ_by_optional_or_rest_parameter<'a>(
     })
 }
 
-type UnionMembers<'a> = SmallVec<[TypeNode<'a>; 8]>;
+#[derive(Default)]
+struct UnionMembers<'a> {
+    list: SmallVec<[TypeNode<'a>; 8]>,
+    /// How they are written, as soon as they are more than a few.
+    texts: FxHashSet<&'a [u8]>,
+}
 
-/// Adds the members of `ty` that are not written in `members` already.
-fn add_union_members<'a>(ty: TypeNode<'a>, members: &mut UnionMembers<'a>) {
-    match ty.kind() {
-        TypeKind::Union(types) => types.iter().for_each(|it| add_union_members(it, members)),
-        _ if members.iter().any(|other| other.text() == ty.text()) => {}
-        _ => members.push(ty),
+impl<'a> UnionMembers<'a> {
+    /// Adds the members of `ty` that are not written in it already.
+    fn add(&mut self, ty: TypeNode<'a>) {
+        let mut stack: SmallVec<[TypeNode<'a>; 8]> = smallvec::smallvec![ty];
+        while let Some(ty) = stack.pop() {
+            if let TypeKind::Union(types) = ty.kind() {
+                let first = stack.len();
+                stack.extend(types);
+                stack[first..].reverse();
+                continue;
+            }
+            if self.list.len() == 16 && self.texts.is_empty() {
+                self.texts.extend(self.list.iter().map(|it| it.text()));
+            }
+            let is_new = match self.texts.is_empty() {
+                true => !self.list.iter().any(|other| other.text() == ty.text()),
+                false => self.texts.insert(ty.text()),
+            };
+            if is_new {
+                self.list.push(ty);
+            }
+        }
     }
 }
 
@@ -378,10 +426,10 @@ fn get_unified_type_text<'a>(type0: Option<TypeNode<'a>>, type1: Option<TypeNode
         }
         return text;
     };
-    let mut members = UnionMembers::new();
-    add_union_members(type0, &mut members);
-    add_union_members(type1, &mut members);
-    for (i, member) in members.into_iter().enumerate() {
+    let mut members = UnionMembers::default();
+    members.add(type0);
+    members.add(type1);
+    for (i, member) in members.list.into_iter().enumerate() {
         if i > 0 {
             text.extend_from_slice(b" | ");
         }
@@ -401,93 +449,227 @@ fn failure_string_start(file: &File<'_>, other: Option<Span>) -> String {
     }
 }
 
+/// A hash of `parts`.
+fn hash_of(parts: impl Hash) -> u64 {
+    let mut hasher = FxHasher::default();
+    parts.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Gives each value a number.
+struct Numbers<T>(FxHashMap<T, u32>);
+
+impl<T: Eq + Hash> Numbers<T> {
+    fn number_of(&mut self, value: T) -> u32 {
+        let next = self.0.len() as u32;
+        *self.0.entry(value).or_insert(next)
+    }
+}
+
 impl UnifiedSignatures {
-    fn signatures_can_be_unified<'a>(
-        &self,
-        a: Func<'a>,
-        b: Func<'a>,
-        a_parameters: &[Param<'a>],
-        b_parameters: &[Param<'a>],
-        outer: Option<List<'a, TypeParam<'a>>>,
-    ) -> bool {
+    fn signatures_can_be_unified<'a>(&self, a: &Signature<'a>, b: &Signature<'a>) -> bool {
         if self.ignore_differently_named_parameters
-            && a_parameters.iter().zip(b_parameters).any(|(a, b)| {
+            && a.parameters.iter().zip(&b.parameters).any(|(a, b)| {
                 parameter_type(*a) == parameter_type(*b)
                     && get_static_parameter_name(*a) != get_static_parameter_name(*b)
             })
         {
             return false;
         }
-        if self.ignore_overloads_with_different_jsdoc
-            && get_block_comment_for_node(a) != get_block_comment_for_node(b)
-        {
+        if a.block_comment != b.block_comment {
             return false;
         }
+        let (a_func, b_func) = (a.func, b.func);
         // Must return the same type.
-        types_are_equal(a.return_type(), b.return_type())
+        types_are_equal(a_func.return_type(), b_func.return_type())
             // Must take the same type parameters.
-            && a.type_params().len() == b.type_params().len()
-            && a.type_params().iter().zip(b.type_params()).all(|(a, b)| type_parameters_are_equal(a, b))
+            && a_func.type_params().len() == b_func.type_params().len()
+            && a_func.type_params().iter().zip(b_func.type_params()).all(|(a, b)| type_parameters_are_equal(a, b))
             // If one uses a type parameter (from outside) and the other doesn't, they shouldn't be joined.
-            && signature_uses_type_parameter(a_parameters, outer) == signature_uses_type_parameter(b_parameters, outer)
+            && a.uses_type_parameter == b.uses_type_parameter
     }
 
-    fn compare_signatures<'a>(
-        &self,
-        a: Func<'a>,
-        b: Func<'a>,
-        outer: Option<List<'a, TypeParam<'a>>>,
-    ) -> Option<Unify<'a>> {
-        let a_parameters: SmallVec<[Param<'a>; 8]> = a.params_with_this().collect();
-        let b_parameters: SmallVec<[Param<'a>; 8]> = b.params_with_this().collect();
-        if !self.signatures_can_be_unified(a, b, &a_parameters, &b_parameters, outer) {
+    fn compare_signatures<'a>(&self, a: &Signature<'a>, b: &Signature<'a>) -> Option<Unify<'a>> {
+        if !self.signatures_can_be_unified(a, b) {
             return None;
         }
-        match a_parameters.len() == b_parameters.len() {
-            true => signatures_have_same_amount_of_parameters(a, b, &a_parameters, &b_parameters),
-            false => signatures_differ_by_optional_or_rest_parameter(a, b, &a_parameters, &b_parameters),
+        match a.parameters.len() == b.parameters.len() {
+            true => signatures_have_same_amount_of_parameters(a.func, b.func, &a.parameters, &b.parameters),
+            false => signatures_differ_by_optional_or_rest_parameter(a.func, b.func, &a.parameters, &b.parameters),
         }
     }
 
-    fn check_overloads<'a>(
-        &self,
-        overloads: &[Func<'a>],
-        outer: Option<List<'a, TypeParam<'a>>>,
-        cx: &Cx<'a, Self>,
-    ) {
+    /// The positions of all pairs for which [`Self::compare_signatures`] finds something, and perhaps of some more, in the order of
+    /// the first and then of the second. It takes time in proportion to the number of parameters and of pairs: signatures that can
+    /// be unified have the same hash of what has to be the same in them. The exception: with `ignoreDifferentlyNamedParameters`, a
+    /// signature with a parameter that has no name is in a pair with each of the others.
+    fn pairs_to_compare<'a>(&self, signatures: &[Signature<'a>]) -> Vec<(u32, u32)> {
+        type Bucket<T> = FxHashMap<u64, SmallVec<[T; 2]>>;
+        let mut classes = Numbers(FxHashMap::default());
+        let mut parameters = Numbers(FxHashMap::default());
+        let mut types = Numbers(FxHashMap::default());
+        // The signatures that have all parameters in common,
+        let mut same: Bucket<u32> = Bucket::default();
+        // all but one, with the number of that one,
+        let mut same_but_one: Bucket<(u32, u32)> = Bucket::default();
+        // and the types of all parameters.
+        let mut same_types: Bucket<u32> = Bucket::default();
+        // Those that may be the longer of a pair: a hash for each length that the shorter can have.
+        let mut longer: Vec<(u64, u32)> = Vec::new();
+        // By class.
+        let mut all: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
+        let mut without_names: Vec<(u32, u32)> = Vec::new();
+
+        let (mut before, mut after, mut numbers): (Vec<u64>, Vec<u64>, Vec<u32>) = Default::default();
+        for (at, signature) in signatures.iter().enumerate() {
+            let (at, list) = (at as u32, &signature.parameters[..]);
+            if is_this_void_param(list.first()) {
+                continue;
+            }
+            let text = |ty: Option<TypeNode<'a>>| ty.map(TypeNode::text);
+            let type_parameters: SmallVec<[_; 2]> =
+                (signature.func.type_params().iter()).map(|it| (it.name().name(), text(it.constraint()))).collect();
+            let class = classes.number_of((
+                text(signature.func.return_type()),
+                type_parameters,
+                signature.uses_type_parameter,
+                signature.block_comment,
+            ));
+            // The name has to be the same where both are an identifier or both a rest element: everywhere, if all are one of the
+            // two and only the last is a rest element.
+            if self.ignore_differently_named_parameters {
+                let has_name = |(i, it): (usize, &Param<'_>)| match parameter_type(*it) {
+                    ParameterType::Identifier => true,
+                    ParameterType::RestElement => i + 1 == list.len(),
+                    _ => false,
+                };
+                all.entry(class).or_default().push(at);
+                if !list.iter().enumerate().all(has_name) {
+                    without_names.push((class, at));
+                    continue;
+                }
+            }
+            let name = |it: Param<'a>| get_static_parameter_name(it).filter(|_| self.ignore_differently_named_parameters);
+
+            numbers.clear();
+            numbers.extend(list.iter().map(|it| {
+                parameters.number_of((is_rest_element(*it), is_optional(*it), text(get_parameter_type_annotation(*it)), name(*it)))
+            }));
+            // The hashes of the parameters before each, and after each.
+            before.clear();
+            before.push(0);
+            before.extend(numbers.iter().scan(0, |hash, it| {
+                *hash = hash_of((*hash, *it));
+                Some(*hash)
+            }));
+            after.clear();
+            after.push(0);
+            after.extend(numbers.iter().rev().scan(0, |hash, it| {
+                *hash = hash_of((*hash, *it));
+                Some(*hash)
+            }));
+            after.reverse();
+            same.entry(hash_of((class, list.len(), before.last()))).or_default().push(at);
+            for (i, parameter) in list.iter().enumerate().filter(|it| !is_rest_element(*it.1)) {
+                let rest = hash_of((class, list.len(), i, before.get(i), after.get(i + 1), is_optional(*parameter)));
+                same_but_one.entry(rest).or_default().push((numbers.get(i).copied().unwrap_or(0), at));
+            }
+
+            // The hashes of the types of the first parameters.
+            before.truncate(1);
+            before.extend(list.iter().scan(0, |hash, it| {
+                *hash = hash_of((*hash, types.number_of((text(get_parameter_type_annotation(*it)), name(*it)))));
+                Some(*hash)
+            }));
+            let is_this = is_this_param(list.first());
+            let of_first = |count: usize| hash_of((class, count, before.get(count), is_this));
+            if !list.last().is_some_and(|it| is_rest_element(*it)) {
+                same_types.entry(of_first(list.len())).or_default().push(at);
+            }
+            // All after the first that the shorter does not have may be missing.
+            let required = list.iter().rposition(|it| !parameter_may_be_missing(*it)).map_or(0, |it| it + 1);
+            longer.extend((required.saturating_sub(1)..list.len()).map(|count| (of_first(count), at)));
+        }
+
+        let mut pairs: Vec<(u32, u32)> = Vec::new();
+        let mut add = |a: u32, b: u32| pairs.push((a.min(b), a.max(b)));
+        for bucket in same.values() {
+            for (i, a) in bucket.iter().enumerate() {
+                bucket.iter().skip(i + 1).for_each(|b| add(*a, *b));
+            }
+        }
+        for bucket in same_but_one.values_mut().filter(|it| it.len() > 1) {
+            // Those that have that one in common too are in `same`.
+            bucket.sort_unstable();
+            let mut end_of_run = 0;
+            for (i, a) in bucket.iter().enumerate() {
+                if i == end_of_run {
+                    end_of_run = i + bucket.iter().skip(i).take_while(|it| it.0 == a.0).count();
+                }
+                bucket.iter().skip(end_of_run).for_each(|b| add(a.1, b.1));
+            }
+        }
+        for (hash, a) in longer {
+            same_types.get(&hash).into_iter().flatten().for_each(|b| add(a, *b));
+        }
+        for (class, a) in without_names {
+            all.get(&class).into_iter().flatten().filter(|b| **b != a).for_each(|b| add(a, *b));
+        }
+        pairs.sort_unstable();
+        pairs.dedup();
+        pairs
+    }
+
+    fn check_overloads<'a>(&self, overloads: &[Func<'a>], outer: &OuterTypeParameters<'a>, cx: &Cx<'a, Self>) {
         let only2 = overloads.len() == 2;
         let start = |other: Span| failure_string_start(cx, (!only2).then_some(other));
-        for (i, &a) in overloads.iter().enumerate() {
-            for &b in &overloads[i + 1..] {
-                match self.compare_signatures(a, b, outer) {
-                    None => {}
-                    Some(Unify::SingleParameterDifference { p0, p1 }) => {
-                        let types = get_unified_type_text(
-                            get_parameter_type_annotation(p0),
-                            get_parameter_type_annotation(p1),
-                        );
-                        cx.report(parameter_span(p1), SINGLE_PARAMETER_DIFFERENCE)
-                            .data("failureStringStart", start(parameter_span(p0)))
-                            .data("types", types);
-                    }
-                    Some(Unify::ExtraParameter {
-                        extra_parameter,
-                        other_signature,
-                    }) => {
-                        let message = match is_rest_element(extra_parameter) {
-                            true => OMITTING_REST_PARAMETER,
-                            false => OMITTING_SINGLE_PARAMETER,
-                        };
-                        cx.report(parameter_span(extra_parameter), message)
-                            .data("failureStringStart", start(other_signature.estree_span()));
-                    }
-                    Some(Unify::AllParametersAreSame {
-                        signature0,
-                        signature1,
-                    }) => {
-                        cx.report(signature1.estree_span(), ALL_PARAMETERS_ARE_SAME)
-                            .data("failureStringStart", start(signature0.estree_span()));
-                    }
+        let signatures: SmallVec<[Signature<'a>; 4]> = (overloads.iter())
+            .map(|&func| {
+                let parameters: SmallVec<[Param<'a>; 8]> = func.params_with_this().collect();
+                Signature {
+                    func,
+                    uses_type_parameter: signature_uses_type_parameter(&parameters, outer),
+                    block_comment: get_block_comment_for_node(func).filter(|_| self.ignore_overloads_with_different_jsdoc),
+                    parameters,
+                }
+            })
+            .collect();
+        let pairs = match signatures.len() <= 8 {
+            true => (0..signatures.len() as u32).flat_map(|i| (i + 1..signatures.len() as u32).map(move |j| (i, j))).collect(),
+            false => self.pairs_to_compare(&signatures),
+        };
+        for (i, j) in pairs {
+            let (Some(a), Some(b)) = (signatures.get(i as usize), signatures.get(j as usize)) else {
+                continue;
+            };
+            match self.compare_signatures(a, b) {
+                None => {}
+                Some(Unify::SingleParameterDifference { p0, p1 }) => {
+                    let types = get_unified_type_text(
+                        get_parameter_type_annotation(p0),
+                        get_parameter_type_annotation(p1),
+                    );
+                    cx.report(parameter_span(p1), SINGLE_PARAMETER_DIFFERENCE)
+                        .data("failureStringStart", start(parameter_span(p0)))
+                        .data("types", types);
+                }
+                Some(Unify::ExtraParameter {
+                    extra_parameter,
+                    other_signature,
+                }) => {
+                    let message = match is_rest_element(extra_parameter) {
+                        true => OMITTING_REST_PARAMETER,
+                        false => OMITTING_SINGLE_PARAMETER,
+                    };
+                    cx.report(parameter_span(extra_parameter), message)
+                        .data("failureStringStart", start(other_signature.estree_span()));
+                }
+                Some(Unify::AllParametersAreSame {
+                    signature0,
+                    signature1,
+                }) => {
+                    cx.report(signature1.estree_span(), ALL_PARAMETERS_ARE_SAME)
+                        .data("failureStringStart", start(signature0.estree_span()));
                 }
             }
         }
@@ -511,8 +693,9 @@ impl UnifiedSignatures {
         for overload in &overloads {
             by_key.entry(overload.key).or_default().push(overload.signature);
         }
-        for signatures in by_key.values() {
-            self.check_overloads(signatures, outer, cx);
+        let outer = OuterTypeParameters::new(outer);
+        for signatures in by_key.values().filter(|it| it.len() > 1) {
+            self.check_overloads(signatures, &outer, cx);
         }
     }
 }

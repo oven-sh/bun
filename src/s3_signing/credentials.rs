@@ -1113,6 +1113,12 @@ impl S3Credentials {
 fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
     let host = strings::split_once_char(endpoint, b'/').map_or(endpoint, |(host, _)| host);
     let host = strings::split_once_char(host, b':').map_or(host, |(host, _)| host);
+    // One trailing dot is the fully qualified form of the same host. A host
+    // with an empty label names nothing.
+    let host = host.strip_suffix(b".").unwrap_or(host);
+    if host.starts_with(b".") || strings::contains(host, b"..") {
+        return None;
+    }
     let bucket = if let Some(rest) = host
         .strip_suffix(b".amazonaws.com")
         .or_else(|| host.strip_suffix(b".amazonaws.com.cn"))
@@ -1149,7 +1155,7 @@ fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]> {
         }
         bucket
     };
-    (!bucket.is_empty()).then_some(bucket)
+    Some(bucket)
 }
 
 pub fn guess_region(endpoint: &[u8]) -> &[u8] {

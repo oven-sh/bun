@@ -211,6 +211,25 @@ testCases(
         r2Case(`R2 host in the ${jurisdiction} jurisdiction`, `my-bucket.acct123.${jurisdiction}`, "my-bucket"),
       ),
     ),
+    // A dot at the end is the fully qualified form of the same host.
+    "AWS host, fully qualified": [
+      { client: { ...virtualHosted, endpoint: "https://prod-bucket.s3.us-east-1.amazonaws.com." } },
+      {
+        url: "prod-bucket.s3.us-east-1.amazonaws.com./dir/f.txt",
+        bucket: "prod-bucket",
+        file: 'S3Ref ("prod-bucket/dir/f.txt")',
+        client: 'S3Client ("prod-bucket")',
+      },
+    ],
+    "R2 host, fully qualified": [
+      { client: { ...virtualHosted, endpoint: "https://my-bucket.acct123.r2.cloudflarestorage.com." } },
+      {
+        url: "my-bucket.acct123.r2.cloudflarestorage.com./dir/f.txt",
+        bucket: "my-bucket",
+        file: 'S3Ref ("my-bucket/dir/f.txt")',
+        client: 'S3Client ("my-bucket")',
+      },
+    ],
   },
 );
 
@@ -267,6 +286,25 @@ testCases(
       { client: { ...virtualHosted, endpoint: "https://files.example.com/prod-bucket.s3.us-east-1.amazonaws.com" } },
       {
         url: "files.example.com/prod-bucket.s3.us-east-1.amazonaws.com/dir/f.txt",
+        bucket: null,
+        file: 'S3Ref ("dir/f.txt")',
+        client: "S3Client",
+      },
+    ],
+    // A host with an empty label has no bucket label.
+    "AWS host with an empty label": [
+      { client: { ...virtualHosted, endpoint: "https://..s3.us-east-1.amazonaws.com" } },
+      {
+        url: "..s3.us-east-1.amazonaws.com/dir/f.txt",
+        bucket: null,
+        file: 'S3Ref ("dir/f.txt")',
+        client: "S3Client",
+      },
+    ],
+    "R2 host with an empty account label": [
+      { client: { ...virtualHosted, endpoint: "https://bkt..r2.cloudflarestorage.com" } },
+      {
+        url: "bkt..r2.cloudflarestorage.com/dir/f.txt",
         bucket: null,
         file: 'S3Ref ("dir/f.txt")',
         client: "S3Client",

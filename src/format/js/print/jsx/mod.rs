@@ -35,9 +35,25 @@ impl<'a> Format<'a> for FormatJsxName<'a> {
                     source_text(property.span())
                 ]
             ),
-            _ => write!(f, text_without_whitespace(name.text())),
+            _ => write_jsx_identifier(name.span(), f),
         });
     }
+}
+
+/// `a`, `a-b`, `a:b`
+fn write_jsx_identifier<'a>(span: Span, f: &mut Formatter<'a>) {
+    let text = f.source_text().text_for(&span);
+    let is_part = |b: &&u8| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'$' | b'-') || **b >= 0x80;
+    let namespace_len = text.iter().take_while(is_part).count() as u32;
+    if namespace_len == span.len() {
+        return write!(f, text_without_whitespace(text));
+    }
+    let namespace = Span::new(span.start, span.start + namespace_len);
+    let name = Span::new(span.end - text.iter().rev().take_while(is_part).count() as u32, span.end);
+    let comments_before_colon = f.comments().comments_before_character(namespace.end, b':');
+    write!(f, [source_text(namespace), FormatTrailingComments::Comments(comments_before_colon), ":"]);
+    let comments_after_colon = f.comments().comments_before(name.start);
+    write!(f, [FormatLeadingComments::Comments(comments_after_colon), source_text(name)]);
 }
 
 /// `</a>`
@@ -185,9 +201,7 @@ pub(crate) fn write_jsx_attribute<'a>(attribute: Prop<'a>, f: &mut Formatter<'a>
     }
     if let Some(key) = attribute.key() {
         let span = key.span(f.file());
-        format_node(span, || AstNodes::JSXAttribute(attribute), f, |f| {
-            write!(f, text_without_whitespace(f.source_text().text_for(&span)));
-        });
+        format_node(span, || AstNodes::JSXAttribute(attribute), f, |f| write_jsx_identifier(span, f));
     }
     if let Some(value) = attribute.value() {
         write!(f, ["=", FormatJsxChild(value)]);

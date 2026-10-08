@@ -521,6 +521,9 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     // these semantics even when modules imported via ES6 import statements end
     // up being CommonJS modules.
     stmts
+        .inside_wrapper_prefix
+        .await_async_dependencies(c.promise_all_runtime_ref);
+    stmts
         .all_stmts
         .reserve(stmts.inside_wrapper_prefix.stmts.len() + stmts.inside_wrapper_suffix.len());
     stmts

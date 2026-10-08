@@ -1213,75 +1213,16 @@ pub(crate) fn scan_imports_and_exports(
 
                     debug_assert!(other_id < this.graph.meta.len());
                     let other_flags = col_ref!(flags)[other_id];
-                    let other_export_kind = col_ref!(exports_kind)[other_id];
                     let other_source_index = other_id as u32;
 
                     if other_flags.wrap != WrapKind::None {
-                        // Depend on the automatically-generated require wrapper symbol
-                        let wrapper_ref = col_ref!(wrapper_refs)[other_id];
-                        if wrapper_ref.is_valid() {
-                            this.graph.generate_symbol_import_and_use(
-                                source_index,
-                                part_index as u32,
-                                wrapper_ref,
-                                1,
-                                Index::source(other_source_index),
-                            )?;
-                        }
-
-                        // This is an ES6 import of a CommonJS module, so it needs the
-                        // "__toESM" wrapper as long as it's not a bare "require()".
-                        // A same-chunk `import()` of a lifted CommonJS module needs it
-                        // too, so that `default` is `module.exports` (the namespace).
-                        if kind != ImportKind::Require
-                            && (other_export_kind == ExportsKind::Cjs
-                                || (kind == ImportKind::Dynamic
-                                    && other_flags.wrap == WrapKind::Esm
-                                    && col_ref!(ast_flags_list)[other_id]
-                                        .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)))
-                            && output_format != Format::InternalBakeDev
-                        {
-                            col!(import_records_list)[id].as_mut_slice()
-                                [import_record_index as usize]
-                                .flags
-                                .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
-                            to_esm_uses += 1;
-                        }
-
-                        // If this is an ESM wrapper, also depend on the exports object
-                        // since the final code will contain an inline reference to it.
-                        // This must be done for "require()" and "import()" expressions
-                        // but does not need to be done for "import" statements since
-                        // those just cause us to reference the exports directly.
-                        if other_flags.wrap == WrapKind::Esm
-                            && kind != ImportKind::Stmt
-                            && !rec_flags.contains(ImportRecordFlags::NAMESPACE_UNUSED)
-                        {
-                            this.graph.generate_symbol_import_and_use(
-                                source_index,
-                                part_index as u32,
-                                col_ref!(exports_refs)[other_id],
-                                1,
-                                Index::source(other_source_index),
-                            )?;
-
-                            // If this is a "require()" call, then we should add the
-                            // "__esModule" marker to behave as if the module was converted
-                            // from ESM to CommonJS. This is done via a wrapper instead of
-                            // by modifying the exports object itself because the same ES
-                            // module may be simultaneously imported and required, and the
-                            // importing code should not see "__esModule" while the requiring
-                            // code should see "__esModule". This is an extremely complex
-                            // and subtle set of transpiler interop issues. See for example
-                            // https://github.com/evanw/esbuild/issues/1591.
-                            if kind == ImportKind::Require {
-                                col!(import_records_list)[id].as_mut_slice()
-                                    [import_record_index as usize]
-                                    .flags
-                                    .insert(ImportRecordFlags::WRAP_WITH_TO_COMMONJS);
-                                to_common_js_uses += 1;
-                            }
-                        }
+                        this.depend_on_wrapper_of_import(
+                            source_index,
+                            part_index as u32,
+                            import_record_index,
+                            &mut to_esm_uses,
+                            &mut to_common_js_uses,
+                        )?;
                     } else if kind == ImportKind::Stmt
                         && export_kind == ExportsKind::EsmWithDynamicFallback
                     {

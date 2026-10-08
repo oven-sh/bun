@@ -125,6 +125,9 @@ pub mod linker_context {
     #[path = "mergeSmallChunks.rs"]
     pub mod merge_small_chunks;
 
+    #[path = "wrapOrderConflicts.rs"]
+    pub(crate) mod wrap_order_conflicts;
+
     #[path = "crossChunkNames.rs"]
     pub mod cross_chunk_names;
 

@@ -3639,6 +3639,54 @@ describe("bundler", () => {
       expect(out).toContain(`init_m${deepChainDepth - 2}`);
     },
   });
+  // The import() wraps x.js and what it imports. An import of a wrapped file is a call, and the
+  // calls are in the order of the import statements, whichever kind of wrapper each one calls.
+  itBundled("edgecase/WrappedFileRunsItsImportsInSourceOrder", {
+    files: {
+      "/entry.js": `import("./x.js").then(ns => console.log("done", Object.keys(ns).length));`,
+      "/x.js": /* js */ `
+        import a from "./a.cjs";
+        import "./s1.js";
+        import b from "./b.cjs";
+        import "./s2.js";
+        console.log("x", a.n, b.n);
+      `,
+      "/a.cjs": `console.log("a.cjs"); module.exports = { n: "a", ["k" + 1]: 1 };`,
+      "/b.cjs": `console.log("b.cjs"); module.exports = { n: "b", ["k" + 1]: 1 };`,
+      "/s1.js": `console.log("s1");`,
+      "/s2.js": `console.log("s2");`,
+    },
+    run: { stdout: "a.cjs\ns1\nb.cjs\ns2\nx a b\ndone 0" },
+  });
+  // An import with a top-level await starts in its place, and the imports after it do not wait
+  // for it. x.js itself waits for all of them.
+  itBundled("edgecase/WrappedFileStartsItsAsyncImportsInSourceOrder", {
+    files: {
+      "/entry.js": `import("./x.js").then(ns => console.log("done", Object.keys(ns).length));`,
+      "/x.js": /* js */ `
+        import a from "./a.cjs";
+        import "./s1.js";
+        import "./t1.js";
+        import b from "./b.cjs";
+        import "./s2.js";
+        import "./t2.js";
+        import d from "./d.cjs";
+        import "./s3.js";
+        console.log("x", a.n, b.n, d.n);
+      `,
+      "/a.cjs": `console.log("a.cjs"); module.exports = { n: "a", ["k" + 1]: 1 };`,
+      "/b.cjs": `console.log("b.cjs"); module.exports = { n: "b", ["k" + 1]: 1 };`,
+      "/d.cjs": `console.log("d.cjs"); module.exports = { n: "d", ["k" + 1]: 1 };`,
+      "/s1.js": `console.log("s1");`,
+      "/s2.js": `console.log("s2");`,
+      "/s3.js": `console.log("s3");`,
+      "/t1.js": `console.log("t1 start"); await 0; console.log("t1 end");`,
+      "/t2.js": `console.log("t2 start"); await 0; console.log("t2 end");`,
+    },
+    run: {
+      stdout: "a.cjs\ns1\nt1 start\nb.cjs\ns2\nt2 start\nd.cjs\ns3\nt1 end\nt2 end\nx a b d\ndone 0",
+    },
+  });
   // Diamond-shaped DAG (half the modules have two importers). The code-
   // splitting reachability pass tracks min distance-from-entry for each file;
   // a LIFO walk with distance relaxation does O(V*E) re-visits here, so this

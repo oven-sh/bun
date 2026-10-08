@@ -779,5 +779,18 @@ describe("bundler", () => {
       const run = await buildAndRun(String(dir), ["./src/index.ts", "./src/tool.ts"], isWindows ? "src" : "index");
       expect(run).toEqual({ stdout: "main ran\nmain main\n", stderr: "", exitCode: 0 });
     });
+
+    // main.js evaluates p, q, a and worker.js evaluates q, p, a, each in a realm of its own.
+    test.concurrent("a chunk that the main script and a worker share runs in the order of each", async () => {
+      using dir = tempDir("compile-splitting-two-programs", {
+        "main.js": `import("./a.js").then(m => { console.log("ok", m.a); new Worker("./worker.js"); });`,
+        "worker.js": `import { q } from "./q.js"; import { a } from "./a.js"; console.log("worker", q, a);`,
+        "a.js": `import "./p.js"; import { q } from "./q.js"; export const a = "a" + q;`,
+        "p.js": `globalThis.P = { v: "P" };`,
+        "q.js": `export const q = "q" + (globalThis.P?.v ?? "-noP");`,
+      });
+      const run = await buildAndRun(String(dir), ["./main.js", "./worker.js", "--outfile", "app"], "app");
+      expect(run).toEqual({ stdout: "ok aqP\nworker q-noP aq-noP\n", stderr: "", exitCode: 0 });
+    });
   });
 });

@@ -53,6 +53,72 @@ pub struct PatchCommitResult {
     pub(crate) not_in_workspace_root: bool,
 }
 
+/// `bun patch` makes this empty directory in the copy it prepares. The isolated linker keeps a
+/// real directory where the root or a workspace links a dependency only when it has this
+/// directory. `git diff` does not report an empty directory, so no patch contains it.
+pub(crate) const PATCH_COPY_MARKER: &[u8] = b".bun-patch-tag";
+
+fn mark_patch_copy(folder: &[u8]) {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let marker =
+        resolve_path::join_z_buf::<platform::Auto>(&mut buf[..], &[folder, PATCH_COPY_MARKER]);
+    match sys::mkdir(marker, 0o755) {
+        Ok(()) => {}
+        Err(e) if e.get_errno() == sys::E::EEXIST => {}
+        Err(e) => {
+            Output::err(
+                e,
+                "failed to create {f}",
+                (bun_fmt::quote(marker.as_bytes()),),
+            );
+            Global::crash();
+        }
+    }
+}
+
+/// The target of the link at `path`, or `None` when `path` is not a link.
+fn link_target(path: &[u8]) -> Option<Vec<u8>> {
+    let mut path_buf = bun_paths::path_buffer_pool::get();
+    let mut target_buf = bun_paths::path_buffer_pool::get();
+    let path = resolve_path::join_z_buf::<platform::Auto>(&mut path_buf[..], &[path]);
+    let len = sys::readlink(path, &mut target_buf[..]).ok()?;
+    Some(target_buf[..len].to_vec())
+}
+
+/// An install moves a folder that is where a dependency link belongs to this path
+/// (`Symlinker::replace_directory`). The separators are `/`, so `bun patch --commit` reads the
+/// result as a path on every platform.
+fn displaced_folder(link: &[u8]) -> Option<Vec<u8>> {
+    let link = strings::without_trailing_slash(link);
+    let name = crate::isolated_install::symlinker::displaced_name(bun_paths::basename(link));
+    let folder = match bun_paths::dirname(link) {
+        Some(parent) => [parent, b"/", &name].concat(),
+        None => name,
+    };
+    is_real_dir_not_symlink(&folder).then_some(folder)
+}
+
+fn is_displaced_folder(folder: &[u8]) -> bool {
+    let name = bun_paths::basename(strings::without_trailing_slash(folder));
+    name.starts_with(&crate::isolated_install::symlinker::displaced_name(b""))
+}
+
+/// The "version" in the package.json of `folder`.
+fn package_json_version(folder: &[u8]) -> Option<Vec<u8>> {
+    // `do_patch_commit` calls this while it holds a path in the buffer of `resolve_path::join`.
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let path = resolve_path::join_z_buf::<platform::Auto>(&mut buf[..], &[folder, b"package.json"]);
+    let source = bun_ast::to_source(path, Default::default()).ok()?;
+    initialize_store();
+    let mut log = bun_ast::Log::init();
+    // `parsed` owns what `root` points to.
+    let parsed = JSON::ParsedJson::parse_package_json(&source, &mut log).ok()?;
+    match &parsed.root.get(b"version")?.data {
+        bun_ast::ExprData::EString(version) => Some(version.data.slice().to_vec()),
+        _ => None,
+    }
+}
+
 /// - Arg is the dir containing the package with changes OR name and version
 /// - Get the patch file contents by running git diff on the temp dir and the original package dir
 /// - Write the patch file to $PATCHES_DIR/$PKG_NAME_AND_VERSION.patch
@@ -267,6 +333,26 @@ pub fn do_patch_commit(
         }
     };
 
+    // `git diff` records a link as `new file mode 120000`, and no install can apply that patch.
+    if let Some(target) = link_target(&changes_dir) {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r><d>:<r> {} is a link to {}, not a folder that bun patch prepared",
+            bun_fmt::quote(&changes_dir),
+            bun_fmt::quote(&target),
+        );
+        if let Some(displaced) = displaced_folder(&changes_dir) {
+            bun_core::note!(
+                "An install moved the folder that was there. To commit that folder, run <cyan>bun patch --commit '{}'<r>",
+                bstr::BStr::new(&displaced),
+            );
+        }
+        bun_core::note!(
+            "To prepare a new copy, run <cyan>bun patch '{}'<r>",
+            bstr::BStr::new(manager.options.positionals[1]),
+        );
+        Global::crash();
+    }
+
     // `compute_cache_dir_and_subpath` resolves `pkg.resolution`'s strings against `manager.lockfile`.
     manager.lockfile = lockfile;
     let name = manager.lockfile.str(&pkg.name).to_vec();
@@ -305,6 +391,27 @@ pub fn do_patch_commit(
                 cache_dir_subpath.as_bytes(),
             ]);
         };
+
+        // A folder that an install moved away from a link can hold any version of the package.
+        // The diff of another version is a patch that turns the installed version into it.
+        if is_displaced_folder(new_folder) {
+            let installed = package_json_version(old_folder);
+            let displaced = package_json_version(new_folder);
+            if installed != displaced {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> {} is not a copy of the installed <b>{}<r>: its package.json has version {}, and the installed package has {}",
+                    bun_fmt::quote(new_folder),
+                    bstr::BStr::new(&patch_key),
+                    bun_fmt::quote(displaced.as_deref().unwrap_or(b"")),
+                    bun_fmt::quote(installed.as_deref().unwrap_or(b"")),
+                );
+                bun_core::note!(
+                    "To patch the installed package, run <cyan>bun patch '{}'<r>",
+                    bstr::BStr::new(&patch_key),
+                );
+                Global::crash();
+            }
+        }
 
         let random_tempdir = match bun_paths::fs::FileSystem::tmpname(
             b"node_modules_tmp",
@@ -595,10 +702,6 @@ pub fn do_patch_commit(
     }
 
     let patchfile_path: Box<[u8]> = Box::<[u8]>::from(path_in_patches_dir.as_bytes());
-    let _ = sys::unlink(resolve_path::join_z::<platform::Auto>(&[
-        changes_dir,
-        b".bun-patch-tag",
-    ]));
 
     Ok(Some(PatchCommitResult {
         patch_key: patch_key.into_boxed_slice(),
@@ -965,6 +1068,8 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         );
         Global::crash();
     }
+
+    mark_patch_copy(module_folder);
 
     if not_in_workspace_root {
         let mut bufn = bun_paths::path_buffer_pool::get();

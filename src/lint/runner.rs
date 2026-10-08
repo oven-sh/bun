@@ -82,6 +82,42 @@ struct Exprs {
 
 impl Exprs {
     fn new(file: &File) -> Exprs {
+        Exprs::from_binder(file).unwrap_or_else(|| Exprs::from_hir(file))
+    }
+
+    /// From the kinds that the binder has noted on its way, if it has. They are those of the HIR, in which a template without
+    /// substitutions is a string.
+    fn from_binder(file: &File) -> Option<Exprs> {
+        let (kinds, counted) = (file.bound.expr_kinds, file.bound.expr_kind_counts);
+        if kinds.len() != file.hir.exprs.len() || file.has_synthetic_nodes() || !file.hir.import_attributes.is_empty() {
+            return None;
+        }
+        let mut counts = [0u32; MOST_KINDS + 2];
+        counts.get_mut(1..=counted.len())?.copy_from_slice(counted);
+        let mut grouped: Grouped<{ 2 * ExprTag::COUNT }> = Grouped::of_counted_kinds(0..kinds.len() as u32, kinds, counts);
+        if bun_core::strings::contains_char(file.text(), b'`') {
+            let (strings, templates) = (2 * ExprTag::String as usize, 2 * ExprTag::Template as usize);
+            const { assert!((ExprTag::String as usize) < ExprTag::Template as usize) };
+            let is_template = |id: &u32| file.expr_in_tree(*id as usize) == Some(ExprTag::Template);
+            let moved: Vec<u32> = grouped.of(strings).iter().copied().filter(is_template).collect();
+            if !moved.is_empty() {
+                // The strings that stay, what is between the two kinds, and the templates of both origins by their index.
+                let (start, end) = (grouped.starts[strings] as usize, grouped.starts[templates + 1] as usize);
+                let mut rest: Vec<u32> = grouped.of(strings).iter().copied().filter(|id| !is_template(id)).collect();
+                rest.extend_from_slice(&grouped.ids[grouped.starts[strings + 1] as usize..grouped.starts[templates] as usize]);
+                let mut all_templates = [grouped.of(templates), &moved[..]].concat();
+                all_templates.sort_unstable();
+                rest.extend_from_slice(&all_templates);
+                grouped.ids.get_mut(start..end)?.copy_from_slice(&rest);
+                for first in &mut grouped.starts[strings + 1..=templates] {
+                    *first -= moved.len() as u32;
+                }
+            }
+        }
+        Some(Exprs { grouped })
+    }
+
+    fn from_hir(file: &File) -> Exprs {
         let (mut kinds, mut counts) = (Vec::new(), [0u32; MOST_KINDS + 2]);
         file.expr_tags_in_tree_as(&mut kinds, |tag, raw| {
             let chain = match raw.kind {

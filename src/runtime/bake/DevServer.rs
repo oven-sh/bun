@@ -4421,13 +4421,17 @@ pub(super) fn finalize_bundle(
         dev.incremental_result.html_routes_soft_affected.clear();
         ctx.gts.clear();
 
-        for index in &dev.incremental_result.client_components_affected {
+        // `trace_dependencies` appends each boundary it visits to this list.
+        let mut i = 0;
+        while i < dev.incremental_result.client_components_affected.len() {
+            let index = dev.incremental_result.client_components_affected[i];
             dev.server_graph.trace_dependencies(
-                *index,
+                index,
                 ctx.gts,
                 incremental_graph::TraceDependencyGoal::NoStop,
-                *index,
+                index,
             )?;
+            i += 1;
         }
 
         for request in &dev.incremental_result.framework_routes_affected {

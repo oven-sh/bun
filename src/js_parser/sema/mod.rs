@@ -461,6 +461,29 @@ pub fn summarize<'s>(
     experimental_decorators: bool,
     every_file_is_a_module: bool,
 ) -> (bun_sema::hir::File<'s>, core::time::Duration) {
+    summarize_as(
+        Default::default(),
+        arena,
+        path,
+        script_kind,
+        text,
+        atoms,
+        experimental_decorators,
+        every_file_is_a_module,
+    )
+}
+
+/// [`summarize`] for a tool that follows another parser than that of `tsc`.
+pub fn summarize_as<'s>(
+    dialect: bun_sema::resolve::Dialect,
+    arena: &'s bun_alloc::Arena,
+    path: &[u8],
+    script_kind: Option<bun_sema::resolve::ScriptKind>,
+    text: &[u8],
+    atoms: &bun_sema::atom::Interner<'s>,
+    experimental_decorators: bool,
+    every_file_is_a_module: bool,
+) -> (bun_sema::hir::File<'s>, core::time::Duration) {
     // How long `parse_stmts_up_to` took. The rest is lowering.
     let parsing = core::cell::Cell::new(core::time::Duration::ZERO);
     use bun_sema::resolve::ScriptKind;
@@ -473,6 +496,11 @@ pub fn summarize<'s>(
         && (path.len().checked_sub(b".json".len()))
             .is_some_and(|dot| path[dot..].eq_ignore_ascii_case(b".json"));
     let is_tsx = script_kind == Some(ScriptKind::Tsx);
+    let is_ecmascript = dialect.ecmascript && is_js;
+    let every_file_is_a_module = match is_ecmascript {
+        true => !dialect.script,
+        false => every_file_is_a_module,
+    };
     // `getLanguageVariant`: JSX is enabled in all JavaScript files, and in JSON.
     let loader = if is_js || is_tsx || is_json {
         bun_ast::Loader::Tsx
@@ -496,6 +524,10 @@ pub fn summarize<'s>(
         options.tolerant = true;
         // `initializeState`
         options.is_javascript = is_js || is_json;
+        options.dialect = bun_sema::resolve::Dialect {
+            ecmascript: is_ecmascript,
+            ..dialect
+        };
         let define = crate::Define::default();
         let mut log = bun_ast::Log::init();
         let (file, awaited) = match crate::Parser::init(options, &mut log, &source, &define, arena)
@@ -521,9 +553,10 @@ pub fn summarize<'s>(
             && !await_is_a_name
             && !every_file_is_a_module
             && !file.has_module_syntax
-            && ![&b".mts"[..], b".cts", b".mjs", b".cjs"]
-                .iter()
-                .any(|e| path.ends_with(e))
+            && (dialect.script
+                || ![&b".mts"[..], b".cts", b".mjs", b".cjs"]
+                    .iter()
+                    .any(|e| path.ends_with(e)))
             && !file
                 .exprs
                 .iter()
@@ -541,10 +574,13 @@ pub fn summarize<'s>(
         }
         *parsed += text.len();
         let mut statements = Vec::new();
-        let (file, parse_again) = parse(false, &mut statements, arena);
+        let is_script = is_ecmascript && dialect.script;
+        let (file, parse_again) = parse(is_script, &mut statements, arena);
         match parse_again {
             true => parse(true, &mut Vec::new(), arena).0,
-            false if !statements.is_empty() => parse(false, &mut statements, arena).0,
+            false if !statements.is_empty() && !is_script => {
+                parse(false, &mut statements, arena).0
+            }
             false => file,
         }
     });

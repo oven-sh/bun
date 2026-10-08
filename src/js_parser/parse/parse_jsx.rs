@@ -452,14 +452,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     let less_than_full_start = p.lexer.full_start();
                     // `ScanJsxTokenEx`: for TypeScript "</" is one token. Nothing comes between its
                     // characters, and its "/" starts no comment.
-                    let is_less_than_slash = p.is_tolerant() && p.lexer.code_point == 0x2F;
+                    let is_one_token = p.is_tolerant() && !p.lexer.is_ecmascript;
+                    let is_less_than_slash = is_one_token && p.lexer.code_point == 0x2F;
                     if is_less_than_slash {
                         p.lexer.step();
                     } else {
                         p.lexer.next_inside_jsx_element()?;
                     }
 
-                    if !is_less_than_slash && (p.lexer.token != T::TSlash || p.is_tolerant()) {
+                    if !is_less_than_slash && (p.lexer.token != T::TSlash || is_one_token) {
                         // This is a child element
 
                         if p.is_tolerant() {

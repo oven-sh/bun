@@ -372,6 +372,19 @@ impl ScriptKind {
     }
 }
 
+/// Whose reading of the syntax a file is parsed with, where parsers differ. The default is that of
+/// `tsc` for a file of a program.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Dialect {
+    /// JavaScript is what ECMAScript says, with Annex B and with JSX as acorn and Babel parse it,
+    /// where TypeScript's parser rejects valid code or reads it differently. It says nothing about
+    /// TypeScript files.
+    pub ecmascript: bool,
+    /// The file is a script. With `ecmascript`: whatever is in it. Otherwise: unless it has module
+    /// syntax, whatever its extension.
+    pub script: bool,
+}
+
 /// Whether `GetScriptKindFromFileName` is `ScriptKindTSX` or `ScriptKindJSX`.
 pub fn is_jsx_file_name(path: &[u8]) -> bool {
     matches!(

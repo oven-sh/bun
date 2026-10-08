@@ -163,6 +163,8 @@ pub struct Options<'a> {
     pub tolerant: bool,
     /// `NodeFlagsJavaScriptFile`, with `tolerant`.
     pub is_javascript: bool,
+    /// `bun_sema::resolve::Dialect`, with `tolerant`.
+    pub dialect: bun_sema::resolve::Dialect,
 }
 
 impl<'a> Default for Options<'a> {
@@ -199,6 +201,7 @@ impl<'a> Default for Options<'a> {
             is_entry_point: false,
             tolerant: false,
             is_javascript: false,
+            dialect: Default::default(),
         }
     }
 }
@@ -288,6 +291,7 @@ impl<'a> Options<'a> {
             is_entry_point: self.is_entry_point,
             tolerant: self.tolerant,
             is_javascript: self.is_javascript,
+            dialect: self.dialect,
         }
     }
 
@@ -364,6 +368,7 @@ impl<'a> Options<'a> {
             is_entry_point: false,
             tolerant: false,
             is_javascript: false,
+            dialect: Default::default(),
         };
         opts.jsx.parse = loader.is_jsx();
         opts
@@ -391,6 +396,8 @@ impl<'a> Parser<'a> {
         lexer.jsc_builtin_syntax = options.jsc_builtin_syntax;
         lexer.tolerant = options.tolerant;
         lexer.is_javascript = options.is_javascript;
+        lexer.is_ecmascript = options.tolerant && options.is_javascript && options.dialect.ecmascript;
+        lexer.is_script = lexer.is_ecmascript && options.dialect.script;
         lexer.is_jsx = options.tolerant && options.jsx.parse;
         lexer.step();
         lexer.next()?;

@@ -247,6 +247,10 @@ pub struct Lexer<'a> {
     pub(crate) tolerant: bool,
     /// `Options::is_javascript`
     pub(crate) is_javascript: bool,
+    /// `Dialect::ecmascript`, in a JavaScript file. Tolerant mode only.
+    pub(crate) is_ecmascript: bool,
+    /// `Dialect::script`, with `is_ecmascript`: the goal symbol is Script.
+    pub(crate) is_script: bool,
     /// `languageVariant == LanguageVariantJSX`. Set for the type checker only.
     pub(crate) is_jsx: bool,
     /// Number of consecutive error recoveries at the same position.
@@ -2203,7 +2207,9 @@ impl<'a> Lexer<'a> {
                 }
 
                 0x23 => {
-                    if self.start == 0 && contents.len() > 1 && contents[1] == b'!' {
+                    if (self.start == 0 || self.start == 3 && self.follows_byte_order_mark())
+                        && contents.get(self.start + 1) == Some(&b'!')
+                    {
                         // "#!/usr/bin/env node"
                         self.token = T::THashbang;
                         'hashbang: loop {
@@ -2484,7 +2490,9 @@ impl<'a> Lexer<'a> {
                             self.step_with(contents);
 
                             // TypeScript's `Scan` does not recognize HTML comments.
-                            if self.code_point == 0x3E && self.has_newline_before && !self.tolerant
+                            if self.code_point == 0x3E
+                                && self.has_newline_before
+                                && (!self.tolerant || self.is_script)
                             {
                                 // Genuinely almost-never taken — kept out of `next()`'s
                                 // body so it doesn't share I-cache with the hot arms.
@@ -2619,6 +2627,10 @@ impl<'a> Lexer<'a> {
                         // Handle legacy HTML-style comments
                         0x21 => {
                             // TypeScript's `Scan` does not recognize HTML comments.
+                            if self.is_script && self.peek("--".len()) == b"--" {
+                                self.skip_rest_of_line();
+                                continue;
+                            }
                             if self.peek("--".len()) == b"--" && !self.tolerant {
                                 self.add_unsupported_syntax_error(
                                     b"Legacy HTML comments not implemented yet!",
@@ -2628,7 +2640,10 @@ impl<'a> Lexer<'a> {
 
                             self.token = T::TLessThan;
                         }
-                        0x2F if self.is_jsx && contents.get(self.current) != Some(&b'*') => {
+                        0x2F if self.is_jsx
+                            && !self.is_ecmascript
+                            && contents.get(self.current) != Some(&b'*') =>
+                        {
                             self.step_with(contents);
                             self.token = T::TLessThanSlash;
                         }
@@ -3163,12 +3178,19 @@ impl<'a> Lexer<'a> {
     fn scan_legacy_html_close_comment(&mut self) {
         // Consume the `>` of `-->`.
         self.step();
-        self.log().add_range_warning(
-            Some(self.source),
-            self.range(),
-            b"Treating \"-->\" as the start of a legacy HTML single-line comment",
-        );
+        if !self.tolerant {
+            self.log().add_range_warning(
+                Some(self.source),
+                self.range(),
+                b"Treating \"-->\" as the start of a legacy HTML single-line comment",
+            );
+        }
+        self.skip_rest_of_line();
+    }
 
+    #[cold]
+    #[inline(never)]
+    fn skip_rest_of_line(&mut self) {
         loop {
             match self.code_point {
                 0x0D | 0x0A | 0x2028 | 0x2029 | -1 => break,
@@ -3176,6 +3198,14 @@ impl<'a> Lexer<'a> {
             }
             self.step();
         }
+    }
+
+    /// Whether the token at offset 3 is the first of a text that `tsc` and ESLint read without its
+    /// byte order mark. Tolerant mode only.
+    #[cold]
+    #[inline(never)]
+    fn follows_byte_order_mark(&self) -> bool {
+        self.tolerant && self.contents.starts_with(b"\xEF\xBB\xBF")
     }
 
     /// This scans a "// comment" in a single pass over the input.
@@ -3375,6 +3405,8 @@ impl<'a> Lexer<'a> {
             is_log_disabled: false,
             tolerant: false,
             is_javascript: false,
+            is_ecmascript: false,
+            is_script: false,
             is_jsx: false,
             stuck: 0,
             is_under_tag: false,

@@ -11,7 +11,7 @@ use crate::js::utils::call_expression::{
     type_arguments_trailing_comments,
 };
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
-use crate::js::utils::member_chain::MemberChain;
+use crate::js::utils::member_chain::write_member_chain;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -29,7 +29,7 @@ pub(crate) fn write_call_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut For
     }
 
     if is_member_expression(callee, f) && !expression_needs_parentheses(callee, f) {
-        return MemberChain::from_call_expression(e, f).fmt(f);
+        return write_member_chain(e, f);
     }
 
     let content = format_args!(head, FormatArguments::of_call(e, call));

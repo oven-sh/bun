@@ -4,11 +4,11 @@
 //! fits and the chain is short and simple, and otherwise each on its own line.
 
 pub(crate) mod chain_member;
-pub(crate) mod groups;
+mod groups;
 pub(crate) mod simple_argument;
 
 use self::chain_member::{CallExpressionPosition, ChainMember, call_of_callee, comments_lead_a_later_link};
-use self::groups::{MemberChainGroup, MemberChainGroupsBuilder, TailChainGroups, should_insert_empty_line_after};
+use self::groups::{FormatMemberChainGroup, should_insert_empty_line_after};
 use self::simple_argument::SimpleArgument;
 use super::call_expression::{callee_trailing_comments, is_call_expression, is_member_expression};
 use super::is_long_curried_call;
@@ -18,38 +18,79 @@ use crate::prelude::*;
 use crate::{best_fitting, write};
 use smallvec::SmallVec;
 
-pub(crate) struct MemberChain<'a> {
+type Members<'a> = SmallVec<[ChainMember<'a>; 8]>;
+
+struct MemberChain<'a> {
     root: Expr<'a>,
-    head: MemberChainGroup<'a>,
-    tail: TailChainGroups<'a>,
+    /// The links, from the first to the last.
+    members: Members<'a>,
+    /// Where each group ends in `members`. The first group is the head, the others are the tail.
+    group_ends: SmallVec<[u32; 8]>,
+}
+
+/// Writes the call `call_expression`, whose callee is a member access.
+pub(crate) fn write_member_chain<'a>(call_expression: Expr<'a>, f: &mut Formatter<'a>) {
+    let (members, has_inner_call) = chain_members(call_expression, f);
+    if !is_one_group_after_the_head(has_inner_call, f) {
+        return MemberChain::new(call_expression, members, f).fmt(f);
+    }
+    let content = format_with(|f| {
+        for member in &members {
+            write!(f, member);
+        }
+    });
+    match is_long_curried_call(call_expression) {
+        true => write!(f, content),
+        false => write!(f, group(&content)),
+    }
+}
+
+/// A group ends before a member access that follows a call, and after a comment. Without either, a
+/// chain has at most one group after the head, and no call that an empty line could follow.
+fn is_one_group_after_the_head(has_inner_call: bool, f: &Formatter<'_>) -> bool {
+    !has_inner_call && f.is_quiet()
 }
 
 impl<'a> MemberChain<'a> {
-    /// `call_expression`: a call.
-    pub(crate) fn from_call_expression(call_expression: Expr<'a>, f: &Formatter<'a>) -> Self {
-        let mut chain_members: SmallVec<[ChainMember<'a>; 4]> = chain_members_iter(call_expression, f).collect();
-        chain_members.reverse();
-
-        let remaining_members_start_index = get_split_index_of_head_and_tail_groups(&chain_members, f);
-        let tail = compute_remaining_groups(chain_members.drain(remaining_members_start_index..), f);
-        let head = MemberChainGroup::from(chain_members);
+    /// `members`: the [`chain_members`] of the call `root`.
+    fn new(root: Expr<'a>, members: Members<'a>, f: &Formatter<'a>) -> Self {
+        let head_end = get_split_index_of_head_and_tail_groups(&members, f);
+        let mut group_ends = SmallVec::new();
+        group_ends.push(head_end as u32);
+        push_ends_of_remaining_groups(&members, head_end, &mut group_ends, f);
 
         let mut member_chain = Self {
-            head,
-            tail,
-            root: call_expression,
+            root,
+            members,
+            group_ends,
         };
         // The first group of the tail may belong to the head.
-        if member_chain.should_merge_tail_with_head(call_expression.as_chain_element().parent(), f)
-            && let Some(group) = member_chain.tail.pop_first()
-        {
-            member_chain.head.extend_members(group.into_members());
+        if member_chain.tail_len() > 0 && member_chain.should_merge_tail_with_head(f) {
+            member_chain.group_ends.remove(0);
         }
         member_chain
     }
 
-    fn should_merge_tail_with_head(&self, parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
-        let Some(first_member) = self.tail.first().and_then(|group| group.members().first()) else {
+    fn group(&self, index: usize) -> &[ChainMember<'a>] {
+        let start = index.checked_sub(1).and_then(|previous| self.group_ends.get(previous)).map_or(0, |&end| end as usize);
+        let end = self.group_ends.get(index).map_or(start, |&end| end as usize);
+        self.members.get(start..end).unwrap_or_default()
+    }
+
+    fn groups(&self) -> impl Iterator<Item = &[ChainMember<'a>]> {
+        (0..self.group_ends.len()).map(|index| self.group(index))
+    }
+
+    fn head(&self) -> &[ChainMember<'a>] {
+        self.group(0)
+    }
+
+    fn tail_len(&self) -> usize {
+        self.group_ends.len().saturating_sub(1)
+    }
+
+    fn should_merge_tail_with_head(&self, f: &Formatter<'a>) -> bool {
+        let Some(first_member) = self.group(1).first() else {
             return false;
         };
         if !f.is_quiet() && (has_leading_comment(first_member, f) || has_trailing_comment(first_member.expr(), f)) {
@@ -57,25 +98,23 @@ impl<'a> MemberChain<'a> {
         }
         let has_computed_property = first_member.is_computed_expression();
 
-        if let [ChainMember::Node(node)] = self.head.members() {
-            match node.kind() {
-                ExprKind::Ident(_) => {
+        if let [ChainMember::Node(node)] = self.head() {
+            match node.tag() {
+                ExprTag::Ident => {
                     let name = node.text();
                     has_computed_property
                         || is_factory(name)
                         // A name that is shorter than the indentation: the `.` would not even be
                         // to the right of it.
-                        || (matches!(
-                            parent.without_chain_expression(),
-                            AstNodes::ExpressionStatement(statement) if !statement.is_arrow_function_body()
-                        ) && name.len() <= f.options().indent_width.value() as usize)
+                        || (name.len() <= f.options().indent_width.value() as usize
+                            && matches!(self.root.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Expr))
                 }
-                ExprKind::This => true,
+                ExprTag::This => true,
                 _ => false,
             }
         } else {
             // Prettier looks at the name in `[]` as well.
-            let name = match self.head.members().last().map(|member| (member, member.expr().kind())) {
+            let name = match self.head().last().map(|member| (member, member.expr().kind())) {
                 Some((ChainMember::StaticMember(_), ExprKind::Dot { name, .. })) if !name.bytes().starts_with(b"#") => {
                     name.bytes()
                 }
@@ -90,41 +129,39 @@ impl<'a> MemberChain<'a> {
         }
     }
 
-    fn inspect_member_chain_groups(&self, f: &mut Formatter<'a>) {
-        self.head.inspect(f);
-        for group in self.tail.iter() {
-            group.inspect(f);
-        }
-    }
-
-    /// Tells the groups before which an empty line is kept. Returns whether one of them is after a
+    /// Before which groups of the tail an empty line is kept, and whether one of them is after a
     /// call, which takes breaking the chain. One after the head, if that does not end with a call,
     /// is only kept if the chain breaks.
-    fn find_empty_lines(&self, f: &Formatter<'a>) -> bool {
+    fn find_empty_lines(&self, f: &Formatter<'a>) -> (SmallVec<[bool; 8]>, bool) {
         let mut has_empty_line_after_call = false;
-        let mut previous = self.head.members().last();
-        for (index, group) in self.tail.iter().enumerate() {
-            let needs_empty_line = match previous {
-                Some(ChainMember::CallExpression { expression, .. }) => {
-                    let is_followed_by_empty_line = should_insert_empty_line_after(*expression, f);
-                    has_empty_line_after_call |= is_followed_by_empty_line;
-                    is_followed_by_empty_line
-                }
-                // Not after a call that the chain starts with: `fn()\n\n.bar()` is `fn().bar()`.
-                Some(ChainMember::Node(node)) if is_call_expression(*node, f) => false,
-                Some(member) => index == 0 && should_insert_empty_line_after(member.expr(), f),
-                None => false,
-            };
-            group.set_needs_empty_line(needs_empty_line);
-            previous = group.members().last();
-        }
-        has_empty_line_after_call
+        let mut previous = self.head().last();
+        let needs_empty_line = (self.groups().skip(1).enumerate())
+            .map(|(index, group)| {
+                let needs_empty_line = match previous {
+                    Some(ChainMember::CallExpression { expression, .. }) => {
+                        let is_followed_by_empty_line = should_insert_empty_line_after(*expression, f);
+                        has_empty_line_after_call |= is_followed_by_empty_line;
+                        is_followed_by_empty_line
+                    }
+                    // Not after a call that the chain starts with: `fn()\n\n.bar()` is `fn().bar()`.
+                    Some(ChainMember::Node(node)) if is_call_expression(*node, f) => false,
+                    Some(member) => index == 0 && should_insert_empty_line_after(member.expr(), f),
+                    None => false,
+                };
+                previous = group.last();
+                needs_empty_line
+            })
+            .collect();
+        (needs_empty_line, has_empty_line_after_call)
     }
 
     /// Prettier's `shouldMerge`'s counterpart `shouldNotWrap`, and the tests on complexity.
-    fn groups_should_break(&self, f: &Formatter<'a>) -> bool {
+    ///
+    /// `formatted`: what is written for each group.
+    fn groups_should_break(&self, formatted: &[Option<FormatElement>], f: &Formatter<'a>) -> bool {
         let mut call_expressions = self
-            .members()
+            .members
+            .iter()
             .filter_map(|member| match member {
                 ChainMember::CallExpression { expression, .. } => expression.call(),
                 ChainMember::Node(expression) if is_call_expression(*expression, f) => expression.call(),
@@ -148,28 +185,20 @@ impl<'a> MemberChain<'a> {
             }
         }
 
-        (!self.tail.is_empty() && self.head.will_break(f))
-            || (self.last_call_breaks(f) && has_function_like_argument)
-            || self.tail.any_except_last_will_break(f)
-    }
-
-    fn last_call_breaks(&self, f: &Formatter<'a>) -> bool {
-        let last_group = self.last_group();
-        matches!(last_group.members().last(), Some(ChainMember::CallExpression { .. })) && last_group.will_break(f)
-    }
-
-    fn last_group(&self) -> &MemberChainGroup<'a> {
-        self.tail.last().unwrap_or(&self.head)
-    }
-
-    fn members(&self) -> impl Iterator<Item = &ChainMember<'a>> {
-        self.head.members().iter().chain(self.tail.members())
+        let will_break = |group: &Option<FormatElement>| group.is_some_and(|formatted| formatted.will_break(f));
+        let ([head, tail @ ..], Some(last)) = (formatted, formatted.last()) else {
+            return false;
+        };
+        let ends_with_call = matches!(self.members.last(), Some(ChainMember::CallExpression { .. }));
+        (!tail.is_empty() && will_break(head))
+            || (has_function_like_argument && ends_with_call && will_break(last))
+            || tail.iter().rev().skip(1).any(will_break)
     }
 
     /// Prettier's `nodeHasComment`.
     fn has_comment(&self, f: &Formatter<'a>) -> bool {
         !f.is_quiet()
-            && self.members().any(|member| {
+            && self.members.iter().any(|member| {
                 has_leading_comment(member, f)
                     || (!matches!(
                         member,
@@ -185,38 +214,58 @@ impl<'a> MemberChain<'a> {
 impl<'a> Format<'a> for MemberChain<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let has_comment = self.has_comment(f);
-        let format_one_line = format_with(|f| {
-            f.join().entries(std::iter::once(&self.head).chain(self.tail.iter()));
-        });
+        let (needs_empty_line, has_empty_line_after_call) = self.find_empty_lines(f);
 
-        self.inspect_member_chain_groups(f);
-
-        let has_empty_line_after_call = self.find_empty_lines(f);
-
-        if self.tail.len() <= 1 && !has_comment && !has_empty_line_after_call {
+        if self.tail_len() <= 1 && !has_comment && !has_empty_line_after_call {
+            let content = format_with(|f| {
+                for group in self.groups() {
+                    write!(f, FormatMemberChainGroup(group));
+                }
+            });
             return match is_long_curried_call(self.root) {
-                true => write!(f, format_one_line),
-                false => write!(f, group(&format_one_line)),
+                true => write!(f, content),
+                false => write!(f, group(&content)),
             };
         }
 
+        // The groups are asked about, and written in two ways. They are formatted in order, for the
+        // sake of the comments.
+        let formatted: SmallVec<[Option<FormatElement>; 8]> =
+            self.groups().map(|group| f.intern(&FormatMemberChainGroup(group))).collect();
+        let write_group = |group: &Option<FormatElement>, f: &mut Formatter<'a>| {
+            if let Some(formatted) = *group {
+                f.write_element(formatted);
+            }
+        };
+
+        let format_one_line = format_with(|f| {
+            for group in &formatted {
+                write_group(group, f);
+            }
+        });
         let format_tail = format_with(|f| {
-            for group in self.tail.iter() {
-                match group.needs_empty_line() {
+            for (group, &needs_empty_line) in formatted.iter().skip(1).zip(&needs_empty_line) {
+                match needs_empty_line {
                     true => write!(f, empty_line()),
                     false => write!(f, hard_line_break()),
                 }
-                write!(f, group);
+                write_group(group, f);
             }
         });
-        let format_expanded = format_with(|f| write!(f, [self.head, indent(&format_tail)]));
+        let format_expanded = format_with(|f| {
+            if let Some(head) = formatted.first() {
+                write_group(head, f);
+            }
+            write!(f, indent(&format_tail));
+        });
 
         let format_content = format_with(|f| {
-            if has_comment || has_empty_line_after_call || self.groups_should_break(f) {
+            if has_comment || has_empty_line_after_call || self.groups_should_break(&formatted, f) {
                 write!(f, group(&format_expanded));
             } else {
-                let has_empty_line_before_tail = self.tail.first().is_some_and(MemberChainGroup::needs_empty_line);
-                if has_empty_line_before_tail || self.last_group().will_break(f) {
+                let has_empty_line_before_tail = needs_empty_line.first() == Some(&true);
+                let last_group_breaks = formatted.last().is_some_and(|last| last.is_some_and(|it| it.will_break(f)));
+                if has_empty_line_before_tail || last_group_breaks {
                     write!(f, expand_parent());
                 }
                 write!(f, best_fitting!(format_one_line, format_expanded));
@@ -293,47 +342,41 @@ fn get_split_index_of_head_and_tail_groups<'a>(members: &[ChainMember<'a>], f: &
     non_call_or_array_member_access_start + member_end
 }
 
-/// The groups after the head: each is some member accesses and the calls after them.
-fn compute_remaining_groups<'a>(
-    members: impl IntoIterator<Item = ChainMember<'a>>,
+/// Where the groups after the head end: each is some member accesses and the calls after them.
+///
+/// `start`: where the head ends in `members`.
+fn push_ends_of_remaining_groups<'a>(
+    members: &[ChainMember<'a>],
+    start: usize,
+    group_ends: &mut SmallVec<[u32; 8]>,
     f: &Formatter<'a>,
-) -> TailChainGroups<'a> {
+) {
     let mut has_seen_call_expression = false;
-    let mut groups_builder = MemberChainGroupsBuilder::default();
+    let mut group_start = start;
 
-    for member in members {
-        let has_trailing_comment = !f.is_quiet() && has_trailing_comment(member.expr(), f);
-
+    for (index, member) in members.iter().enumerate().skip(start) {
         match member {
             // `[0]` goes with what is before it.
-            ChainMember::ComputedMember(_) if is_computed_array_member_access(&member) => {
-                groups_builder.start_or_continue_group(member);
+            ChainMember::ComputedMember(_) if is_computed_array_member_access(member) => {}
+            ChainMember::StaticMember(_) | ChainMember::ComputedMember(_) if has_seen_call_expression => {
+                group_ends.push(index as u32);
+                group_start = index;
+                has_seen_call_expression = false;
             }
-            ChainMember::StaticMember(_) | ChainMember::ComputedMember(_) => {
-                if has_seen_call_expression {
-                    groups_builder.close_group();
-                    groups_builder.start_group(member);
-                    has_seen_call_expression = false;
-                } else {
-                    groups_builder.start_or_continue_group(member);
-                }
-            }
-            ChainMember::CallExpression { .. } => {
-                groups_builder.start_or_continue_group(member);
-                has_seen_call_expression = true;
-            }
-            ChainMember::TSNonNullExpression(_) | ChainMember::Node(_) => {
-                groups_builder.start_or_continue_group(member);
-            }
+            ChainMember::CallExpression { .. } => has_seen_call_expression = true,
+            _ => {}
         }
 
         // So that the comment stays behind what it is written behind.
-        if has_trailing_comment {
-            groups_builder.close_group();
+        if !f.is_quiet() && has_trailing_comment(member.expr(), f) {
+            group_ends.push(index as u32 + 1);
+            group_start = index + 1;
             has_seen_call_expression = false;
         }
     }
-    groups_builder.finish()
+    if group_start < members.len() {
+        group_ends.push(members.len() as u32);
+    }
 }
 
 /// A name that starts with a capital letter, or consists of `_` and `$`, is likely to be a factory
@@ -349,54 +392,66 @@ fn is_factory(name: &[u8]) -> bool {
 /// Whether the call `expression` is written as a member chain that can break before each group: it
 /// has more than one group after the head, or a comment between its links.
 pub(crate) fn is_member_call_chain<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
-    let chain = MemberChain::from_call_expression(expression, f);
-    chain.tail.is_member_call_chain() || chain.has_comment(f)
+    let (members, has_inner_call) = chain_members(expression, f);
+    if is_one_group_after_the_head(has_inner_call, f) {
+        return false;
+    }
+    let chain = MemberChain::new(expression, members, f);
+    chain.tail_len() > 1 || chain.has_comment(f)
 }
 
-/// The links of the chain that ends with the call `root`, from the last to the first. The chain
-/// ends where something needs parentheses.
-fn chain_members_iter<'a>(root: Expr<'a>, f: &Formatter<'a>) -> impl Iterator<Item = ChainMember<'a>> {
-    let mut is_root = true;
-    let mut next: Option<Expr<'a>> = None;
+/// The links of the chain that ends with the call `root`, from the first to the last, and whether
+/// there is another call among them. The chain starts where something needs parentheses.
+fn chain_members<'a>(root: Expr<'a>, f: &Formatter<'a>) -> (Members<'a>, bool) {
+    let mut members = Members::new();
+    members.push(ChainMember::CallExpression {
+        expression: root,
+        position: CallExpressionPosition::End,
+    });
+    let has_type_casts = f.comments().has_type_cast_comments();
+    let mut has_inner_call = false;
+    let mut next = root.callee();
 
-    std::iter::from_fn(move || {
-        if is_root {
-            is_root = false;
-            next = root.callee();
-            return Some(ChainMember::CallExpression {
-                expression: root,
-                position: CallExpressionPosition::End,
-            });
+    while let Some(expression) = next.take() {
+        let tag = expression.tag();
+        let is_link = matches!(tag, ExprTag::Call | ExprTag::Dot | ExprTag::Index | ExprTag::NonNull);
+        // A link is in a link: nothing that it would need parentheses in, unless an optional chain
+        // ends with it.
+        if (has_type_casts && is_type_cast_node(expression.span(), f).is_some())
+            || ((!is_link || is_chain_root(expression)) && expression_needs_parentheses(expression, f))
+        {
+            members.push(ChainMember::Node(expression));
+            break;
         }
 
-        let expression = next.take()?;
-        if is_type_cast_node(expression.span(), f).is_some() || expression_needs_parentheses(expression, f) {
-            return Some(ChainMember::Node(expression));
-        }
-
-        Some(match expression.kind() {
-            ExprKind::Call(call)
-                if is_member_expression(call.callee(), f) || is_call_expression(call.callee(), f) =>
+        members.push(match tag {
+            ExprTag::Call
+                if expression
+                    .callee()
+                    .is_some_and(|callee| is_member_expression(callee, f) || is_call_expression(callee, f)) =>
             {
-                next = Some(call.callee());
+                next = expression.callee();
+                has_inner_call = true;
                 ChainMember::CallExpression {
                     expression,
                     position: CallExpressionPosition::Middle,
                 }
             }
-            ExprKind::Dot { obj, .. } => {
-                next = Some(obj);
+            ExprTag::Dot => {
+                next = expression.object();
                 ChainMember::StaticMember(expression)
             }
-            ExprKind::Index { obj, .. } => {
-                next = Some(obj);
+            ExprTag::Index => {
+                next = expression.object();
                 ChainMember::ComputedMember(expression)
             }
-            ExprKind::NonNull(inner) => {
-                next = Some(inner);
+            ExprTag::NonNull => {
+                next = expression.operand();
                 ChainMember::TSNonNullExpression(expression)
             }
             _ => ChainMember::Node(expression),
-        })
-    })
+        });
+    }
+    members.reverse();
+    (members, has_inner_call)
 }

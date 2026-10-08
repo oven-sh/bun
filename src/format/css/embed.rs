@@ -289,7 +289,7 @@ fn is_angular_component_styles(parent: AstNodes<'_>) -> bool {
 }
 
 /// Prettier's `isEmbedCss`. `e`: a template.
-fn is_embed_css(e: Expr<'_>) -> bool {
+pub(crate) fn is_embed_css(e: Expr<'_>) -> bool {
     let parent = e.ast_parent();
     match parent {
         AstNodes::TaggedTemplateExpression(tagged) => {

@@ -1,6 +1,7 @@
 //! `getOperatorPrecedence.ts`, `getWrappedCode.ts`, `isHigherPrecedenceThanAwait.ts`.
 
 use crate::ast::{BinOp, Expr, ExprKind, FnKind, Node, PropKind, UnOp};
+use crate::types::SyntaxKind;
 use crate::utils::ast_utils::is_member_expression;
 use std::borrow::Cow;
 
@@ -98,67 +99,8 @@ pub fn get_operator_precedence_for_node(e: Expr<'_>) -> OperatorPrecedence {
     }
 }
 
-/// The `ts.SyntaxKind`s that [`get_operator_precedence`] tells apart.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub enum SyntaxKind {
-    /// Any other kind.
-    Unknown,
-    SpreadElement,
-    YieldExpression,
-    ConditionalExpression,
-    /// Also an assignment and the comma operator.
-    BinaryExpression,
-    TypeAssertionExpression,
-    NonNullExpression,
-    PrefixUnaryExpression,
-    TypeOfExpression,
-    VoidExpression,
-    DeleteExpression,
-    AwaitExpression,
-    PostfixUnaryExpression,
-    CallExpression,
-    NewExpression,
-    TaggedTemplateExpression,
-    PropertyAccessExpression,
-    ElementAccessExpression,
-    MetaProperty,
-    AsExpression,
-    SatisfiesExpression,
-    ThisKeyword,
-    SuperKeyword,
-    Identifier,
-    PrivateIdentifier,
-    NullKeyword,
-    TrueKeyword,
-    FalseKeyword,
-    NumericLiteral,
-    BigIntLiteral,
-    StringLiteral,
-    ArrayLiteralExpression,
-    ObjectLiteralExpression,
-    FunctionExpression,
-    ArrowFunction,
-    ClassExpression,
-    RegularExpressionLiteral,
-    NoSubstitutionTemplateLiteral,
-    TemplateExpression,
-    ParenthesizedExpression,
-    OmittedExpression,
-    JsxElement,
-    JsxSelfClosingElement,
-    JsxFragment,
-}
-
-/// The `operatorToken.kind` of a `ts.BinaryExpression`.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum OperatorKind {
-    Binary(BinOp),
-    /// `None` is `=`.
-    Assign(Option<BinOp>),
-}
-
-/// `esTreeNodeToTSNodeMap.get(node).kind`. It is never `ParenthesizedExpression`: ESTree has no
-/// node for the parentheses.
+/// `esTreeNodeToTSNodeMap.get(node).kind`, from the syntax alone: `e.ts_node().kind()` needs a
+/// program. It is never `ParenthesizedExpression`: ESTree has no node for the parentheses.
 pub fn ts_syntax_kind(e: Expr<'_>) -> SyntaxKind {
     use SyntaxKind as K;
     match e.kind() {
@@ -171,6 +113,7 @@ pub fn ts_syntax_kind(e: Expr<'_>) -> SyntaxKind {
         ExprKind::True => K::TrueKeyword,
         ExprKind::False => K::FalseKeyword,
         ExprKind::Number(_) => K::NumericLiteral,
+        ExprKind::String(_) if e.is_jsx_text() => K::JsxText,
         ExprKind::String(_) => K::StringLiteral,
         ExprKind::BigInt(_) => K::BigIntLiteral,
         ExprKind::Regex(_) => K::RegularExpressionLiteral,
@@ -181,12 +124,13 @@ pub fn ts_syntax_kind(e: Expr<'_>) -> SyntaxKind {
         ExprKind::TaggedTemplate(_) => K::TaggedTemplateExpression,
         ExprKind::Array(_) => K::ArrayLiteralExpression,
         ExprKind::Object(_) => K::ObjectLiteralExpression,
+        // The value of a method or an accessor of an object literal is the declaration itself.
         ExprKind::Fn(func) => match func.kind() {
             FnKind::Arrow => K::ArrowFunction,
-            FnKind::Expr => K::FunctionExpression,
-            // The value of a method or an accessor of an object literal is the `MethodDeclaration`
-            // or the accessor itself.
-            _ => K::Unknown,
+            FnKind::Getter => K::GetAccessor,
+            FnKind::Setter => K::SetAccessor,
+            FnKind::Method => K::MethodDeclaration,
+            _ => K::FunctionExpression,
         },
         ExprKind::Class(_) => K::ClassExpression,
         ExprKind::Dot { .. } => K::PropertyAccessExpression,
@@ -211,7 +155,7 @@ pub fn ts_syntax_kind(e: Expr<'_>) -> SyntaxKind {
         },
         ExprKind::Satisfies { .. } => K::SatisfiesExpression,
         ExprKind::NonNull(_) => K::NonNullExpression,
-        ExprKind::Instantiation { .. } => K::Unknown,
+        ExprKind::Instantiation { .. } => K::ExpressionWithTypeArguments,
         ExprKind::Jsx(jsx) => match () {
             () if jsx.is_fragment() => K::JsxFragment,
             () if jsx.is_self_closing() => K::JsxSelfClosingElement,
@@ -221,13 +165,69 @@ pub fn ts_syntax_kind(e: Expr<'_>) -> SyntaxKind {
     }
 }
 
-/// `ts.isBinaryExpression(tsNode) ? tsNode.operatorToken.kind : ts.SyntaxKind.Unknown`, with `None`
-/// for `Unknown`.
-pub fn ts_operator_kind(e: Expr<'_>) -> Option<OperatorKind> {
+/// The `ts.SyntaxKind` of the token of a binary operator.
+pub fn binary_operator_token_kind(op: BinOp) -> SyntaxKind {
+    use SyntaxKind as K;
+    match op {
+        BinOp::Add => K::PlusToken,
+        BinOp::Sub => K::MinusToken,
+        BinOp::Mul => K::AsteriskToken,
+        BinOp::Div => K::SlashToken,
+        BinOp::Rem => K::PercentToken,
+        BinOp::Pow => K::AsteriskAsteriskToken,
+        BinOp::Shl => K::LessThanLessThanToken,
+        BinOp::Shr => K::GreaterThanGreaterThanToken,
+        BinOp::UShr => K::GreaterThanGreaterThanGreaterThanToken,
+        BinOp::BitAnd => K::AmpersandToken,
+        BinOp::BitOr => K::BarToken,
+        BinOp::BitXor => K::CaretToken,
+        BinOp::Lt => K::LessThanToken,
+        BinOp::Le => K::LessThanEqualsToken,
+        BinOp::Gt => K::GreaterThanToken,
+        BinOp::Ge => K::GreaterThanEqualsToken,
+        BinOp::EqEq => K::EqualsEqualsToken,
+        BinOp::NotEq => K::ExclamationEqualsToken,
+        BinOp::EqEqEq => K::EqualsEqualsEqualsToken,
+        BinOp::NotEqEq => K::ExclamationEqualsEqualsToken,
+        BinOp::In => K::InKeyword,
+        BinOp::Instanceof => K::InstanceOfKeyword,
+        BinOp::And => K::AmpersandAmpersandToken,
+        BinOp::Or => K::BarBarToken,
+        BinOp::Nullish => K::QuestionQuestionToken,
+        BinOp::Comma => K::CommaToken,
+    }
+}
+
+/// The `ts.SyntaxKind` of the token of an assignment operator. `None` is `=`.
+pub fn assignment_operator_token_kind(op: Option<BinOp>) -> SyntaxKind {
+    use SyntaxKind as K;
+    match op {
+        None => K::EqualsToken,
+        Some(BinOp::Add) => K::PlusEqualsToken,
+        Some(BinOp::Sub) => K::MinusEqualsToken,
+        Some(BinOp::Mul) => K::AsteriskEqualsToken,
+        Some(BinOp::Div) => K::SlashEqualsToken,
+        Some(BinOp::Rem) => K::PercentEqualsToken,
+        Some(BinOp::Pow) => K::AsteriskAsteriskEqualsToken,
+        Some(BinOp::Shl) => K::LessThanLessThanEqualsToken,
+        Some(BinOp::Shr) => K::GreaterThanGreaterThanEqualsToken,
+        Some(BinOp::UShr) => K::GreaterThanGreaterThanGreaterThanEqualsToken,
+        Some(BinOp::BitAnd) => K::AmpersandEqualsToken,
+        Some(BinOp::BitOr) => K::BarEqualsToken,
+        Some(BinOp::BitXor) => K::CaretEqualsToken,
+        Some(BinOp::And) => K::AmpersandAmpersandEqualsToken,
+        Some(BinOp::Or) => K::BarBarEqualsToken,
+        Some(BinOp::Nullish) => K::QuestionQuestionEqualsToken,
+        Some(_) => K::Unknown,
+    }
+}
+
+/// `ts.isBinaryExpression(tsNode) ? tsNode.operatorToken.kind : ts.SyntaxKind.Unknown`
+pub fn ts_operator_kind(e: Expr<'_>) -> SyntaxKind {
     match e.kind() {
-        ExprKind::Binary { op, .. } => Some(OperatorKind::Binary(op)),
-        ExprKind::Assign { op, .. } => Some(OperatorKind::Assign(op)),
-        _ => None,
+        ExprKind::Binary { op, .. } => binary_operator_token_kind(op),
+        ExprKind::Assign { op, .. } => assignment_operator_token_kind(op),
+        _ => SyntaxKind::Unknown,
     }
 }
 
@@ -279,21 +279,18 @@ pub fn get_operator_precedence_of_ts_parent(e: Expr<'_>) -> OperatorPrecedence {
     let parent = ts_parent_expression(e).filter(|_| !e.is_parenthesized());
     get_operator_precedence(
         ts_parent_syntax_kind(e),
-        parent.and_then(ts_operator_kind),
+        parent.map_or(SyntaxKind::Unknown, ts_operator_kind),
         parent.is_some_and(|it| matches!(it.kind(), ExprKind::New(call) if !call.args().is_empty())),
     )
 }
 
-/// typescript-eslint's `getOperatorPrecedence`. Upstream takes `ts.SyntaxKind`s: see
-/// [`ts_syntax_kind`], [`ts_operator_kind`] and [`ts_parent_syntax_kind`] for those of a node. For
-/// a constant kind, write the result:
-/// `getOperatorPrecedence(SyntaxKind.AsExpression, SyntaxKind.Unknown)` is
-/// `OperatorPrecedence::Relational`.
+/// typescript-eslint's `getOperatorPrecedence`. For the kinds of a node without a program, see
+/// [`ts_syntax_kind`], [`ts_operator_kind`] and [`ts_parent_syntax_kind`].
 ///
-/// `operator_kind` matters for a `BinaryExpression` only, which is `Invalid` without one.
+/// `operator_kind` matters for a `BinaryExpression` only, which is `Invalid` with `Unknown`.
 pub fn get_operator_precedence(
     node_kind: SyntaxKind,
-    operator_kind: Option<OperatorKind>,
+    operator_kind: SyntaxKind,
     has_arguments: bool,
 ) -> OperatorPrecedence {
     use OperatorPrecedence as P;
@@ -303,10 +300,24 @@ pub fn get_operator_precedence(
         K::YieldExpression => P::Yield,
         K::ConditionalExpression => P::Conditional,
         K::BinaryExpression => match operator_kind {
-            Some(OperatorKind::Assign(_)) => P::Assignment,
-            Some(OperatorKind::Binary(BinOp::Comma)) => P::Comma,
-            Some(OperatorKind::Binary(op)) => get_binary_operator_precedence(op),
-            None => P::Invalid,
+            K::AmpersandAmpersandEqualsToken
+            | K::AmpersandEqualsToken
+            | K::AsteriskAsteriskEqualsToken
+            | K::AsteriskEqualsToken
+            | K::BarBarEqualsToken
+            | K::BarEqualsToken
+            | K::CaretEqualsToken
+            | K::EqualsToken
+            | K::GreaterThanGreaterThanEqualsToken
+            | K::GreaterThanGreaterThanGreaterThanEqualsToken
+            | K::LessThanLessThanEqualsToken
+            | K::MinusEqualsToken
+            | K::PercentEqualsToken
+            | K::PlusEqualsToken
+            | K::QuestionQuestionEqualsToken
+            | K::SlashEqualsToken => P::Assignment,
+            K::CommaToken => P::Comma,
+            _ => get_binary_operator_precedence_of_kind(operator_kind),
         },
         K::TypeAssertionExpression
         | K::NonNullExpression
@@ -349,29 +360,45 @@ pub fn get_operator_precedence(
         | K::JsxElement
         | K::JsxSelfClosingElement
         | K::JsxFragment => P::Primary,
-        K::Unknown => P::Invalid,
+        _ => P::Invalid,
     }
 }
 
-/// typescript-eslint's `getBinaryOperatorPrecedence`. The comma is `Invalid`, as upstream.
+/// typescript-eslint's `getBinaryOperatorPrecedence`, for the operator of an ESTree node. The comma
+/// is `Invalid`, as upstream.
 pub fn get_binary_operator_precedence(op: BinOp) -> OperatorPrecedence {
+    get_binary_operator_precedence_of_kind(binary_operator_token_kind(op))
+}
+
+/// typescript-eslint's `getBinaryOperatorPrecedence`, for a `ts.SyntaxKind`.
+pub fn get_binary_operator_precedence_of_kind(kind: SyntaxKind) -> OperatorPrecedence {
     use OperatorPrecedence as P;
-    match op {
-        BinOp::Add | BinOp::Sub => P::Additive,
-        BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => P::Equality,
-        BinOp::Nullish => P::COALESCE,
-        BinOp::Mul | BinOp::Div | BinOp::Rem => P::Multiplicative,
-        BinOp::Pow => P::Exponentiation,
-        BinOp::BitAnd => P::BitwiseAND,
-        BinOp::And => P::LogicalAND,
-        BinOp::BitXor => P::BitwiseXOR,
-        BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::In | BinOp::Instanceof => {
-            P::Relational
-        }
-        BinOp::Shl | BinOp::Shr | BinOp::UShr => P::Shift,
-        BinOp::BitOr => P::BitwiseOR,
-        BinOp::Or => P::LogicalOR,
-        BinOp::Comma => P::Invalid,
+    use SyntaxKind as K;
+    match kind {
+        K::MinusToken | K::PlusToken => P::Additive,
+        K::EqualsEqualsEqualsToken
+        | K::EqualsEqualsToken
+        | K::ExclamationEqualsEqualsToken
+        | K::ExclamationEqualsToken => P::Equality,
+        K::QuestionQuestionToken => P::COALESCE,
+        K::AsteriskToken | K::PercentToken | K::SlashToken => P::Multiplicative,
+        K::AsteriskAsteriskToken => P::Exponentiation,
+        K::AmpersandToken => P::BitwiseAND,
+        K::AmpersandAmpersandToken => P::LogicalAND,
+        K::CaretToken => P::BitwiseXOR,
+        K::AsKeyword
+        | K::GreaterThanEqualsToken
+        | K::GreaterThanToken
+        | K::InKeyword
+        | K::InstanceOfKeyword
+        | K::LessThanEqualsToken
+        | K::LessThanToken => P::Relational,
+        K::GreaterThanGreaterThanGreaterThanToken
+        | K::GreaterThanGreaterThanToken
+        | K::LessThanLessThanToken => P::Shift,
+        K::BarToken => P::BitwiseOR,
+        K::BarBarToken => P::LogicalOR,
+        _ => P::Invalid,
     }
 }
 

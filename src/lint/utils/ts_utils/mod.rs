@@ -38,9 +38,9 @@
 //! | `getMemberHeadLoc.ts` | [`get_member_head_loc`]`(member)`, [`get_parameter_property_head_loc`]`(param, name)` |
 //! | `getOperatorPrecedence.ts`: `OperatorPrecedence` | [`OperatorPrecedence`], with `COALESCE`, `HIGHEST` and `LOWEST` as constants |
 //! | `getOperatorPrecedenceForNode(node)` | [`get_operator_precedence_for_node`]`(expr)` |
-//! | `getOperatorPrecedence(tsNode.kind, operator, hasArguments)` | [`get_operator_precedence`]`(`[`ts_syntax_kind`]`(expr), `[`ts_operator_kind`]`(expr), has_arguments)` |
+//! | `getOperatorPrecedence(tsNode.kind, operator, hasArguments)` | [`get_operator_precedence`], on `types::SyntaxKind`. Without a program: [`ts_syntax_kind`]`(expr)`, [`ts_operator_kind`]`(expr)` |
 //! | `getOperatorPrecedence(tsNode.parent.kind, ..)` | [`get_operator_precedence_of_ts_parent`]`(expr)`, [`ts_parent_syntax_kind`] |
-//! | `getBinaryOperatorPrecedence(operator)` | [`get_binary_operator_precedence`]`(BinOp)` |
+//! | `getBinaryOperatorPrecedence(operator)` | [`get_binary_operator_precedence`]`(BinOp)`, [`get_binary_operator_precedence_of_kind`]`(SyntaxKind)` |
 //! | `getParentFunctionNode.ts` | [`get_parent_function_node`] |
 //! | `getStaticStringValue.ts` | [`get_static_string_value`] |
 //! | `getStringLength.ts` | [`get_string_length`] |

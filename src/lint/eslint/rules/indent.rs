@@ -2,6 +2,7 @@ use bun_core::strings;
 use bun_lint::language::Parser;
 use bun_lint::prelude::*;
 use bun_lint::selector::Selector;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use smallvec::SmallVec;
 
 /// Enforce consistent indentation.
@@ -166,6 +167,14 @@ struct Descriptor {
     is_forced: bool,
 }
 
+/// The tokens `first..after` get `descriptor`.
+#[derive(Copy, Clone)]
+struct Assignment {
+    first: u32,
+    after: u32,
+    descriptor: Descriptor,
+}
+
 /// The whitespace that a line is to start with: the indentation of the token `base` as it is
 /// written, and `extra` spaces or tabs.
 #[derive(Copy, Clone)]
@@ -244,16 +253,25 @@ enum Step<'a> {
 
 /// ESLint's `OffsetStorage` and `TokenInfo`, and the walk that fills them.
 ///
-/// Upstream keeps a descriptor for each range of the text. Here each token has its own: setting
-/// the offsets of a range is a `fill`.
+/// Upstream keeps a descriptor for each range of the text in a tree. Here the walk, which asks for
+/// none, only notes which range gets which, and then each token gets the last that was meant for it.
 struct Offsets<'a, 'r> {
     rule: &'r Indent,
     file: &'a File<'a>,
     tokens: Vec<Tok>,
     /// For each offset in the text, how many tokens and comments start before it.
     index: Vec<u32>,
+    /// For each token or comment, and for the end, the first token at or after it and the last
+    /// before it. Empty if there are no comments.
+    token_at_or_after: Vec<u32>,
+    token_before: Vec<u32>,
     /// ESLint's `firstTokensByLineNumber`.
     first_of_line: Vec<u32>,
+    /// For each line the first at or after it that has no token. Empty until it is asked for.
+    blank_line_at_or_after: Vec<u32>,
+    /// What the walk sets, in that order.
+    assignments: Vec<Assignment>,
+    /// Empty during the walk.
     descriptors: Vec<Descriptor>,
     flags: Vec<u8>,
     /// ESLint's `_lockedFirstTokens`. Empty until there is one.
@@ -271,6 +289,10 @@ struct Offsets<'a, 'r> {
     has_collected: bool,
     /// A walk that was not preceded by one that collects has met a node that is ignored.
     is_stale: bool,
+    /// Whether what is around a call is as [`Offsets::is_outer_iife`] wants it.
+    outer_calls: AncestorMemo<'a, bool>,
+    /// The statement that an expression is in.
+    statements: AncestorMemo<'a, Stmt<'a>>,
 }
 
 /// The range of the `ExportNamedDeclaration` or `ExportDefaultDeclaration` around a declaration.
@@ -321,41 +343,6 @@ fn jsx_child_span(child: JsxChild) -> Span {
     }
 }
 
-/// ESLint's `isOuterIIFE`, for the function or the class `callee`.
-fn is_outer_iife(callee: Expr) -> bool {
-    let Node::Expr(call) = callee.parent() else {
-        return false;
-    };
-    if !matches!(call.kind(), ExprKind::Call(it) if it.callee() == callee && it.chain() == Chain::No) {
-        return false;
-    }
-    let mut at = Node::Expr(call);
-    loop {
-        at = at.parent();
-        match at {
-            Node::Expr(e) => match e.kind() {
-                ExprKind::Unary {
-                    op: UnOp::Not | UnOp::BitNot | UnOp::Plus | UnOp::Minus,
-                    ..
-                }
-                | ExprKind::Binary {
-                    op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma,
-                    ..
-                } => {}
-                ExprKind::Assign { .. } if !e.is_assignment_target() => {}
-                _ => return false,
-            },
-            Node::VarDecl(_) => {}
-            Node::Stmt(statement) => {
-                return matches!(statement.kind(), StmtKind::Expr(_) | StmtKind::Var(_))
-                    && matches!(statement.parent(), Node::File(_))
-                    && export_span(statement).is_none();
-            }
-            _ => return false,
-        }
-    }
-}
-
 // ───────────────────────────── tokens ─────────────────────────────
 
 impl<'a, 'r> Offsets<'a, 'r> {
@@ -394,6 +381,29 @@ impl<'a, 'r> Offsets<'a, 'r> {
             at = until;
         }
 
+        let (mut token_at_or_after, mut token_before) = (Vec::new(), Vec::new());
+        if tokens.iter().any(|it| it.kind.is_comment()) {
+            let mut before = NONE;
+            token_before.reserve_exact(tokens.len() + 1);
+            for (i, token) in tokens.iter().enumerate() {
+                token_before.push(before);
+                if !token.kind.is_comment() {
+                    before = i as u32;
+                }
+            }
+            token_before.push(before);
+            let mut at_or_after = tokens.len() as u32;
+            token_at_or_after.resize(tokens.len() + 1, at_or_after);
+            for (i, token) in tokens.iter().enumerate().rev() {
+                if !token.kind.is_comment() {
+                    at_or_after = i as u32;
+                }
+                if let Some(slot) = token_at_or_after.get_mut(i) {
+                    *slot = at_or_after;
+                }
+            }
+        }
+
         let mut first_of_line = vec![NONE; line_count as usize + 2];
         for (i, token) in tokens.iter().enumerate() {
             if let Some(first) = first_of_line.get_mut(token.line as usize)
@@ -416,8 +426,12 @@ impl<'a, 'r> Offsets<'a, 'r> {
             file,
             tokens,
             index,
+            token_at_or_after,
+            token_before,
             first_of_line,
-            descriptors: Vec::with_capacity(count),
+            blank_line_at_or_after: Vec::new(),
+            assignments: Vec::new(),
+            descriptors: Vec::new(),
             flags: Vec::with_capacity(count),
             locked: Vec::new(),
             desired: vec![Indentation::UNKNOWN; count],
@@ -427,6 +441,8 @@ impl<'a, 'r> Offsets<'a, 'r> {
             is_collecting: false,
             has_collected: false,
             is_stale: false,
+            outer_calls: AncestorMemo::default(),
+            statements: AncestorMemo::default(),
         }
     }
 
@@ -465,18 +481,32 @@ impl<'a, 'r> Offsets<'a, 'r> {
     }
 
     /// `getTokenBefore(token)`
+    #[inline]
     fn before(&self, i: usize) -> Option<usize> {
-        (0..i.min(self.tokens.len())).rev().find(|&it| !self.is_comment(it))
+        let i = i.min(self.tokens.len());
+        match self.token_before.get(i) {
+            Some(&before) => (before != NONE).then_some(before as usize),
+            None => i.checked_sub(1),
+        }
+    }
+
+    /// The first token, not comment, among those from `i` on.
+    #[inline]
+    fn at_or_after(&self, i: usize) -> Option<usize> {
+        let token = self.token_at_or_after.get(i).map_or(i, |&it| it as usize);
+        (token < self.tokens.len()).then_some(token)
     }
 
     /// `getTokenAfter(token)`
+    #[inline]
     fn after(&self, i: usize) -> Option<usize> {
-        (i + 1..self.tokens.len()).find(|&it| !self.is_comment(it))
+        self.at_or_after(i + 1)
     }
 
     /// `getFirstToken(node)` with the start of the node, `getTokenAfter(node)` with its end.
+    #[inline]
     fn token_from(&self, offset: u32) -> Option<usize> {
-        (self.lower_bound(offset)..self.tokens.len()).find(|&it| !self.is_comment(it))
+        self.at_or_after(self.lower_bound(offset))
     }
 
     /// `getLastToken(node)` with the end of the node, `getTokenBefore(node)` with its start.
@@ -563,35 +593,91 @@ impl<'a> Offsets<'a, '_> {
         }
     }
 
-    /// ESLint's `setDesiredOffset`.
-    fn set_offset(&mut self, token: usize, from: Option<usize>, offset: u32) {
-        if from != Some(token)
-            && let Some(descriptor) = self.descriptors.get_mut(token)
-        {
-            *descriptor = Descriptor {
-                from: from.map_or(NONE, |it| it as u32),
-                offset,
-                is_forced: false,
-            };
+    /// During the walk.
+    #[inline]
+    fn assign(&mut self, first: usize, after: usize, descriptor: Descriptor) {
+        if first < after && after <= self.tokens.len() {
+            self.assignments.push(Assignment {
+                first: first as u32,
+                after: after as u32,
+                descriptor,
+            });
         }
     }
 
-    /// ESLint's `setDesiredOffsets`, for the tokens that start in `start..end`.
+    /// ESLint's `setDesiredOffset`.
+    fn set_offset(&mut self, token: usize, from: Option<usize>, offset: u32) {
+        if from == Some(token) {
+            return;
+        }
+        let new = Descriptor {
+            from: from.map_or(NONE, |it| it as u32),
+            offset,
+            is_forced: false,
+        };
+        match self.descriptors.get_mut(token) {
+            Some(descriptor) => *descriptor = new,
+            None => self.assign(token, token + 1, new),
+        }
+    }
+
+    /// ESLint's `setDesiredOffsets`, for the tokens that start in `start..end`. During the walk.
     fn set_offsets(&mut self, start: u32, end: u32, from: Option<usize>, offset: u32, is_forced: bool) {
         let (first, after) = (self.lower_bound(start), self.lower_bound(end));
-        let own = from.filter(|&it| first <= it && it < after && self.token(it).end <= end);
-        let kept = own.and_then(|it| self.descriptors.get(it).copied());
-        if let Some(descriptors) = self.descriptors.get_mut(first..after) {
-            descriptors.fill(Descriptor {
-                from: from.map_or(NONE, |it| it as u32),
-                offset,
-                is_forced,
-            });
+        let descriptor = Descriptor {
+            from: from.map_or(NONE, |it| it as u32),
+            offset,
+            is_forced,
+        };
+        // `from` keeps what it has.
+        match from.filter(|&it| first <= it && it < after && self.token(it).end <= end) {
+            Some(own) => {
+                self.assign(first, own, descriptor);
+                self.assign(own + 1, after, descriptor);
+            }
+            None => self.assign(first, after, descriptor),
         }
-        if let (Some(own), Some(kept)) = (own, kept)
-            && let Some(descriptor) = self.descriptors.get_mut(own)
-        {
-            *descriptor = kept;
+    }
+
+    /// Ends the walk: gives each token the descriptor that was assigned to it last. From the last
+    /// assignment to the first, each gives it to the tokens that have none yet, which are found in
+    /// nearly constant time: O(tokens + assignments).
+    fn settle_descriptors(&mut self) {
+        let count = self.tokens.len();
+        let root = Descriptor {
+            from: NONE,
+            offset: 0,
+            is_forced: false,
+        };
+        self.descriptors.clear();
+        self.descriptors.resize(count, root);
+        // Itself for a token that has no descriptor yet, and for the end. For another, one that is
+        // further on and not beyond the next that has none.
+        let mut next: Vec<u32> = (0..=count as u32).collect();
+        for assignment in self.assignments.drain(..).rev() {
+            let mut at = assignment.first;
+            loop {
+                // To the next that has none. What it passes is left pointing twice as far.
+                while let Some(&further) = next.get(at as usize)
+                    && further != at
+                {
+                    let twice = next.get(further as usize).map_or(further, |&it| it);
+                    if let Some(slot) = next.get_mut(at as usize) {
+                        *slot = twice;
+                    }
+                    at = twice;
+                }
+                let (Some(descriptor), Some(slot)) = (self.descriptors.get_mut(at as usize), next.get_mut(at as usize))
+                else {
+                    break;
+                };
+                if at >= assignment.after {
+                    break;
+                }
+                *descriptor = assignment.descriptor;
+                *slot = at + 1;
+                at += 1;
+            }
         }
     }
 
@@ -683,9 +769,19 @@ impl<'a> Offsets<'a, '_> {
     }
 
     /// ESLint's `hasBlankLinesBetween`.
-    fn has_blank_lines_between(&self, first: usize, second: usize) -> bool {
-        let mut lines = self.token(first).end_line + 1..self.token(second).line;
-        lines.any(|line| self.first_token_of_line(line).is_none())
+    fn has_blank_lines_between(&mut self, first: usize, second: usize) -> bool {
+        if self.blank_line_at_or_after.is_empty() {
+            let mut blank = u32::MAX;
+            self.blank_line_at_or_after = self.first_of_line.clone();
+            for (line, slot) in self.blank_line_at_or_after.iter_mut().enumerate().rev() {
+                if *slot == NONE {
+                    blank = line as u32;
+                }
+                *slot = blank;
+            }
+        }
+        let blank = self.blank_line_at_or_after.get(self.token(first).end_line as usize + 1);
+        blank.is_some_and(|&it| it < self.token(second).line)
     }
 
     /// ESLint's `countTrailingLinebreaks(token.value)`.
@@ -776,13 +872,51 @@ impl<'a> Offsets<'a, '_> {
         }
     }
 
+    /// ESLint's `isOuterIIFE`, for the function or the class `callee`.
+    fn is_outer_iife(&mut self, callee: Expr<'a>) -> bool {
+        let Node::Expr(call) = callee.parent() else {
+            return false;
+        };
+        if !matches!(call.kind(), ExprKind::Call(it) if it.callee() == callee && it.chain() == Chain::No) {
+            return false;
+        }
+        let is_outer = self.outer_calls.find(Node::Expr(call), |_, ancestor| match ancestor {
+            Node::Expr(e) => match e.kind() {
+                ExprKind::Unary {
+                    op: UnOp::Not | UnOp::BitNot | UnOp::Plus | UnOp::Minus,
+                    ..
+                }
+                | ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma,
+                    ..
+                } => None,
+                ExprKind::Assign { .. } if !e.is_assignment_target() => None,
+                _ => Some(false),
+            },
+            Node::VarDecl(_) => None,
+            Node::Stmt(statement) => Some(
+                matches!(statement.kind(), StmtKind::Expr(_) | StmtKind::Var(_))
+                    && matches!(statement.parent(), Node::File(_))
+                    && export_span(statement).is_none(),
+            ),
+            _ => Some(false),
+        });
+        is_outer == Some(true)
+    }
+
     fn add_parameter_parens(&mut self, opening: usize, closing: usize) {
         self.add_flag(opening, IS_PARAMETER_PAREN);
         self.add_flag(closing, IS_PARAMETER_PAREN);
     }
 
     /// ESLint's `addParensIndent`.
+    ///
+    /// Upstream goes from the outermost pair to the innermost and makes each token in a pair that
+    /// does not depend on another token in it depend on the opening parenthesis. Such a token does
+    /// not depend on one in a pair further in either. So the innermost pair around each token
+    /// decides: O(tokens).
     fn add_parens_indent(&mut self) {
+        // The innermost first.
         let (mut open, mut pairs) = (Vec::new(), Vec::new());
         for i in 0..self.tokens.len() {
             if self.is_punctuator(i, b"(") {
@@ -793,31 +927,65 @@ impl<'a> Offsets<'a, '_> {
                 pairs.push((left, i));
             }
         }
-        for &(left, right) in pairs.iter().rev() {
-            if !self.has_flag(left, IS_PARAMETER_PAREN) && !self.has_flag(right, IS_PARAMETER_PAREN) {
-                for token in left + 1..right {
+        // The outermost of the pairs so far.
+        let mut decided: Vec<(usize, usize)> = Vec::new();
+        for &(left, right) in &pairs {
+            if self.has_flag(left, IS_PARAMETER_PAREN) || self.has_flag(right, IS_PARAMETER_PAREN) {
+                continue;
+            }
+            let mut decide = |tokens: std::ops::Range<usize>| {
+                for token in tokens {
                     let from = self.first_dependency(token) as usize;
                     let is_from_inside = left < from && from < right && !self.is_comment(from);
                     if !is_from_inside && !self.is_comment(token) {
                         self.set_offset(token, Some(left), 1);
                     }
                 }
+            };
+            let mut end = right;
+            while let Some(inner) = decided.pop_if(|it| it.0 > left) {
+                decide(inner.1..end);
+                end = inner.0 + 1;
             }
+            decide(left + 1..end);
+            decided.push((left, right));
+        }
+        for (left, right) in pairs {
             self.set_offset(right, Some(left), 0);
         }
     }
 
-    /// ESLint's `ignoreNode`.
-    fn ignore_node(&mut self, node: Span) {
-        let tokens = self.lower_bound(node.start)..self.lower_bound(node.end);
-        for token in tokens.clone() {
-            if tokens.contains(&(self.first_dependency(token) as usize)) {
-                continue;
+    /// ESLint's `ignoreNode`, for each of `nodes`, which are in each other or apart.
+    ///
+    /// What it does to a token depends on whether the token depends on one in the node. If it does,
+    /// so it does for the nodes around that node, and if not, they do the same to it again. So the
+    /// innermost node around each token decides: O(tokens + nodes), and a sort if a node comes before
+    /// one that is in it.
+    fn ignore_nodes(&mut self, nodes: &[Span]) {
+        let ranges = nodes.iter().map(|it| (self.lower_bound(it.start), self.lower_bound(it.end)));
+        let mut ranges: Vec<(usize, usize)> = ranges.filter(|it| it.0 < it.1).collect();
+        ranges.sort_unstable_by_key(|it| (it.1, std::cmp::Reverse(it.0)));
+        // The outermost of the nodes so far.
+        let mut decided: Vec<(usize, usize)> = Vec::new();
+        for (first, after) in ranges {
+            let mut decide = |tokens: std::ops::Range<usize>| {
+                for token in tokens {
+                    if (first..after).contains(&(self.first_dependency(token) as usize)) {
+                        continue;
+                    }
+                    match self.first_token_of_line(self.token(token).line) {
+                        Some(first) if first != token => self.set_offset(token, Some(first), 0),
+                        _ => self.ignore_token(token),
+                    }
+                }
+            };
+            let mut end = after;
+            while let Some(inner) = decided.pop_if(|it| it.0 >= first) {
+                decide(inner.1..end);
+                end = inner.0;
             }
-            match self.first_token_of_line(self.token(token).line) {
-                Some(first) if first != token => self.set_offset(token, Some(first), 0),
-                _ => self.ignore_token(token),
-            }
+            decide(first..end);
+            decided.push((first, after));
         }
     }
 
@@ -842,13 +1010,7 @@ impl<'a> Offsets<'a, '_> {
         let is_espree = self.file.language().parser == Parser::Espree && self.file.is_javascript();
         self.has_collected = !is_espree || !self.rule.ignored_nodes.is_empty();
         loop {
-            let root = Descriptor {
-                from: NONE,
-                offset: 0,
-                is_forced: false,
-            };
-            self.descriptors.clear();
-            self.descriptors.resize(self.tokens.len(), root);
+            self.assignments.clear();
             self.flags.clear();
             self.flags.resize(self.tokens.len(), 0);
             self.locked.clear();
@@ -863,6 +1025,7 @@ impl<'a> Offsets<'a, '_> {
             }
             (self.is_stale, self.has_collected) = (false, true);
         }
+        self.settle_descriptors();
         if self.rule.ignore_comments {
             for i in 0..self.tokens.len() {
                 if self.is_comment(i) {
@@ -870,9 +1033,8 @@ impl<'a> Offsets<'a, '_> {
                 }
             }
         }
-        for node in std::mem::take(&mut self.ignored) {
-            self.ignore_node(node);
-        }
+        let ignored = std::mem::take(&mut self.ignored);
+        self.ignore_nodes(&ignored);
         self.add_parens_indent();
     }
 
@@ -1646,7 +1808,7 @@ impl<'a> Offsets<'a, '_> {
         };
         if self.enter("BlockStatement", span) {
             let level = match func.owner() {
-                Node::Expr(e) if is_outer_iife(e) => self.rule.outer_iife_body,
+                Node::Expr(e) if self.is_outer_iife(e) => self.rule.outer_iife_body,
                 _ if func.kind() == FnKind::Decl => Offset::Levels(self.rule.function_declaration.body),
                 _ => Offset::Levels(self.rule.function_expression.body),
             };
@@ -1822,7 +1984,7 @@ impl<'a> Offsets<'a, '_> {
         let span = class.body_span();
         if self.enter("ClassBody", span) {
             let level = match class.owner() {
-                Node::Expr(e) if is_outer_iife(e) => self.rule.outer_iife_body,
+                Node::Expr(e) if self.is_outer_iife(e) => self.rule.outer_iife_body,
                 _ => Offset::Levels(1),
             };
             let elements = class.members().iter().map(|it| Some(it.span()));
@@ -2312,8 +2474,8 @@ impl<'a> Offsets<'a, '_> {
     }
 
     /// ESLint's `isOnFirstLineOfStatement`.
-    fn is_on_first_line_of_statement(&self, token: usize, e: Expr<'a>) -> bool {
-        let statement = Node::Expr(e).ancestors().find_map(|it| match it {
+    fn is_on_first_line_of_statement(&mut self, token: usize, e: Expr<'a>) -> bool {
+        let statement = self.statements.find(Node::Expr(e), |_, it| match it {
             // The names of these do not end with `Statement` or `Declaration`.
             Node::Stmt(it) if matches!(it.kind(), StmtKind::ExportAssign(_)) => None,
             Node::Stmt(it) if matches!(it.kind(), StmtKind::Fn(func) if !func.has_body()) => None,

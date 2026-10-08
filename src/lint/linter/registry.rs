@@ -41,6 +41,10 @@ const REPLACEMENTS: &[(&str, &str)] = &[
     ("spaced-line-comment", "spaced-comment"),
 ];
 
+/// Rules that typescript-eslint extends and oxlint has as they are in ESLint: they are not in its
+/// `TYPESCRIPT_COMPATIBLE_ESLINT_RULES`.
+const NOT_EXTENDED_BY_OXLINT: [&[u8]; 1] = [b"no-unused-private-class-members"];
+
 /// ESLint's `parseRuleId`: the name of the plugin, which is empty for a rule of ESLint itself, and
 /// the name of the rule in it.
 pub fn parse_rule_id(id: &[u8]) -> (&[u8], &[u8]) {
@@ -83,7 +87,7 @@ impl Registry {
     }
 
     /// The same as [`Registry::get`]. With `prefers_typescript`, for a rule of ESLint that
-    /// typescript-eslint extends, the extension.
+    /// typescript-eslint extends and that understands TypeScript in oxlint, the extension.
     pub fn get_preferring(
         &self,
         plugin: Plugin,
@@ -92,6 +96,7 @@ impl Registry {
     ) -> Option<&'static RuleEntry> {
         if prefers_typescript
             && plugin == Plugin::Eslint
+            && !NOT_EXTENDED_BY_OXLINT.contains(&name)
             && let Some(extension) = self.get(Plugin::TypeScript, name)
             && extension.meta.extends_base_rule.is_some()
         {

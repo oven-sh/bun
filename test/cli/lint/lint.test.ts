@@ -618,6 +618,28 @@ describe.concurrent("bun lint", () => {
           1 problem"
         `);
       });
+
+      test("no-unused-private-class-members is about #names, not about `private`", async () => {
+        const unused = "  private a = 1;\n  private b() {}\n  constructor(private c: number) {}\n";
+        const [named, byDefault] = await Promise.all([
+          lint(
+            {
+              ".oxlintrc.json": rc({ rules: { "no-unused-private-class-members": "error" } }),
+              "a.ts": `export class A {\n${unused}  #d = 2;\n}\n`,
+            },
+            ["-f", "unix"],
+          ),
+          lint({ ".oxlintrc.json": "{}", "a.ts": `export class A {\n${unused}}\n` }, ["-f", "unix"]),
+        ]);
+        expect(named.stdout).toMatchInlineSnapshot(`
+          "<dir>/a.ts:5:3: '#d' is defined but never used. [Error/no-unused-private-class-members]
+
+          1 problem"
+        `);
+        expect(named.exitCode).toBe(1);
+        expect(byDefault.stdout).toBe("");
+        expect(byDefault.exitCode).toBe(0);
+      });
     });
 
     test(".eslintrc.json", async () => {

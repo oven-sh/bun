@@ -2554,6 +2554,28 @@ describe("bundler", () => {
     ],
   });
 
+  // The wrapper of each file of the cycle is an async function, n.js too.
+  itBundled("splitting/SharedChunkOrderConflictAsyncImportCycle", {
+    files: {
+      "/index.js": `import "./p.js"; import "./a2.js"; console.log("index");`,
+      "/worker.js": `import "./a2.js"; import "./p.js"; console.log("worker");`,
+      "/p.js": `console.log("p");`,
+      // a2 -> a1 -> n -> a1, a1 -> a2, and a2 -> d, which has the await.
+      "/a2.js": `import { n } from "./a1.js"; import { d } from "./d.js"; console.log("a2", n(), d);`,
+      "/a1.js": `import { n } from "./n.js"; import "./a2.js"; export const a1 = "a1"; export { n };`,
+      "/n.js": `import { a1 } from "./a1.js"; export const n = () => "n" + a1;`,
+      "/d.js": `export const d = await Promise.resolve("d");`,
+    },
+    entryPoints: ["/index.js", "/worker.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/index.js", stdout: "p\na2 na1 d\nindex" },
+      { file: "/out/worker.js", stdout: "p\na2 na1 d\nworker" },
+    ],
+  });
+
   // An HTML file prints nothing for a <script src>, so nothing would call a wrapper of a.js or
   // b.js. They stay as they are, and so does first.js, which would otherwise run after them.
   itBundled("splitting/SharedChunkOrderConflictHtmlScripts", {

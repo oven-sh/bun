@@ -937,7 +937,7 @@ impl<'a> LinkerContext<'a> {
             }
 
             // after validation propagate async through all importers.
-            self.graph.propagate_async_dependencies()?;
+            self.graph.propagate_async_dependencies();
         }
 
         scan_imports_and_exports(self)?;

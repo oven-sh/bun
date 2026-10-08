@@ -3696,6 +3696,19 @@ describe("bundler", () => {
     },
     run: { stdout: "x 1" },
   });
+  // Every file of an import cycle that reaches a top-level await waits for a wrapper, so each of
+  // their own wrappers is an async function. n.js is visited while a1.js is not known to be async yet.
+  itBundled("edgecase/EsmWrapperAsyncImportCycle", {
+    files: {
+      "/entry.js": `import("./a2.js").then(() => console.log("entry"));`,
+      // a2 -> a1 -> n -> a1, a1 -> a2, and a2 -> d, which has the await.
+      "/a2.js": `import { n } from "./a1.js"; import { d } from "./d.js"; console.log("a2", n(), d);`,
+      "/a1.js": `import { n } from "./n.js"; import "./a2.js"; export const a1 = "a1"; export { n };`,
+      "/n.js": `import { a1 } from "./a1.js"; export const n = () => "n" + a1;`,
+      "/d.js": `export const d = await Promise.resolve("d");`,
+    },
+    run: { stdout: "a2 na1 d\nentry" },
+  });
   // t.js has started when boom.js throws, so x.js never gets to wait for it. Its rejection is
   // not reported on its own: x.js has failed already, as from source.
   itBundled("edgecase/EsmWrapperAsyncImportRejectsAfterSyncThrow", {

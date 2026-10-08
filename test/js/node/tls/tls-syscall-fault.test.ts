@@ -217,6 +217,57 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     }
   });
 
+  test("send → short write of the last TLS batch: a server that answers the peer's FIN with write + end() and then exits on its own delivers every byte", async () => {
+    // No process.exit() here. After the peer's FIN the socket drops its hold
+    // on the loop once its write completes, so a write that completes while
+    // the spill still holds the tail lets the process end with the tail in
+    // userspace: a clean end of stream, 32 to 128 KiB short.
+    const payloadLen = 64 * 1024;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          const tls = require("node:tls");
+          const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+          const server = tls.createServer({ key: ${JSON.stringify(certs.key)}, cert: ${JSON.stringify(certs.cert)}, allowHalfOpen: true }, socket => {
+            server.close();
+            socket.resume();
+            socket.on("end", () => {
+              fault.set({ syscall: "send", action: "short", bytes: 4096, repeat: -1 });
+              socket.write(Buffer.alloc(${payloadLen}, 99));
+              socket.end();
+            });
+          });
+          server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+        `,
+      ],
+      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const reader = proc.stdout.getReader();
+    let first = "";
+    while (!first.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      first += new TextDecoder().decode(value);
+    }
+    reader.releaseLock();
+    const port = parseInt(first);
+    const client = tls.connect({ port, host: "127.0.0.1", ca: certs.cert, allowHalfOpen: true }, () =>
+      client.end("hello"),
+    );
+    let received = 0;
+    const closed = Promise.withResolvers<void>();
+    client.on("data", c => (received += c.length));
+    client.on("error", closed.reject);
+    client.on("close", () => closed.resolve());
+    await closed.promise;
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ received, stderr, exitCode }).toEqual({ received: payloadLen, stderr: "", exitCode: 0 });
+  });
+
   test("recv → 0 (peer closed) on established session emits 'end' without 'error'", async () => {
     using p = await connectedTLSPair();
     let gotError: unknown = null;

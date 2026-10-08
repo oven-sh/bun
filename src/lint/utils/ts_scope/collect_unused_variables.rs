@@ -27,7 +27,7 @@ use bun_core::strings;
 use bun_sema::atom::known;
 use bun_sema::bind::PatParent;
 use bun_sema::hir;
-use smallvec::SmallVec;
+use smallvec::{SmallVec, smallvec};
 
 // ───────────────────────────── eslintUsed ─────────────────────────────
 
@@ -517,6 +517,15 @@ fn mark_key<'a>(key: Option<Key<'a>>, holder: Node<'a>, marks: &mut Marker<'a>) 
 /// Marks what the name of every `Identifier` of ESTree in `node` means where it is written, whether
 /// it refers to that or not: the `b` of `a.b`, a key, a label.
 fn mark_identifiers<'a>(node: Node<'a>, marks: &mut Marker<'a>) {
+    // Not by recursion: `T[][][]..` is as deep as it is long.
+    let mut pending: SmallVec<[Node<'a>; 16]> = smallvec![node];
+    while let Some(node) = pending.pop() {
+        mark_identifiers_of(node, marks, &mut pending);
+    }
+}
+
+/// Adds the children of `node` that are to be looked at to `pending`.
+fn mark_identifiers_of<'a>(node: Node<'a>, marks: &mut Marker<'a>, pending: &mut SmallVec<[Node<'a>; 16]>) {
     match node {
         Node::Expr(e) => match e.kind() {
             ExprKind::Ident(name) => mark_identifier(name, node, marks),
@@ -531,15 +540,9 @@ fn mark_identifiers<'a>(node: Node<'a>, marks: &mut Marker<'a>) {
             }
             // The names of the tags are `JSXIdentifier`s.
             ExprKind::Jsx(jsx) => {
-                jsx.type_args()
-                    .iter()
-                    .for_each(|it| mark_identifiers(Node::Type(it), marks));
-                jsx.attrs()
-                    .iter()
-                    .for_each(|it| mark_identifiers(Node::Prop(it), marks));
-                jsx.children()
-                    .iter()
-                    .for_each(|it| mark_identifiers(Node::Expr(it), marks));
+                pending.extend(jsx.type_args().iter().map(Node::Type));
+                pending.extend(jsx.attrs().iter().map(Node::Prop));
+                pending.extend(jsx.children().iter().map(Node::Expr));
                 return;
             }
             _ => {}
@@ -567,7 +570,7 @@ fn mark_identifiers<'a>(node: Node<'a>, marks: &mut Marker<'a>) {
             if has_marked_parameters(func) {
                 node.for_each_child(|child| {
                     if !matches!(child, Node::Param(_)) {
-                        mark_identifiers(child, marks);
+                        pending.push(child);
                     }
                 });
                 return;
@@ -598,7 +601,7 @@ fn mark_identifiers<'a>(node: Node<'a>, marks: &mut Marker<'a>) {
         }
         _ => {}
     }
-    node.for_each_child(|child| mark_identifiers(child, marks));
+    node.for_each_child(|child| pending.push(child));
 }
 
 /// Upstream's `visitFunctionTypeSignature` and `visitSetter`. They mean to mark the parameters, and

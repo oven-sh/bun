@@ -9,6 +9,7 @@
 //! for a document without comments.
 
 use super::{Config, Parser};
+use crate::FormatError;
 use crate::ir::width::string_width;
 use crate::js::utils::array::{is_line_after_element_empty, is_next_line_empty};
 use crate::js::utils::number::format_trimmed_number;
@@ -156,6 +157,8 @@ pub(super) struct Tree {
     open: Vec<Open>,
     /// For a text that has to be made to know how wide it is.
     scratch: Vec<u8>,
+    /// Why it was given up: [`MAX_DEPTH`].
+    is_nested_too_deeply: bool,
 }
 
 #[derive(Debug)]
@@ -182,12 +185,13 @@ enum State {
 }
 
 /// Fills `tree`. It has no nodes if there is nothing but white space and comments.
-pub(super) fn parse(text: &[u8], config: &Config, tree: &mut Tree) -> Result<()> {
+pub(super) fn parse(text: &[u8], config: &Config, tree: &mut Tree) -> std::result::Result<(), FormatError> {
     tree.nodes.clear();
     tree.comments.clear();
     tree.open.clear();
+    tree.is_nested_too_deeply = false;
     if u32::try_from(text.len()).is_err() {
-        return Err(SyntaxError);
+        return Err(FormatError::SyntaxError);
     }
     // A node for every six bytes is what minified JSON has.
     tree.nodes.reserve(text.len() / 6);
@@ -200,6 +204,10 @@ pub(super) fn parse(text: &[u8], config: &Config, tree: &mut Tree) -> Result<()>
         unresolved: 0,
     }
     .run()
+    .map_err(|SyntaxError| match tree.is_nested_too_deeply {
+        true => FormatError::NestedTooDeeply,
+        false => FormatError::SyntaxError,
+    })
 }
 
 impl Reader<'_, '_> {
@@ -314,6 +322,7 @@ impl Reader<'_, '_> {
 
     fn open(&mut self, kind: Kind) -> Result<Owner> {
         if self.tree.open.len() >= MAX_DEPTH {
+            self.tree.is_nested_too_deeply = true;
             return Err(SyntaxError);
         }
         let start = self.at;

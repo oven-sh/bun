@@ -152,7 +152,7 @@ pub(super) fn format(
         return format_normalized(text, &config, options, scratch, out);
     }
 
-    super::parser::parse(text, &config, &mut scratch.tree).map_err(|_| FormatError::SyntaxError)?;
+    super::parser::parse(text, &config, &mut scratch.tree)?;
     let (start, end) = match config.is_stringify() {
         // What writes `json-stringify` does not say what is in a node, so the document is all there is.
         true => (0, text.len()),

@@ -257,7 +257,7 @@ fn format_normalized(
         printer,
         ..
     } = scratch;
-    parser::parse(text, config, tree).map_err(|_| FormatError::SyntaxError)?;
+    parser::parse(text, config, tree)?;
     if tree.comments.is_empty() {
         if !tree.nodes.is_empty() {
             writer::write(text, tree, config, frames, out);

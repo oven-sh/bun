@@ -411,7 +411,10 @@ impl<'a> Param<'a> {
     /// The function.
     #[inline]
     pub fn parent(self) -> Node<'a> {
-        Node::Param(self).parent()
+        match self.func() {
+            Some(func) => Node::Func(func),
+            None => Node::File(self.file),
+        }
     }
 }
 
@@ -985,7 +988,11 @@ impl<'a> Member<'a> {
     /// The `Class`, the `Stmt` of the interface, or the `TypeNode` of the type literal.
     #[inline]
     pub fn parent(self) -> Node<'a> {
-        Node::Member(self).parent()
+        match self.file.bound.member_owner.get(self.id.idx()) {
+            Some(&MemberOwner::Class(class)) => Node::Class(Class::new(self.file, class)),
+            Some(&MemberOwner::TypeLiteral(ty)) => Node::Type(TypeNode::new(self.file, ty)),
+            _ => Node::Member(self).parent_of_neither_expr_nor_stmt(),
+        }
     }
 }
 
@@ -1115,7 +1122,12 @@ impl<'a> Prop<'a> {
     /// the `Stmt` of the import or the export, or the `TypeNode` of the import type.
     #[inline]
     pub fn parent(self) -> Node<'a> {
-        Node::Prop(self).parent()
+        match self.file.bound.prop_owner.get(self.id.idx()) {
+            Some(&owner) if owner.is_some() && self.file.hir.import_attributes.is_empty() => {
+                Node::Expr(Expr::new(self.file, owner))
+            }
+            _ => Node::Prop(self).parent_of_neither_expr_nor_stmt(),
+        }
     }
 }
 

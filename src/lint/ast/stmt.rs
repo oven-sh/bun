@@ -664,7 +664,10 @@ impl<'a> VarDecl<'a> {
     /// The `Var` statement, or the `Try` statement of a `catch` parameter.
     #[inline]
     pub fn parent(self) -> Node<'a> {
-        Node::VarDecl(self).parent()
+        match self.file.bound.var_stmt.get(self.id.idx()) {
+            Some(&statement) if statement.is_some() => Node::Stmt(Stmt::new(self.file, statement)),
+            _ => Node::File(self.file),
+        }
     }
 }
 

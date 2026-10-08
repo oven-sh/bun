@@ -238,7 +238,7 @@ impl<'a> Node<'a> {
         }
     }
 
-    fn parent_of_neither_expr_nor_stmt(self) -> Node<'a> {
+    pub(super) fn parent_of_neither_expr_nor_stmt(self) -> Node<'a> {
         let file = self.file();
         let (hir, bound) = (&file.hir, &file.bound);
         let stmt = |s: Option<hir::StmtId>| match s {
@@ -330,8 +330,8 @@ impl<'a> Expr<'a> {
     #[inline]
     pub fn parent(self) -> Node<'a> {
         let file = self.file;
+        // The binder never has an expression as the parent of the `a.b` of the type `typeof a.b`.
         if !file.hides_casts
-            && file.bound.type_query_operands.is_empty()
             && let Some(&Parent::Expr(parent)) = file.bound.expr_parent.get(self.id.idx())
             && let Some(raw) = file.hir.exprs.get(parent.idx())
             && !matches!(raw.kind, hir::ExprKind::TaggedTemplate(_))
@@ -341,7 +341,30 @@ impl<'a> Expr<'a> {
         self.parent_in_general()
     }
 
+    /// What most expressions are part of that are not part of an expression.
     fn parent_in_general(self) -> Node<'a> {
+        let file = self.file;
+        if !file.hides_casts {
+            let is_in_no_type = file.bound.type_query_operands.is_empty();
+            match file.bound.expr_parent.get(self.id.idx()) {
+                Some(&Parent::VarInit(d)) => return Node::VarDecl(VarDecl::new(file, d)),
+                Some(&Parent::Prop(p)) if file.hir.import_attributes.is_empty() => {
+                    return Node::Prop(Prop::new(file, p));
+                }
+                Some(&Parent::Stmt(s))
+                    if !matches!(file.hir.stmts.get(s.idx()), None | Some(hir::Stmt { kind: hir::StmtKind::Expr(_), .. })) =>
+                {
+                    return Node::Stmt(Stmt::new(file, s));
+                }
+                Some(&Parent::FnBody(f)) if is_in_no_type => return Node::Func(Func::new(file, f)),
+                Some(&Parent::MemberInit(m)) if is_in_no_type => return Node::Member(Member::new(file, m)),
+                _ => {}
+            }
+        }
+        self.parent_in_rare_cases()
+    }
+
+    fn parent_in_rare_cases(self) -> Node<'a> {
         let file = self.file;
         let (hir, bound) = (&file.hir, &file.bound);
         // Few files have a `typeof` in a type.

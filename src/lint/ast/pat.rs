@@ -6,6 +6,7 @@
 use super::stmt::tags;
 use super::{Expr, Key, List, Name, Node, handle};
 use crate::span::Span;
+use bun_sema::bind::PatParent;
 use bun_sema::hir;
 
 handle! {
@@ -70,10 +71,26 @@ impl<'a> Pat<'a> {
         }
     }
 
+    /// The pattern that `inner` is the value of a property of, or an element.
+    #[inline]
+    fn around(file: &'a super::File<'a>, inner: hir::PatId) -> Node<'a> {
+        match file.bound.pat_parent.get(inner.idx()) {
+            Some(&(PatParent::Prop(owner, _) | PatParent::Elem(owner, _))) => Node::Pat(Pat::new(file, owner)),
+            _ => Node::File(file),
+        }
+    }
+
     /// A `VarDecl`, a `Param`, a `PatProp` or a `PatElem`.
     #[inline]
     pub fn parent(self) -> Node<'a> {
-        Node::Pat(self).parent()
+        let file = self.file;
+        match file.bound.pat_parent.get(self.id.idx()) {
+            Some(&PatParent::Var(d)) => Node::VarDecl(super::VarDecl::new(file, d)),
+            Some(&PatParent::Param(p)) => Node::Param(super::Param::new(file, p)),
+            Some(&PatParent::Prop(_, prop)) => Node::PatProp(PatProp::new(file, prop)),
+            Some(&PatParent::Elem(_, elem)) => Node::PatElem(PatElem::new(file, elem)),
+            Some(PatParent::None) | None => Node::Pat(self).parent_of_neither_expr_nor_stmt(),
+        }
     }
 
     /// Calls `visit` with every identifier that the pattern binds, in source order.
@@ -140,7 +157,7 @@ impl<'a> PatProp<'a> {
     /// The object pattern.
     #[inline]
     pub fn parent(self) -> Node<'a> {
-        Node::PatProp(self).parent()
+        Pat::around(self.file, self.value().id())
     }
 }
 
@@ -179,6 +196,6 @@ impl<'a> PatElem<'a> {
     /// The array pattern.
     #[inline]
     pub fn parent(self) -> Node<'a> {
-        Node::PatElem(self).parent()
+        Pat::around(self.file, self.file.hir.pat_elems.get(self.id.idx()).map_or(hir::PatId::NONE, |it| it.pat))
     }
 }

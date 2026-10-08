@@ -5755,14 +5755,25 @@ describe("block-level function declarations", () => {
 
   // A strict scope has no `var` to lose, and its "use strict" may not be printed.
   it.each([
-    ['a function with "use strict"', 'function o() {\n  "use strict";\n  {\n    function f() {}\n  }\n}'],
-    ['a file with "use strict"', '"use strict";\n{\n  function f() {}\n}\nmodule.exports = 1;'],
-    ["a class method", "class A {\n  m() {\n    {\n      function f() {}\n    }\n  }\n}"],
-    ["a module", "{\n  function f() {}\n}\nexport {};"],
-  ])("strict code is still lowered to let in %s", (_, code) => {
-    const out = print(code);
-    expect(out).toContain("let f = function() {};");
-    expect(out).not.toContain("function f()");
+    [
+      'a function with "use strict"',
+      'function o() {\n  "use strict";\n  {\n    function f() {}\n  }\n}\n',
+      "function o() {\n  {\n    let f = function() {};\n  }\n}\n",
+    ],
+    [
+      'a file with "use strict"',
+      '"use strict";\n{\n  function f() {}\n}\nmodule.exports = 1;\n',
+      "{\n  let f = function() {};\n}\nmodule.exports = 1;\n",
+    ],
+    [
+      "a class method",
+      "class A {\n  m() {\n    {\n      function f() {}\n    }\n  }\n}\n",
+      "class A {\n  m() {\n    {\n      let f = function() {};\n    }\n  }\n}\n",
+    ],
+    ["a module", "{\n  function f() {}\n}\n\nexport {};\n", "{\n  let f = function() {};\n}\n\nexport {};\n"],
+  ])("strict code is still lowered to let in %s", (_, code, expected) => {
+    // Whether the directive itself is printed is not the subject here.
+    expect(print(code).replace(/^ *"use strict";\n/m, "")).toBe(expected);
   });
 
   it("a renamer still gets the let and the var alias", () => {
@@ -5773,11 +5784,10 @@ describe("block-level function declarations", () => {
 
   // Each REPL input runs inside a wrapper function, which would own the `var` of a top-level block.
   it("REPL input is lowered to let at its top level only", () => {
-    const out = print("if (x) {\n  function f() {}\n}\nfunction o() {\n  {\n    function g() {}\n  }\n}", {
-      replMode: true,
-    });
-    expect(out).toContain("let f = function() {};");
-    expect(out).toContain("    {\n      function g() {}\n    }");
+    const input = "if (x) {\n  function f() {}\n  h(function() {\n    {\n      function g() {}\n    }\n  });\n}";
+    expect(print(input, { replMode: true })).toBe(
+      "(() => {\n  if (x) {\n    let f = function() {};\n    h(function() {\n      {\n        function g() {}\n      }\n    });\n  }\n})();\n",
+    );
   });
 });
 

@@ -33,7 +33,7 @@ struct Checks<'a> {
     is_all_strict: bool,
     /// The tree is whole: the parser has reported nothing.
     is_whole: bool,
-    /// Only what Prettier refuses counts: see [`is_refused_by_babel`].
+    /// Only what Prettier refuses counts: see [`refusal_of_babel`].
     is_babel: bool,
 }
 
@@ -176,7 +176,7 @@ pub(super) fn module_syntax_in_commonjs<'a>(
 /// Prettier lets Babel go on after an error, and lets pass what is only wrong in strict mode, names that are declared twice or
 /// not at all, `return`, `import` and `export` where they do not belong, and more. It is meant to format code that is not quite
 /// right. So only errors count here of which it is known that it throws. Nothing is asked of the scopes of the file.
-pub(super) fn is_refused_by_babel<'a>(file: &'a File<'a>) -> bool {
+pub(super) fn refusal_of_babel<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     let mut checks = Checks {
         file,
         first: None,
@@ -187,7 +187,7 @@ pub(super) fn is_refused_by_babel<'a>(file: &'a File<'a>) -> bool {
     };
     checks.keywords_as_names();
     checks.early_errors();
-    checks.first.is_some()
+    checks.first.map(|it| it.1)
 }
 
 /// `of_parser`: the error of TypeScript's parser, if it has one, and where it is.

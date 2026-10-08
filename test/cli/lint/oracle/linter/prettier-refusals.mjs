@@ -337,6 +337,7 @@ const TOLERATED = new Set([
 ]);
 const differences = [];
 const tolerant = [];
+const places = { typescript: { both: 0, place: 0, words: 0 }, javascript: { both: 0, place: 0, words: 0 } };
 let refused = 0;
 for (let start = 0; start < cases.length; start += 1000) {
   const batch = cases.slice(start, start + 1000);
@@ -347,7 +348,15 @@ for (let start = 0; start < cases.length; start += 1000) {
   batch.forEach((it, i) => {
     const expected = refusal(it);
     if (expected !== null) refused++;
-    const [isRefused, parser, , isRefusedWithTypes] = actual[i];
+    const [isRefused, parser, , isRefusedWithTypes, why] = actual[i];
+    if ((why !== null) !== isRefused) tolerant.push(`refused without a reason, or the other way round: ${it.path}`);
+    if (expected !== null && why !== null) {
+      // The place is for a reader, not for a verdict: it is counted, and no difference.
+      const kind = TYPESCRIPT.has(extname(it.filename)) ? places.typescript : places.javascript;
+      kind.both++;
+      if (expected.endsWith(` (${why[1]}:${why[2]})`)) kind.place++;
+      if (expected === `${why[0]} (${why[1]}:${why[2]})`) kind.words++;
+    }
     if ((expected !== null) !== isRefused) differences.push({ path: it.path, prettier: expected, parser });
     // Where types in JavaScript are tolerated, less is refused, and never an annotation.
     if (isRefusedWithTypes && !isRefused) tolerant.push(`refused only where types are tolerated: ${it.path}`);
@@ -368,4 +377,7 @@ console.log(
 console.log(`prettier refusals: ${cases.length - differences.length} of ${cases.length} agree`);
 for (const it of tolerant) console.log(it);
 console.log(`types tolerated: ${tolerant.length} wrong`);
+for (const [kind, { both, place, words }] of Object.entries(places)) {
+  console.log(`${kind}: of ${both} that both refuse, the same place for ${place}, the same words too for ${words}`);
+}
 if (differences.length > 0 || tolerant.length > 0) process.exitCode = 1;

@@ -858,7 +858,8 @@ fn diagnostics(args: &[String]) {
 }
 
 /// `prettier <cases.json>`: for each `{ code, filename }`, whether Prettier refuses it, whether the parser has reported
-/// something, what it has left in the HIR, and whether Prettier refuses it if types in JavaScript are tolerated. The file is parsed and bound as for formatting: in the dialect of Babel, as a module, without symbols.
+/// something, what it has left in the HIR, whether Prettier refuses it if types in JavaScript are tolerated, and
+/// the words, the line and the column of the refusal. The file is parsed and bound as for formatting: in the dialect of Babel, as a module, without symbols.
 fn prettier(args: &[String]) {
     let mut all = Vec::new();
     for case in &read_cases(args) {
@@ -896,6 +897,17 @@ fn prettier(args: &[String]) {
             Json::Bool(file.has_parse_errors()),
             Json::Array(testing::diagnostics(&file)),
             Json::Bool(bun_lint::linter::refused_by_prettier(&file)),
+            match bun_lint::linter::refusal_of_prettier(&file, TypesInJavaScript::Refused) {
+                Some(it) => {
+                    let at = file.position(it.at);
+                    Json::Array(vec![
+                        Json::String(it.message),
+                        Json::Number(f64::from(at.line)),
+                        Json::Number(f64::from(at.column + 1)),
+                    ])
+                }
+                None => Json::Null,
+            },
         ]));
     }
     let mut out = Vec::new();

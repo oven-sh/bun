@@ -17,6 +17,7 @@ use crate::ast::{File, Stmt};
 use crate::context::Severity;
 use crate::language::{Parser, SourceType};
 use crate::options::Json;
+use crate::tokens::{skip_trivia, token_len};
 use bun_sema::hir::{Diagnostic, DiagnosticKind, StmtKind};
 
 /// Why a parser throws, and where.
@@ -136,7 +137,7 @@ fn goes_to_flow(file: &File) -> bool {
         true => bun_core::strings::index_of_any(text, b"\n\r").unwrap_or(text.len()),
         false => 0,
     };
-    let code = crate::tokens::skip_trivia(text, after_shebang as u32) as usize;
+    let code = skip_trivia(text, after_shebang as u32) as usize;
     let mut comments = text.get(after_shebang..code).unwrap_or_default();
     while let Some(at) = bun_core::strings::index_of_char_usize(comments, b'@') {
         comments = &comments[at + 1..];
@@ -177,39 +178,100 @@ pub enum TypesInJavaScript {
 
 /// [`refused_by_prettier`], with a say about types in JavaScript.
 pub fn refused_by_prettier_with<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> bool {
+    refusal_of_prettier(file, types).is_some()
+}
+
+/// Why Prettier refuses to format a file.
+pub struct Refusal {
+    /// Without a place. For a TypeScript file these are the words of Prettier. For a JavaScript file they are those of
+    /// TypeScript's parser or of acorn, where Prettier has Babel's.
+    pub message: Vec<u8>,
+    /// The offset in the text of the file.
+    pub at: u32,
+}
+
+/// [`refused_by_prettier_with`], with the reason.
+pub fn refusal_of_prettier<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> Option<Refusal> {
+    let of_diagnostic = |it: &Diagnostic| {
+        let mut message = Vec::new();
+        match bun_sema::messages::message(it.code) {
+            Some((_, text)) => bun_sema::messages::format(&mut message, text, &it.args),
+            None => message.extend_from_slice(b"Unexpected token"),
+        }
+        Refusal {
+            message,
+            at: it.start,
+        }
+    };
+    let of_check = |it: SyntaxError| Refusal {
+        message: it.message,
+        at: it.at,
+    };
     // `import a from "a" assert { .. }` passes. `typescript` accepts it. `babel` does not, but Prettier's own tests have such
     // JavaScript files formatted, by other parsers, and nobody is served by a refusal.
-    let is_reported = |it: &Diagnostic| {
+    let is_reported = |it: &&Diagnostic| {
         it.kind == DiagnosticKind::Parse && it.code != 2880 && !file.is_in_jsdoc(it.start)
     };
     let of_parser = file.hir.diagnostics.iter();
-    let says_why = of_parser.clone().any(|it| it.kind == DiagnosticKind::Parse);
-    if file.has_parse_errors() && (of_parser.clone().any(is_reported) || !says_why) {
-        return true;
+    if file.has_parse_errors() {
+        if let Some(it) = of_parser.clone().find(is_reported) {
+            return Some(of_diagnostic(it));
+        }
+        if !of_parser.clone().any(|it| it.kind == DiagnosticKind::Parse) {
+            return Some(Refusal {
+                message: b"Unexpected token".to_vec(),
+                at: 0,
+            });
+        }
+    }
+    if !file.is_javascript() {
+        return typescript_estree::first_error(file, true).map(of_check);
+    }
+    let of_babel = || espree::refusal_of_babel(file).map(of_check);
+    if goes_to_flow(file) {
+        return of_babel();
     }
     // Refused even where types are tolerated: `type A = 1`, `a!`, a function without a body, decorators on both sides of
     // `export`.
     let is_strict = types == TypesInJavaScript::Refused;
-    let is_typescript = |it: &Diagnostic| {
+    let is_typescript = |it: &&Diagnostic| {
         (is_strict && it.kind == DiagnosticKind::Js
             || matches!(it.kind, DiagnosticKind::Js | DiagnosticKind::Grammar)
                 && matches!(it.code, 1206 | 8008 | 8013 | 8017 | 8038))
             && !file.is_in_jsdoc(it.start)
     };
-    // `declare module "a" {}`, `declare global {}`, `export as namespace A`: the parser says nothing about them.
-    let is_declaration = |it: Stmt| {
-        matches!(
-            it.try_raw().map(|it| it.kind),
-            Some(StmtKind::Module(_) | StmtKind::ExportAsNamespace(_))
-        )
+    // `declare module "a" {}`, `declare global {}`, `export as namespace A`: the parser says nothing about them. Babel takes
+    // `declare` for a name, and expects the `{` of `export {}`.
+    let of_declaration = |it: Stmt| {
+        let start = it.span().start;
+        let after_first_token =
+            start + token_len(file.text().get(start as usize..).unwrap_or_default()) as u32;
+        match it.try_raw()?.kind {
+            StmtKind::Module(_) => Some(Refusal {
+                message: b"Missing semicolon.".to_vec(),
+                at: after_first_token,
+            }),
+            StmtKind::ExportAsNamespace(_) => Some(Refusal {
+                message: b"Unexpected token, expected \"{\"".to_vec(),
+                at: skip_trivia(file.text(), after_first_token),
+            }),
+            _ => None,
+        }
     };
-    match file.is_javascript() {
-        true if goes_to_flow(file) => espree::is_refused_by_babel(file),
-        true if of_parser.clone().any(is_typescript) => true,
-        true if is_strict && file.body().iter().any(is_declaration) => true,
-        true => espree::is_refused_by_babel(file),
-        false => typescript_estree::first_error(file, true).is_some(),
-    }
+    let of_typescript = of_parser
+        .clone()
+        .filter(is_typescript)
+        .min_by_key(|it| it.start);
+    let of_declaration = match is_strict {
+        true => file.body().iter().find_map(of_declaration),
+        false => None,
+    };
+    // Babel throws at once at what it cannot parse. After an early error it goes on, and Prettier throws it at the end.
+    [of_typescript.map(of_diagnostic), of_declaration]
+        .into_iter()
+        .flatten()
+        .min_by_key(|it| it.at)
+        .or_else(of_babel)
 }
 
 /// What `@typescript-eslint/parser` throws for the file at `path`, which is absolute, if `parserOptions.projectService` is on and

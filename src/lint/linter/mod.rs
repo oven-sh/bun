@@ -57,7 +57,8 @@ pub use registry::{Registry, parse_rule_id};
 pub use resolved::{ConfiguredJsRule, ConfiguredRule, LinterOptions, ResolvedConfig, severity_of};
 pub(crate) use space::trim as trim_js_space;
 pub use syntax::{
-    TypesInJavaScript, not_in_a_project, parse_error, refused_by_prettier, refused_by_prettier_with,
+    Refusal, TypesInJavaScript, not_in_a_project, parse_error, refusal_of_prettier,
+    refused_by_prettier, refused_by_prettier_with,
 };
 
 use crate::ast::File;

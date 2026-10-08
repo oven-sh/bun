@@ -73,4 +73,16 @@ impl JSModuleLoader {
         ))
         .ok_or(JsError::Thrown)
     }
+
+    /// A handled promise, rejected with what a load threw before it had one, for its starter.
+    #[cold]
+    #[inline(never)]
+    pub fn rejected_load(
+        global: &JSGlobalObject,
+        err: JsError,
+    ) -> JsResult<core::ptr::NonNull<JSInternalPromise>> {
+        let rejected = JSInternalPromise::rejected_promise_with_caught_exception(global, err)?;
+        rejected.set_handled();
+        Ok(core::ptr::NonNull::from(rejected))
+    }
 }

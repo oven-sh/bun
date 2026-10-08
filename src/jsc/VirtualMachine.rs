@@ -3528,9 +3528,15 @@ impl VirtualMachine {
                                 }
                                 // `Promise.resolve(ret)` reads `ret.constructor` / `ret.then`,
                                 // which may throw.
-                                jsc::call_check_slow(global_ref, || {
+                                match jsc::call_check_slow(global_ref, || {
                                     JSC__JSInternalPromise__resolvedPromise(global_ref, ret)
-                                })?
+                                }) {
+                                    Ok(promise) => promise,
+                                    Err(err) => {
+                                        jsc::JSModuleLoader::rejected_load(global_ref, err)?
+                                            .as_ptr()
+                                    }
+                                }
                             }
                             Err(err) => {
                                 let rejected =
@@ -3561,9 +3567,11 @@ impl VirtualMachine {
             let global_ref = self.global();
             let promise = if !self.main_is_html_entrypoint {
                 let name = bun_core::String::borrow_utf8(MAIN_FILE_NAME);
-                jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
-                    .map(NonNull::as_ptr)
-                    .ok_or(crate::CrateError::JSError)?
+                match jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name) {
+                    Some(promise) => promise.as_ptr(),
+                    None => jsc::JSModuleLoader::rejected_load(global_ref, jsc::JsError::Thrown)?
+                        .as_ptr(),
+                }
             } else {
                 let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || {
                     Bun__loadHTMLEntryPoint(global_ref)
@@ -3580,10 +3588,14 @@ impl VirtualMachine {
             self.entry_evaluation_started = false;
             let global = self.global;
             let main_str = bun_core::String::from_bytes(self.main());
-            let promise =
-                jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str)
-                    .map(NonNull::as_ptr)
-                    .ok_or(crate::CrateError::JSError)?;
+            let promise = match jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(
+                global, &main_str,
+            ) {
+                Some(promise) => promise.as_ptr(),
+                // Not resolving is the entry's failure, like not loading.
+                None => jsc::JSModuleLoader::rejected_load(self.global(), jsc::JsError::Thrown)?
+                    .as_ptr(),
+            };
             self.set_pending_internal_promise(Some(promise));
             Ok(promise)
         }
@@ -5732,13 +5744,7 @@ impl VirtualMachine {
             Some(promise) => promise.as_ptr(),
             // Not resolving is this file's failure, like not loading.
             None => {
-                let rejected = crate::JSPromise::rejected_promise_with_caught_exception(
-                    self.global(),
-                    jsc::JsError::Thrown,
-                )?;
-                // Like the loader's: whoever loads the file reports it, not the rejection tracker.
-                rejected.set_handled();
-                std::ptr::from_mut(rejected)
+                jsc::JSModuleLoader::rejected_load(self.global(), jsc::JsError::Thrown)?.as_ptr()
             }
         };
         self.set_pending_internal_promise(Some(promise));

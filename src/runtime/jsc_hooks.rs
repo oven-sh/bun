@@ -702,7 +702,7 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
 ///
 /// Error mapping: resolver `Failure` returns the resolver error,
 /// `Pending`/`NotFound` returns `error.ModuleNotFound`,
-/// `JSModuleLoader.import` throwing returns `error.JSError`.
+/// `JSModuleLoader.import` throwing gives a rejected preload promise.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
@@ -822,11 +822,9 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         let promise: *mut JSInternalPromise = match JSModuleLoader::import_ptr(global, &module_name)
         {
             Ok(p) => p.as_ptr(),
-            Err(_) => {
-                // The exception is
-                // already pending on `global`; bubble the tag so
-                // `reload_entry_point` forwards it.
-                return Err(bun_jsc::CrateError::JSError);
+            // The loader threw before this preload had a promise: its failure, like a throw in it.
+            Err(err) => {
+                JSModuleLoader::rejected_load(JSGlobalObject::opaque_ref(global), err)?.as_ptr()
             }
         };
 

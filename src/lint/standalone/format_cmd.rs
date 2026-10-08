@@ -97,7 +97,24 @@ fn format_text(path: &str, code: &[u8], options: &FormatOptions) -> Result<Vec<u
 
 type WithCursor = (Vec<u8>, Option<u32>);
 
+/// For `FormatOptions::format_javascript`.
+fn format_javascript(path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>) -> bool {
+    let formatted = format_text_with_cursor(&crate::text(path), code, options);
+    formatted.map(|(formatted, _)| out.extend_from_slice(&formatted)).is_ok()
+}
+
 fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> Result<WithCursor, FormatError> {
+    let with_format_javascript;
+    let options = match options.format_javascript {
+        Some(_) => options,
+        None => {
+            with_format_javascript = FormatOptions {
+                format_javascript: Some(bun_format::options::FormatJavaScript(std::sync::Arc::new(format_javascript))),
+                ..options.clone()
+            };
+            &with_format_javascript
+        }
+    };
     fn format<'a>(file: &'a File<'a>, is_script: bool, options: &FormatOptions) -> Result<WithCursor, FormatError> {
         if file.language().parser == Parser::TypeScript && bun_lint::linter::parse_error(file).is_some() {
             return Err(FormatError::SyntaxError);
@@ -154,12 +171,7 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
             bun_format::markdown::dump_ast(code, &mut out);
             return Ok((out, None));
         }
-        let mut format_javascript = |path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>| {
-            let formatted = format_text_with_cursor(&crate::text(path), code, options);
-            formatted.map(|(formatted, _)| out.extend_from_slice(&formatted)).is_ok()
-        };
-        let scratch = &mut Default::default();
-        return bun_format::markdown::format(code, options, scratch, &mut out, &mut format_javascript).map(|()| with_cursor(code, out));
+        return bun_format::markdown::format(code, options, &mut Default::default(), &mut out).map(|()| with_cursor(code, out));
     }
     let is_graphql = match &options.parser {
         Some(parser) => &parser[..] == b"graphql",

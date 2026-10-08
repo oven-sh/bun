@@ -247,7 +247,7 @@ pub(super) fn preprocess(model: &mut Model, options: &Options, end_of_line: &'st
     }
     removed.sort_unstable_by_key(|span| span.start);
     let (text, code) = (model.text, printer.code());
-    let mut out = Vec::with_capacity(text.len() + code.len());
+    let mut out = Vec::with_capacity(model.rest_start as usize + code.len() + 64);
     let mut pieces: Vec<Piece> = Vec::with_capacity(printer.pieces.len());
     let mut comments = model.comments.iter().enumerate().peekable();
     let mut at = 0;
@@ -289,8 +289,9 @@ pub(super) fn preprocess(model: &mut Model, options: &Options, end_of_line: &'st
     let rest_start = model.rest_start.max(at);
     keep(&mut out, at, rest_start);
     let new_rest_start = out.len() as u32;
+    if !printer.has_changed_comment && is_unchanged(model, inject_at, &out, inject_at, &pieces, new_rest_start) {
+        return None;
+    }
     out.extend_from_slice(&text[rest_start as usize..]);
-
-    let is_same = !printer.has_changed_comment && is_unchanged(model, inject_at, &out, inject_at, &pieces, new_rest_start);
-    (!is_same).then_some(out)
+    Some(out)
 }

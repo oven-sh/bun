@@ -18,6 +18,7 @@ mod settings;
 mod sort;
 mod trivago;
 
+pub(crate) use oxfmt::ImportRun;
 pub use settings::Settings;
 
 use bun_lint::ast::File;

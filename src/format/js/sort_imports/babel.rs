@@ -112,7 +112,6 @@ pub(super) struct Specifier<'a> {
     pub(super) imported: Ident<'a>,
     pub(super) local: Ident<'a>,
     pub(super) span: Span,
-    pub(super) lines: Lines,
     pub(super) comments: Attached,
 }
 
@@ -172,6 +171,8 @@ pub(super) struct Model<'a> {
     /// The comments of the nodes in specifiers, of sources, of attributes and of the strings of
     /// directives. The plugins leave them alone.
     deep: Vec<(Node, Which, List)>,
+    /// Whether there is a comment in an import.
+    pub(super) has_comments_in_imports: bool,
     /// The comments of [`Node::Empty`].
     pub(super) empty: Attached,
     /// `program.body[0]`: where it starts, and its `leadingComments`.
@@ -230,10 +231,11 @@ impl<'a> Model<'a> {
             lists: Vec::new(),
             interpreter: None,
             directives: Vec::new(),
-            declarations: Vec::new(),
-            specifiers: Vec::new(),
-            orders: Vec::new(),
+            declarations: Vec::with_capacity(32),
+            specifiers: Vec::with_capacity(64),
+            orders: Vec::with_capacity(64),
             deep: Vec::new(),
+            has_comments_in_imports: false,
             empty: Attached::default(),
             first_statement: None,
             is_contiguous: true,
@@ -502,7 +504,6 @@ impl<'a> Model<'a> {
             imported,
             local,
             span,
-            lines: self.lines_of(span),
             comments: Attached::default(),
         });
     }
@@ -548,6 +549,7 @@ impl<'a> Model<'a> {
 
     /// Babel's `processComment` and `finalizeComment` for comments inside of an import.
     fn attach_in_declaration(&mut self, index: u32, group: Group) {
+        self.has_comments_in_imports = true;
         let declaration = self.declarations[index as usize];
         let list = self.new_list(group.first..group.after);
         let is_in = |span: Span| span.start < group.start && group.end < span.end;
@@ -628,7 +630,6 @@ impl<'a> Model<'a> {
     pub(super) fn lines(&self, node: Node) -> Option<Lines> {
         match node {
             Node::Import(index) => self.declarations[index as usize].lines,
-            Node::Specifier(index) => Some(self.specifiers[index as usize].lines),
             Node::Empty => Some(Lines::default()),
             _ => self.span(node).map(|span| self.lines_of(span)),
         }

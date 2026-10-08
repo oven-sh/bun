@@ -4,6 +4,7 @@
 //! as bytes: everything is generic over [`Unit`], and other text is converted first.
 
 use super::collation_tables::{EXPANSIONS, PRIMARY, SECONDARY, TERTIARY};
+use smallvec::SmallVec;
 use std::cmp::Ordering;
 
 /// A UTF-16 code unit, or a byte of ASCII text.
@@ -93,6 +94,8 @@ fn parse_float<T: Unit>(text: &[T]) -> Option<f64> {
         true => f64::INFINITY,
         false => match decimal_literal_len(unsigned) {
             0 => return None,
+            // Nearly always a few digits.
+            len @ ..=15 if digits_at(unsigned, 0) == len => unsigned[..len].iter().fold(0u64, |value, unit| value * 10 + u64::from(unit.code() - 0x30)) as f64,
             len => ascii_of(&unsigned[..len]).parse::<f64>().ok()?,
         },
     };
@@ -101,6 +104,10 @@ fn parse_float<T: Unit>(text: &[T]) -> Option<f64> {
 
 /// `isNaN(text)`
 fn is_nan_as_number<T: Unit>(text: &[T]) -> bool {
+    // What nearly all text starts with.
+    if text.first().is_some_and(|unit| matches!(unit.code(), 0x21..=0x2A | 0x2C | 0x2F | 0x3A..=0x48 | 0x4A..=0x7E)) {
+        return true;
+    }
     let start = text.iter().take_while(|unit| is_js_whitespace(unit.code())).count();
     let end = text.len() - text[start..].iter().rev().take_while(|unit| is_js_whitespace(unit.code())).count();
     let text = &text[start..end];
@@ -120,7 +127,7 @@ fn is_nan_as_number<T: Unit>(text: &[T]) -> bool {
     }
     let sign = usize::from(matches!(text[0].code(), 0x2B | 0x2D));
     let unsigned = &text[sign..];
-    !(ascii_of(unsigned) == "Infinity" || (!unsigned.is_empty() && decimal_literal_len(unsigned) == unsigned.len()))
+    !((unsigned.len() == 8 && starts_with(unsigned, b"Infinity")) || (!unsigned.is_empty() && decimal_literal_len(unsigned) == unsigned.len()))
 }
 
 // ───────────────────────────── javascript-natural-sort ─────────────────────────────
@@ -226,7 +233,10 @@ fn natural_sort_units<T: Unit>(x: &[T], y: &[T]) -> Ordering {
         }
     }
 
-    let (mut x_chunks, mut y_chunks) = (Chunks::new(x), Chunks::new(y));
+    compare_chunks(Chunks::new(x), Chunks::new(y))
+}
+
+fn compare_chunks<T: Unit>(mut x_chunks: Chunks<T>, mut y_chunks: Chunks<T>) -> Ordering {
     loop {
         let (x_chunk, y_chunk) = (x_chunks.next(), y_chunks.next());
         if x_chunk.is_none() && y_chunk.is_none() {
@@ -257,9 +267,31 @@ pub(super) fn natural_sort(x: &[u8], y: &[u8], is_insensitive: bool) -> Ordering
         return natural_sort_units(&utf16(x, is_insensitive), &utf16(y, is_insensitive));
     }
     if is_insensitive && (x.iter().chain(y).any(u8::is_ascii_uppercase)) {
-        return natural_sort_units(&x.to_ascii_lowercase(), &y.to_ascii_lowercase());
+        let lowercase = |text: &[u8]| text.iter().map(u8::to_ascii_lowercase).collect::<SmallVec<[u8; 64]>>();
+        return natural_sort_ascii(&lowercase(x), &lowercase(y));
     }
-    natural_sort_units(x, y)
+    natural_sort_ascii(x, y)
+}
+
+fn natural_sort_ascii(x: &[u8], y: &[u8]) -> Ordering {
+    // Neither a number nor anything to trim: only the chunks from where the two differ count.
+    let is_plain = |text: &[u8]| {
+        text.first().is_some_and(|first| !first.is_ascii_digit() && !matches!(first, b'+' | b'-' | b' ')) && text.last() != Some(&b' ')
+    };
+    if !is_plain(x) || !is_plain(y) {
+        return natural_sort_units(x, y);
+    }
+    let common = x.iter().zip(y).take_while(|(x, y)| x == y).count();
+    let mut start = common;
+    if let Some(before) = common.checked_sub(1) {
+        start -= x[..common].iter().rev().take_while(|byte| byte.is_ascii_digit() == x[before].is_ascii_digit()).count();
+    }
+    let chunks = |text| Chunks {
+        text,
+        at: 0,
+        is_whole: false,
+    };
+    compare_chunks(chunks(&x[start..]), chunks(&y[start..]))
 }
 
 // ───────────────────────────── @ianvs/prettier-plugin-sort-imports ─────────────────────────────
@@ -405,4 +437,66 @@ pub(super) fn locale_compare(a: &[u8], b: &[u8]) -> Ordering {
     compare_by(elements(a, false), elements(b, false), compare_primary)
         .then_with(|| level(|it| if let Element::Weights(_, secondary, _) = it { secondary } else { 0 }))
         .then_with(|| level(|it| if let Element::Weights(_, _, tertiary) = it { tertiary } else { 0 }))
+}
+
+// ───────────────────────────── natord ─────────────────────────────
+
+fn natord_chars(left: impl Iterator<Item = char>, right: impl Iterator<Item = char>) -> Ordering {
+    let (mut left, mut right) = (left.fuse(), right.fuse());
+    let digit = |c: Option<char>| c.and_then(|c| c.to_digit(10));
+    let (mut l, mut r) = (left.next(), right.next());
+    loop {
+        while l.is_some_and(char::is_whitespace) {
+            l = left.next();
+        }
+        while r.is_some_and(char::is_whitespace) {
+            r = right.next();
+        }
+        match (l, r) {
+            (None, None) => return Ordering::Equal,
+            (Some(_), None) => return Ordering::Greater,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(l_char), Some(r_char)) => {
+                let (Some(l_digit), Some(r_digit)) = (digit(l), digit(r)) else {
+                    if l_char != r_char {
+                        return l_char.cmp(&r_char);
+                    }
+                    (l, r) = (left.next(), right.next());
+                    continue;
+                };
+                // With a zero at the start, digits are compared from the left: `015` < `12`.
+                // Otherwise the longer number is the greater one: `15` < `123`.
+                let is_left_aligned = l_digit == 0 || r_digit == 0;
+                let mut order = l_digit.cmp(&r_digit);
+                loop {
+                    if is_left_aligned && order != Ordering::Equal {
+                        return order;
+                    }
+                    (l, r) = (left.next(), right.next());
+                    match (digit(l), digit(r)) {
+                        (Some(l_digit), Some(r_digit)) => order = order.then(l_digit.cmp(&r_digit)),
+                        (Some(_), None) => return Ordering::Greater,
+                        (None, Some(_)) => return Ordering::Less,
+                        (None, None) => break,
+                    }
+                }
+                if order != Ordering::Equal {
+                    return order;
+                }
+            }
+        }
+    }
+}
+
+/// `natord::compare` of the crate `natord`, 1.0.9. `ignores_case`: of the two in lower case.
+pub(super) fn natord(left: &[u8], right: &[u8], ignores_case: bool) -> Ordering {
+    if left.is_ascii() && right.is_ascii() {
+        let char_of = |byte: &u8| char::from(if ignores_case { byte.to_ascii_lowercase() } else { *byte });
+        return natord_chars(left.iter().map(char_of), right.iter().map(char_of));
+    }
+    let (left, right) = (String::from_utf8_lossy(left), String::from_utf8_lossy(right));
+    match ignores_case {
+        true => natord_chars(left.to_lowercase().chars(), right.to_lowercase().chars()),
+        false => natord_chars(left.chars(), right.chars()),
+    }
 }

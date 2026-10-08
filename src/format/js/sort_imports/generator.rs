@@ -594,8 +594,83 @@ impl<'m, 'a> Printer<'m, 'a> {
         }
     }
 
+    /// The same as `import_declaration` where no import has a comment in it.
+    fn import_declaration_without_comments(&mut self, index: u32) {
+        let model = self.model;
+        let declaration = model.declarations[index as usize];
+        self.flush();
+        let out = &mut self.out;
+        out.extend_from_slice(b"import ");
+        if declaration.is_type {
+            out.extend_from_slice(b"type ");
+        } else if declaration.import.is_deferred() && declaration.span.is_some() {
+            out.extend_from_slice(b"defer ");
+        }
+        let specifiers = model.specifiers_of(&declaration);
+        let mut is_in_braces = false;
+        for (at, &specifier) in specifiers.iter().enumerate() {
+            let specifier = &model.specifiers[specifier as usize];
+            if at > 0 {
+                out.extend_from_slice(b", ");
+            }
+            match specifier.kind {
+                SpecifierKind::Default => {}
+                SpecifierKind::Namespace => out.extend_from_slice(b"* as "),
+                SpecifierKind::Named => {
+                    if !std::mem::replace(&mut is_in_braces, true) {
+                        out.extend_from_slice(b"{ ");
+                    }
+                    if specifier.is_type {
+                        out.extend_from_slice(b"type ");
+                    }
+                    let is_string = specifier.imported.is_string();
+                    if is_string || specifier.local.bytes() != specifier.imported.bytes() {
+                        out.extend_from_slice(if is_string { model.file.slice(specifier.imported.span()) } else { specifier.imported.bytes() });
+                        out.extend_from_slice(b" as ");
+                    }
+                }
+            }
+            out.extend_from_slice(specifier.local.bytes());
+        }
+        if is_in_braces {
+            out.extend_from_slice(b" }");
+        } else if declaration.is_type && specifiers.is_empty() {
+            out.extend_from_slice(b"{}");
+        }
+        if !specifiers.is_empty() || declaration.is_type {
+            out.extend_from_slice(b" from ");
+        }
+        out.extend_from_slice(model.file.slice(model.source_span(&declaration)));
+        if let Some(attributes) = declaration.import.attributes().filter(|_| declaration.has_attributes) {
+            let is_legacy = self.attributes_keyword.ends_with(b"-legacy");
+            out.push(b' ');
+            out.extend_from_slice(self.attributes_keyword.strip_suffix(b"-legacy").unwrap_or(self.attributes_keyword));
+            out.extend_from_slice(if is_legacy { b" " } else { b" { " });
+            let mut is_first = true;
+            for attribute in attributes.entries().iter() {
+                let (Some(key), Some(value)) = (attribute_key_span(model.file, attribute), attribute.value()) else {
+                    continue;
+                };
+                if !std::mem::replace(&mut is_first, false) {
+                    out.extend_from_slice(b", ");
+                }
+                out.extend_from_slice(model.file.slice(key));
+                out.extend_from_slice(b": ");
+                out.extend_from_slice(model.file.slice(value.span()));
+            }
+            if !is_legacy {
+                out.extend_from_slice(b" }");
+            }
+        }
+        self.last = LAST_IS_TEXT;
+        self.semicolon(false);
+    }
+
     fn import_declaration(&mut self, index: u32) {
         let model = self.model;
+        if !model.has_comments_in_imports {
+            return self.import_declaration_without_comments(index);
+        }
         let declaration = model.declarations[index as usize];
         self.word(b"import");
         self.space();

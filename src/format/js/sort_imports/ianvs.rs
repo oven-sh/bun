@@ -87,10 +87,11 @@ fn has_ignore_next_node(model: &Model, comments: &[CommentId]) -> bool {
 
 /// `text.trim()`
 fn trim(text: &[u8]) -> &[u8] {
+    trim_end(trim_start(text))
+}
+
+fn trim_end(text: &[u8]) -> &[u8] {
     let mut text = text;
-    while let len @ 1.. = whitespace_len(text) {
-        text = &text[len..];
-    }
     loop {
         text = match text {
             [rest @ .., b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C] | [rest @ .., 0xC2, 0xA0] => rest,
@@ -288,7 +289,7 @@ impl Registry {
     fn attach(&mut self, model: &Model, which: Which, comments: List, owner: Owner) {
         let owner_lines = match owner {
             Owner::Declaration(index) => model.declarations[index as usize].lines,
-            Owner::Specifier(index) => Some(model.specifiers[index as usize].lines),
+            Owner::Specifier(index) => model.lines(Node::Specifier(index)),
         };
         let is_specifier = matches!(owner, Owner::Specifier(_));
         let mut counter = 0;
@@ -354,7 +355,7 @@ fn comment_registry(model: &Model, output: &[u32]) -> Vec<Entry> {
     // The first specifier on a line.
     let specifier_on = |line: i32| {
         (output.iter().flat_map(|index| model.specifiers_of(&model.declarations[*index as usize])).copied())
-            .find(|specifier| model.specifiers[*specifier as usize].lines.start == line)
+            .find(|specifier| model.lines(Node::Specifier(*specifier)).is_some_and(|lines| lines.start == line))
     };
     for entry in deferred {
         if registry.is_registered[entry.comment as usize] {
@@ -408,7 +409,7 @@ fn attach_comments_to_output_nodes(model: &mut Model, entries: &[Entry], nodes: 
                 continue;
             };
             owner = Node::Specifier(last);
-            model.comments[entry.comment as usize].start_line = model.specifiers[last as usize].lines.end + 1;
+            model.comments[entry.comment as usize].start_line = model.lines(owner).map_or(0, |lines| lines.end) + 1;
         }
         if owner == new_first_import
             && entry.association != Which::Leading
@@ -547,7 +548,7 @@ pub(super) fn preprocess(model: &mut Model, options: &Options, end_of_line: &'st
 
     // `removeNodesFromOriginalCode`, and `trim`
     let (text, from) = (model.text, model.text_start());
-    let mut out = Vec::with_capacity(text.len() + printer.code().len());
+    let mut out = Vec::with_capacity(model.rest_start as usize + printer.code().len() + 64);
     out.extend_from_slice(&text[..from as usize]);
     let moved = out.len() as u32;
     let mut pieces: Vec<Piece> = (printer.pieces.iter())
@@ -560,7 +561,6 @@ pub(super) fn preprocess(model: &mut Model, options: &Options, end_of_line: &'st
     out.extend_from_slice(printer.code());
     let header_end = out.len();
     let mut comments = model.comments.iter().enumerate().peekable();
-    let mut new_rest_start = None;
     let mut keep = |out: &mut Vec<u8>, at: u32, to: u32| {
         let mut kept = &text[at as usize..to as usize];
         let mut at = at;
@@ -578,9 +578,6 @@ pub(super) fn preprocess(model: &mut Model, options: &Options, end_of_line: &'st
                 });
             }
         }
-        if new_rest_start.is_none() && (at..=to).contains(&model.rest_start) {
-            new_rest_start = Some(out.len() as u32 + model.rest_start - at);
-        }
         out.extend_from_slice(kept);
     };
     let mut at = from;
@@ -590,14 +587,17 @@ pub(super) fn preprocess(model: &mut Model, options: &Options, end_of_line: &'st
         }
         at = at.max(span.end);
     }
-    keep(&mut out, at, text.len() as u32);
-    let trimmed = header_end + trim(&out[header_end..]).len();
-    out.truncate(trimmed);
+    let rest_start = model.rest_start.max(at);
+    keep(&mut out, at, rest_start);
 
     let new_from = from + u32::from(nodes.first() == Some(&Node::Empty) && model.interpreter.is_none() && model.directives.is_empty());
-    let new_rest_start = new_rest_start.unwrap_or(out.len() as u32).min(out.len() as u32);
-    let is_same = !printer.has_changed_comment && is_unchanged(model, from, &out, new_from, &pieces, new_rest_start);
-    (!is_same).then_some(out)
+    if !printer.has_changed_comment && is_unchanged(model, from, &out, new_from, &pieces, out.len() as u32) {
+        return None;
+    }
+    out.extend_from_slice(&text[rest_start as usize..]);
+    let trimmed = header_end + trim_end(&out[header_end..]).len();
+    out.truncate(trimmed);
+    Some(out)
 }
 
 fn trim_start(text: &[u8]) -> &[u8] {

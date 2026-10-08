@@ -5,6 +5,7 @@ use super::statements::{
     CommentPlacement, comment_placements, expression_statement_needs_semicolon, follows_type_cast_comment,
 };
 use crate::ir::element::TextWidth;
+use crate::js::sort_imports::ImportRun;
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -122,8 +123,10 @@ pub(crate) struct FormatStatements<'a>(pub(crate) List<'a, Stmt<'a>>);
 impl<'a> Format<'a> for FormatStatements<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let mut previous: Option<Stmt<'a>> = None;
+        let mut imports = ImportRun::new(f);
         for statement in self.0.iter().filter(|it| !matches!(it.kind(), StmtKind::Empty)) {
             let Some(previous_statement) = previous.replace(statement) else {
+                imports.before_statement(statement, f);
                 write_semicolon_before_type_cast_comment(statement, f);
                 write!(f, statement);
                 continue;
@@ -134,10 +137,12 @@ impl<'a> Format<'a> for FormatStatements<'a> {
                 true => SmallVec::new(),
                 false => write_more_trailing_comments(previous_statement, comments, statement, f),
             };
+            imports.before_separator(statement, placements.is_empty(), f);
             match is_next_line_empty_after(previous_statement, f) {
                 true => write!(f, empty_line()),
                 false => write!(f, hard_line_break()),
             }
+            imports.before_statement(statement, f);
             for (comment, _) in comments.iter().zip(&placements).filter(|(_, placement)| placement.leads()) {
                 write!(f, FormatLeadingComments::Comments(std::slice::from_ref(comment)));
             }
@@ -153,6 +158,7 @@ impl<'a> Format<'a> for FormatStatements<'a> {
             let end = last.ast_parent().span().end;
             write!(f, FormatTrailingComments::Comments(f.comments().comments_before(end)));
         }
+        imports.finish(f);
     }
 }
 

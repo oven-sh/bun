@@ -4,6 +4,8 @@
 //! - `cases <cases.json> [--filter=text] [--report=dir] [--verbose]`: the cases that
 //!   test/cli/format/oracle/sort-imports/*.mjs make. Of each, the text and the formatted text are
 //!   compared with those of the plugin and Prettier.
+//! - `bench <paths..> [--iterations=n] [--steady]`: how long sorting takes, next to parsing and formatting. `--steady`: of
+//!   the files as they are once they are formatted.
 //! - `serve`: for each `<path>\t<length>\n<text>` on stdin, answers `<length>\n<text>` twice: the
 //!   text that is formatted, and the formatted text. A length of `-1`: an error.
 
@@ -148,6 +150,68 @@ fn serve(args: &Args) {
     }
 }
 
+fn bench(args: &Args) {
+    let mut files: Vec<(String, Vec<u8>)> = (super::collect_files(args.positional.get(1..).unwrap_or_default()).iter())
+        .filter_map(|path| Some((path.to_string_lossy().into_owned(), std::fs::read(path).ok()?)))
+        .collect();
+    if args.flag("steady").is_some() {
+        for (path, code) in &mut files {
+            if let Ok(formatted) = super::format_text(path, code, &args.options) {
+                *code = formatted;
+            }
+        }
+    }
+    let iterations: u32 = args.flag("iterations").and_then(|it| it.parse().ok()).unwrap_or(3);
+    let how = args.options.sort_imports.as_deref().expect("options");
+    let language = LanguageOptions::default();
+    let (mut parsing, mut sorting, mut formatting, mut again, mut moved) = (0.0, 0.0, 0.0, 0.0, 0);
+    let mut scratch = bun_format::Scratch::default();
+    for _ in 0..iterations {
+        moved = 0;
+        for (path, code) in &files {
+            let started = std::time::Instant::now();
+            crate::with_file(path, code, &language, |file| {
+                parsing += started.elapsed().as_secs_f64();
+                // The formatter needs them anyway.
+                let started = std::time::Instant::now();
+                std::hint::black_box(file.comments().count());
+                formatting += started.elapsed().as_secs_f64();
+                let started = std::time::Instant::now();
+                let sorted = bun_format::sort_imports::sorted_text(file, how);
+                sorting += started.elapsed().as_secs_f64();
+                let mut out = Vec::new();
+                match sorted {
+                    None => {
+                        let started = std::time::Instant::now();
+                        let _ = bun_format::format(file, &args.options, &mut scratch, &mut out);
+                        formatting += started.elapsed().as_secs_f64();
+                    }
+                    Some(sorted) => {
+                        moved += 1;
+                        let started = std::time::Instant::now();
+                        crate::with_file(path, &sorted, &language, |file| {
+                            again += started.elapsed().as_secs_f64();
+                            let started = std::time::Instant::now();
+                            let _ = bun_format::format(file, &args.options, &mut scratch, &mut out);
+                            formatting += started.elapsed().as_secs_f64();
+                        });
+                    }
+                }
+            });
+        }
+    }
+    let per_pass = |seconds: f64| seconds * 1e3 / f64::from(iterations);
+    println!(
+        "{} files, {:.1} MB: parse + bind {:.1} ms, sort imports {:.1} ms, parse + bind again {:.1} ms for {moved} files, format {:.1} ms",
+        files.len(),
+        files.iter().map(|it| it.1.len()).sum::<usize>() as f64 / 1e6,
+        per_pass(parsing),
+        per_pass(sorting),
+        per_pass(again),
+        per_pass(formatting),
+    );
+}
+
 pub(super) fn run(args: &Args) {
     match args.positional.first().map(String::as_str) {
         Some("text") => {
@@ -159,7 +223,8 @@ pub(super) fn run(args: &Args) {
             }
         }
         Some("cases") => cases(args),
+        Some("bench") => bench(args),
         Some("serve") => serve(args),
-        _ => println!("usage: bun-lint format sort-imports text|cases|serve .."),
+        _ => println!("usage: bun-lint format sort-imports text|cases|bench|serve .."),
     }
 }

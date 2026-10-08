@@ -9,6 +9,7 @@
 mod ast;
 mod block;
 mod content;
+pub(crate) mod embed;
 mod front_matter;
 mod inline;
 mod preprocess;
@@ -216,7 +217,18 @@ pub fn format(text: &[u8], options: &FormatOptions, scratch: &mut Scratch, out: 
         return Ok(());
     }
 
-    let tree = &mut scratch.tree;
+    with_document(text, &options, &mut scratch.tree, false, |document| doc::print(document, &options, text, out))
+}
+
+/// Calls `then` with the document for `text`, in which every line break is `\n`. `is_in_template`: it is for a
+/// template in JavaScript.
+fn with_document<R>(
+    text: &[u8],
+    options: &FormatOptions,
+    tree: &mut ast::Tree,
+    is_in_template: bool,
+    then: impl FnOnce(doc::Doc<'_>) -> R,
+) -> Result<R, FormatError> {
     let root = block::parse(text, tree).ok_or(FormatError::NestedTooDeeply)?;
     let mut preprocessor = preprocess::Preprocessor {
         text,
@@ -232,23 +244,23 @@ pub fn format(text: &[u8], options: &FormatOptions, scratch: &mut Scratch, out: 
 
     let formats_embedded = matches!(options.embedded_language_formatting, EmbeddedLanguageFormatting::Auto);
     let mut embed = |embedded: &printer::Embedded<'_>| match formats_embedded {
-        true => format_embedded(embedded.language, embedded.code, embedded.width, &options),
+        true => format_embedded(embedded.language, embedded.code, embedded.width, options),
         false => None,
     };
     let mut printer = printer::Printer {
         text,
         tree,
-        options: &options,
+        options,
         embed: &mut embed,
+        is_in_template,
         indentation: 0,
         is_in_label: false,
         stack_check: bun_core::StackCheck::init(),
         is_nested_too_deeply: false,
     };
     let document = printer.print(root);
-    if printer.is_nested_too_deeply {
-        return Err(FormatError::NestedTooDeeply);
+    match printer.is_nested_too_deeply {
+        true => Err(FormatError::NestedTooDeeply),
+        false => Ok(then(document)),
     }
-    doc::print(document, &options, text, out);
-    Ok(())
 }

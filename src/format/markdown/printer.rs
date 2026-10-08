@@ -24,6 +24,8 @@ pub(crate) struct Printer<'a, 'e> {
     pub(crate) options: &'a FormatOptions,
     /// Formats code in another language. `None`: it stays as it is.
     pub(crate) embed: &'e mut dyn FnMut(&Embedded<'_>) -> Option<Vec<u8>>,
+    /// The document is for a template in JavaScript: no backticks.
+    pub(crate) is_in_template: bool,
     /// How many columns what is being written is indented by.
     pub(crate) indentation: usize,
     /// What is being written is in a reference whose label is its text, which has to stay as it is.
@@ -969,7 +971,8 @@ impl<'a> Printer<'a, '_> {
         if formatted.is_none() && is_indented_code(self.text, self.tree, id) {
             return align_with_spaces(4, docs!["    ", replace_end_of_line(value, hardline)]);
         }
-        let style = vec![b'`'; (max_continuous_count(value, b'`') + 1).max(3)];
+        let style_unit = if self.is_in_template { b'~' } else { b'`' };
+        let style = vec![style_unit; (max_continuous_count(value, style_unit) + 1).max(3)];
         let meta = self.str(node.third);
         docs![
             style.clone(),

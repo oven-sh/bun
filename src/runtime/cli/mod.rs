@@ -342,6 +342,8 @@ pub(crate) mod check_command;
 pub(crate) mod format_command;
 #[path = "lint_command.rs"]
 pub(crate) mod lint_command;
+#[path = "lint_js.rs"]
+pub(crate) mod lint_js;
 #[path = "script_or_command.rs"]
 pub(crate) mod script_or_command;
 #[path = "dedupe_command.rs"]

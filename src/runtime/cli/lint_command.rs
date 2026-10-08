@@ -1,6 +1,7 @@
 //! `bun lint`: lints a project with the rules of ESLint and typescript-eslint. All of it is in
 //! `bun_lint_driver`. What is here is what that takes from the process: the arguments, the
-//! terminal, TypeScript's libraries, and a way to run a configuration file that is a program.
+//! terminal, TypeScript's libraries, a way to run a configuration file that is a program, and
+//! (`lint_js.rs`) rules that are written in JavaScript.
 
 use bstr::BStr;
 
@@ -82,83 +83,6 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     }
 }
 
-/// Our ends of the pipes to a process that runs a script.
-struct Worker {
-    /// Closed first: the script ends when there is nothing more to read.
-    input: Option<bun_sys::File>,
-    output: bun_sys::File,
-}
-
-impl bun_lint_driver::js_plugin::Channel for Worker {
-    fn send(&mut self, bytes: &[u8]) -> Result<(), Vec<u8>> {
-        let input = self.input.as_ref().ok_or(&b"The pipe is closed."[..])?;
-        input.write_all(bytes).map_err(|err| err.name().to_vec())
-    }
-
-    fn receive(&mut self, into: &mut [u8]) -> Result<(), Vec<u8>> {
-        match self.output.read_all(into) {
-            Ok(count) if count == into.len() => Ok(()),
-            Ok(_) => Err(b"The process has ended.".to_vec()),
-            Err(err) => Err(err.name().to_vec()),
-        }
-    }
-}
-
-impl Drop for Worker {
-    fn drop(&mut self) {
-        drop(self.input.take());
-        // Until it has ended, so that what it prints for the user comes before what follows.
-        let mut rest = [0; 4096];
-        while self.output.read(&mut rest).is_ok_and(|count| count > 0) {}
-    }
-}
-
-/// Starts `script` with this executable.
-fn spawn_worker(script: &Script) -> Result<Box<dyn bun_lint_driver::js_plugin::Channel>, Vec<u8>> {
-    use crate::api::bun::process::{SpawnEnv, SpawnOptions, Stdio, spawn_process_cstr};
-    let failed = |name: &[u8]| [&b"Could not start a process: "[..], name].concat();
-    let Ok(exe) = bun_core::self_exe_path() else {
-        return Err(b"Could not find the path of the running executable.".to_vec());
-    };
-    let argv = [exe.as_bytes(), b"-e", script.source.as_bytes()];
-    let argv: Vec<std::ffi::CString> = (argv.iter().chain(script.arguments))
-        .map(|it| std::ffi::CString::new(*it).map_err(|_| failed(b"an argument has a NUL in it")))
-        .collect::<Result<_, _>>()?;
-    let argv: Vec<&std::ffi::CStr> = argv.iter().map(|it| it.as_c_str()).collect();
-    // The end to read from, and the end to write to.
-    let pipe = || bun_sys::pipe().map(|ends| ends.map(bun_sys::File::from_fd)).map_err(|err| failed(err.name()));
-    let ([its_input, input], [output, its_output]) = (pipe()?, pipe()?);
-    let spawned = spawn_process_cstr(
-        &SpawnOptions {
-            stdin: Stdio::Ignore,
-            // What the script prints is for the user, and not among the messages.
-            stdout: Stdio::Pipe(bun_sys::Fd::stderr()),
-            stderr: Stdio::Inherit,
-            // 3 and 4
-            extra_fds: Box::new([Stdio::Pipe(its_input.handle()), Stdio::Pipe(its_output.handle())]),
-            cwd: Box::<[u8]>::from(script.cwd),
-            #[cfg(windows)]
-            windows: crate::api::bun::process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                    None, None,
-                )),
-                ..Default::default()
-            },
-            ..Default::default()
-        },
-        &argv,
-        SpawnEnv::Inherit,
-    );
-    match spawned {
-        Ok(Ok(_)) => Ok(Box::new(Worker {
-            input: Some(input),
-            output,
-        })),
-        Ok(Err(err)) => Err(failed(err.name())),
-        Err(err) => Err(failed(err.name().as_bytes())),
-    }
-}
-
 /// Reports that the command line of `bun <command>` cannot be used.
 pub(crate) fn usage_error(command: &str, message: &[u8]) -> ! {
     Output::err_generic("{}", (BStr::new(message),));
@@ -186,19 +110,9 @@ pub(crate) fn run_and_exit(
         let _turn = turn.lock();
         run_script(script)
     };
-    let cwd = bun_lint_driver::from_native_path(&working_directory());
-    let worker = Script {
-        source: bun_lint_driver::js_plugin::BOOTSTRAP,
-        arguments: &[],
-        cwd: &cwd,
-    };
-    let spawn_worker = || {
-        let _turn = turn.lock();
-        spawn_worker(&worker)
-    };
-    let processes = bun_lint_driver::js_plugin::Processes::new(&spawn_worker, usize::from(bun_core::get_thread_count()));
+    let js_engine = super::lint_js::ThreadVms::default();
     let environment = Environment {
-        cwd: cwd.clone(),
+        cwd: bun_lint_driver::from_native_path(&working_directory()),
         stdout: Stream {
             is_tty: Output::is_stdout_tty(),
             colors: Output::enable_ansi_colors_stdout(),
@@ -211,7 +125,7 @@ pub(crate) fn run_and_exit(
         is_github_action: Output::is_github_action(),
         libs: bun_sema_driver::Libs::Bundled(super::typescript_libs::BUNDLED),
         run_script: &run_script,
-        js_engine: &processes,
+        js_engine: &js_engine,
         version: Global::package_json_version.as_bytes(),
     };
     let outcome = run(&environment);

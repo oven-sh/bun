@@ -64,7 +64,7 @@ fn add_named_import<'a>(file: &'a File<'a>, id: &str, into: &mut Vec<LintMessage
             rule_id: Some(RuleId::Unknown(id.as_bytes().into())),
             severity: Severity::Warn,
             message: b"Add I18nManager.".to_vec(),
-            message_id: Some(""),
+            message_id: Some("".into()),
             line: start.line,
             column: start.column + 1,
             end: Some((end.line, end.column + 1)),

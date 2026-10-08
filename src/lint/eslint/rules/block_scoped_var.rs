@@ -40,6 +40,9 @@ impl BlockScopedVar {
         let StmtKind::Var(declarations) = statement.kind() else {
             return;
         };
+        if cx.has_reported_too_much() {
+            return;
+        }
         let Some(first) = declarations.first().filter(|it| it.var_kind() == VarKind::Var) else {
             return;
         };
@@ -61,7 +64,8 @@ impl BlockScopedVar {
                     Node::Pat(name) => utils::estree_span(name.into()),
                     _ => reference.span(),
                 };
-                if context.contains(identifier) {
+                // Each of n declarations can have n references outside its block.
+                if context.contains(identifier) || cx.has_reported_too_much() {
                     return true;
                 }
                 let definition = *definition.get_or_insert_with(|| cx.position(pat.span().start));

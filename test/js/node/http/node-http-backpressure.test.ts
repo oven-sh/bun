@@ -3135,6 +3135,59 @@ describe("backpressure", () => {
         }
       });
 
+      // The response ends the connection at a moment when the kernel has room again: its bytes and the
+      // rest of the write that waits leave in that call, before the write has heard that it is done.
+      it("a response that closes the connection as the kernel takes everything does not fail the write that waits", async () => {
+        const callbacks: string[] = [];
+        const ready = Promise.withResolvers<{ res: http.ServerResponse; chunks: number; waits: boolean }>();
+        const connection = await open("http", "req.socket in a 'request' listener", (socket, res) => {
+          // The last write of fill() is the one that waits.
+          const { chunks, waits } = fill(chunk =>
+            socket.write(chunk, (err?: Coded | null) => void callbacks.push(err ? `error ${err.code}` : "ok")),
+          );
+          ready.resolve({ res: res!, chunks, waits });
+        });
+        try {
+          const { res, chunks, waits } = await ready.promise;
+          const { client } = connection;
+          const parts: Buffer[] = [];
+          const ended = Promise.withResolvers<void>();
+          let length = 0;
+          let responded = false;
+          client.on("data", (part: Buffer) => {
+            parts.push(part);
+            length += part.length;
+            // The client has what the kernel held, so the next write of the server goes out whole.
+            if (!responded && length >= (chunks - 1) * SIZE) {
+              responded = true;
+              res.writeHead(200, { "Connection": "close", "Content-Length": 4 });
+              res.end("done");
+            }
+          });
+          client.on("end", () => ended.resolve());
+          client.resume();
+          await ended.promise;
+          const received = Buffer.concat(parts);
+          expect({
+            waits,
+            wrong: firstWrongChunk(received, chunks),
+            ...offsets(received, [response]),
+            tail: received.subarray(-4).toString(),
+            callbacks,
+            errors: connection.errors,
+          }).toEqual({
+            waits: true,
+            wrong: -1,
+            [response]: chunks * SIZE,
+            tail: "done",
+            callbacks: inOrder(chunks).map(() => "ok"),
+            errors: [],
+          });
+        } finally {
+          connection.close();
+        }
+      });
+
       it("a 'finish' listener of the response that destroys the socket finds every raw write done", async () => {
         const started = Promise.withResolvers<Burst>();
         const connection = await open("http", "req.socket in a 'request' listener", (socket, res) => {
@@ -3484,28 +3537,48 @@ describe("backpressure", () => {
       }
     });
 
-    it("a stream piped to the response behind raw writes that wait reaches the client", async () => {
-      const filling = Promise.withResolvers<ReturnType<typeof fill>>();
-      const connection = await open("http", "req.socket in a 'request' listener", (socket, res) => {
-        const result = fill((chunk, callback) => socket.write(chunk, callback));
-        res!.writeHead(200, { "Connection": "close", "Content-Length": 10 });
-        Readable.from([Buffer.from("piped "), Buffer.from("body")]).pipe(res!);
-        filling.resolve(result);
+    // A pipe asks the response whether it needs a 'drain' before it writes. The response does not:
+    // the bytes that wait belong to the socket.
+    describe.each([
+      ["raw writes that wait", SIZE],
+      // 16 KiB is below the high water mark: the write that waits returned true.
+      ["a raw write that waits although every write() returned true", 16 * 1024],
+    ] as const)("a stream piped to the response behind %s", (_name, size) => {
+      it.each(["http", "https"] as const)("reaches the client (%s)", async protocol => {
+        const written = Promise.withResolvers<{ bytes: number; waits: boolean; returned: boolean }>();
+        const connection = await open(protocol, "req.socket in a 'request' listener", (socket, res) => {
+          let bytes = 0;
+          let returned = true;
+          while (socket.writableLength === 0 && bytes < TOTAL) {
+            returned = socket.write(CHUNKS[0].subarray(0, size));
+            bytes += size;
+          }
+          res!.writeHead(200, { "Connection": "close", "Content-Length": 10 });
+          Readable.from([Buffer.from("piped "), Buffer.from("body")]).pipe(res!);
+          written.resolve({ bytes, waits: socket.writableLength > 0, returned });
+        });
+        try {
+          const { bytes, waits, returned } = await written.promise;
+          const { received, ended } = await connection.read();
+          expect({
+            waits,
+            returned,
+            ...offsets(received, [response]),
+            tail: received.subarray(-10).toString(),
+            ended,
+            errors: connection.errors,
+          }).toEqual({
+            waits: true,
+            returned: size < SIZE,
+            [response]: bytes,
+            tail: "piped body",
+            ended: true,
+            errors: [],
+          });
+        } finally {
+          connection.close();
+        }
       });
-      try {
-        const { chunks, filled, waits } = await filling.promise;
-        const { received, ended } = await connection.read();
-        expect({
-          waits,
-          wrong: firstWrongChunk(received, chunks),
-          ...offsets(received, [response]),
-          tail: received.subarray(-10).toString(),
-          ended,
-          errors: connection.errors,
-        }).toEqual({ waits: true, wrong: -1, [response]: filled, tail: "piped body", ended: true, errors: [] });
-      } finally {
-        connection.close();
-      }
     });
 
     // ws.handleUpgrade() writes the 101 response and the frames of the WebSocket to the connection.

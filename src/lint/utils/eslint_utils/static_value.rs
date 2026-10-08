@@ -111,6 +111,8 @@ pub enum StaticValue<'a> {
     Set(Vec<StaticValue<'a>>),
     /// `array.values()`, `map.entries()`, ..: what it yields.
     Iterator(IteratorKind, Vec<StaticValue<'a>>),
+    /// An object around a primitive value: `new String("a")`, `new Number(1)`, `Object(1n)`.
+    Wrapper(Box<StaticValue<'a>>),
     /// A function or an object of the standard library: `Math`, `Math.max`, `String`,
     /// `"".trim`.
     Builtin(Builtin),
@@ -209,6 +211,7 @@ impl<'a> StaticValue<'a> {
                 | StaticValue::Map(_)
                 | StaticValue::Set(_)
                 | StaticValue::Iterator(..)
+                | StaticValue::Wrapper(_)
                 | StaticValue::Builtin(_)
         )
     }
@@ -228,6 +231,7 @@ impl<'a> StaticValue<'a> {
     pub(super) fn to_primitive(&self) -> Eval<StaticValue<'a>> {
         let text: &[u8] = match self {
             StaticValue::Hole => return Ok(StaticValue::Undefined),
+            StaticValue::Wrapper(primitive) => return Ok((**primitive).clone()),
             StaticValue::Array(items) => return Ok(StaticValue::string(join(items, b",")?)),
             StaticValue::Regex { pattern, flags } => {
                 return Ok(StaticValue::string([b"/", &**pattern, b"/", &**flags].concat()));
@@ -318,7 +322,7 @@ impl<'a> StaticValue<'a> {
             (Symbol(a), Symbol(b)) => a == b,
             (Builtin(a), Builtin(b)) => a == b,
             // Both may be the value of the same literal, which is one object.
-            (Regex { .. }, Regex { .. }) => return Err(Stop::Abort),
+            (Regex { .. }, Regex { .. }) if self == other => return Err(Stop::Abort),
             // Any other object is made anew each time its expression is evaluated.
             _ => false,
         })

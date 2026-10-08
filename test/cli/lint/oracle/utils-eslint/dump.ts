@@ -22,7 +22,7 @@ const { READ, CALL, CONSTRUCT, ESM, ReferenceTracker } = utils;
 
 // How the functions and the objects of the standard library are called.
 const builtinNames =
-  "Array ArrayBuffer BigInt BigInt64Array BigUint64Array Boolean DataView Date decodeURI decodeURIComponent encodeURI encodeURIComponent escape Float32Array Float64Array Function isFinite isNaN isPrototypeOf JSON Map Math Number Object parseFloat parseInt Promise Proxy Reflect RegExp Set String Symbol Uint16Array Uint32Array Uint8Array Uint8ClampedArray unescape WeakMap WeakSet".split(
+  "Array ArrayBuffer BigInt BigInt64Array BigUint64Array Boolean DataView Date decodeURI decodeURIComponent encodeURI encodeURIComponent escape Float32Array Float64Array Function Int16Array Int32Array Int8Array isFinite isNaN isPrototypeOf JSON Map Math Number Object parseFloat parseInt Promise Proxy Reflect RegExp Set String Symbol Uint16Array Uint32Array Uint8Array Uint8ClampedArray unescape WeakMap WeakSet".split(
     " ",
   );
 const pathOf = new Map<unknown, string>();
@@ -69,6 +69,7 @@ function show(it: any): string {
   if (it === null) return "null";
   if (pathOf.has(it)) return pathOf.get(it)!;
   const prototype = Object.getPrototypeOf(it);
+  if ([String, Number, Boolean, BigInt, Symbol].some(it => prototype === it.prototype)) return `Wrapper(${show(it.valueOf())})`;
   if (prototype === RegExp.prototype) return `/${quote(it.source)}/${it.flags}`;
   if (prototype === Array.prototype) return `[${Array.from(it, (_, i) => (i in it ? show(it[i]) : "<hole>")).join(",")}]`;
   if (prototype === Map.prototype) return `Map{${[...it].map(([key, value]) => `${show(key)}=>${show(value)}`).join(",")}}`;

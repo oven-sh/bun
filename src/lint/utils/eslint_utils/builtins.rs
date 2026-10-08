@@ -274,6 +274,7 @@ pub(super) fn get_member<'a>(object: &StaticValue<'a>, key: &PropertyKey<'a>) ->
             return match (object, symbol) {
                 (StaticValue::Undefined | StaticValue::Null | StaticValue::Hole, _) => Err(Stop::Abort),
                 (StaticValue::Object(properties), _) => Ok(own_property(properties, key).unwrap_or(StaticValue::Undefined)),
+                (StaticValue::Wrapper(primitive), _) => get_member(primitive, key),
                 (_, StaticSymbol::Registered(_)) => Ok(StaticValue::Undefined),
                 // The prototypes and the constructors have properties that are named by these.
                 (_, StaticSymbol::WellKnown(_)) => Err(Stop::Abort),
@@ -283,6 +284,9 @@ pub(super) fn get_member<'a>(object: &StaticValue<'a>, key: &PropertyKey<'a>) ->
     let flag = |flags: &[u8], flag: u8| Ok(StaticValue::Bool(strings::contains_char(flags, flag)));
     match object {
         StaticValue::Undefined | StaticValue::Null | StaticValue::Hole | StaticValue::Iterator(..) => Err(Stop::Abort),
+        // On an object it is seen to be a getter.
+        StaticValue::Wrapper(primitive) if name == b"description" && primitive.as_symbol().is_some() => Err(Stop::NotStatic),
+        StaticValue::Wrapper(primitive) => get_member(primitive, key),
         StaticValue::Bool(_) => inherited("Boolean", "Boolean.prototype", name),
         StaticValue::Number(_) => inherited("Number", "Number.prototype", name),
         StaticValue::BigInt(_) => inherited("BigInt", "BigInt.prototype", name),
@@ -374,9 +378,9 @@ pub(super) fn set_property<'a>(
     key: PropertyKey<'a>,
     value: StaticValue<'a>,
 ) -> Eval<()> {
-    // It sets the prototype.
+    // It sets the prototype, to an object or to `null`.
     if key.as_str() == Some(b"__proto__") {
-        return Err(Stop::Abort);
+        return if value.is_object() || value == StaticValue::Null { Err(Stop::Abort) } else { Ok(()) };
     }
     if let Some(property) = properties.iter_mut().find(|property| property.0 == key) {
         property.1 = value;

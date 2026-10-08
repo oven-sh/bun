@@ -103,8 +103,11 @@ pub struct TrackedReference<'a, 'm, T> {
     /// - `Call`, `Construct`: the call or the `new` expression.
     /// - `Read`: the identifier or the member access. In a destructuring pattern the `PatProp` or
     ///   the `Prop`. Of a module the `require()` call, the `Stmt` of the import or the export, the
-    ///   `ImportSpec` or the `ExportSpec`. ESTree's `ImportDefaultSpecifier` is no node here: it is
-    ///   the `Stmt` of the import, and `span` is that of the name.
+    ///   `ImportSpec` or the `ExportSpec`.
+    ///
+    /// Where upstream has an identifier that is no node here, it is what the identifier is part of,
+    /// and `span` is that of the identifier: the `Stmt` of the import for the
+    /// `ImportDefaultSpecifier`, [`Reference::node`] for a name in a type.
     pub node: Node<'a>,
     /// The range of the node that upstream reports.
     pub span: Span,
@@ -306,8 +309,8 @@ impl<'a, 'g> ReferenceTracker<'a, 'g> {
                     continue;
                 }
                 StmtKind::Import(import) => {
-                    let scope = self.file.scope();
-                    let variable = |name: Name<'a>| super::find_variable(scope, name.bytes()).map(Variable::Symbol);
+                    let scope = self.file.top_level_scope();
+                    let variable = |name: Name<'a>| scope.get_name(name).map(Variable::Symbol);
                     if let Some(local) = import.default()
                         && let Some((name, next)) = view.get(b"default")
                     {
@@ -425,23 +428,13 @@ impl<'a, 'm, T: Copy> Walk<'a, 'm, T> {
         }
     }
 
-    fn global_references(&self, name: &'a [u8]) -> impl Iterator<Item = Reference<'a>> + 'a {
-        self.file.unresolved_references().filter(move |reference| reference.name().bytes() == name)
-    }
-
     /// The global variable `name`, unless upstream's `isModifiedGlobal` holds. `None` as well if
     /// nothing refers to it.
     fn unmodified_global(&self, name: &[u8]) -> Option<Variable<'a>> {
-        let mut variable = None;
-        for reference in self.file.unresolved_references() {
-            if reference.name().bytes() == name {
-                if reference.is_write() {
-                    return None;
-                }
-                variable = Some(Variable::Global(reference.name()));
-            }
-        }
-        variable.filter(|_| is_configured_global(self.file, name))
+        let mut references = self.file.unresolved_references_to(name);
+        let first = references.next()?;
+        let is_modified = first.is_write() || references.any(Reference::is_write);
+        (!is_modified && is_configured_global(self.file, name)).then(|| Variable::Global(first.name()))
     }
 
     /// Upstream's `_iterateVariableReferences`.
@@ -452,11 +445,11 @@ impl<'a, 'm, T: Copy> Walk<'a, 'm, T> {
         self.variables.push(variable);
         let references: Vec<Reference<'a>> = match variable {
             Variable::Symbol(symbol) => symbol.references().collect(),
-            Variable::Global(name) => self.global_references(name.bytes()).collect(),
+            Variable::Global(name) => self.file.unresolved_references_to(name.bytes()).collect(),
         };
         for reference in references.into_iter().filter(|reference| reference.is_read()) {
             if should_report {
-                self.report(reference.node(), path, ReferenceKind::Read, map.own().and_then(|map| map.read));
+                self.report_at(reference.node(), reference.span(), path, map.own().and_then(|map| map.read));
             }
             if let Some(identifier) = reference.expr() {
                 self.property_references(identifier, path, map);

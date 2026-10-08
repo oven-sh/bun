@@ -127,6 +127,11 @@ fn show(value: &StaticValue<'_>, out: &mut String) {
             show_all(items, out, show);
             out.push(']');
         }
+        StaticValue::Wrapper(primitive) => {
+            out.push_str("Wrapper(");
+            show(primitive, out);
+            out.push(')');
+        }
         StaticValue::Builtin(builtin) => out.push_str(builtin.name()),
     }
 }
@@ -184,6 +189,7 @@ impl<'a> Facts<'a> {
         if e.is_missing()
             || (matches!(e.kind(), ExprKind::Binary { .. }) && utils::sequence_root(e) != e)
             || matches!(e.kind(), ExprKind::Fn(_) | ExprKind::Class(_))
+            || matches!(utils::estree_type_name(node), "TSQualifiedName" | "JSXMemberExpression")
         {
             return;
         }
@@ -201,7 +207,12 @@ impl<'a> Facts<'a> {
         match node {
             Node::File(_) => {}
             Node::Expr(e) => self.expr(e),
-            Node::Func(func) => {
+            Node::Func(func)
+                if matches!(
+                    utils::estree_type_name(node),
+                    "FunctionDeclaration" | "FunctionExpression" | "ArrowFunctionExpression"
+                ) =>
+            {
                 self.common(node);
                 let head = get_function_head_location(func);
                 self.add("functionHead", node, format!("{}-{}", head.start, head.end));
@@ -216,6 +227,7 @@ impl<'a> Facts<'a> {
                 self.common(node);
                 self.property_name(node);
             }
+            Node::Func(_) => {}
             Node::Stmt(statement) if matches!(statement.kind(), StmtKind::Fn(_) | StmtKind::Class(_)) => {}
             _ => self.common(node),
         }
@@ -230,10 +242,10 @@ impl<'a> Facts<'a> {
                 ReferenceKind::Call => "call",
                 ReferenceKind::Construct => "construct",
             };
-            let is_default_specifier = reference.span != reference.node.span()
-                && matches!(reference.node.as_stmt().map(|it| it.kind()), Some(StmtKind::Import(_)));
-            let (ty, span) = match is_default_specifier {
-                true => ("ImportDefaultSpecifier", reference.span),
+            let is_import = matches!(reference.node.as_stmt().map(|it| it.kind()), Some(StmtKind::Import(_)));
+            let (ty, span) = match reference.span != reference.node.span() {
+                true if is_import => ("ImportDefaultSpecifier", reference.span),
+                true => ("Identifier", reference.span),
                 false => (utils::estree_type_name(reference.node), utils::estree_span(reference.node)),
             };
             let key = format!("{ty}|{}|{}", span.start, span.end);

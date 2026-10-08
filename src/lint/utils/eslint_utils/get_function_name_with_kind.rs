@@ -55,7 +55,8 @@ pub fn get_function_name_with_kind(func: Func<'_>, with_key_text: bool) -> Vec<u
         Node::Member(member) if !member.flags().contains(Flags::ABSTRACT) => {
             is_static = member.is_static();
             match member.kind() {
-                MemberKind::Constructor => return b"constructor".to_vec(),
+                MemberKind::Constructor if !is_static => return b"constructor".to_vec(),
+                MemberKind::Constructor => return b"static method 'constructor'".to_vec(),
                 MemberKind::Getter => property = Some((member.key(), "getter")),
                 MemberKind::Setter => property = Some((member.key(), "setter")),
                 MemberKind::Method => property = Some((member.key(), "method")),

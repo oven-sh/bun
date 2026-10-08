@@ -64,5 +64,5 @@ for (const [id, theirs] of expected) {
 console.log(`${compared} cases compared, ${parsedByOne} that only one side parses`);
 for (const [name, entry] of [...tally].sort()) {
   console.log(`${name.padEnd(24)} ${entry.same} same, ${entry.different} different`);
-  if (show === "all" || (show && name.startsWith(show))) console.log(entry.examples.join("\n"));
+  if (show === "all" || show === name) console.log(entry.examples.join("\n"));
 }

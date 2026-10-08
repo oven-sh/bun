@@ -1,6 +1,6 @@
 //! `has-side-effect.mjs`
 
-use crate::ast::{BinOp, Expr, ExprKind, File, FnKind, Key, KeyKind, Node, UnOp};
+use crate::ast::{BinOp, Expr, ExprKind, File, Flags, FnKind, Key, KeyKind, Node, TypeKind, UnOp};
 use crate::tokens::skip_trivia;
 use crate::utils::estree_compat::is_assignment_target;
 
@@ -18,7 +18,6 @@ pub struct HasSideEffectOptions {
 /// `await`, a call, `new`, `import()`, `delete`, `++`, `--` and `yield` have one. What is in a
 /// function expression or an arrow function is not evaluated.
 ///
-/// Types are not looked into.
 pub fn has_side_effect<'a>(node: impl Into<Node<'a>>, options: HasSideEffectOptions) -> bool {
     visit(node.into(), options)
 }
@@ -66,11 +65,21 @@ fn converts_key<'a>(key: Option<Key<'a>>, file: &'a File<'a>, options: HasSideEf
 fn visit(node: Node<'_>, options: HasSideEffectOptions) -> bool {
     let converts = options.consider_implicit_type_conversion;
     match node {
-        Node::Type(_) | Node::TypeParam(_) | Node::TupleElem(_) => false,
+        // ESTree's `TSQualifiedName` is no member access.
+        Node::Type(ty) if matches!(ty.kind(), TypeKind::Typeof { .. }) => {
+            let mut found = false;
+            node.for_each_child(|child| found = found || (!matches!(child, Node::Expr(_)) && visit(child, options)));
+            found
+        }
         Node::Func(func) => {
             matches!(func.kind(), FnKind::Decl | FnKind::StaticBlock) && visit_children(node, options)
         }
-        Node::Member(member) => converts_key(member.key(), node.file(), options) || visit_children(node, options),
+        // ESTree's `MethodDefinition` and `PropertyDefinition`
+        Node::Member(member)
+            if matches!(member.parent(), Node::Class(_)) && !member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR) =>
+        {
+            converts_key(member.key(), node.file(), options) || visit_children(node, options)
+        }
         Node::Prop(prop) => converts_key(prop.key(), node.file(), options) || visit_children(node, options),
         Node::PatProp(prop) => converts_key(prop.key(), node.file(), options) || visit_children(node, options),
         Node::Expr(e) => match e.kind() {
@@ -106,6 +115,15 @@ fn visit(node: Node<'_>, options: HasSideEffectOptions) -> bool {
                     && !(is_literal(left) && is_literal(right)) =>
             {
                 true
+            }
+            // The name of the element is no member access.
+            ExprKind::Jsx(jsx) => {
+                let mut found = false;
+                node.for_each_child(|child| {
+                    let is_name = child.as_expr().is_some_and(|child| Some(child) == jsx.tag() || Some(child) == jsx.close_tag());
+                    found = found || (!is_name && visit(child, options));
+                });
+                found
             }
             ExprKind::Dot { .. } | ExprKind::Index { .. } if options.consider_getters => true,
             ExprKind::Index { index, .. } if converts && !is_literal(index) => true,

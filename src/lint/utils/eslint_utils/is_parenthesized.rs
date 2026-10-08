@@ -2,14 +2,14 @@
 
 use crate::ast::{Node, StmtKind};
 use crate::tokens::{skip_trivia, skip_trivia_back};
+use crate::utils::estree_compat::estree_span;
 
 /// eslint-utils' `isParenthesized(node, sourceCode)`: whether `node` is directly in parentheses
 /// that are not part of the syntax of its parent, as those of `f(a)`, `if (a)`, `import(a)` and
 /// `catch (e)` are.
 ///
 /// As upstream, the parentheses of a parameter list count: it is true for the only parameter of
-/// `(a) => a` and of `function f(a) {}`. Pass the `Param`, whose span has the type annotation and
-/// the default value that ESTree's node includes.
+/// `(a) => a` and of `function f(a: T) {}`, be it given as the `Param` or as its `Pat`.
 #[inline]
 pub fn is_parenthesized<'a>(node: impl Into<Node<'a>>) -> bool {
     is_parenthesized_times(1, node)
@@ -36,7 +36,7 @@ pub fn is_parenthesized_times<'a>(times: usize, node: impl Into<Node<'a>>) -> bo
         _ => {}
     }
     let text = node.file().text();
-    let mut span = node.span();
+    let mut span = estree_span(node);
     for _ in 0..times {
         let before = skip_trivia_back(text, span.start);
         let after = skip_trivia(text, span.end);

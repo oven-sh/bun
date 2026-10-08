@@ -8,10 +8,7 @@ use crate::semantic::{Scope, Symbol};
 /// A global variable that the file does not declare is not a [`Symbol`]: the result is `None`,
 /// where upstream finds the variable of the global scope that the configuration defines.
 pub fn find_variable<'a>(scope: Scope<'a>, name: impl AsRef<[u8]>) -> Option<Symbol<'a>> {
-    let name = name.as_ref();
-    scope
-        .chain()
-        .find_map(|scope| scope.symbols().find(|symbol| symbol.name().bytes() == name))
+    scope.resolve_bytes(name.as_ref())
 }
 
 /// eslint-utils' `findVariable(initialScope, identifierNode)`: what the identifier `expr` refers

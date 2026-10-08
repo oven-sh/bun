@@ -6,7 +6,7 @@ use crate::utils::ast_utils::is_configured_global;
 use super::js_string;
 use super::operators::{binary, unary};
 use super::static_value::{Eval, MAX_LEN, PropertyKey, StaticValue, Stop, parse_bigint_digits};
-use crate::ast::{BinOp, Call, Chain, Expr, ExprKind, Key, KeyKind, List, Node, PropKind, StmtKind, Template, UnOp, VarKind};
+use crate::ast::{BinOp, Call, Chain, Expr, ExprKind, Key, KeyKind, List, Node, PropKind, Stmt, StmtKind, Template, UnOp, VarKind};
 use crate::semantic::{Declaration, Scope, Symbol};
 use crate::utils::estree_compat::is_assignment_target;
 use bun_core::strings;
@@ -23,15 +23,23 @@ use std::borrow::Cow;
 /// value.
 ///
 /// Only the functions that upstream calls are called: `"a".repeat(2)` has no static value. What
-/// upstream computes and this cannot (a `bigint` beyond 128 bits, `new Date(0)`, `Object(1)`,
+/// upstream computes and this cannot (a `bigint` beyond 128 bits, `new Date(0)`,
 /// `"é".normalize()`, a string of more than a megabyte, ..) has none either.
 ///
 /// Upstream's `optional`, which tells that the value is the `undefined` of a `?.` that cut the
 /// evaluation short, is only used inside: no rule reads it.
 pub fn get_static_value<'a>(expr: Expr<'a>, scope: Option<Scope<'a>>) -> Option<StaticValue<'a>> {
-    // ESTree has a pattern there, which has no value.
-    if matches!(expr.kind(), ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Assign { .. }) && is_assignment_target(expr) {
-        return None;
+    match expr.kind() {
+        // ESTree has a pattern there, which has no value.
+        ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Assign { .. } if is_assignment_target(expr) => return None,
+        // `JSXText`, and the name of an element.
+        ExprKind::String(_) | ExprKind::Ident(_) | ExprKind::Dot { .. }
+            if matches!(expr.parent().as_expr().map(Expr::kind), Some(ExprKind::Jsx(_)))
+                && expr.jsx_container_span().is_none() =>
+        {
+            return None;
+        }
+        _ => {}
     }
     let mut evaluator = Evaluator {
         resolves: scope.is_some(),
@@ -194,7 +202,7 @@ impl<'a> Evaluator<'a> {
         let Node::VarDecl(declaration) = pat.parent() else {
             return Err(Stop::NotStatic);
         };
-        if !matches!(declaration.parent().as_stmt().map(|it| it.kind()), Some(StmtKind::Var(_)))
+        if !matches!(declaration.parent().as_stmt().map(Stmt::kind), Some(StmtKind::Var(_)))
             || (declaration.var_kind() != VarKind::Const && !is_effectively_const(symbol))
         {
             return Err(Stop::NotStatic);

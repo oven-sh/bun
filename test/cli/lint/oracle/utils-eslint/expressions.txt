@@ -427,3 +427,22 @@ const a = { f: "".toUpperCase }; a.f()
 const a = { f: "".toString }; a.f()
 const a = [1, 2]; const b = { f: "".concat, toString: 1 }; b.f()
 const a = { f: "".slice, 0: 1 }; a.f(1, 7)
+[new String("ab"), new String(), new String(1), new Number("1"), new Number(), new Boolean(0), new Boolean(), Object(1), Object("a"), Object(true), Object(1n), Object(Symbol.iterator), new Object(1)]
+[typeof new String("a"), !new Boolean(false), !!new Number(0), new String("ab").length, new String("ab")[1], new String("ab")[2], new String("ab").foo, new String("ab").constructor === String, new Number(1).constructor === Number, new String("ab") + "c", new Number(1) + 1, +new Number(5), -new String("3"), `${new String("x")}`, String(new String("x")), String(new Number(1)), String(new Boolean(false)), Number(new String("12")), Boolean(new Boolean(false))]
+[new String("a") == "a", new String("a") === "a", new String("a") == new String("a"), new Number(1) == 1, new Number(1) < 2, Object(1n) == 1n, new Boolean(false) == false, new Boolean(false) ? 1 : 2, new String("") || 1, Object.is(new Number(1), 1)]
+[new String(" a ").trim(), new String("ab").toString(), new String("ab").toUpperCase(), new String("ab").at(-1), new Number(255).toString(16), new Number(1.5).toFixed(0), new String("ab").concat(new String("c")), new String("ab").includes(new String("b"))]
+[[...new String("ab")], { ...new String("ab") }, { ...new Number(1) }, Object.keys(new String("ab")), Object.values(new String("ab")), Object.entries(new Number(1)), Object.isFrozen(new String("a")), Object.isExtensible(new Number(1)), Array.isArray(new String("a")), [1].concat(new String("a")), [new String("a")].join(), [new Number(1)].includes(1), new Set([new Number(1), new Number(1)]).size, ({ a: 1 })[new String("a")], [1, 2][new Number(1)], "ab"[new Number(1)], RegExp(new String("a")), parseInt(new String("12")), Math.max(new Number(3), 1), isNaN(new Number(NaN)), Number.isNaN(new Number(NaN)), BigInt(new Number(1)), Symbol.for(new String("a")), encodeURIComponent(new String(" "))]
+[...new Number(1)]
+new String(Symbol.iterator)
+String(Object(Symbol.iterator))
+`${Object(Symbol.iterator)}`
+Object(Symbol.iterator).description
+new Number(1n)
+new Number(Symbol.iterator)
+const a = new String("a"); a.b = 1; a
+const a = new String("b"); const o = { b: 1 }; o[a]
+[/a/ === /b/, /a/ === /a/g, /a/ !== /b/, /a/ == RegExp("b"), [/a/].indexOf(/b/), [/a/].includes(/b/), new Set([/a/, /b/]).size, Object.is(/a/, /b/)]
+[({ __proto__: 1, a: 2 }), ({ "__proto__": "x" }), ({ ["__proto__"]: undefined, b: 1 }), ({ __proto__: 1 }).__proto__ === 1]
+({ __proto__: [] })
+({ __proto__: Math })
+({ ...{ __proto__: 1 } })

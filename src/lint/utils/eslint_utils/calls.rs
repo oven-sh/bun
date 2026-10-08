@@ -80,6 +80,7 @@ pub(super) fn iterate<'a>(value: &StaticValue<'a>) -> Eval<Vec<StaticValue<'a>>>
     Ok(match value {
         StaticValue::Array(items) => items.iter().map(element).collect(),
         StaticValue::Set(items) | StaticValue::Iterator(_, items) => items.clone(),
+        StaticValue::Wrapper(primitive) => return iterate(primitive),
         StaticValue::Map(entries) => entries.iter().map(|(key, value)| pair(key.clone(), value.clone())).collect(),
         StaticValue::String(text) => js_string::code_points_of(&to_utf16(text))
             .map(|c| {
@@ -97,6 +98,7 @@ pub(super) fn own_enumerable<'a>(value: &StaticValue<'a>) -> Eval<Vec<(Cow<'a, [
     let index = |i: usize| Cow::Owned(i.to_string().into_bytes());
     Ok(match value {
         StaticValue::Undefined | StaticValue::Null | StaticValue::Hole => return Err(Stop::Abort),
+        StaticValue::Wrapper(primitive) => return own_enumerable(primitive),
         StaticValue::String(text) => (to_utf16(text).iter().enumerate())
             .map(|(i, &unit)| (index(i), StaticValue::string(from_utf16(&[unit]))))
             .collect(),
@@ -148,6 +150,10 @@ pub(super) fn call<'a>(function: Builtin, this: &StaticValue<'a>, args: Args<'_,
         return math(name, args);
     }
     if let Some((owner, name)) = strings::split_once(path.as_bytes(), b".prototype.") {
+        let this = match this {
+            StaticValue::Wrapper(primitive) => primitive,
+            this => this,
+        };
         return match (owner, this) {
             (b"String", StaticValue::String(text)) => string_method(name, text, args),
             (b"String", this) if !this.is_nullish() && name != b"toString" => string_method(name, &this.to_string()?, args),
@@ -279,8 +285,13 @@ pub(super) fn construct<'a>(function: Builtin, args: Args<'_, 'a>) -> Eval<Stati
         "Object" => match first {
             _ if first.is_nullish() => Ok(StaticValue::Object(Vec::new())),
             _ if first.is_object() => Ok(first.clone()),
-            _ => Err(Stop::Abort),
+            _ => Ok(StaticValue::Wrapper(Box::new(first.clone()))),
         },
+        "Boolean" | "Number" => Ok(StaticValue::Wrapper(Box::new(call(function, &StaticValue::Undefined, args)?))),
+        "String" => Ok(StaticValue::Wrapper(Box::new(StaticValue::String(match args.is_empty() {
+            true => Cow::Borrowed(b""),
+            false => first.to_string()?,
+        })))),
         "RegExp" => {
             let flags = arg(args, 1);
             let (pattern, flags) = match (first, flags) {
@@ -296,7 +307,7 @@ pub(super) fn construct<'a>(function: Builtin, args: Args<'_, 'a>) -> Eval<Stati
             };
             new_regex(pattern, &flags).ok_or(Stop::Abort)
         }
-        // Objects that wrap a primitive value, `Date`, and what is not a constructor.
+        // `Date`, and what is not a constructor.
         _ => Err(Stop::Abort),
     }
 }

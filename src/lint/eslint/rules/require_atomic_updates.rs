@@ -164,6 +164,8 @@ pub struct State<'a> {
     stack: Vec<Frame<'a>>,
     /// By `Segment::id`, for the reachable segments of async functions and generators.
     segment_info: FxHashMap<u32, SegmentInfo<'a>>,
+    /// The current segments where the `ChainExpression` that is being left is left.
+    segments_after_chain: Option<SmallVec<[Segment<'a>; 2]>>,
     /// By what is assigned: the references to verify once that has been evaluated.
     assignment_references: FxHashMap<Expr<'a>, SmallVec<[(Reference<'a>, Variable<'a>); 1]>>,
 }
@@ -222,14 +224,35 @@ impl RequireAtomicUpdates {
         if !pauses.any(|it| whole.contains(it.span())) {
             return;
         }
+        // ESLint leaves the `ChainExpression` around an optional chain where the ways through it have
+        // joined, which is after its outermost expression has been left. That the last of the
+        // events for that has been seen is only known when the segments have changed again.
+        let mut chain = None;
         for step in func.code_path_steps(NodeTags::PAT | ExprTag::Ident.into(), EXPRESSIONS) {
+            let is_join = matches!(
+                step,
+                Step::Event(
+                    Event::SegmentStart(_, node)
+                    | Event::SegmentEnd(_, node)
+                    | Event::UnreachableSegmentStart(_, node)
+                    | Event::UnreachableSegmentEnd(_, node)
+                ) if Some(node) == chain
+            );
+            if !is_join && let Some(chain) = chain.take() {
+                self.on_expression_exit(chain, cx);
+                cx.state.segments_after_chain = None;
+            }
             match step {
                 Step::Event(Event::CodePathStart(path, node)) => self.on_code_path_start(path, node, cx),
                 Step::Event(Event::CodePathEnd(path, node)) => self.on_code_path_end(path, node, cx),
                 Step::Event(Event::SegmentStart(segment, node)) => self.on_segment_start(segment, node, cx),
                 Step::Event(_) => {}
                 Step::Enter(node) => self.on_identifier(node, cx),
+                Step::Exit(node) if matches!(node, Node::Expr(e) if e.is_chain_root()) => chain = Some(node),
                 Step::Exit(node) => self.on_expression_exit(node, cx),
+            }
+            if chain.is_some() {
+                cx.state.segments_after_chain = cx.state.stack.last().map(|it| it.code_path.current_segments());
             }
         }
     }
@@ -345,7 +368,7 @@ impl RequireAtomicUpdates {
         let Some(assignment) = assignment_of(e) else {
             return;
         };
-        let segments = code_path.current_segments();
+        let segments = cx.state.segments_after_chain.take().unwrap_or_else(|| code_path.current_segments());
         for (reference, variable) in references {
             let is_outdated = segments.iter().any(|segment| {
                 let info = cx.state.segment_info.get(&segment.id());

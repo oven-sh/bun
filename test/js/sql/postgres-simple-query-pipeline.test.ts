@@ -1,19 +1,17 @@
 // A simple-protocol Query ('Q') is its own sync point: the backend answers it
-// with exactly one ReadyForQuery. Bun also appended an extended-protocol Sync
-// after every 'Q', so the server replied with a second, unaccounted
-// ReadyForQuery per simple query. That spurious ReadyForQuery re-armed the
-// connection's "ready" state while the next query's Parse+Describe round trip
-// was still in flight, and advance() then pipelined a third query into that
-// window, so its replies were delivered to the wrong query.
+// with exactly one ReadyForQuery, and Bun writes nothing behind it.
+// - A Sync would elicit a second ReadyForQuery. It re-arms the connection's
+//   "ready" state while the Parse+Describe round trip of the next query is in
+//   flight, advance() then pipelines a third query into that window, and its
+//   replies go to the wrong query.
+// - A Flush reaches the server after the ReadyForQuery. PostgreSQL starts
+//   idle_in_transaction_session_timeout and idle_session_timeout when it sends
+//   ReadyForQuery and stops them at the next message of any kind, so the session
+//   then idles with no limit.
 //
-// The simple protocol is used for query.simple(), for sql.unsafe(text) with
-// no parameters, and for the BEGIN/COMMIT/ROLLBACK of sql.begin(), so every
-// one of those emitted the spurious ReadyForQuery.
-//
-// Bun also wrote a Flush ('H') behind every 'Q'. The server reads it after the
-// ReadyForQuery of the query. PostgreSQL starts idle_in_transaction_session_timeout
-// and idle_session_timeout when it sends ReadyForQuery and stops them at the next
-// message of any kind, so the Flush left the session idle with no limit.
+// The simple protocol is used for query.simple(), for sql.unsafe(text) with no
+// parameters, for LISTEN, and for the BEGIN/COMMIT/ROLLBACK/SAVEPOINT statements
+// that Bun sends itself.
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
 import { describeWithContainer, tempDir } from "harness";

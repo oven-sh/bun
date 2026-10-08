@@ -148,6 +148,7 @@ pub(crate) struct ByKind {
     import_specs: OnceCell<Vec<u32>>,
     export_specs: OnceCell<Vec<u32>>,
     entity_names: OnceCell<Names>,
+    pub(crate) nearby_line: crate::source::NearbyLine,
     pub(crate) string_literals: OnceCell<Vec<crate::literal::RawLiteral>>,
     /// See [`File::mentions`].
     pub(crate) has_other_spellings: OnceCell<bool>,

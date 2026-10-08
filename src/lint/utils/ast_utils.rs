@@ -210,8 +210,64 @@ pub fn is_token_on_same_line(file: &File<'_>, left: impl Spanned, right: impl Sp
     }
 }
 
+/// What `equal_tokens` is for the texts `left` and `right`, if that shows without splitting them into tokens: they are compared
+/// byte by byte, whitespace against whitespace. `None` where more than that is to be known: at a comment, a regular expression,
+/// a template, an escape, a character that is not ASCII, and where only one of the two has whitespace, which may or may not
+/// separate two tokens.
+fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
+    let is_blank = |byte: Option<&u8>| matches!(byte, Some(b'\t'..=b'\r' | b' '));
+    let (mut l, mut r) = (0, 0);
+    // The quote of the string that both are in.
+    let mut quote = None;
+    loop {
+        if quote.is_none() && (is_blank(left.get(l)) || is_blank(right.get(r))) {
+            if !is_blank(left.get(l)) || !is_blank(right.get(r)) {
+                return None;
+            }
+            while is_blank(left.get(l)) {
+                l += 1;
+            }
+            while is_blank(right.get(r)) {
+                r += 1;
+            }
+        }
+        let (a, b) = match (left.get(l), right.get(r)) {
+            (None, None) => return Some(true),
+            (Some(&a), Some(&b)) => (a, b),
+            _ => return quote.is_none().then_some(false),
+        };
+        if a == b'\\' || b == b'\\' {
+            return None;
+        }
+        if quote.is_none() {
+            if matches!(a, b'/' | b'`' | 0x80..) || matches!(b, b'/' | b'`' | 0x80..) {
+                return None;
+            }
+            // `<!--` and `-->` can start a comment.
+            if a == b'-' && left.get(l + 1) == Some(&b'-') || b == b'-' && right.get(r + 1) == Some(&b'-') {
+                return None;
+            }
+        }
+        if a != b {
+            return Some(false);
+        }
+        match quote {
+            None if matches!(a, b'"' | b'\'') => quote = Some(a),
+            Some(open) if open == a => quote = None,
+            _ => {}
+        }
+        (l, r) = (l + 1, r + 1);
+    }
+}
+
 /// ESLint's `equalTokens`: `left` and `right` consist of the same tokens.
 pub fn equal_tokens<'a>(file: &'a File<'a>, left: impl Spanned, right: impl Spanned) -> bool {
+    // In JSX whitespace can be text, and what a name is depends on where it is.
+    if file.hir.jsx.is_empty()
+        && let Some(answer) = equal_tokens_of_plain_text(file.slice(left.span()), file.slice(right.span()))
+    {
+        return answer;
+    }
     let (left, right) = (file.tokens_in(left), file.tokens_in(right));
     left.len() == right.len()
         && left

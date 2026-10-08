@@ -321,10 +321,9 @@ unsafe extern "C" fn highway_last_index_of_char(p: *const u8, len: usize, needle
 #[unsafe(no_mangle)]
 unsafe extern "C" fn highway_count_char(p: *const u8, len: usize, needle: u8) -> usize {
     // SAFETY: the caller passes a slice, as a pointer and a length.
-    unsafe { bytes(p, len) }
-        .iter()
-        .filter(|&&c| c == needle)
-        .count()
+    let text = unsafe { bytes(p, len) };
+    // Sums that fit in a byte, which the compiler adds up with vector instructions.
+    text.chunks(192).map(|chunk| usize::from(chunk.iter().map(|&c| u8::from(c == needle)).sum::<u8>())).sum()
 }
 #[unsafe(no_mangle)]
 unsafe extern "C" fn highway_index_of_any_char(
@@ -339,13 +338,12 @@ unsafe extern "C" fn highway_index_of_any_char(
     let text = unsafe { bytes(p, len) };
     match *chars {
         [a] => first(text, |c| c == a),
-        [a, b] => first(text, |c| (c == a) | (c == b)),
-        [a, b, d] => first(text, |c| (c == a) | (c == b) | (c == d)),
-        [a, b, d, e] => first(text, |c| (c == a) | (c == b) | (c == d) | (c == e)),
+        // One character after the other for each 32 bytes: that is what the compiler makes good vector code of.
         _ if chars.len() <= 8 => {
-            let mut set = [chars[0]; 8];
-            set[..chars.len()].copy_from_slice(chars);
-            first(text, |c| set.iter().fold(false, |is_in_set, &it| is_in_set | (c == it)))
+            let has = |chunk: &[u8], wanted: u8| chunk.iter().fold(false, |is_found, &c| is_found | (c == wanted));
+            let whole = text.chunks_exact(32).take_while(|chunk| !chars.iter().any(|&wanted| has(chunk, wanted))).count();
+            let at = whole * 32;
+            at + text[at..].iter().position(|c| chars.contains(c)).unwrap_or(len - at)
         }
         _ => {
             let mut is_in_set = [false; 256];

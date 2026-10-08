@@ -2,6 +2,7 @@
 
 use crate::ast::{File, Name};
 use crate::span::{Position, Span};
+use std::cell::{Cell, OnceCell};
 
 /// Where the lines of a file start.
 pub(crate) struct Lines {
@@ -10,7 +11,50 @@ pub(crate) struct Lines {
     is_ascii: bool,
 }
 
+/// For the line of an offset in a file of which few are asked for: then the lines in between are counted, and the starts of
+/// all the lines are not looked for.
+#[derive(Default)]
+pub(crate) struct NearbyLine {
+    /// Only `\n` ends a line.
+    is_plain: OnceCell<bool>,
+    /// An offset, and how many lines end before it.
+    known: Cell<(u32, u32)>,
+    /// How many bytes have been looked at.
+    looked_at: Cell<usize>,
+}
+
+/// Whether only `\n` ends a line of `text`.
+fn is_plain(text: &[u8]) -> bool {
+    use bun_core::strings::{contains, contains_char};
+    !contains_char(text, b'\r')
+        && (!contains_char(text, 0xE2) || !contains(text, "\u{2028}".as_bytes()) && !contains(text, "\u{2029}".as_bytes()))
+}
+
 impl<'a> File<'a> {
+    /// The line that `offset` is in, counted from 1, and where it starts, if that takes less than to find all lines.
+    fn nearby_line(&self, offset: u32) -> Option<(u32, u32)> {
+        if self.lazy.lines.get().is_some() {
+            return None;
+        }
+        let (text, nearby) = (self.text(), &self.by_kind().nearby_line);
+        if !*nearby.is_plain.get_or_init(|| is_plain(text)) {
+            return None;
+        }
+        let (known, lines_before) = nearby.known.get();
+        let between = text.get(known.min(offset) as usize..known.max(offset) as usize)?;
+        // To count is many times faster than to note where each line starts.
+        let looked_at = nearby.looked_at.get() + between.len() + 256;
+        if looked_at > 4 * text.len() {
+            return None;
+        }
+        nearby.looked_at.set(looked_at);
+        let breaks = bun_core::strings::count_char(between, b'\n') as u32;
+        let lines_before = if offset >= known { lines_before + breaks } else { lines_before - breaks };
+        nearby.known.set((offset, lines_before));
+        let start = bun_core::strings::last_index_of_char(&text[..offset as usize], b'\n').map_or(0, |at| at as u32 + 1);
+        Some((lines_before + 1, start))
+    }
+
     fn lines_index(&self) -> &Lines {
         self.lazy.lines.get_or_init(|| Lines {
             starts: line_starts(self.text()),
@@ -31,6 +75,9 @@ impl<'a> File<'a> {
 
     /// The line that `offset` is in, counted from 1.
     pub fn line_of(&self, offset: u32) -> u32 {
+        if let Some((line, _)) = self.nearby_line(offset.min(self.text().len() as u32)) {
+            return line;
+        }
         self.lines_index().starts.partition_point(|&start| start <= offset) as u32
     }
 
@@ -64,10 +111,16 @@ impl<'a> File<'a> {
     pub fn position(&self, offset: u32) -> Position {
         let text = self.text();
         let offset = offset.min(text.len() as u32);
-        let line = self.line_of(offset);
-        let start = self.lines_index().starts[line as usize - 1].max(self.start_of_text());
+        let (line, start, is_ascii) = match self.nearby_line(offset) {
+            Some((line, start)) => (line, start, false),
+            None => {
+                let (line, lines) = (self.line_of(offset), self.lines_index());
+                (line, lines.starts[line as usize - 1], lines.is_ascii)
+            }
+        };
+        let start = start.max(self.start_of_text());
         let offset = offset.max(start);
-        if self.lines_index().is_ascii {
+        if is_ascii {
             return Position { line, column: offset - start };
         }
         let mut character = offset;
@@ -150,7 +203,7 @@ impl<'a> File<'a> {
 
 /// Where the lines of `text` start.
 fn line_starts(text: &[u8]) -> Vec<u32> {
-    if bun_core::strings::index_of_any(text, b"\r\xE2").is_some() {
+    if !is_plain(text) {
         return bun_sema::check::compute_ecma_line_starts(text);
     }
     // Only `\n` ends a line, as in nearly every file: 8 bytes are tested at a time.

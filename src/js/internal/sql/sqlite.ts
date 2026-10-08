@@ -427,7 +427,7 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
     }
   }
 
-  checkFragmentPlaceholders(_text: string, _offset: number, _count: number): void {}
+  checkNestedUnsafeValues(): void {}
 
   connect(onConnected: OnConnected<BunSQLiteModule.Database>, reserved?: boolean) {
     if (this._closed) {

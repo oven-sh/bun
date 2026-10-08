@@ -251,83 +251,6 @@ function wrapPostgresError(error: Error | (PostgresErrorOptions & { message: str
   return new PostgresError(error.message, error);
 }
 
-const enum Char {
-  DOUBLE_QUOTE = 34, // "
-  DOLLAR = 36, // $
-  SINGLE_QUOTE = 39, // '
-  ASTERISK = 42, // *
-  MINUS = 45, // -
-  SLASH = 47, // /
-  ZERO = 48, // 0
-  NINE = 57, // 9
-  UPPER_A = 65, // A
-  UPPER_Z = 90, // Z
-  UNDERSCORE = 95, // _
-  LOWER_A = 97, // a
-  LOWER_Z = 122, // z
-}
-
-// What continues an identifier in the server's lexer. False for the NaN that charCodeAt returns outside the text.
-function isIdentifierChar(c: number): boolean {
-  return (
-    (c >= Char.LOWER_A && c <= Char.LOWER_Z) ||
-    (c >= Char.UPPER_A && c <= Char.UPPER_Z) ||
-    (c >= Char.ZERO && c <= Char.NINE) ||
-    c === Char.UNDERSCORE ||
-    c === Char.DOLLAR ||
-    c >= 0x80
-  );
-}
-
-/**
- * `$N` in a nested `sql.unsafe` is the N-th parameter of the whole query. A fragment whose `count` values follow
- * `offset` bound ones must name its last slot, `$(offset + count)`: numbered from `$1` it would read earlier values.
- * Text in which a `$N` may not be a parameter (a quote, a comment, a `$` that is not a lone `$N`) is refused, not lexed.
- */
-function checkNestedUnsafePlaceholders(text: string, offset: number, count: number): void {
-  const last = offset + count;
-  const length = text.length;
-  let namesLast = false;
-  let i = 0;
-  while (i < length) {
-    const c = text.charCodeAt(i++);
-    if (c === Char.DOLLAR) {
-      const digits = i;
-      let n = 0;
-      let next = text.charCodeAt(i);
-      while (next >= Char.ZERO && next <= Char.NINE) {
-        n = n * 10 + (next - Char.ZERO);
-        next = text.charCodeAt(++i);
-      }
-      if (i === digits || isIdentifierChar(next) || isIdentifierChar(text.charCodeAt(digits - 2))) {
-        throw uncheckedNestedUnsafeError();
-      }
-      if (n === last) {
-        namesLast = true;
-      }
-    } else if (
-      c === Char.SINGLE_QUOTE ||
-      c === Char.DOUBLE_QUOTE ||
-      (c === Char.MINUS && text.charCodeAt(i) === Char.MINUS) ||
-      (c === Char.SLASH && text.charCodeAt(i) === Char.ASTERISK)
-    ) {
-      throw uncheckedNestedUnsafeError();
-    }
-  }
-  if (!namesLast) {
-    const own = count === 1 ? `value is $${last}` : `values are $${offset + 1}..$${last}`;
-    throw new SyntaxError(
-      `Nested sql.unsafe() parameters are numbered for the whole query: this fragment's ${own} here, but its text does not reference $${last}. Renumber it or use a sql\`\` fragment`,
-    );
-  }
-}
-
-function uncheckedNestedUnsafeError(): SyntaxError {
-  return new SyntaxError(
-    'Nested sql.unsafe() with values cannot contain quotes, comments or a "$" that is not a $N parameter when it follows other parameters. Use a sql`` fragment for the values',
-  );
-}
-
 initPostgres(
   function onResolvePostgresQuery(query, result, commandTag, count, queries, is_last) {
     if (is_last) {
@@ -598,8 +521,10 @@ class PostgresAdapter
     return "$" + index;
   }
 
-  checkFragmentPlaceholders(text: string, offset: number, count: number): void {
-    checkNestedUnsafePlaceholders(text, offset, count);
+  checkNestedUnsafeValues(): void {
+    throw new SyntaxError(
+      "Nested sql.unsafe() cannot have values when it follows other parameters: on PostgreSQL its $1 is the first parameter of the whole query. Use a sql`` fragment for the values",
+    );
   }
 
   bindParam(value: unknown, binding_values: unknown[], index: number): string {

@@ -21,6 +21,13 @@
 // The two syntax trees differ. Only the nodes that both have are entered and left in a trace: `common` says which.
 // `standIn` says which node `bun lint` passes with an event where ESLint passes one that it does not have. If that
 // is not in both trees either, the trace has the next node that is entered or left. Offsets are in bytes.
+//
+// `--listen statements` and `--listen nothing` leave all other nodes out of the traces. `bun lint` then does not walk
+// into what does not matter to the analysis, which must not change the events. Use them with `--ignore-nodes`: which
+// node is "the next" is not comparable there.
+//
+// What is known to differ: code that only typescript-estree accepts (`x = { a = 1 }`, `({ a }) = b`), optional patterns
+// (`function f({ a }?) {}`: the range), and what the parsers disagree about.
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

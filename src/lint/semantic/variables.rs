@@ -147,26 +147,43 @@ impl Variables {
         file.binding.declarations_in_scopes(&mut declared);
         let mut entries: Vec<Entry> = Vec::with_capacity(declared.len());
         for &(symbol, decl) in &declared {
-            let Some((name, pos)) = name_of_declaration(file, decl) else {
-                continue;
-            };
-            if file.has_synthetic_nodes() && file.is_in_jsdoc(pos) {
-                continue;
+            if let Some((name, pos)) = name_of_declaration(file, decl)
+                && !(file.has_synthetic_nodes() && file.is_in_jsdoc(pos))
+            {
+                entries.push(Entry {
+                    scope: NONE,
+                    name,
+                    pos,
+                    symbol,
+                    decl,
+                    flags: 0,
+                });
             }
-            let here = || tree.region_at(pos).from;
-            let (scope, flags) = match decl {
+        }
+        // The scope that each name is written in. The binder declares nearly in source order.
+        let mut in_order: Vec<u64> =
+            (entries.iter().enumerate()).map(|(i, it)| u64::from(it.pos) << 32 | i as u64).collect();
+        in_order.sort_unstable();
+        let mut cursor = tree.cursor();
+        for key in in_order {
+            entries[key as u32 as usize].scope = cursor.seek((key >> 32) as u32).from;
+        }
+        // The scope that each is declared in.
+        entries.retain_mut(|it| {
+            let (here, name) = (it.scope, it.name);
+            (it.scope, it.flags) = match it.decl {
                 Decl::Var(p) | Decl::Require(p) => {
                     let PatParent::Var(d) = root_of_pattern(file, p) else {
-                        continue;
+                        return false;
                     };
                     let is_hoisted = hir.var_decls.get(d.idx()).is_some_and(|it| it.kind == VarKind::Var)
                         && !is_catch_parameter(file, d);
                     let scope = match is_hoisted {
-                        true => tree.scopes[here() as usize].variable_scope,
-                        false => here(),
+                        true => tree.scopes[here as usize].variable_scope,
+                        false => here,
                     };
                     // The binder declares it in the function.
-                    if matches!(decl, Decl::Require(_)) && tree.scopes[scope as usize].variable_scope != scope {
+                    if matches!(it.decl, Decl::Require(_)) && tree.scopes[scope as usize].variable_scope != scope {
                         hazards.push(name);
                     }
                     (scope, VALUE)
@@ -177,8 +194,8 @@ impl Variables {
                         (scope.copied().unwrap_or(NONE), VALUE)
                     }
                     // The binder does not visit the name of a `this` parameter.
-                    _ if name == known::this => (here(), VALUE),
-                    _ => continue,
+                    _ if name == known::this => (here, VALUE),
+                    _ => return false,
                 },
                 Decl::Fn(f) => {
                     let is_in_block = || {
@@ -188,36 +205,28 @@ impl Variables {
                     if !has_block_scopes && is_in_block() {
                         hazards.push(name);
                     }
-                    (here(), VALUE)
+                    (here, VALUE)
                 }
                 Decl::Class(c) => match bound.class_owner.get(c.idx()) {
                     Some(ClassOwner::Expr(_)) => (tree.of_class.get(c.idx()).copied().unwrap_or(NONE), VALUE | TYPE),
-                    _ => (here(), VALUE | TYPE),
+                    _ => (here, VALUE | TYPE),
                 },
-                Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_) => (here(), VALUE | TYPE),
-                _ if is_javascript => continue,
-                Decl::Interface(_) | Decl::Alias(_) => (here(), TYPE),
-                Decl::TypeParam(_) => (scope_of_type_parameter(file, tree, pos), TYPE),
+                Decl::ImportDefault(_) | Decl::ImportNamespace(_) | Decl::ImportSpec(_) => (here, VALUE | TYPE),
+                _ if is_javascript => return false,
+                Decl::Interface(_) | Decl::Alias(_) => (here, TYPE),
+                Decl::TypeParam(_) => (scope_of_type_parameter(file, tree, here, it.pos), TYPE),
                 Decl::Module(_) => {
                     // To the binder, a namespace without values is not a value.
-                    if !file.binding.symbol(symbol).is_some_and(|it| it.flags.intersects(SymFlags::VALUE)) {
+                    if !file.binding.symbol(it.symbol).is_some_and(|it| it.flags.intersects(SymFlags::VALUE)) {
                         hazards.push(name);
                     }
-                    (here(), VALUE | TYPE)
+                    (here, VALUE | TYPE)
                 }
-                _ => (here(), VALUE | TYPE),
+                _ => (here, VALUE | TYPE),
             };
-            if scope != NONE {
-                entries.push(Entry {
-                    scope,
-                    name,
-                    pos,
-                    symbol,
-                    decl,
-                    flags,
-                });
-            }
-        }
+            it.scope != NONE
+        });
+
         // The entries scope by scope, as indices.
         let scope_count = tree.scopes.len();
         let mut entry_starts = vec![0u32; scope_count + 1];
@@ -465,9 +474,8 @@ fn place_in_filter(words: usize, name: Atom) -> (usize, u64) {
     ((hash >> 6) as usize & (words - 1), 1 << (hash & 63))
 }
 
-/// The scope that the type parameter at `pos` is declared in.
-fn scope_of_type_parameter(file: &File, tree: &ScopeTree, pos: u32) -> u32 {
-    let here = tree.region_at(pos).from;
+/// The scope that the type parameter at `pos`, in the scope `here`, is declared in.
+fn scope_of_type_parameter(file: &File, tree: &ScopeTree, here: u32, pos: u32) -> u32 {
     let is_nested = |scope: u32| {
         matches!(
             tree.scopes.get(scope as usize).map(|it| it.kind),

@@ -157,11 +157,14 @@ fn has_use_strict(file: &File, statements: impl Iterator<Item = hir::StmtId>) ->
 impl ScopeTree {
     pub(crate) fn new<'a>(file: &'a File<'a>) -> ScopeTree {
         let protos = collect(file);
-        let mut order: Vec<u32> = (0..protos.len() as u32).collect();
-        order.sort_unstable_by_key(|&i| {
-            let it = &protos[i as usize];
-            (it.start, u32::MAX - it.end, it.rank, i)
-        });
+        // By start. Of two that start together, the one that ends later contains the other.
+        let mut order: Vec<(u64, u64)> = (protos.iter().enumerate())
+            .map(|(i, it)| {
+                let range = u64::from(it.start) << 32 | u64::from(u32::MAX - it.end);
+                (range, u64::from(it.rank) << 32 | i as u64)
+            })
+            .collect();
+        order.sort_unstable();
 
         let language = file.language();
         let supports_strict = !is_javascript_mode(file) || language.ecma_version >= 5;
@@ -174,7 +177,8 @@ impl ScopeTree {
         let mut scope_of_proto = vec![NONE; protos.len()];
         let mut outside: Vec<(u32, u32)> = Vec::new();
         let mut stack: Vec<u32> = Vec::new();
-        for &index in &order {
+        for &(_, index) in &order {
+            let index = index as u32;
             let proto = protos[index as usize];
             while let Some(&top) = stack.last()
                 && tree.regions[top as usize].end <= proto.start

@@ -127,9 +127,12 @@ impl Binding for bind::Bound<'_> {
     }
     fn declarations_in_scopes(&self, into: &mut Vec<(SymbolId, Decl)>) {
         for (i, symbol) in self.symbols.iter().enumerate() {
-            let id = match symbol.export_symbol.is_some() {
-                true => symbol.export_symbol,
-                false => SymbolId(i as u32),
+            let id = match self.symbols.get(symbol.export_symbol.idx()) {
+                // The two symbols of what is exported have the same declarations, unless not all
+                // of them are exported.
+                Some(exported) if exported.decls.len() == symbol.decls.len() => continue,
+                Some(_) => symbol.export_symbol,
+                None => SymbolId(i as u32),
             };
             for &decl in symbol.decls.as_slice() {
                 if matches!(

@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Disallow losing originally caught error when re-throwing custom errors.
 pub struct PreserveCaughtError {
@@ -85,25 +86,29 @@ fn get_error_cause<'a>(args: List<'a, Expr<'a>>, options_index: usize) -> Cause<
     }
 }
 
+/// By a statement: the `try` statement in whose `catch` block it is, or `None` in a function in that
+/// block.
+type ParentCatches<'a> = AncestorMemo<'a, Option<Stmt<'a>>>;
+
 /// ESLint's `findParentCatch`: the `try` statement in whose `catch` block `statement` is, outside of
 /// any function in that block, and the parameter of the `catch`.
-fn find_parent_catch(statement: Stmt<'_>) -> Option<(Stmt<'_>, Option<VarDecl<'_>>)> {
-    let mut child = Node::Stmt(statement);
-    for ancestor in child.ancestors() {
-        match ancestor {
-            Node::Func(_) => return None,
-            Node::Stmt(parent) => {
-                if let StmtKind::Try { param, handler: Some(handler), .. } = parent.kind()
-                    && Node::Stmt(handler) == child
-                {
-                    return Some((parent, param));
-                }
-            }
-            _ => {}
-        }
-        child = ancestor;
+fn find_parent_catch<'a>(
+    statement: Stmt<'a>,
+    known: &mut ParentCatches<'a>,
+) -> Option<(Stmt<'a>, Option<VarDecl<'a>>)> {
+    let parent = known.find(statement.into(), |child, ancestor| match ancestor {
+        Node::Func(_) => Some(None),
+        Node::Stmt(parent) => matches!(
+            parent.kind(),
+            StmtKind::Try { handler: Some(handler), .. } if Node::Stmt(handler) == child
+        )
+        .then_some(Some(parent)),
+        _ => None,
+    });
+    match parent??.kind() {
+        StmtKind::Try { param, .. } => Some((parent??, param)),
+        _ => None,
     }
-    None
 }
 
 /// ESLint's `findInsertionTokenAfterParens`: `first_token`, or the last of the closing parentheses
@@ -211,7 +216,7 @@ impl PreserveCaughtError {
         if !can_be_built_in && configured.is_none() {
             return;
         }
-        let Some((try_statement, param)) = find_parent_catch(statement) else {
+        let Some((try_statement, param)) = find_parent_catch(statement, &mut cx.state) else {
             return;
         };
         let (options_index, placeholders) =
@@ -278,7 +283,7 @@ impl Rule for PreserveCaughtError {
     const META: Meta = Meta::eslint("preserve-caught-error", Kind::Suggestion)
         .has_suggestions()
         .recommended();
-    type State<'a> = ();
+    type State<'a> = ParentCatches<'a>;
 
     fn new(options: &Options) -> Self {
         let config = options.object(0);
@@ -298,7 +303,8 @@ impl Rule for PreserveCaughtError {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> ParentCatches<'a> {
         on.stmts([StmtTag::Throw], Self::check);
+        ParentCatches::default()
     }
 }

@@ -16,7 +16,20 @@ fn is_in_jsx_empty_expression<'a>(file: &'a File<'a>, offset: u32) -> bool {
         e.is_missing() && e.jsx_container_span().is_some_and(|braces| braces.shrink(1, 1).contains_offset(offset))
     };
     match utils::get_node_by_range_index(file, offset) {
-        Node::Expr(e) => matches!(e.kind(), ExprKind::Jsx(jsx) if jsx.children().iter().any(is_around)),
+        Node::Expr(e) => match e.kind() {
+            // What is in the braces around `offset` starts after it or not: it is the first child that does, or the
+            // one before that.
+            ExprKind::Jsx(jsx) => {
+                let children = jsx.children();
+                let after = children.after(offset);
+                let before = match after {
+                    Some(after) => children.before(after.span().start),
+                    None => children.last(),
+                };
+                before.into_iter().chain(after).any(is_around)
+            }
+            _ => false,
+        },
         Node::Prop(attribute) => attribute.value().is_some_and(is_around),
         _ => false,
     }

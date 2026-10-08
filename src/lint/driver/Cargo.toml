@@ -12,6 +12,7 @@ bun_lint_eslint.workspace = true
 bun_lint_typescript.workspace = true
 bun_lint_plugins.workspace = true
 bun_lint_graph.workspace = true
+bun_lint_conformance.workspace = true
 bun_format.workspace = true
 bun_sema.workspace = true
 bun_sema_driver.workspace = true

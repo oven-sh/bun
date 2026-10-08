@@ -54,6 +54,7 @@ enum Command {
 pub(crate) fn run(args: &[String]) {
     let args: Vec<&[u8]> = args.iter().map(String::as_bytes).collect();
     let command = match &args[..] {
+        [b"--run-eslint-tests", ..] => Command::Lint(Box::default()),
         [b"@format", rest @ ..] => Command::Format(Box::new(or_exit(bun_lint_driver::fmt::cli::Options::parse(rest)))),
         args => Command::Lint(Box::new(or_exit(Options::parse(args)))),
     };
@@ -86,6 +87,9 @@ pub(crate) fn run(args: &[String]) {
         js_engine: &processes,
         version: b"0.0.0-harness",
     };
+    if let [b"--run-eslint-tests", rest @ ..] = &args[..] {
+        std::process::exit(i32::from(!bun_lint_driver::for_tests::run_eslint_tests(rest, &environment)));
+    }
     let outcome = match &command {
         Command::Lint(options) => bun_lint_driver::run(options, &environment),
         Command::Format(options) => bun_lint_driver::fmt::run(options, &environment),

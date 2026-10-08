@@ -239,57 +239,27 @@ fn describe(index: usize, case: &Json, problem: &Problem, into: &mut String) {
     );
 }
 
-/// How many cases have been counted for `--every`, without and with types.
-#[derive(Default)]
-struct Counters {
-    untyped: usize,
-    typed: usize,
+/// The tests of a rule.
+struct Fixture {
+    /// `<plugin>/<rule>`
+    id: String,
+    entry: &'static RuleEntry,
+    json: Json,
+    tally: Tally,
 }
 
-/// Runs the cases of one rule. Returns the tally, and for each failure the number of the case and
-/// what is wrong.
-fn run_fixture<'j>(
-    host: &dyn Host,
-    flags: &Flags,
-    entry: &'static RuleEntry,
-    fixture: &'j Json,
-    counters: &mut Counters,
-) -> (Tally, Vec<(usize, &'j Json, Problem)>) {
-    let cases = fixture.get(b"cases").and_then(Json::as_array).unwrap_or_default();
-    let mut tally = Tally::default();
-    let mut chosen = Vec::new();
-    for (index, case) in cases.iter().enumerate() {
-        let kind = kind_of(entry, case);
-        let (counter, every) = match kind {
-            Kind::Typed => (&mut counters.typed, flags.every_typed),
-            _ => (&mut counters.untyped, flags.every),
-        };
-        if kind == Kind::Skipped || (kind == Kind::Typed && !flags.types) {
-            tally.skipped += 1;
-            continue;
-        }
-        *counter += 1;
-        if (*counter - 1) % every == flags.first % every {
-            chosen.push((index, case, kind));
-        }
+impl Fixture {
+    fn cases(&self) -> &[Json] {
+        self.json.get(b"cases").and_then(Json::as_array).unwrap_or_default()
     }
-    let results: Vec<OnceLock<Result<Option<Problem>, ()>>> = chosen.iter().map(|_| OnceLock::new()).collect();
-    host.for_each(flags.threads, chosen.len(), &|at| {
-        let (_, case, kind) = chosen[at];
-        let _ = results[at].set(run_case(host, flags, entry, case, kind));
-    });
-    let mut failures = Vec::new();
-    for ((index, case, _), result) in chosen.into_iter().zip(results) {
-        match result.into_inner() {
-            Some(Ok(None)) => tally.passed += 1,
-            Some(Ok(Some(problem))) => {
-                tally.failed += 1;
-                failures.push((index, case, problem));
-            }
-            Some(Err(())) | None => tally.skipped += 1,
-        }
-    }
-    (tally, failures)
+}
+
+/// A case that is run.
+#[derive(Copy, Clone)]
+struct Chosen {
+    fixture: usize,
+    index: usize,
+    kind: Kind,
 }
 
 /// The name of the rule whose tests are at `path` in the bundle, if it is a rule of the plugin in
@@ -305,8 +275,7 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
             write_file(&[projects, b"/", path].concat(), bundle.read(path).unwrap_or_default());
         }
     }
-    let (mut total, mut counters) = (Tally::default(), Counters::default());
-    let (mut implemented, mut perfect, mut missing) = (0, 0, 0);
+    let (mut fixtures, mut missing) = (Vec::new(), 0);
     for (directory, plugin) in PLUGINS {
         if flags.plugin.is_some_and(|only| only != directory.as_bytes()) {
             continue;
@@ -322,39 +291,90 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
                 missing += 1;
                 continue;
             };
-            let Some(fixture) = bundle.read(path).and_then(bun_lint::json::parse) else {
-                output_line!("{id}: the fixture cannot be read");
-                continue;
-            };
-            let (tally, failures) = run_fixture(host, flags, entry, &fixture, &mut counters);
-            implemented += 1;
-            perfect += usize::from(tally.failed == 0);
-            let mut at_length = String::new();
-            for (index, case, problem) in &failures {
-                if !flags.table {
-                    output_line!("FAIL {id}#{index} {}", problem.summary);
-                }
-                if flags.verbose || flags.report.is_some() {
-                    describe(*index, case, problem, &mut at_length);
-                }
+            match bundle.read(path).and_then(bun_lint::json::parse) {
+                Some(json) => fixtures.push(Fixture {
+                    id,
+                    entry,
+                    json,
+                    tally: Tally::default(),
+                }),
+                None => output_line!("{id}: the fixture cannot be read"),
             }
-            if flags.table {
-                let verdict = if tally.failed == 0 { "ok  " } else { "FAIL" };
-                output_line!("{verdict} {id}: {} passed, {} failed, {} skipped", tally.passed, tally.failed, tally.skipped);
-            }
-            if flags.verbose && !at_length.is_empty() {
-                output_line!("{}", at_length.trim_end_matches('\n'));
-            }
-            if let Some(report) = flags.report {
-                write_file(&[report, b"/", id.as_bytes(), b".txt"].concat(), at_length.as_bytes());
-            }
-            total.passed += tally.passed;
-            total.failed += tally.failed;
-            total.skipped += tally.skipped;
         }
     }
+
+    // How many cases have been counted for `--every`, without and with types.
+    let (mut untyped, mut typed) = (0, 0);
+    let mut chosen = Vec::new();
+    for (fixture, it) in fixtures.iter_mut().enumerate() {
+        let kinds: Vec<Kind> = it.cases().iter().map(|case| kind_of(it.entry, case)).collect();
+        for (index, kind) in kinds.into_iter().enumerate() {
+            if kind == Kind::Skipped || (kind == Kind::Typed && !flags.types) {
+                it.tally.skipped += 1;
+                continue;
+            }
+            let (counter, every) = match kind {
+                Kind::Typed => (&mut typed, flags.every_typed),
+                _ => (&mut untyped, flags.every),
+            };
+            if *counter % every == flags.first % every {
+                chosen.push(Chosen { fixture, index, kind });
+            }
+            *counter += 1;
+        }
+    }
+    // Those with types take a hundred times as long: they are begun first.
+    let mut order: Vec<usize> = (0..chosen.len()).collect();
+    order.sort_by_key(|&at| chosen[at].kind != Kind::Typed);
+    let results: Vec<OnceLock<Result<Option<Problem>, ()>>> = chosen.iter().map(|_| OnceLock::new()).collect();
+    host.for_each(flags.threads, chosen.len(), &|at| {
+        let at = order[at];
+        let (it, fixture) = (chosen[at], &fixtures[chosen[at].fixture]);
+        let _ = results[at].set(run_case(host, flags, fixture.entry, &fixture.cases()[it.index], it.kind));
+    });
+
+    let mut failures: Vec<Vec<(usize, Problem)>> = fixtures.iter().map(|_| Vec::new()).collect();
+    for (it, result) in chosen.iter().zip(results) {
+        let tally = &mut fixtures[it.fixture].tally;
+        match result.into_inner() {
+            Some(Ok(None)) => tally.passed += 1,
+            Some(Ok(Some(problem))) => {
+                tally.failed += 1;
+                failures[it.fixture].push((it.index, problem));
+            }
+            Some(Err(())) | None => tally.skipped += 1,
+        }
+    }
+    let (mut total, mut perfect) = (Tally::default(), 0);
+    for (fixture, failures) in fixtures.iter().zip(&failures) {
+        let (id, tally) = (&fixture.id, fixture.tally);
+        perfect += usize::from(tally.failed == 0);
+        let mut at_length = String::new();
+        for (index, problem) in failures {
+            if !flags.table {
+                output_line!("FAIL {id}#{index} {}", problem.summary);
+            }
+            if flags.verbose || flags.report.is_some() {
+                describe(*index, &fixture.cases()[*index], problem, &mut at_length);
+            }
+        }
+        if flags.table {
+            let verdict = if tally.failed == 0 { "ok  " } else { "FAIL" };
+            output_line!("{verdict} {id}: {} passed, {} failed, {} skipped", tally.passed, tally.failed, tally.skipped);
+        }
+        if flags.verbose && !at_length.is_empty() {
+            output_line!("{}", at_length.trim_end_matches('\n'));
+        }
+        if let Some(report) = flags.report {
+            write_file(&[report, b"/", id.as_bytes(), b".txt"].concat(), at_length.as_bytes());
+        }
+        total.passed += tally.passed;
+        total.failed += tally.failed;
+        total.skipped += tally.skipped;
+    }
     output_line!(
-        "\n{implemented} rules, {perfect} without failures, {missing} not implemented\n{} cases passed, {} failed, {} skipped",
+        "\n{} rules, {perfect} without failures, {missing} not implemented\n{} cases passed, {} failed, {} skipped",
+        fixtures.len(),
         total.passed,
         total.failed,
         total.skipped

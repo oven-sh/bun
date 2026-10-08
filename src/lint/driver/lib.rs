@@ -13,6 +13,7 @@ mod deprecated;
 mod discover;
 mod evaluate;
 pub mod fmt;
+pub mod for_tests;
 mod format;
 mod fs;
 mod gitignore;

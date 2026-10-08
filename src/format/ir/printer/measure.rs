@@ -252,7 +252,7 @@ impl<'d> Printer<'d> {
         Ok(true)
     }
 
-    #[inline]
+    #[inline(always)]
     fn fits_element(&mut self, measure: &mut Measure<'d>, element: &'d FormatElement) -> PrintResult<Fits> {
         let mode = measure.mode;
         match element {

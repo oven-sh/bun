@@ -1,8 +1,48 @@
 //! `bun-lint format bench`.
 
-use super::{Args, collect_files, with_file_as};
+use super::{Args, collect_files};
 use bun_format::Scratch;
+use bun_lint::ast::File;
+use bun_lint::language::{LanguageOptions, Parser, SourceType};
+use bun_sema::atom::{Intern, InternerPerThread};
+use bun_sema::bind::{BindOptions, bind_for_format};
+use bun_sema::resolve::Dialect;
+use bun_sema::session::Session;
 use std::hash::Hasher as _;
+
+/// Parses `code` the way Prettier's parsers do, as a module or as a script, and calls `then` with the file. The names in it are
+/// the file's own: nothing is interned. `atoms`: for a file with syntax errors.
+fn with_file_as<R>(is_script: bool, path: &str, code: &[u8], atoms: &dyn Intern, then: impl for<'a> FnOnce(&'a File<'a>) -> R) -> R {
+    let is_typescript = [".ts", ".tsx", ".mts", ".cts"].iter().any(|it| path.ends_with(it));
+    let language = LanguageOptions {
+        parser: if is_typescript { Parser::TypeScript } else { Parser::Espree },
+        source_type: if is_script { SourceType::Script } else { SourceType::Module },
+        ..LanguageOptions::default()
+    };
+    let session = Session::new();
+    let arena = session.arena();
+    let how = language.parse_options(path.as_bytes());
+    bun_js_parser::sema::with_summary(
+        Dialect::babel(is_script),
+        (arena, &session),
+        path.as_bytes(),
+        how.script_kind,
+        code,
+        atoms,
+        how.experimental_decorators,
+        how.every_file_is_a_module,
+        |mut hir, atoms| {
+            hir.text = std::borrow::Cow::Borrowed(code);
+            let bind_options = BindOptions {
+                emit_standard_class_fields: true,
+                before_es2020: false,
+                before_es2017: false,
+            };
+            let bound = bind_for_format(&hir, bind_options, atoms, arena);
+            then(&File::new(path.as_bytes(), &hir, &bound, atoms, &language, None))
+        },
+    )
+}
 
 /// `--check` does what `prettier --check` does: it reads each file, formats it and compares. Otherwise the files are read once,
 /// and parsed and formatted `--iterations` times. With `--only=parse` nothing is formatted: the difference between two runs
@@ -36,6 +76,8 @@ pub(super) fn bench(args: &Args) {
     let (parsing, formatting, bytes) = (AtomicU64::new(0), AtomicU64::new(0), AtomicU64::new(0));
     let (changed, failed) = (AtomicU64::new(0), AtomicU64::new(0));
     let hashes: Vec<AtomicU64> = paths.iter().map(|_| AtomicU64::new(0)).collect();
+    let sessions: Vec<Session> = (0..threads.max(1)).map(|_| Session::new()).collect();
+    let atoms = InternerPerThread::new_in(&sessions);
     let started = std::time::Instant::now();
     for _ in 0..iterations {
         bun_sema_standalone::for_each_parallel(threads, paths.len(), |i| {
@@ -65,7 +107,7 @@ pub(super) fn bench(args: &Args) {
             }
             // As `bun format` does: as a module, and if that is a syntax error, as a script.
             for is_script in [false, true] {
-                let is_done = with_file_as(is_script, &paths[i], code, |file| {
+                let is_done = with_file_as(is_script, &paths[i], code, atoms.of_this_thread(), |file| {
                     if file.has_parse_errors() && !is_script {
                         return false;
                     }

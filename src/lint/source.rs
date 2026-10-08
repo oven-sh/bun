@@ -253,10 +253,10 @@ fn line_starts(text: &[u8]) -> Vec<u32> {
     const ONES: u64 = 0x0101_0101_0101_0101;
     let mut starts = Vec::with_capacity(text.len() / 32 + 1);
     starts.push(0);
-    let words = text.chunks_exact(8);
-    let rest = text.len() - words.remainder().len();
-    for (i, word) in words.enumerate() {
-        let others = u64::from_le_bytes(word.try_into().unwrap_or_default()) ^ (ONES * b'\n' as u64);
+    let (words, tail) = text.as_chunks::<8>();
+    let rest = text.len() - tail.len();
+    for (i, word) in words.iter().enumerate() {
+        let others = u64::from_le_bytes(*word) ^ (ONES * b'\n' as u64);
         // The high bit of each byte that is a `\n`.
         let mut found = !(((others & (ONES * 0x7F)) + ONES * 0x7F) | others) & (ONES * 0x80);
         while found != 0 {

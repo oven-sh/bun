@@ -1065,7 +1065,7 @@ impl RewriterPipe {
     ) -> JsResult<JSValue> {
         // Inherit status and headers (#3334); `finalize_without_stream` reads `get_fetch_headers()`, so materialize.
         let mut init = original.clone_init(cx.global())?;
-        init.materialize_headers(cx.global())?;
+        init.headers.materialize(cx.global())?;
 
         let pipe = bun_core::heap::alloc_nn(RewriterPipe {
             global: GlobalRef::from(cx.global()),

@@ -1,7 +1,7 @@
 use core::ffi::{c_int, c_void};
 
 use crate::webcore::Response;
-use crate::webcore::response::{HeadersRef, Init};
+use crate::webcore::response::{HeadersRef, Init, LazyHeaders};
 use bun_core::String as BunString;
 use bun_jsc::{CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsResult};
 
@@ -195,7 +195,7 @@ fn construct_render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
             headers: {
                 let mut headers = HeadersRef::create_empty();
                 headers.put(HTTPHeaderName::Location, &path_str, global_this)?;
-                Some(headers)
+                LazyHeaders::List(headers)
             },
             ..Default::default()
         },

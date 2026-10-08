@@ -1306,7 +1306,7 @@ impl Request {
                                     Err(e) => bail!(Err(e)),
                                 });
                         if header_check {
-                            if let Some(headers) = response_init.headers {
+                            if let Some(headers) = response_init.headers.into_list() {
                                 if !fields.contains(Fields::Headers) {
                                     req.headers.set(Some(headers));
                                     fields.insert(Fields::Headers);

@@ -22,7 +22,7 @@ fn write_array_pattern<'a>(pat: Pat<'a>, elements: List<'a, PatElem<'a>>, f: &mu
     if elements.is_empty() {
         write!(f, format_dangling_comments(pat.span()).with_soft_block_indent());
     } else {
-        let rest = elements.last().filter(|it| it.is_rest());
+        let rest = elements.last().filter(|it| is_rest_element(*it));
         let count = elements.len() - usize::from(rest.is_some());
         write!(
             f,
@@ -50,13 +50,18 @@ fn write_assignment_pattern<'a>(left: Pat<'a>, right: Expr<'a>, f: &mut Formatte
     write!(f, [FormatLeadingComments::Comments(comments), group(&left), space(), "=", space(), right]);
 }
 
+/// `[...a = 1]` is an error, and `a = 1` in typescript-estree's tree.
+fn is_rest_element(element: PatElem<'_>) -> bool {
+    element.is_rest() && element.default().is_none()
+}
+
 /// `a`, `a = 1`, `...a` in an array pattern.
 pub(crate) fn write_array_pattern_element<'a>(element: PatElem<'a>, f: &mut Formatter<'a>) {
     let Some(pat) = element.pat() else {
         return;
     };
     let parent = || crate::js::ast_nodes::node_as_ast_nodes(element.parent());
-    if element.is_rest() {
+    if is_rest_element(element) {
         format_node(element.span(), parent, f, |f| write!(f, ["...", pat]));
     } else if let Some(default) = element.default() {
         format_node(element.span(), parent, f, |f| write_assignment_pattern(pat, default, f));

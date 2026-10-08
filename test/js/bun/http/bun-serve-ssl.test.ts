@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import tls from "node:tls";
 import { bunEnv, bunExe } from "harness";
+import tls from "node:tls";
 import { join } from "path";
 import privateKey from "../../third_party/jsonwebtoken/priv.pem" with { type: "text" };
 import publicKey from "../../third_party/jsonwebtoken/pub.pem" with { type: "text" };

@@ -1,5 +1,5 @@
 import jsc from "bun:jsc";
-import { describe, expect, it, mock, test } from "bun:test";
+import { describe, expect, it, jest, mock, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, isWindows } from "harness";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
@@ -347,6 +347,144 @@ describe("_idleStart", () => {
     t1._idleStart = -Number.MAX_VALUE;
     expect(t1._idleStart).toBe(-Number.MAX_VALUE);
     clearTimeout(t1);
+  });
+});
+
+describe("_repeat", () => {
+  type TimerWithRepeat = Timer & { _repeat: number | null };
+
+  // Each statement runs in the first callback of a setTimeout whose `_repeat` is set.
+  const clearsInCallback = [
+    "clearTimeout(t)",
+    "clearTimeout(id)",
+    "clearTimeout(String(id))",
+    "clearInterval(t)",
+    "clearInterval(id)",
+    "clearInterval(String(id))",
+    "t.close()",
+    "t[Symbol.dispose]()",
+    "clearTimeout(t); t.refresh()",
+    "t.refresh(); clearTimeout(t)",
+    "clearTimeout(t); t._repeat = 1",
+    "clearTimeout(id); t._idleTimeout = 5",
+    "clearTimeout(t); throw new Error('after the clear')",
+  ];
+
+  it.concurrent.each(clearsInCallback)("a timeout cleared in its own callback by `%s` fires once", async clear => {
+    // The child exits by itself only when no timer is left armed. It prints the number of
+    // fires and the number of Timeout objects that are still rooted.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import { heapStats } from "bun:jsc";
+          let fires = 0;
+          process.on("uncaughtException", () => {});
+          process.on("exit", () => console.log(fires, heapStats().protectedObjectTypeCounts.Timeout ?? 0));
+          const t = setTimeout(() => {
+            if (++fires > 1) process.exit(1);
+            ${clear};
+          }, 1);
+          const id = +t;
+          t._repeat = 1;
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ stdout, exitCode }).toEqual({ stdout: "1 0\n", exitCode: 0 });
+  });
+
+  it.each(["ref'd", "unref'd"])("no timer stays armed after a self-clear by id (%s timeout)", kind => {
+    jest.useFakeTimers();
+    try {
+      let fires = 0;
+      const timeout = setTimeout(() => {
+        fires++;
+        clearTimeout(id);
+      }, 1) as TimerWithRepeat;
+      const id = +timeout;
+      timeout._repeat = 1;
+      if (kind === "unref'd") timeout.unref();
+
+      jest.advanceTimersByTime(1);
+      expect(jest.getTimerCount()).toBe(0);
+      jest.advanceTimersByTime(50);
+      expect(fires).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("no timer stays armed after refresh() and jest.clearAllTimers() in its own callback", () => {
+    jest.useFakeTimers();
+    try {
+      let fires = 0;
+      const timeout = setTimeout(() => {
+        fires++;
+        // refresh() puts the timer back in the heap, where clearAllTimers() finds it.
+        timeout.refresh();
+        jest.clearAllTimers();
+      }, 1) as TimerWithRepeat;
+      timeout._repeat = 1;
+
+      jest.advanceTimersByTime(1);
+      expect(jest.getTimerCount()).toBe(0);
+      jest.advanceTimersByTime(50);
+      expect(fires).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("no timer stays armed after its Bun.ModuleGraph is disposed in its own callback", () => {
+    jest.useFakeTimers();
+    try {
+      using graph = new Bun.ModuleGraph();
+      let fires = 0;
+      const timeout = graph.run(() =>
+        setTimeout(() => {
+          fires++;
+          graph.dispose();
+        }, 1),
+      ) as TimerWithRepeat;
+      timeout._repeat = 1;
+
+      jest.advanceTimersByTime(1);
+      expect({ fires, armed: jest.getTimerCount(), hasRef: timeout.hasRef() }).toEqual({
+        fires: 1,
+        armed: 0,
+        hasRef: false,
+      });
+      jest.advanceTimersByTime(50);
+      expect(fires).toBe(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it.each([
+    ["is not cleared", (_timeout: TimerWithRepeat) => {}],
+    ["calls refresh() in its callback", (timeout: TimerWithRepeat) => void timeout.refresh()],
+  ])("a timeout that %s becomes an interval", (_, inCallback) => {
+    jest.useFakeTimers();
+    try {
+      let fires = 0;
+      const timeout = setTimeout(() => {
+        fires++;
+        inCallback(timeout);
+      }, 1) as TimerWithRepeat;
+      timeout._repeat = 1;
+
+      jest.advanceTimersByTime(5);
+      expect(fires).toBe(5);
+      clearTimeout(timeout);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 

@@ -5,12 +5,14 @@
 //! formatted as a file of its own, indented like the line that it starts on, and put back.
 
 use crate::ir::element::{Align, FormatElement, Tag};
+use crate::ir::prelude::{Format, Formatter, hard_line_break};
+use crate::ir::run::format_with;
 use crate::js::ast_nodes::{AstNodes, ExpressionStatement, node_as_ast_nodes};
 use crate::js::comments::{self, Comment, Comments};
 use crate::js::print::program::ends_before_semicolon;
 use crate::js::source_text::SourceText;
 use crate::options::LineEnding;
-use crate::{FormatError, FormatOptions, Scratch, ir, js};
+use crate::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::{File, FnBody, FnKind, Node, Stmt, StmtKind};
 use bun_lint::span::Span;
 use smallvec::SmallVec;
@@ -61,7 +63,9 @@ pub fn format<'a>(
         };
         let mut result = Err(FormatError::SyntaxError);
         parse(slice, &mut |slice_file| {
-            result = format_aligned(slice_file, &slice_options, alignment, scratch, &mut formatted);
+            result = format_with(slice_file, &slice_options, scratch, &mut formatted, |file, f| {
+                write_aligned(file, alignment, f);
+            });
         });
         result?;
     }
@@ -184,55 +188,28 @@ fn comments_of<'a>(file: &'a File<'a>) -> &'a [Comment] {
     comments.map_or(&[][..], |comments: &Vec<Comment>| comments)
 }
 
-/// Prettier's `coreFormat` with `addAlignmentSize`: every line but the first is indented by
-/// `alignment` columns more.
-fn format_aligned<'a>(
-    file: &'a File<'a>,
-    options: &FormatOptions,
-    alignment: usize,
-    scratch: &mut Scratch,
-    out: &mut Vec<u8>,
-) -> Result<(), FormatError> {
-    if alignment == 0 {
-        return crate::format(file, options, scratch, out);
-    }
-    if file.has_parse_errors() {
-        return Err(FormatError::SyntaxError);
-    }
-    let context = js::context::JsFormatContext::new(file, options.clone(), comments_of(file));
-    let mut formatter = ir::formatter::Formatter::new(context, std::mem::take(&mut scratch.formatter));
-
-    // Prettier's `addAlignmentToDoc`. The line break at the start makes the indentation count for
-    // the first line, and is trimmed by the caller.
-    let tab_width = usize::from(options.indent_width.value().max(1));
+/// Writes the document of `file` so that every line is indented by `alignment` columns more.
+/// Prettier's `addAlignmentToDoc`.
+fn write_aligned<'a>(file: &'a File<'a>, alignment: usize, f: &mut Formatter<'a>) {
+    let tab_width = usize::from(f.options().indent_width.value().max(1));
     let (levels, spaces) = (alignment / tab_width, (alignment % tab_width) as u8);
     if spaces > 0 {
-        formatter.write_element(FormatElement::Tag(Tag::StartAlign(Align(spaces))));
+        f.write_element(FormatElement::Tag(Tag::StartAlign(Align(spaces))));
     }
     for _ in 0..levels {
-        formatter.write_element(FormatElement::Tag(Tag::StartIndent));
+        f.write_element(FormatElement::Tag(Tag::StartIndent));
     }
-    ir::prelude::Format::fmt(&ir::prelude::hard_line_break(), &mut formatter);
-    js::format_file(file, &mut formatter);
+    // It makes the indentation count for the first line, and is trimmed from the result.
+    if alignment > 0 {
+        hard_line_break().fmt(f);
+    }
+    crate::js::format_file(file, f);
     for _ in 0..levels {
-        formatter.write_element(FormatElement::Tag(Tag::EndIndent));
+        f.write_element(FormatElement::Tag(Tag::EndIndent));
     }
     if spaces > 0 {
-        formatter.write_element(FormatElement::Tag(Tag::EndAlign));
+        f.write_element(FormatElement::Tag(Tag::EndAlign));
     }
-
-    let (root, buffers) = formatter.finish();
-    scratch.formatter = buffers;
-    ir::document::propagate_expand(root, &mut scratch.formatter.storage, &mut scratch.propagate);
-    ir::printer::print(
-        root,
-        &scratch.formatter.storage,
-        file.text(),
-        ir::printer::PrinterOptions::new(options, file.text()),
-        &mut scratch.printer,
-        out,
-    )
-    .map_err(|_| FormatError::InvalidDocument)
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

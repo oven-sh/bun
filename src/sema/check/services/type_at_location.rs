@@ -3,6 +3,7 @@
 use super::super::*;
 use super::visited::VisitedKind;
 use super::{NodeRef, Services};
+use crate::check::errors_type_nodes::rest_element_type_node;
 use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, SymbolId, flags_of_member};
 use crate::node::{Kind, Node, NodeData, Part};
 
@@ -286,7 +287,7 @@ impl Checker<'_, '_> {
                 ClassOwner::Expr(e) => return self.type_of_expr(file, e),
                 ClassOwner::Stmt(_) => true,
             },
-            Decl::Enum(_) | Decl::Alias(_) => true,
+            Decl::Enum(_) | Decl::Alias(_) | Decl::Interface(_) | Decl::TypeParam(_) => true,
             // `import type a from`, `import type { a }`, `export type { a }`: the `type` of the clause, not of the specifier.
             Decl::ImportDefault(import) => hir[import].type_only,
             Decl::ImportSpec(spec) => hir[hir[spec].import].type_only,
@@ -498,6 +499,11 @@ impl Services<'_, '_, '_> {
             };
         }
         let bound = self.c.bound(file);
+        // `node.Symbol`, also where another declaration has the name.
+        let symbol_of = |services: &Self, decl: Decl| match bound.symbol_of_declaration(decl) {
+            SymbolId::NONE => services.symbol_of_rejected_declaration(file, decl),
+            symbol => symbol,
+        };
         let declared_type_of = |services: &mut Self, symbol: SymbolId| match symbol.is_some() {
             true => services.c.declared_type(services.c.files().sym(file, symbol)),
             false => TypeId::ERROR,
@@ -514,20 +520,23 @@ impl Services<'_, '_, '_> {
                 StmtKind::TypeAlias(a) => return declared_type_of(self, bound.alias_symbol[a.idx()]),
                 StmtKind::Enum(e) => return declared_type_of(self, bound.enum_symbol[e.idx()]),
                 StmtKind::Module(m) => return type_of(self, bound.module_symbol[m.idx()]),
-                StmtKind::ImportEquals(i) => return type_of(self, bound.symbol_of_declaration(Decl::ImportEquals(i))),
+                StmtKind::ImportEquals(i) => {
+                    let symbol = symbol_of(self, Decl::ImportEquals(i));
+                    return type_of(self, symbol);
+                }
                 _ => {}
             },
             NodeData::TypeParam(p) => return declared_type_of(self, bound.type_param_symbol[p.idx()]),
             NodeData::EnumMember(m) => return type_of(self, bound.enum_member_symbol[m.idx()]),
             NodeData::ImportSpec(s) => {
-                let symbol = bound.symbol_of_declaration(Decl::ImportSpec(s));
+                let symbol = symbol_of(self, Decl::ImportSpec(s));
                 return match hir[hir[s].import].type_only {
                     true => declared_type_of(self, symbol),
                     false => type_of(self, symbol),
                 };
             }
             NodeData::ExportSpec(s) => {
-                let symbol = bound.symbol_of_declaration(Decl::ExportSpec(s));
+                let symbol = symbol_of(self, Decl::ExportSpec(s));
                 return match hir[hir[s].export].type_only {
                     true => declared_type_of(self, symbol),
                     false => type_of(self, symbol),
@@ -536,9 +545,8 @@ impl Services<'_, '_, '_> {
             // `isBindingPattern`, and a declaration whose name is one:
             // `getTypeForVariableLikeDeclaration`.
             NodeData::Pat(pat) => return self.c.type_of_pat(file, pat),
-            NodeData::VarDecl(d) if !matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => {
-                return self.c.type_of_pat(file, hir[d].pat);
-            }
+            // A variable declaration whose name is a pattern has no symbol.
+            NodeData::VarDecl(d) if !matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => return TypeId::ERROR,
             NodeData::PatProp(p) if hir[p].value.is_some() && !matches!(hir[hir[p].value].kind, PatKind::Ident(_)) => {
                 return self.c.type_of_pat(file, hir[p].value);
             }
@@ -549,11 +557,19 @@ impl Services<'_, '_, '_> {
                 if let NodeData::Stmt(s) = hir.data(row)
                     && let StmtKind::Import(i) = hir[s].kind
                 {
-                    let symbol = bound.symbol_of_declaration(Decl::ImportDefault(i));
+                    let symbol = symbol_of(self, Decl::ImportDefault(i));
                     return match hir[i].type_only {
                         true => declared_type_of(self, symbol),
                         false => type_of(self, symbol),
                     };
+                }
+            }
+            NodeData::Part(Part::ExportClause, row) => {
+                if let NodeData::Stmt(s) = hir.data(row)
+                    && hir.kind(at) == Kind::NamespaceExport
+                {
+                    let symbol = symbol_of(self, Decl::ExportStarAs(s));
+                    return type_of(self, symbol);
                 }
             }
             NodeData::Part(Part::NamedBindings, row) => {
@@ -561,7 +577,8 @@ impl Services<'_, '_, '_> {
                     && let StmtKind::Import(i) = hir[s].kind
                     && hir.kind(at) == Kind::NamespaceImport
                 {
-                    return type_of(self, bound.symbol_of_declaration(Decl::ImportNamespace(i)));
+                    let symbol = symbol_of(self, Decl::ImportNamespace(i));
+                    return type_of(self, symbol);
                 }
             }
             _ => {}
@@ -600,10 +617,34 @@ impl Services<'_, '_, '_> {
                 }
                 ty
             }
-            NodeData::TypeParam(p) => self.c.type_param(file, p),
+            // `getTypeFromRestTypeNode`, `getTypeFromOptionalTypeNode`,
+            // `getTypeFromNamedTupleTypeNode`
+            NodeData::TupleElem(element) => {
+                let element = &hir[element];
+                if element.has_dots {
+                    let of = rest_element_type_node(hir, element).unwrap_or(element.written);
+                    return self.c.type_from_node(file, of);
+                }
+                let ty = self.c.type_from_node(file, element.written);
+                match element.optional {
+                    true => self.c.optional_property(ty),
+                    false => ty,
+                }
+            }
+            // The type parameter of a mapped type or of an `infer` counts as part of a type node,
+            // and is no type node.
+            NodeData::TypeParam(_) => TypeId::ERROR,
             // A keyword that is the literal of a `LiteralType`, `null`.
-            NodeData::Part(Part::Literal | Part::ConstType, row) => match hir.data(row) {
+            NodeData::Part(Part::Literal, row) => match hir.data(row) {
                 NodeData::Type(t) => self.c.type_from_node(file, t),
+                _ => TypeId::ERROR,
+            },
+            // `isConstTypeReference`: `checkExpressionCached(node.parent.expression)`
+            NodeData::Part(Part::ConstType, row) => match hir.data(row) {
+                NodeData::Expr(e) => match hir[e].kind {
+                    ExprKind::AsConst(operand) => self.c.type_of_expr(file, operand),
+                    _ => TypeId::ERROR,
+                },
                 _ => TypeId::ERROR,
             },
             NodeData::Expr(e) if matches!(hir[e].kind, ExprKind::Null) => {

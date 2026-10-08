@@ -258,26 +258,24 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     /// The innermost node that starts at `offset` and has no children: a name or a literal.
     fn name_at(&self, offset: u32) -> Node {
         let hir = self.c.hir(self.file);
-        let (mut at, mut depth) = (Node::FILE, 0);
-        loop {
-            let mut inner = Node::NONE;
+        let mut work: SmallVec<[Node; 16]> = SmallVec::new();
+        work.push(Node::FILE);
+        while let Some(at) = work.pop() {
+            let before = work.len();
             hir.for_each_child(at, &mut |child| {
-                let is_around = hir.start(child) <= offset && offset < self.c.end_of_node(self.file, child);
+                // Where a node begins and ends that is derived from another is not always known.
+                let is_around = child.part().is_some()
+                    || hir.start(child) <= offset && offset < self.c.end_of_node(self.file, child);
                 if is_around {
-                    inner = child;
+                    work.push(child);
                 }
-                is_around
+                false
             });
-            depth += 1;
-            if inner.is_none() || depth > 4096 {
-                break;
+            if work.len() == before && at != Node::FILE && hir.start(at) == offset {
+                return at;
             }
-            at = inner;
         }
-        match at != Node::FILE && hir.start(at) == offset {
-            true => at,
-            false => Node::NONE,
-        }
+        Node::NONE
     }
 
     pub fn node_kind(&mut self, node: NodeRef) -> Kind {
@@ -329,7 +327,14 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     pub fn node_span(&mut self, node: NodeRef) -> (u32, u32) {
         match self.valid(node) {
             // The text of the default library is not kept, and the end of a node is found in it.
-            Some((hir, at)) if !hir.text.is_empty() => (hir.start(at), self.c.end_of_node(node.file, at)),
+            Some((hir, at)) if !hir.text.is_empty() => {
+                let (start, end) = (hir.start(at), self.c.end_of_node(node.file, at));
+                // The HIR does not say where every node is that is derived from another.
+                match at.part().is_some() && (end <= start || start == 0 && hir.start(at.row()) != 0) {
+                    true => (0, 0),
+                    false => (start, end),
+                }
+            }
             _ => (0, 0),
         }
     }
@@ -350,6 +355,34 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         match self.valid(node) {
             Some((hir, _)) => hir.text.get(start as usize..end as usize).unwrap_or_default(),
             None => b"",
+        }
+    }
+
+    /// `isTypeOnlyImportOrExportDeclaration` if `with_parents`, else `node.isTypeOnly`.
+    pub fn is_type_only(&mut self, node: NodeRef, with_parents: bool) -> bool {
+        let Some((hir, at)) = self.valid(node) else {
+            return false;
+        };
+        match (hir.data(at), hir.data(at.row())) {
+            (NodeData::ImportSpec(s), _) => hir[s].type_only || with_parents && hir[hir[s].import].type_only,
+            (NodeData::ExportSpec(s), _) => hir[s].type_only || with_parents && hir[hir[s].export].type_only,
+            (data, NodeData::Stmt(s)) => match (hir[s].kind, data) {
+                (StmtKind::Import(i), NodeData::Part(crate::node::Part::ImportClause, _)) => hir[i].type_only,
+                (StmtKind::Import(i), NodeData::Part(crate::node::Part::NamedBindings, _)) => {
+                    with_parents && hir.kind(at) == Kind::NamespaceImport && hir[i].type_only
+                }
+                (StmtKind::ImportEquals(i), NodeData::Stmt(_)) => hir[i].flags.contains(Flags::TYPE_ONLY),
+                (StmtKind::ExportNamed(e), NodeData::Stmt(_)) => !with_parents && hir[e].type_only,
+                // `export type * from "m"` is one, `export type * as ns from "m"` has a clause that is.
+                (StmtKind::ExportStar { type_only, .. }, NodeData::Stmt(_)) => {
+                    type_only && (!with_parents || hir.kind(at.with(crate::node::Part::ExportClause)) != Kind::NamespaceExport)
+                }
+                (StmtKind::ExportStar { type_only, .. }, NodeData::Part(crate::node::Part::ExportClause, _)) => {
+                    with_parents && type_only
+                }
+                _ => false,
+            },
+            _ => false,
         }
     }
 
@@ -491,20 +524,21 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 
     // ───────────────────────────── from a node ─────────────────────────────
 
+    /// `node.Symbol` of a declaration for which the binder has no table. `NONE`: it has none.
+    fn symbol_of_rejected_declaration(&self, file: FileId, decl: Decl) -> SymbolId {
+        let found = match file == self.file {
+            true => {
+                let symbols = (self.symbols_of_declarations).get_or_init(|| self.c.symbols_of_declarations(file));
+                symbols.get(&decl).copied()
+            }
+            false => self.c.symbols_of_declarations(file).get(&decl).copied(),
+        };
+        found.unwrap_or(SymbolId::NONE)
+    }
+
     /// What `node` is, if it is an expression, an identifier or the name of a declaration.
     fn visited_kind(&self, node: NodeRef) -> Option<VisitedKind> {
-        let own;
-        let symbols: &FxHashMap<Decl, SymbolId> = match node.file == self.file {
-            true => (self.symbols_of_declarations).get_or_init(|| self.c.symbols_of_declarations(self.file)),
-            false => {
-                own = OnceCell::new();
-                return self.c.visited_kind(node.file, node.node, &|decl| {
-                    let symbols: &FxHashMap<_, _> = own.get_or_init(|| self.c.symbols_of_declarations(node.file));
-                    symbols.get(&decl).copied()
-                });
-            }
-        };
-        self.c.visited_kind(node.file, node.node, &|decl| symbols.get(&decl).copied())
+        self.c.visited_kind(node.file, node.node, &|decl| self.symbol_of_rejected_declaration(node.file, decl).some())
     }
 
     pub fn type_from_type_node(&mut self, node: NodeRef) -> TypeId {

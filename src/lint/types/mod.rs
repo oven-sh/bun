@@ -226,6 +226,7 @@ queries! {
     fn node_text(node: NodeRef) -> &'a [u8];
     fn node_source_text(node: NodeRef) -> &'a [u8];
     fn node_hir_flags(node: NodeRef) -> crate::ast::Flags;
+    fn is_type_only(node: NodeRef, with_parents: bool) -> bool;
     fn node_modifier_flags(node: NodeRef) -> ModifierFlags;
     fn node_flags(node: NodeRef) -> NodeFlags;
     fn deprecation_of_node(node: NodeRef) -> Option<&'a [u8]>;

@@ -158,6 +158,18 @@ impl<'a> TsNode<'a> {
         self.file.query(|q| q.node_hir_flags(self.raw))
     }
 
+    /// `node.isTypeOnly`: of a specifier, an `ImportClause`, an `ImportEqualsDeclaration`, an
+    /// `ExportDeclaration`.
+    pub fn is_type_only(self) -> bool {
+        self.file.query(|q| q.is_type_only(self.raw, false))
+    }
+
+    /// `ts.isTypeOnlyImportOrExportDeclaration(node)`: a specifier, a clause or a namespace import
+    /// or export that is `type` itself or is part of an `import type` or an `export type`.
+    pub fn is_type_only_import_or_export_declaration(self) -> bool {
+        self.file.query(|q| q.is_type_only(self.raw, true))
+    }
+
     /// `node.questionToken !== undefined`: of a parameter, a property, a method.
     pub fn has_question_token(self) -> bool {
         self.hir_flags().contains(ast::Flags::OPTIONAL)
@@ -205,8 +217,9 @@ impl<'a> TsNode<'a> {
         self.raw.file == self.file.id_in_program()
     }
 
-    /// `[node.getStart(), node.getEnd()]`, which is a range of the text of **its** file. Empty in a
-    /// file of the default library, whose text is not kept.
+    /// `[node.getStart(), node.getEnd()]`, which is a range of the text of **its** file. `0..0` in a
+    /// file of the default library, whose text is not kept, and for some of the nodes that have no
+    /// handle in [`ast`]: a `TemplateSpan`, a `CaseBlock`, `NamedExports`.
     pub fn span(self) -> Span {
         let (start, end) = self.file.query(|q| q.node_span(self.raw));
         Span::new(start, end)

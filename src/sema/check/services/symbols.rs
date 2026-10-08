@@ -18,6 +18,9 @@ pub(super) enum Key<'p> {
     ThisParameter(FileId, FnId),
     /// `__object`, `__type`, `__function`: the symbol that only that node declares.
     Anonymous(FileId, Node),
+    /// What that member of an object literal declares. The property of the type of the literal is
+    /// another symbol, which `checkObjectLiteral` makes.
+    LiteralMember(FileId, PropId),
     /// `signature.parameters[index]`
     Parameter(SigId, u32),
     /// The `prototype` of that class.
@@ -35,6 +38,26 @@ pub(super) struct Entry<'p> {
     pub(super) key: Key<'p>,
     /// The property that it was found as, and the mapper to read it with.
     pub(super) prop: Option<(&'p Prop<'p>, MapperId)>,
+    /// `symbol.name`, where it is not that of the key: of a late bound member, of a type name that
+    /// does not resolve.
+    pub(super) name: Atom,
+}
+
+/// `removeFileExtension`
+fn remove_file_extension(path: &[u8]) -> &[u8] {
+    const EXTENSIONS_TO_REMOVE: [&[u8]; 12] = [
+        b".d.ts", b".d.mts", b".d.cts", b".mjs", b".mts", b".cjs", b".cts", b".ts", b".js", b".tsx", b".jsx", b".json",
+    ];
+    EXTENSIONS_TO_REMOVE.iter().find_map(|extension| path.strip_suffix(*extension)).unwrap_or(path)
+}
+
+fn flags_of_literal_member(kind: PropKind) -> SymbolFlags {
+    match kind {
+        PropKind::Method => SymbolFlags::METHOD,
+        PropKind::Getter => SymbolFlags::GET_ACCESSOR,
+        PropKind::Setter => SymbolFlags::SET_ACCESSOR,
+        _ => SymbolFlags::PROPERTY,
+    }
 }
 
 impl<'c, 'p, 's> Services<'c, 'p, 's> {
@@ -48,7 +71,11 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             return id;
         }
         let id = SymbolRef(self.symbols.len() as u32);
-        self.symbols.push(Entry { key, prop });
+        self.symbols.push(Entry {
+            key,
+            prop,
+            name: Atom::NONE,
+        });
         self.symbol_ids.insert(key, id);
         id
     }
@@ -57,6 +84,15 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     pub(super) fn symbol(&mut self, symbol: Sym) -> SymbolRef {
         let symbol = self.c.files().canonical(symbol);
         self.intern_symbol(Key::Symbol(symbol), None)
+    }
+
+    /// The same with the name `name`.
+    pub(super) fn named_symbol(&mut self, key: Key<'c>, name: Atom) -> SymbolRef {
+        let id = self.intern_symbol(key, None);
+        if let Some(entry) = self.symbols.get_mut(id.0 as usize) {
+            entry.name = name;
+        }
+        id
     }
 
     pub(super) fn unique_symbol(&mut self) -> SymbolRef {
@@ -157,6 +193,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             _ => {
                 let bytes: &'p [u8] = self.c.atoms().bytes(name);
                 return match bytes {
+                    // `symbolName`: `#x`
+                    _ if bytes.starts_with(crate::atom::PRIVATE_NAME_PREFIX) => crate::atom::written_name(bytes),
                     [0xFE, rest @ ..] => self.list(&cat!(b"__", rest)),
                     _ => bytes,
                 };
@@ -180,7 +218,11 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         match key {
             Key::Symbol(sym) | Key::Instantiated(sym, _) => {
                 let files = self.c.files();
-                info.name = self.name_as_in_typescript(files.symbol(sym).name);
+                info.name = self.name_as_in_typescript(match prop {
+                    // A late bound member has the name of the property.
+                    Some((prop, _)) if prop.name.is_some() => prop.name,
+                    _ => files.symbol(sym).name,
+                });
                 let flags = match prop.is_some() || self.c.is_member_symbol(sym) {
                     true => self.c.flags_of_property(sym),
                     false => files.flags(sym),
@@ -198,18 +240,33 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 if prop.is_none() && self.is_optional_declaration(sym) {
                     info.flags |= SymbolFlags::OPTIONAL;
                 }
+                if info.name.is_empty() && flags.contains(SymFlags::CLASS) {
+                    info.name = b"__class";
+                }
+                // The name of a module that is a file or has a string for its name is in quotes.
+                if flags.intersects(SymFlags::MODULE) {
+                    match files.decls_of(sym).first() {
+                        Some(&(file, Decl::File)) => {
+                            let path = files.module(file).file_name();
+                            let path = remove_file_extension(path);
+                            info.name = self.list(&cat!(b"\"", path, b"\""));
+                        }
+                        Some(&(file, Decl::Module(module))) if matches!(self.c.hir(file)[module].name, ModuleName::String(_)) => {
+                            info.name = self.list(&cat!(b"\"", info.name, b"\""));
+                        }
+                        _ => {}
+                    }
+                }
             }
             Key::Property(source, name, _) => {
-                info.name = self.name_as_in_typescript(name);
+                info.name = match name {
+                    Atom::NONE => b"__computed",
+                    name => self.name_as_in_typescript(name),
+                };
                 info.flags = SymbolFlags::PROPERTY;
                 match source {
                     PropSource::Literal(file, p) => {
-                        info.flags = match self.c.hir(*file)[*p].kind {
-                            PropKind::Method => SymbolFlags::METHOD,
-                            PropKind::Getter => SymbolFlags::GET_ACCESSOR,
-                            PropKind::Setter => SymbolFlags::SET_ACCESSOR,
-                            _ => SymbolFlags::PROPERTY,
-                        };
+                        info.flags |= flags_of_literal_member(self.c.hir(*file)[*p].kind) | SymbolFlags::TRANSIENT;
                     }
                     PropSource::Intersected(..) => {
                         info.flags |= SymbolFlags::TRANSIENT;
@@ -229,9 +286,17 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     _ => info.flags |= SymbolFlags::TRANSIENT,
                 }
             }
+            Key::LiteralMember(file, p) => {
+                let member = &self.c.hir(file)[p];
+                info.flags = flags_of_literal_member(member.kind);
+                info.name = match self.c.declared_member_name(file, member.key) {
+                    Some(name) => self.name_as_in_typescript(name),
+                    None => b"__computed",
+                };
+            }
             Key::Index(..) => {
                 info.name = b"__index";
-                info.flags = SymbolFlags::SIGNATURE;
+                info.flags = SymbolFlags::SIGNATURE | SymbolFlags::TRANSIENT;
             }
             Key::ThisParameter(..) => {
                 info.name = b"this";
@@ -266,13 +331,26 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 info.flags = SymbolFlags::PROPERTY | SymbolFlags::TRANSIENT;
             }
             Key::Undeclared(name) => info.name = self.name_as_in_typescript(name),
-            Key::Unique(_) => info.name = b"__index",
+            Key::Unique(_) => {
+                info.name = b"__index";
+                info.flags = SymbolFlags::SIGNATURE | SymbolFlags::TRANSIENT;
+            }
+        }
+        if let Some(name) = self.symbols.get(symbol.0 as usize).map(|entry| entry.name).filter(|name| name.is_some()) {
+            info.name = self.name_as_in_typescript(name);
+            // `getUnresolvedSymbolForEntityName`
+            if matches!(key, Key::Undeclared(_)) {
+                info.flags = SymbolFlags::TYPE_ALIAS | SymbolFlags::TRANSIENT;
+            }
         }
         if let Some((prop, _)) = prop {
             if !matches!(key, Key::Symbol(_) | Key::Instantiated(..)) && prop.flags.contains(PropFlags::METHOD) {
-                info.flags = (info.flags - SymbolFlags::PROPERTY) | SymbolFlags::METHOD;
-                if info.check_flags.contains(CheckFlags::SYNTHETIC_PROPERTY) {
-                    info.check_flags = (info.check_flags - CheckFlags::SYNTHETIC_PROPERTY) | CheckFlags::SYNTHETIC_METHOD;
+                // `createUnionOrIntersectionProperty` makes a property of methods.
+                match info.check_flags.contains(CheckFlags::SYNTHETIC_PROPERTY) {
+                    true => {
+                        info.check_flags = (info.check_flags - CheckFlags::SYNTHETIC_PROPERTY) | CheckFlags::SYNTHETIC_METHOD;
+                    }
+                    false => info.flags = (info.flags - SymbolFlags::PROPERTY) | SymbolFlags::METHOD,
                 }
             }
             if prop.flags.contains(PropFlags::OPTIONAL) {
@@ -332,7 +410,15 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 out.extend(declarations.iter().map(|&it| self.node_of_declaration(it)));
             }
             PropSource::Symbol(symbol) => self.push_declarations_of_sym(*symbol, out),
-            PropSource::Intersected(_, parts) | PropSource::Copy(_, parts, _) | PropSource::ReverseMapped(_, parts) => {
+            // `propSet` has a symbol once.
+            PropSource::Intersected(_, parts) => {
+                for (index, part) in parts.iter().enumerate() {
+                    if !parts[..index].contains(part) {
+                        self.push_declarations_of_prop(part, depth + 1, out);
+                    }
+                }
+            }
+            PropSource::Copy(_, parts, _) | PropSource::ReverseMapped(_, parts) => {
                 for part in parts.iter() {
                     self.push_declarations_of_prop(part, depth + 1, out);
                 }
@@ -353,7 +439,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let mut out: SmallVec<[NodeRef; 4]> = SmallVec::new();
         match key {
             Key::Symbol(sym) | Key::Instantiated(sym, _) => self.push_declarations_of_sym(sym, &mut out),
-            Key::Property(..) => {
+            Key::Property(..) | Key::LiteralMember(..) => {
                 if let Some((prop, _)) = prop {
                     self.push_declarations_of_prop(prop, 0, &mut out);
                 }
@@ -390,7 +476,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 };
                 declaration.map(|it| self.node_of_declaration(it))
             }
-            Key::Property(..) => {
+            Key::Property(..) | Key::LiteralMember(..) => {
                 let declaration = self.c.value_declaration_of_prop(prop?.0)?;
                 Some(self.node_of_declaration(declaration))
             }
@@ -426,7 +512,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 let node = self.node_of_declaration((declaration.0, Decl::Member(declaration.1)));
                 infos.iter().find(|it| it.declaration == Some(node)).map_or(TypeId::ERROR, |it| it.ty)
             }
-            Key::Property(..) | Key::Undeclared(_) | Key::Unique(_) => TypeId::ERROR,
+            Key::Property(..) | Key::LiteralMember(..) | Key::Undeclared(_) | Key::Unique(_) => TypeId::ERROR,
         }
     }
 

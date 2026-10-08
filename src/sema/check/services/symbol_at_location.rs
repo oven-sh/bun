@@ -8,7 +8,7 @@ use super::symbols::Key;
 use super::visited::VisitedKind;
 use super::{NodeRef, Services, SymbolFlags, SymbolRef};
 use crate::bind::{Decl, FnOwner, Parent, PatParent, ScopeKind};
-use crate::node::{Node, NodeData, Part};
+use crate::node::{Kind, Node, NodeData, Part};
 
 /// An entry of `symbol.Declarations`.
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -915,7 +915,14 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             }
             // What is made up for a declared member says nothing but which symbol it is.
             Found::Property(FoundProp::Made(prop), mapper) => match prop.source {
-                PropSource::Symbol(symbol) => self.symbol(symbol),
+                PropSource::Symbol(symbol) => {
+                    let symbol = self.c.files().canonical(symbol);
+                    self.named_symbol(Key::Symbol(symbol), prop.name)
+                }
+                PropSource::Literal(file, p) => {
+                    let prop: &'c Prop<'c> = self.arena.alloc(prop);
+                    self.intern_symbol(Key::LiteralMember(file, p), Some((prop, mapper)))
+                }
                 _ => {
                     let prop: &'c Prop<'c> = self.arena.alloc(prop);
                     self.symbol_of_prop(prop, mapper)
@@ -936,10 +943,15 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 let name = match undeclared {
                     Undeclared::Name(name) => name,
                     Undeclared::Path(names) => {
+                        let last = names.last().copied().unwrap_or(Atom::NONE);
                         let names: Vec<&[u8]> = names.iter().map(|&name| atoms.bytes(name)).collect();
-                        atoms.intern(&names.join(&b"."[..]))
+                        let path = atoms.intern(&names.join(&b"."[..]));
+                        return self.named_symbol(Key::Undeclared(path), last);
                     }
-                    Undeclared::Const => atoms.intern(b"const"),
+                    Undeclared::Const => {
+                        let name = atoms.intern(b"const");
+                        return self.named_symbol(Key::Undeclared(name), name);
+                    }
                     Undeclared::ImportMeta => atoms.intern(b"meta"),
                     Undeclared::GlobalThis => return self.symbol(self.c.files().global_this_symbol),
                 };
@@ -1000,6 +1012,27 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             let specifier = Some(hir.text(at)).filter(|text| text.is_some())?;
             let module = files.module_of_specifier(file, specifier)?;
             return Some(self.symbol(module));
+        }
+        // The literal in `T["name"]`: the property.
+        if at.part() == Some(Part::Literal)
+            && let NodeData::Type(literal) = hir.data(at.row())
+            && let NodeData::Type(access) = hir.data(hir.parent(at.row()))
+            && let TypeNodeKind::IndexedAccess { obj, index } = hir[access].kind
+            && index == literal
+        {
+            let name = match hir[literal].kind {
+                TypeNodeKind::StringLit(text) => text,
+                TypeNodeKind::NumberLit(number) => self.c.number_name(*hir.numbers.get(number as usize)?),
+                _ => return None,
+            };
+            let object = self.c.type_from_node(file, obj);
+            let (prop, mapper) = self.c.get_property_of_type(object, name)?;
+            return Some(self.symbol_of_prop(prop, mapper));
+        }
+        // `getTypeFromThisTypeNode(node).symbol`
+        if hir.kind(at) == Kind::ThisType {
+            let ty = self.type_from_type_node(node);
+            return self.symbol_of_type(ty);
         }
         let kind = self.visited_kind(node)?;
         let found = SymbolFinder { c: self.c, file }.get_symbol_at_visited_node(kind)?;

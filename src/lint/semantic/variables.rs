@@ -43,6 +43,8 @@ pub(crate) struct Variables {
     starts: Vec<u32>,
     /// Where the name of each declaration is, and the index in `list` of what it declares. Sorted.
     declared_at: Vec<(u32, u32)>,
+    /// For each pattern that is a name, the index in `list` of what it declares.
+    of_pat: Vec<u32>,
     names: NameTable,
     /// The indices in `list` name by name. Those of one name are sorted, and so by scope.
     by_name: Vec<u32>,
@@ -495,7 +497,16 @@ impl Variables {
             .iter()
             .map(|&key| &entries[key as u32 as usize])
             .filter(|it| it.scope != NONE);
-        let declared_at = declared.map(|it| (it.pos, it.scope)).collect();
+        let mut of_pat = vec![NONE; hir.pats.len()];
+        let note = |it: &Entry| {
+            if let Decl::Var(pat) | Decl::Param(pat) = it.decl
+                && let Some(slot) = of_pat.get_mut(pat.idx())
+            {
+                *slot = it.scope;
+            }
+            (it.pos, it.scope)
+        };
+        let declared_at = declared.map(note).collect();
 
         // The variables name by name.
         let mut by_name = vec![0u32; list.len()];
@@ -528,6 +539,7 @@ impl Variables {
             list,
             starts,
             declared_at,
+            of_pat,
             names,
             by_name,
             declarations,
@@ -540,6 +552,12 @@ impl Variables {
             .declared_at
             .get(self.declared_at.partition_point(|it| it.0 < pos))?;
         (found.0 == pos).then_some(found.1)
+    }
+
+    /// The index in `list` of what the name `pat` declares.
+    #[inline]
+    pub(crate) fn of_pat(&self, pat: hir::PatId) -> Option<u32> {
+        self.of_pat.get(pat.idx()).copied().filter(|it| *it != NONE)
     }
 
     /// How many slots `slot_of` tells apart.

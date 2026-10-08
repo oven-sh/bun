@@ -379,7 +379,14 @@ fn dump_case(
     language: &LanguageOptions,
     with_nodes: bool,
 ) -> Vec<(Vec<u8>, Json)> {
-    dump_code(path, code, language, with_nodes, false)
+    dump_code(path, code, language, with_nodes, Errors::Refused)
+}
+
+/// What becomes of code that the parser rejects.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Errors {
+    Refused,
+    Ignored,
 }
 
 fn dump_code(
@@ -387,11 +394,11 @@ fn dump_code(
     code: &[u8],
     language: &LanguageOptions,
     with_nodes: bool,
-    even_with_errors: bool,
+    errors: Errors,
 ) -> Vec<(Vec<u8>, Json)> {
     let dumped = std::panic::catch_unwind(|| {
         crate::with_file(path, code, language, |file| {
-            (even_with_errors || !file.has_parse_errors()).then(|| dump(file, with_nodes))
+            (errors == Errors::Ignored || !file.has_parse_errors()).then(|| dump(file, with_nodes))
         })
     });
     match dumped {
@@ -517,7 +524,7 @@ fn fuzz(args: &[String]) {
                 }
             }
             tried += 1;
-            let dumped = dump_code(path, &damaged, &language, true, true);
+            let dumped = dump_code(path, &damaged, &language, true, Errors::Ignored);
             if matches!(dumped.first(), Some((key, Json::String(what))) if key == b"error" && what == b"panicked")
             {
                 panicked += 1;

@@ -826,9 +826,17 @@ impl<'f> Collector<'f, '_> {
         };
         let mut merge = start();
         let is_simple = merge.into.is_plain && skipped.is_empty();
+        // Which are identifiers, if the binder has noted the kinds.
+        const IDENT: u8 = 2 * hir::ExprTag::Ident as u8;
+        let (kinds, parents) = (self.file.bound.expr_kinds, self.file.bound.expr_parent);
         // The parser stores nearly every file in source order.
-        let with_parent = exprs.iter().zip(self.file.bound.expr_parent);
-        let is_in_order = with_parent.enumerate().all(|(i, (e, parent))| {
+        let is_in_order = (0..exprs.len()).all(|i| {
+            if kinds.get(i).is_some_and(|kind| *kind != IDENT) {
+                return true;
+            }
+            let (Some(e), Some(parent)) = (exprs.get(i), parents.get(i)) else {
+                return true;
+            };
             let ExprKind::Ident(name) = e.kind else {
                 return true;
             };
@@ -1215,6 +1223,15 @@ fn is_component_name(name: &[u8]) -> bool {
     }
 }
 
+/// What `group_by` groups by.
+#[derive(Copy, Clone)]
+enum Key {
+    /// `RawReference::variable`, or else this.
+    Variable(usize),
+    /// `RawReference::from`
+    Scope,
+}
+
 /// The groups of `all` by `key`: the indices group by group, and where each group starts.
 /// `counts`: how many are in each group, at the index after its key. Within a group they are in
 /// `order`, which is empty if that is the order of `all`.
@@ -1222,13 +1239,17 @@ fn group_by(
     all: &[RawReference],
     order: &[u32],
     mut counts: Vec<u32>,
-    key: impl Fn(&RawReference) -> usize,
+    key: Key,
 ) -> (Vec<u32>, Vec<u32>) {
     for i in 1..counts.len() {
         counts[i] += counts[i - 1];
     }
     let mut next = counts.clone();
     let mut indices = vec![0u32; all.len()];
+    let key = |it: &RawReference| match key {
+        Key::Variable(unresolved) => (it.variable as usize).min(unresolved),
+        Key::Scope => it.from as usize,
+    };
     let mut place = |i: usize| {
         let slot = &mut next[key(&all[i])];
         indices[*slot as usize] = i as u32;
@@ -1292,9 +1313,8 @@ impl References {
             visiting_order.sort_by_key(|&it| visits[it as usize]);
         }
 
-        let unresolved = variables.list.len();
-        let variable_of = |it: &RawReference| (it.variable as usize).min(unresolved);
-        let (by_variable, variable_starts) = group_by(&all, &visiting_order, counts, variable_of);
+        let key = Key::Variable(variables.list.len());
+        let (by_variable, variable_starts) = group_by(&all, &visiting_order, counts, key);
         References {
             all,
             visiting_order,
@@ -1375,9 +1395,7 @@ impl References {
             self.all
                 .iter()
                 .for_each(|it| counts[it.from as usize + 1] += 1);
-            group_by(&self.all, &self.visiting_order, counts, |it| {
-                it.from as usize
-            })
+            group_by(&self.all, &self.visiting_order, counts, Key::Scope)
         };
         let (by_scope, starts) = self.by_scope.get_or_init(compute);
         Self::group(by_scope, starts, first as usize, last as usize)

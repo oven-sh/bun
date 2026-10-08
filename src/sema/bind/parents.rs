@@ -294,6 +294,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
     // The expressions come first. What the parser has left behind are expressions, like the `A<T>` of
     // `extends A<T>` and the `a = 1` of `({ a = 1 }) => 0`, whose operands are part of something that
     // is not an expression. Of two expressions, the one that is made later is the one that is kept.
+    let mut counts = [0u32; 2 * ExprTag::COUNT];
     for (i, e) in f.exprs.iter().enumerate() {
         let id = ExprId(i as u32);
         let me = Parent::Expr(id);
@@ -413,10 +414,11 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
         if LINT && !matches!(e.kind, ExprKind::Missing) {
             let kind = 2 * e.kind.tag() as u8 + u8::from(chain != Chain::No);
             set!(expr_kinds[id] = kind);
-            if let Some(count) = expr_kind_counts.get_mut(kind as usize) {
-                *count += 1;
-            }
+            counts[kind as usize] += 1;
         }
+    }
+    if let Some(all) = expr_kind_counts.get_mut(..counts.len()) {
+        all.copy_from_slice(&counts);
     }
     for (i, ty) in f.types.iter().enumerate() {
         let id = TypeNodeId(i as u32);
@@ -743,8 +745,27 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
     }
     type_query_operands.sort_unstable();
     type_query_operands.dedup();
-    // What nothing says to be a part of anything is what the parser has left behind, and what is in it
-    // has entries that `bind` does not have. That is rare enough to leave it to the binder.
+    is_all_part_of_something(
+        expr_parent,
+        stmt_parent,
+        fns,
+        class_owner,
+        type_scope,
+        type_param_scope,
+    )
+}
+
+/// What nothing says to be a part of anything is what the parser has left behind, and what is in it
+/// has entries that `bind` does not have. That is rare enough to leave it to the binder.
+#[inline(never)]
+fn is_all_part_of_something(
+    expr_parent: &[Parent],
+    stmt_parent: &[Parent],
+    fns: &[FnInfo],
+    class_owner: &[ClassOwner],
+    type_scope: &[ScopeId],
+    type_param_scope: &[ScopeId],
+) -> bool {
     !expr_parent.iter().any(|it| matches!(it, Parent::None))
         && !stmt_parent.iter().any(|it| matches!(it, Parent::None))
         && fns.iter().all(|it| it.owner != FnOwner::None)

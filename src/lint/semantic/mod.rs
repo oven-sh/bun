@@ -1254,8 +1254,8 @@ impl<'a> Pat<'a> {
     /// What an identifier pattern declares.
     #[inline]
     pub fn symbol(self) -> Option<Symbol<'a>> {
-        // Whether it is part of a parameter makes no difference here.
-        Symbol::declared_by(self.file(), Decl::Var(self.id()))
+        let index = self.file().variables().of_pat(self.id())?;
+        Some(Symbol::at(self.file(), index))
     }
 }
 

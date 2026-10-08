@@ -52,6 +52,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "Listener.rs": "runtime/socket/Listener.rs",
   "MarkdownObject.rs": "runtime/api/MarkdownObject.rs",
   "SecureContext.rs": "runtime/api/bun/SecureContext.rs",
+  "ServerWebSocket.rs": "runtime/server/ServerWebSocket.rs",
   "Stat.rs": "runtime/node/Stat.rs",
   "bindgen_test.rs": "jsc/bindgen_test.rs",
   "collections/linear_fifo.rs": "collections/linear_fifo.rs",

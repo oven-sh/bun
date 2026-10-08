@@ -1086,4 +1086,45 @@ JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject)
     return WebCore::JSWebSocket::getConstructor(globalObject->vm(), globalObject);
 }
 
+static ALWAYS_INLINE EncodedJSValue frameSent(JSGlobalObject& lexicalGlobalObject, ThrowScope& throwScope, ExceptionOr<void>&& sent)
+{
+    if (sent.hasException()) [[unlikely]] {
+        propagateException(lexicalGlobalObject, throwScope, sent.releaseException());
+        return {};
+    }
+    return JSValue::encode(jsBoolean(true));
+}
+
+// Returns undefined for a `data` that is not a string, an ArrayBuffer, a view or a Blob.
+JSC_DEFINE_HOST_FUNCTION(jsWebSocketSendFrame, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    if (callFrame->argumentCount() < 3) [[unlikely]]
+        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+    auto* socket = dynamicDowncast<JSWebSocket>(callFrame->uncheckedArgument(0));
+    if (!socket) [[unlikely]]
+        return throwVMTypeError(lexicalGlobalObject, throwScope, "Expected a WebSocket"_s);
+    auto& impl = socket->wrapped();
+    EnsureStillAliveScope data = callFrame->uncheckedArgument(1);
+    // The `ws` module passes a boolean.
+    auto opcode = callFrame->uncheckedArgument(2).isTrue() ? WebSocket::Opcode::Binary : WebSocket::Opcode::Text;
+
+    if (data.value().isString()) {
+        auto message = convert<IDLUSVString>(*lexicalGlobalObject, data.value());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        return frameSent(*lexicalGlobalObject, throwScope, impl.sendFrame(message, opcode));
+    }
+
+    // The bytes of a view as they are: the ArrayBuffer of a view that has none yet is not made.
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(data.value()))
+        return frameSent(*lexicalGlobalObject, throwScope, impl.sendFrame(view->span(), opcode));
+    if (auto* buffer = dynamicDowncast<JSArrayBuffer>(data.value()))
+        return frameSent(*lexicalGlobalObject, throwScope, impl.sendFrame(buffer->impl()->span(), opcode));
+    if (auto* blob = dynamicDowncast<JSBlob>(data.value()))
+        return frameSent(*lexicalGlobalObject, throwScope, impl.sendFrame(blob, opcode));
+    return JSValue::encode(jsUndefined());
+}
+
 }

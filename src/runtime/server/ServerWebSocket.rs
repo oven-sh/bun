@@ -216,6 +216,55 @@ pub(super) fn blob_payload<'a>(
     Ok(Some(blob.shared_view()))
 }
 
+/// `(socket | null, data, binary, compress)` for `ws.js`: `undefined` not a payload, `false` not sent, `true` sent.
+#[bun_jsc::host_fn]
+pub(crate) fn js_send_frame(
+    global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let [socket, data, binary, compress_value] = callframe.arguments_as_array::<4>();
+    let compress = ServerWebSocket::parse_compress_arg(
+        global_this,
+        "send",
+        compress_value,
+        callframe.arguments_count() as usize,
+    )?;
+    // The `ws` module passes a boolean.
+    let opcode = if binary == JSValue::TRUE {
+        Opcode::Binary
+    } else {
+        Opcode::Text
+    };
+
+    let this = socket
+        .as_class_ref::<ServerWebSocket>()
+        .filter(|this| !this.is_closed());
+    let send = |payload: &[u8]| match this {
+        Some(this) => this.websocket().send(payload, opcode, compress, true),
+        None => SendStatus::Dropped,
+    };
+
+    let status = if data.is_string_literal() {
+        // With no socket the string is not encoded: `ws.js` keeps it and sends it later.
+        if this.is_none() {
+            return Ok(JSValue::FALSE);
+        }
+        let view = data.to_js_string_view(global_this)?;
+        let utf8 = view.to_utf8();
+        send(utf8.slice())
+    } else if let Some(buffer) = data.as_array_buffer(global_this) {
+        send(buffer.slice())
+    } else if let Some(slice) = blob_payload(global_this, "send", data)? {
+        let status = send(slice);
+        data.ensure_still_alive();
+        status
+    } else {
+        return Ok(JSValue::UNDEFINED);
+    };
+
+    Ok(JSValue::js_boolean(!matches!(status, SendStatus::Dropped)))
+}
+
 /// Handler state a `publish*` method reads once up front (`publish_ctx`).
 #[derive(Clone, Copy)]
 struct PublishCtx {

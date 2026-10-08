@@ -304,7 +304,7 @@ impl<'a> Printer<'a, '_> {
         let (text, tree) = (self.text(), parent.tree);
         let raw = &tree.nodes[id as usize];
         let start = (raw.start as usize).min(text.len());
-        if previous.is_some_and(|it| it.kind == Kind::Comment && text::trim(self.context.of(it.text)) == b"prettier-ignore") {
+        if previous.is_some_and(|it| it.kind == Kind::Comment && matches!(text::trim(self.context.of(it.text)), b"prettier-ignore" | b"oxfmt-ignore")) {
             let end = self.context.end_of(tree, id, parsed);
             return self.sink.text(text.get(start..end).unwrap_or_default());
         }

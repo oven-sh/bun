@@ -312,6 +312,8 @@ const kAdoptedTLSRaw = Symbol("kAdoptedTLSRaw");
 const kOwesRawClose = Symbol("kOwesRawClose");
 // Emitted on a socket under the stream-level TLS engine in place of reporting a read error itself.
 const kReadError = Symbol("kReadError");
+// The verdict on the peer let the session through, so the application can have written over it.
+const kSessionAccepted = Symbol("kSessionAccepted");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
 const kclosed = Symbol("closed");
@@ -533,6 +535,22 @@ function unadoptedTransport(self): SocketInstance | undefined {
   const upgraded = self[kupgraded];
   if (upgraded && !upgraded.destroyed && upgraded._handle?.[kAdoptedTLSRaw] !== self) return upgraded;
 }
+// Node destroys the transport at every close: all writes have completed by then. Here a write completes once the transport has
+// taken the ciphertext, so one that can hold some of the application's is released instead (releaseTransport).
+function transportToDestroy(self): SocketInstance | undefined {
+  if (self[kSessionAccepted] !== true) return unadoptedTransport(self);
+}
+// Sessions below one that was never accepted, or is reset, carried nothing else of the application's: they go with it.
+function abortTransport(transport: SocketInstance) {
+  if (transport instanceof Socket) transport[kSessionAccepted] = false;
+  transport.destroy();
+}
+function releaseTransport(transport: SocketInstance) {
+  if (!(transport instanceof Socket)) return void transport.destroy();
+  // What leaves a socket at 'finish' is still the kernel's to send, and a close over unread input drops that. So it only gets the
+  // end() of the engine, closes at the FIN of its peer and reports its own errors until then.
+  transport.removeAllListeners(kReadError);
+}
 // The wrapped socket reports nothing and closes with the TLS socket: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L676-L688
 function closeWithTLSSocket(self, raw) {
   const tlsSocket = raw[kAdoptedTLSRaw];
@@ -677,6 +695,7 @@ function onClientHandshake(self, socket, success, verifyError) {
     } else {
       self.authorized = true;
     }
+    self[kSessionAccepted] = true;
     // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1697-L1698
     self.secureConnecting = false;
     // pauseOnConnect stopped the handle as the handshake completed, whatever resume() did before that.
@@ -702,6 +721,7 @@ function finishStandaloneWrap(self, verifyError) {
     self.destroy(verifyError);
     return;
   }
+  self[kSessionAccepted] = true;
   // The rest is node's _finishInit: no hostname check, no 'secureConnect', and `authorized` stays false.
   self.secureConnecting = false;
   self.emit(kSecureConnectDone);
@@ -978,7 +998,8 @@ function SocketEmitEndNT(self, _err?) {
   // (native on_error / a fatal write); node emits a socket error exactly
   // once, so the close that follows it is delivered plain.
   if (_err && !self.destroyed && !self._hadError && !teardownNoise && self.listenerCount("error") > 0) {
-    if (self.emit(kReadError, _err)) return;
+    // Its TLS socket reports the error. The handle is gone, so this socket closes with nothing to report.
+    if (self.emit(kReadError, _err)) return void self.destroy();
     // The consumer can detach its 'error' listener between this close
     // callback and destroy()'s deferred 'error' emission (a request that
     // finished just as the reset arrived); a last-resort no-op listener keeps
@@ -1321,6 +1342,7 @@ const ServerHandlers = {
         self.authorized = true;
       }
     }
+    self[kSessionAccepted] = true;
     const pauseOnConnect = server?.pauseOnConnect;
     if (pauseOnConnect) {
       pauseOnCreate(self, socket);
@@ -1687,7 +1709,8 @@ const SocketHandlers2 = {
     // upgrade also report errors on close, and those must keep ending
     // cleanly.
     if (!leftToTLSSocket && err && !self.destroyed && socket === self._handle && self.listenerCount("error") > 0) {
-      if (self.emit(kReadError, err)) return;
+      // See SocketEmitEndNT.
+      if (self.emit(kReadError, err)) return void self.destroy();
       // Same late-detach guard as SocketEmitEndNT: the listener seen at
       // close-time can be gone by the deferred 'error' emission.
       self.once("error", () => {});
@@ -2330,6 +2353,7 @@ Socket.prototype.connect = function connect(...args) {
       this.secureConnecting = true;
       this[kPreHandshakeWrite] = false;
       this._secureEstablished = false;
+      this[kSessionAccepted] = false;
       this._securePending = true;
       this[kConnectOptions] = options;
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1811
@@ -2432,9 +2456,10 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     }
   }
 
-  for (let s = this; s !== null; s = s._parent) {
-    clearTimeout(s[kTimeout]);
-  }
+  // What closes with this socket clears its own.
+  clearTimeout(this[kTimeout]);
+  const released = unadoptedTransport(this);
+  if (released !== undefined && !this.resetAndClosing && this[kSessionAccepted] === true) releaseTransport(released);
 
   $debug("close");
   if (this._handle) {
@@ -2455,7 +2480,8 @@ Socket.prototype._destroy = function _destroy(err, callback) {
       // ECONNRESET. `close()` does a fast shutdown (clean close) which only
       // happens to surface as RST on some platforms; `terminate()` arms
       // SO_LINGER{1,0} for a real reset on all platforms.
-      unadoptedTransport(this)?.destroy();
+      const transport = unadoptedTransport(this);
+      if (transport !== undefined) abortTransport(transport);
       const err = this._handle.terminate();
       setImmediate(() => {
         $debug("emit close");
@@ -2487,8 +2513,8 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   } else {
     callback(err);
     closeOwedRaw(this, upgraded);
-    const transport = unadoptedTransport(this);
-    transport?.destroy();
+    const transport = transportToDestroy(this);
+    if (transport !== undefined) abortTransport(transport);
     if (transport instanceof Socket) transport.once("close", emitCloseNT.bind(null, this, err ? true : false));
     else process.nextTick(emitCloseNT, this, err ? true : false);
   }
@@ -4447,7 +4473,8 @@ function onSocketHandleClosed() {}
 function closeSocketHandle(self, handle, isException, isCleanupPending = false) {
   $debug("closeSocketHandle", isException, isCleanupPending);
   // Ahead of the setImmediate below: the transport's 'close' precedes this socket's.
-  unadoptedTransport(self)?.destroy();
+  const transport = transportToDestroy(self);
+  if (transport !== undefined) abortTransport(transport);
   // The owner of a wrapped socket destroyed it: the TLS socket goes first, so the close of their fd is nothing to report.
   handle[kAdoptedTLSRaw]?.destroy();
   handle.close(onSocketHandleClosed);

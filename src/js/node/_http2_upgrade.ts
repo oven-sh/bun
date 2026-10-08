@@ -18,6 +18,7 @@ interface UpgradeContextType {
   rawSocket: import("node:net").Socket;
   nativeHandle: NativeHandle | null;
   events: UpgradeEvents | null;
+  handedOver: boolean;
 }
 
 interface Http2SecureServer {
@@ -64,6 +65,7 @@ function UpgradeContext(
   this.rawSocket = rawSocket;
   this.nativeHandle = null;
   this.events = null;
+  this.handedOver = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -109,8 +111,8 @@ function tlsSocketDestroy(this: TLSProxySocket, err: Error | null, callback: (er
     h.close();
     ctx.nativeHandle = null;
   }
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L676-L688
-  ctx.rawSocket.destroy();
+  // Nothing of the application's is on its way on a socket it never got. Else the raw socket closes when it has sent what it took.
+  if (!ctx.handedOver) ctx.rawSocket.destroy();
   // Must invoke pending write callback with error per Writable stream contract
   const writeCb = this._writeCallback;
   if (writeCb) {
@@ -243,6 +245,7 @@ function socketHandshake(
   // Invoke the H2 connectionListener which creates a ServerHttp2Session.
   // This is the same function passed to Http2SecureServer's constructor
   // and is what normally fires on the 'secureConnection' event.
+  ctx.handedOver = true;
   ctx.connectionListener.$call(ctx.server, tlsSocket);
 
   // Resume the Duplex so the H2 session can read frames from it. The accept

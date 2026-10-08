@@ -62,6 +62,8 @@ pub(crate) struct UpgradedDuplex {
     pub pending_close: Cell<bool>,
     /// [`Self::shutdown`] arrived before the engine existed. [`Self::drain_pending`] replays it.
     pub pending_shutdown: Cell<bool>,
+    /// `pause_stream` paused the wrapped stream and `resume_stream` has not run since.
+    paused_origin: Cell<bool>,
 }
 
 bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
@@ -219,6 +221,10 @@ impl UpgradedDuplex {
         (self.handlers.on_close)(self.handlers.ctx);
         // closes the underlying duplex
         self.call_write_or_end(None, false);
+        // Left paused, a net.Socket transport never reads its peer's FIN and stays open.
+        if self.paused_origin.get() {
+            self.resume_stream();
+        }
 
         // Early teardown (struct itself is dropped later by parent).
         self.teardown();
@@ -229,11 +235,14 @@ impl UpgradedDuplex {
     #[uws_callback(export = "UpgradedDuplex__pause_stream")]
     pub(crate) fn pause_stream(&self) -> bool {
         // Like a connecting fd: `on_open` forgets the owner's pause, so nothing would resume this one.
-        self.wrapper_ref().is_some() && self.call_origin("pause")
+        let paused = self.wrapper_ref().is_some() && self.call_origin("pause");
+        self.paused_origin.set(self.paused_origin.get() || paused);
+        paused
     }
 
     #[uws_callback(export = "UpgradedDuplex__resume_stream")]
     pub(crate) fn resume_stream(&self) -> bool {
+        self.paused_origin.set(false);
         self.call_origin("resume")
     }
 
@@ -453,6 +462,7 @@ impl UpgradedDuplex {
             pending_data: JsCell::new(Vec::new()),
             pending_close: Cell::new(false),
             pending_shutdown: Cell::new(false),
+            paused_origin: Cell::new(false),
         }
     }
 

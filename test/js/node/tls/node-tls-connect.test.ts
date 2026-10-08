@@ -13,6 +13,7 @@ import {
   rejectUnauthorizedScope,
   tempDir,
 } from "harness";
+import http2 from "http2";
 import https from "https";
 import net from "net";
 import { join } from "path";
@@ -6376,6 +6377,53 @@ describe("over a duplex, 'session' is emitted before the data that followed it o
     // Node still emits the second ticket of the read.
     expect([...new Set(events)]).toEqual(["secureConnect", "session"]);
   });
+});
+
+it("an HTTP/2 request completes over a Duplex that emits 'drain' in its _write()", async () => {
+  const server = http2.createSecureServer(COMMON_CERT_);
+  server.on("stream", stream => {
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const raw = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+  await once(raw, "connect");
+  const transport = new Duplex({
+    read() {},
+    write(chunk, _encoding, callback) {
+      this.emit("drain");
+      raw.write(chunk, callback);
+    },
+  });
+  raw.on("data", chunk => transport.push(chunk));
+
+  const { promise, resolve, reject } = Promise.withResolvers<{ status: unknown; body: string }>();
+  raw.on("error", reject);
+  raw.on("close", () => reject(new Error("the connection closed before the response ended")));
+  // A second copy of the client preface reaches the server as a protocol error.
+  server.on("sessionError", reject);
+  const session = http2.connect("https://localhost", {
+    createConnection: () => tls.connect({ socket: transport, ALPNProtocols: ["h2"], rejectUnauthorized: false }),
+  });
+  try {
+    session.on("error", reject);
+    const request = session.request({ ":path": "/" });
+    request.on("error", reject);
+    request.on("close", () => reject(new Error("the request closed before its response ended")));
+    request.setEncoding("utf8");
+    request.on("response", headers => {
+      let body = "";
+      request.on("data", chunk => (body += chunk));
+      request.on("end", () => resolve({ status: headers[":status"], body }));
+    });
+    request.end();
+    expect(await promise).toEqual({ status: 200, body: "ok" });
+  } finally {
+    session.destroy();
+    raw.destroy();
+    server.close();
+  }
 });
 
 describe("large writes and reads of a TLS socket over a Duplex", () => {

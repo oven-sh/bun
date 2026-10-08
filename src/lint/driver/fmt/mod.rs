@@ -148,6 +148,7 @@ struct Scratches {
     json: bun_format::json::Scratch,
     css: bun_format::css::Scratch,
     graphql: bun_format::graphql::Scratch,
+    handlebars: bun_format::handlebars::Scratch,
     yaml: bun_format::yaml::Scratch,
     markdown: bun_format::markdown::Scratch,
     verify: bun_format::verify::Scratch,
@@ -221,6 +222,10 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, (atoms, memory): (&dyn 
         Some(Kind::GraphQl) => {
             let done = bun_format::graphql::format(text, options, &mut scratch.graphql, &mut out);
             return finish(done, out, "GraphQL");
+        }
+        Some(Kind::Handlebars) => {
+            let done = bun_format::handlebars::format(text, options, &mut scratch.handlebars, &mut out);
+            return finish(done, out, "Handlebars");
         }
     }
     let text = match bun_format::pragma::before_parsing(text, options) {

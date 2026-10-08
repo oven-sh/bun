@@ -103,6 +103,7 @@ struct Inverse {
     chained: Option<NodeId>,
 }
 
+#[derive(Copy, Clone)]
 enum Prefix {
     None,
     /// `@`

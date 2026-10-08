@@ -449,7 +449,10 @@ function mutate(): string {
 
 const directory = mkdtempSync(join(flag("out", "."), `handlebars-${mode}-`));
 for (let i = 0; i < count; i++) {
-  const template = mode === "grammar" ? children(0) : mode === "mutate" ? mutate() : many(12, () => pick(pieces));
+  let template = mode === "grammar" ? children(0) : mode === "mutate" ? mutate() : many(12, () => pick(pieces));
+  if (chance(3)) template = pick(["---\na:   b\n---\n", "---\n---\n", "---yaml\n- a\n---", "+++\na = 1\n+++\n", "---\na: [\n---\n\n\n", "--- \na: é😀\n...\n"]) + template;
+  if (chance(3)) template = template.replaceAll("\n", pick(["\r\n", "\r"]));
+  if (chance(2)) template = "\ufeff" + template;
   writeFileSync(join(directory, `${i}.hbs`), template);
 }
 console.log(directory);

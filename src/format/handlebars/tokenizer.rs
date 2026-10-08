@@ -138,7 +138,9 @@ struct Builder<'a> {
     tag_open: usize,
     tag: Tag,
     /// The attributes, modifiers and comments of `tag`.
-    tag_parts: Vec<NodeId>,
+    tag_parts: [Vec<NodeId>; 3],
+    /// The same, in the order of the template.
+    sorted_tag_parts: Vec<NodeId>,
     tag_params: Vec<Text>,
     attribute: Attribute,
     attribute_parts: Vec<NodeId>,
@@ -207,7 +209,7 @@ impl Builder<'_> {
             is_self_closing: false,
         };
         self.is_tag_name_buffer_empty = false;
-        self.tag_parts.clear();
+        self.tag_parts.iter_mut().for_each(Vec::clear);
         self.tag_params.clear();
     }
 
@@ -241,19 +243,16 @@ impl Builder<'_> {
         if self.stack.len() >= MAX_DEPTH {
             return Err(Error::NestedTooDeeply);
         }
-        let tree = &*self.tree;
-        self.tag_parts.sort_by_key(|part| {
-            let node = tree.node(*part);
-            let rank = match node.kind {
-                Kind::Attr { .. } => 0,
-                Kind::ElementModifier { .. } => 1,
-                _ => 2,
-            };
-            (node.start, rank)
-        });
+        // Prettier sorts them by where they start. Each list is in that order.
+        self.sorted_tag_parts.clear();
+        let mut rest = self.tag_parts.each_ref().map(|list| &list[..]);
+        while let Some(first) = rest.iter_mut().filter(|list| !list.is_empty()).min_by_key(|list| self.tree.node(list[0]).start) {
+            self.sorted_tag_parts.push(first[0]);
+            *first = &first[1..];
+        }
         let kind = Kind::Element {
             tag: self.tag.name,
-            attributes: self.tree.add_list(&self.tag_parts),
+            attributes: self.tree.add_list(&self.sorted_tag_parts),
             block_params: self.tree.add_names(&self.tag_params),
             children: Range::default(),
             is_self_closing: self.tag.is_self_closing,
@@ -373,7 +372,7 @@ impl Builder<'_> {
             (node.start, node.end) = (value_start as u32, position as u32);
         }
         let attribute = self.tree.add(Kind::Attr { name, value }, start, position);
-        self.tag_parts.push(attribute);
+        self.tag_parts[0].push(attribute);
         Ok(())
     }
 
@@ -891,7 +890,7 @@ impl Builder<'_> {
         if let Some(kind) = self.tree.kind_mut(mustache) {
             *kind = Kind::ElementModifier { call };
         }
-        self.tag_parts.push(mustache);
+        self.tag_parts[1].push(mustache);
         Ok(())
     }
 
@@ -940,7 +939,7 @@ impl Builder<'_> {
             StatementKind::Comment { value } => {
                 let comment = self.tree.add(Kind::MustacheComment { value }, start, end);
                 match self.state {
-                    State::BeforeAttributeName | State::AfterAttributeName if !self.tag.is_end => self.tag_parts.push(comment),
+                    State::BeforeAttributeName | State::AfterAttributeName if !self.tag.is_end => self.tag_parts[2].push(comment),
                     State::BeforeData | State::Data => self.children.push(comment),
                     _ => return Err(Error::Syntax),
                 }
@@ -1041,7 +1040,8 @@ pub(crate) fn build(
         is_tag_name_buffer_empty: true,
         tag_open: 0,
         tag: Tag::default(),
-        tag_parts: Vec::new(),
+        tag_parts: Default::default(),
+        sorted_tag_parts: Vec::new(),
         tag_params: Vec::new(),
         attribute: Attribute::default(),
         attribute_parts: Vec::new(),

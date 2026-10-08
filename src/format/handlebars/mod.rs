@@ -33,7 +33,8 @@ enum Error {
 
 /// Whether Prettier takes the file at `path` for Handlebars.
 pub fn is_handlebars_path(path: &[u8]) -> bool {
-    path.ends_with(b".hbs") || path.ends_with(b".handlebars")
+    let ends_with = |extension: &[u8]| path.len().checked_sub(extension.len()).is_some_and(|at| path[at..].eq_ignore_ascii_case(extension));
+    ends_with(b".hbs") || ends_with(b".handlebars")
 }
 
 /// What can be used again for the next file.

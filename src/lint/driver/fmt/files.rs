@@ -63,6 +63,7 @@ pub(crate) enum Kind {
     Markdown,
     Mdx,
     GraphQl,
+    Handlebars,
 }
 
 impl Kind {
@@ -76,6 +77,7 @@ impl Kind {
                 b"markdown" | b"remark" => Some(Kind::Markdown),
                 b"mdx" => Some(Kind::Mdx),
                 b"graphql" => Some(Kind::GraphQl),
+                b"glimmer" => Some(Kind::Handlebars),
                 _ => None,
             };
             return Some(json().or_else(css).or_else(other).unwrap_or(Kind::Script));
@@ -91,7 +93,8 @@ impl Kind {
         let markdown = || bun_format::markdown::is_markdown_path(path).then_some(Kind::Markdown);
         let mdx = || bun_format::markdown::is_mdx_path(path).then_some(Kind::Mdx);
         let graphql = || bun_format::graphql::is_graphql_path(path).then_some(Kind::GraphQl);
-        json().or_else(css).or_else(yaml).or_else(markdown).or_else(mdx).or_else(graphql)
+        let handlebars = || bun_format::handlebars::is_handlebars_path(path).then_some(Kind::Handlebars);
+        json().or_else(css).or_else(yaml).or_else(markdown).or_else(mdx).or_else(graphql).or_else(handlebars)
     }
 }
 
@@ -99,6 +102,8 @@ pub(crate) fn language_of(path: &[u8]) -> Language {
     match Kind::of(path, None) {
         // Prettier reads MDX 1, and damages what is written today. Only for who asks: `--parser mdx`.
         Some(Kind::Mdx) => return Language::Other,
+        // Not by itself yet. Only for who asks: `--parser glimmer`.
+        Some(Kind::Handlebars) => return Language::Other,
         Some(_) => return Language::Supported,
         None => {}
     }

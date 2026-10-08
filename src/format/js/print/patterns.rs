@@ -33,9 +33,7 @@ fn write_array_pattern<'a>(pat: Pat<'a>, elements: List<'a, PatElem<'a>>, f: &mu
                         f,
                     );
                 }
-                if let Some(rest) = rest {
-                    write!(f, [(count > 0).then_some(soft_line_break_or_space()), rest]);
-                }
+                write!(f, rest);
             })))
         );
     }

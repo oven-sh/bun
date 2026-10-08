@@ -1,3 +1,4 @@
+use super::parameters::should_hug_function_parameters;
 use crate::prelude::*;
 use crate::write;
 
@@ -41,14 +42,25 @@ impl<'a> ObjectPatternLike<'a> {
             }
     }
 
-    /// Prettier's `shouldBreak` for patterns: a property has a pattern as its value.
+    /// It is the only parameter of a function, and breaks instead of the parentheses.
+    fn is_hugged_parameter(&self, f: &Formatter<'a>) -> bool {
+        matches!(self.parent(), AstNodes::FormalParameter(param)
+            if param.func().is_some_and(|func| should_hug_function_parameters(func, false, f)))
+    }
+
+    /// Prettier's `shouldBreak` for patterns: a property has a pattern as its value. Not in a
+    /// parameter of a function, unless that is only a signature.
     fn should_break_properties(&self) -> bool {
         match self {
             Self::ObjectPattern(_, props) => {
-                !matches!(
-                    self.parent(),
-                    AstNodes::CatchParameter(_) | AstNodes::FormalParameter(_) | AstNodes::AssignmentPattern(_)
-                ) && props.iter().any(|property| {
+                let is_exempt = match self.parent() {
+                    AstNodes::CatchParameter(_) | AstNodes::AssignmentPattern(_) => true,
+                    AstNodes::FormalParameter(param) => {
+                        param.default().is_some() || param.func().is_none_or(|func| func.has_body())
+                    }
+                    _ => false,
+                };
+                !is_exempt && props.iter().any(|property| {
                     !property.is_rest()
                         && property.default().is_none()
                         && matches!(property.value().kind(), PatKind::Object(_) | PatKind::Array(_))
@@ -70,13 +82,16 @@ impl<'a> ObjectPatternLike<'a> {
         }
     }
 
-    fn layout(&self) -> ObjectPatternLayout {
+    fn layout(&self, f: &Formatter<'a>) -> ObjectPatternLayout {
         if self.is_empty() {
             ObjectPatternLayout::Empty
+        } else if self.should_break_properties() {
+            match self.is_hugged_parameter(f) {
+                true => ObjectPatternLayout::Inline,
+                false => ObjectPatternLayout::Group { expand: true },
+            }
         } else if self.is_inline() {
             ObjectPatternLayout::Inline
-        } else if self.should_break_properties() {
-            ObjectPatternLayout::Group { expand: true }
         } else if self.is_in_assignment_like() {
             ObjectPatternLayout::Inline
         } else {
@@ -120,7 +135,7 @@ impl<'a> Format<'a> for ObjectPatternLike<'a> {
         });
 
         write!(f, "{");
-        match self.layout() {
+        match self.layout(f) {
             ObjectPatternLayout::Empty => write!(f, format_dangling_comments(self.span()).with_soft_block_indent()),
             ObjectPatternLayout::Inline => write!(f, format_properties),
             ObjectPatternLayout::Group { expand } => write!(f, group(&format_properties).should_expand(expand)),

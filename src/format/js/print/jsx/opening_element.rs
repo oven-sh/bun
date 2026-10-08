@@ -1,4 +1,5 @@
 use super::FormatJsxName;
+use crate::js::utils::array::is_next_line_empty;
 use crate::js::print::type_parameters::type_arguments;
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -78,7 +79,9 @@ impl<'a> Format<'a> for FormatOpeningElement<'a> {
             for attribute in attributes {
                 // An empty line between two attributes is kept.
                 match previous.replace(attribute) {
-                    Some(previous) if f.source_text().lines_after(previous.span().end) > 1 => write!(f, empty_line()),
+                    Some(previous) if is_next_line_empty(f.source_text().as_bytes(), previous.span().end as usize) => {
+                        write!(f, empty_line());
+                    }
                     Some(_) => write!(f, line_break),
                     None => {}
                 }

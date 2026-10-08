@@ -191,14 +191,14 @@ impl<'a> Format<'a> for FormatTemplateExpression<'a> {
             TemplateExpression::Expression(e) => {
                 has_comment_in_expression = !f.is_quiet()
                     && (f.comments().has_comment_before(e.span().start)
-                        || !f.comments().comments_before_character(e.span().end, b'}').is_empty());
+                        || f.comments().has_comment_in_range(e.span().end, self.interpolation.end));
                 f.intern(&format_with(|f| {
                     match e.kind() {
                         ExprKind::Jsx(_) => e.fmt(f),
                         _ => FormatNodeWithoutTrailingComments(&e).fmt(f),
                     }
                     if !f.is_quiet() {
-                        let trailing_comments = f.comments().comments_before_character(e.span().start, b'}');
+                        let trailing_comments = f.comments().comments_before(self.interpolation.end);
                         FormatTrailingComments::Comments(trailing_comments).fmt(f);
                     }
                 }))

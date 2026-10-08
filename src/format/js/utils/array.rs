@@ -4,25 +4,15 @@ use crate::write;
 /// Prettier's `printArrayElements`: the elements of an array literal or an array pattern, each on
 /// its own line if they do not fit on one. `None` is a hole, which is written as the comma after it.
 ///
-/// `len`: the number of elements, including a rest element that the caller writes afterwards.
+/// `len`: the number of elements, including a rest element that the caller writes afterwards. The
+/// line break before that is written here.
 pub(crate) fn write_array_node<'a, N: Format<'a> + Spanned>(
     len: usize,
     array: impl IntoIterator<Item = Option<N>>,
     f: &mut Formatter<'a>,
 ) {
     let last_index = len.saturating_sub(1);
-    // Where the previous element ends, unless it is a hole.
-    let mut previous_end: Option<u32> = None;
-
     for (index, element) in array.into_iter().enumerate() {
-        if index > 0 {
-            // An empty line after an element is kept if the array breaks.
-            match previous_end.is_some_and(|end| is_line_after_element_empty(f.source_text().as_bytes(), end as usize)) {
-                true => write!(f, soft_empty_line_or_space()),
-                false => write!(f, soft_line_break_or_space()),
-            }
-        }
-        previous_end = element.as_ref().map(|it| it.span().end);
         match &element {
             Some(element) => {
                 write!(f, group(element));
@@ -32,6 +22,14 @@ pub(crate) fn write_array_node<'a, N: Format<'a> + Spanned>(
                 }
             }
             None => write!(f, ","),
+        }
+        if index != last_index {
+            // An empty line after an element is kept if the array breaks.
+            let text = f.source_text().as_bytes();
+            match element.is_some_and(|it| is_line_after_element_empty(text, it.span().end as usize)) {
+                true => write!(f, soft_empty_line_or_space()),
+                false => write!(f, soft_line_break_or_space()),
+            }
         }
     }
 }
@@ -73,7 +71,7 @@ fn skip_newline(text: &[u8], at: usize) -> usize {
 }
 
 /// Prettier's `isNextLineEmpty`
-fn is_next_line_empty(text: &[u8], start: usize) -> bool {
+pub(crate) fn is_next_line_empty(text: &[u8], start: usize) -> bool {
     let mut at = start;
     loop {
         let line_end = skip(text, at, |b| matches!(b, b',' | b';' | b' ' | b'\t'));

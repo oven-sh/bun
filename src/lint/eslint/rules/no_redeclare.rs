@@ -124,7 +124,7 @@ fn report<'a, R: Rule>(cx: &Cx<'a, R>, name: &'a [u8], declarations: &[(Declarat
 
 /// For [`Listeners::symbols`].
 pub fn check_symbol<'a, R: Rule>(config: Config, symbol: Symbol<'a>, cx: &Cx<'a, R>) {
-    let count = symbol.declarations().len();
+    let count = symbol.declaration_count();
     let scope = symbol.scope();
     let is_global = scope.kind() == ScopeKind::Global;
     if count < 2 && !is_global || !is_checked(scope, config) {

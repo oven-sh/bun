@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use smallvec::SmallVec;
 
 /// Disallow identifiers from shadowing restricted names.
 pub struct NoShadowRestrictedNames {
@@ -29,7 +30,8 @@ fn name_span(declaration: Declaration) -> Option<Span> {
 }
 
 pub struct State<'a> {
-    restricted: [Name<'a>; 6],
+    /// Those of the restricted names that the file mentions.
+    restricted: SmallVec<[Name<'a>; 6]>,
     /// Where the names that have been reported start.
     reported: Vec<u32>,
 }
@@ -87,6 +89,15 @@ impl Rule for NoShadowRestrictedNames {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+        let last = if self.report_global_this { "globalThis" } else { "eval" };
+        let names = ["undefined", "NaN", "Infinity", "arguments", "eval", last];
+        let state = State {
+            restricted: names.into_iter().filter(|name| file.mentions(name)).map(|name| file.name_of(name)).collect(),
+            reported: Vec::new(),
+        };
+        if state.restricted.is_empty() {
+            return state;
+        }
         on.pats([PatTag::Ident], Self::check_pat);
         on.funcs(|_, func, cx| {
             if let Some(name) = func.name()
@@ -115,10 +126,6 @@ impl Rule for NoShadowRestrictedNames {
                 }
             }
         });
-        let last = if self.report_global_this { "globalThis" } else { "eval" };
-        State {
-            restricted: ["undefined", "NaN", "Infinity", "arguments", "eval", last].map(|name| file.name_of(name)),
-            reported: Vec::new(),
-        }
+        state
     }
 }

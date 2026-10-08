@@ -87,15 +87,19 @@ fn get_write_node(reference: Reference) -> Span {
 
 impl Rule for NoImportAssign {
     const META: Meta = Meta::eslint("no-import-assign", Kind::Problem).recommended();
-    type State<'a> = ();
+    /// Whether a namespace is imported.
+    type State<'a> = bool;
 
     fn new(_: &Options) -> Self {
         NoImportAssign
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> bool {
         on.stmts([StmtTag::Import], |_, stmt, cx| {
             for variable in Node::Stmt(stmt).declared_symbols() {
+                if !cx.state && !variable.has_writes() {
+                    continue;
+                }
                 let should_check_members =
                     variable.declarations().any(|it| matches!(it, Declaration::ImportNamespace(_)));
                 if !should_check_members && !variable.has_writes() {
@@ -118,5 +122,7 @@ impl Rule for NoImportAssign {
                 }
             }
         });
+        let mut imports = file.stmts_of_kind(StmtTag::Import);
+        imports.any(|it| matches!(it.kind(), StmtKind::Import(import) if import.namespace().is_some()))
     }
 }

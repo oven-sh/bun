@@ -34,6 +34,16 @@ impl PartialEq for RuleId {
 }
 impl Eq for RuleId {}
 
+impl std::hash::Hash for RuleId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        match self {
+            RuleId::Known(meta) => (meta.plugin, meta.name).hash(state),
+            RuleId::Js(rule) => Arc::as_ptr(rule).hash(state),
+            RuleId::Unknown(name) => name.hash(state),
+        }
+    }
+}
+
 impl RuleId {
     pub fn write_to(&self, out: &mut Vec<u8>) {
         match self {

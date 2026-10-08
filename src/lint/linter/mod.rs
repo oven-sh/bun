@@ -93,6 +93,9 @@ pub struct LintOptions<'o> {
     pub report_unused_disable_directives: Option<Severity>,
     /// Whether anything reads [`LintMessage::fix`] and [`LintMessage::suggestions`].
     pub wants_fixes: bool,
+    /// Whether anything reads what is in [`LintMessage::suppressions`]. If not, a message that comments suppress has one of
+    /// them, not one for each comment that is in effect: n comments that disable and n messages make n² of them.
+    pub wants_suppressions: bool,
     /// ESLint's `ruleFilter`: which of the enabled rules run. `--quiet` leaves out those that warn.
     pub rule_filter: Option<&'o (dyn Fn(&RuleId, Severity) -> bool + Sync)>,
     /// Runs the rules of JavaScript plugins. `None`: they are skipped.
@@ -117,6 +120,7 @@ impl Default for LintOptions<'_> {
             allow_inline_config: true,
             report_unused_disable_directives: None,
             wants_fixes: true,
+            wants_suppressions: true,
             rule_filter: None,
             js_plugins: None,
             again: None,
@@ -450,6 +454,14 @@ impl Linter {
         }
         problems.sort_by_key(|it| (it.line, it.column));
 
+        // Of a rule that has reported as much as it can, the rest is missing. So it cannot be told whether a comment that
+        // disables it does nothing, and no comment of the file is removed: one that is in use would be damage to the source.
+        let cut: Vec<RuleId> = (problems.iter().filter(|it| is_closing(it)))
+            .filter_map(|it| it.rule_id.clone())
+            .collect();
+        rules_to_ignore.extend(cut.iter().cloned());
+        let fixes_comments = options.wants_fixes && cut.is_empty();
+
         let report_unused = (options.report_unused_disable_directives)
             .unwrap_or(config.linter.report_unused_disable_directives);
         let mut has_directives = !disable_directives.is_empty();
@@ -475,7 +487,7 @@ impl Linter {
                 &disable_oxlint::Input {
                     file,
                     report_unused,
-                    wants_fixes: options.wants_fixes,
+                    wants_fixes: fixes_comments,
                     rules_to_ignore: &rules_to_ignore,
                     has_skipped_rules: config.has_skipped_rules,
                     can_tell: &can_tell,
@@ -491,12 +503,16 @@ impl Linter {
                     parents: &parents,
                     directives: &disable_directives,
                     report_unused,
-                    wants_fixes: options.wants_fixes,
+                    wants_fixes: fixes_comments,
+                    wants_suppressions: options.wants_suppressions,
                     rules_to_ignore: &rules_to_ignore,
                     has_skipped_rules: config.has_skipped_rules,
                 },
                 &mut problems,
             );
+        }
+        for rule in &cut {
+            suppress_closing_like_the_rest(&mut problems, rule);
         }
         if !has_directives {
             result.messages = problems;
@@ -508,6 +524,25 @@ impl Linter {
             result.suppressed = suppressed;
         }
         result
+    }
+}
+
+/// Whether it says that a rule has reported as much as it can in the file: see [`Cx::report`](crate::context::Cx::report).
+fn is_closing(message: &LintMessage) -> bool {
+    matches!(message.rule_id, Some(RuleId::Known(_)))
+        && matches!(message.message_id.as_deref(), Some("tooManyProblems" | "tooLargeProblems"))
+}
+
+/// That reports of `rule` are missing is not shown if and only if none of those that are kept is shown: then comments switch the
+/// rule off here. Which comment happens to be where the first missing report would be does not count.
+fn suppress_closing_like_the_rest(problems: &mut [LintMessage], rule: &RuleId) {
+    let mut kept = problems.iter().filter(|it| it.rule_id.as_ref() == Some(rule) && !is_closing(it));
+    let suppressions = match kept.clone().all(|it| !it.suppressions.is_empty()) {
+        true => kept.next_back().map(|it| it.suppressions.clone()).unwrap_or_default(),
+        false => Vec::new(),
+    };
+    for closing in problems.iter_mut().filter(|it| it.rule_id.as_ref() == Some(rule) && is_closing(it)) {
+        closing.suppressions.clone_from(&suppressions);
     }
 }
 

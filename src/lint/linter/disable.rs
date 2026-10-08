@@ -8,6 +8,7 @@ use crate::context::Severity;
 use crate::fix::Fix;
 use crate::span::Span;
 use bun_core::strings;
+use rustc_hash::FxHashMap;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Kind {
@@ -57,6 +58,8 @@ pub(crate) struct Input<'i, 'a> {
     pub(crate) directives: &'i [Directive<'a>],
     pub(crate) report_unused: Severity,
     pub(crate) wants_fixes: bool,
+    /// [`LintOptions::wants_suppressions`](super::LintOptions::wants_suppressions)
+    pub(crate) wants_suppressions: bool,
     /// The rules that are enabled and were filtered out. What disables them is not reported.
     pub(crate) rules_to_ignore: &'i [RuleId],
     /// There are more of them, which have no name here.
@@ -139,12 +142,14 @@ impl Input<'_, '_> {
     /// `unused`: indices into the directives.
     fn report(&self, unused: &[u32], out: &mut Vec<LintMessage>) {
         let mut groups: Vec<(u32, Vec<u32>)> = Vec::new();
+        let mut group_of_parent: FxHashMap<u32, usize> = FxHashMap::default();
         for &directive in unused {
             let parent = self.directives[directive as usize].parent;
-            match groups.iter_mut().find(|it| it.0 == parent) {
-                Some(group) => group.1.push(directive),
-                None => groups.push((parent, vec![directive])),
-            }
+            let group = *group_of_parent.entry(parent).or_insert_with(|| {
+                groups.push((parent, Vec::new()));
+                groups.len() - 1
+            });
+            groups[group].1.push(directive);
         }
         for (parent, group) in groups {
             let parent = &self.parents[parent as usize];
@@ -281,50 +286,61 @@ impl Input<'_, '_> {
             return;
         }
         let mut is_used = vec![false; self.directives.len()];
-        // The switches that disable and that no later one has undone for all the rules they are
-        // for, as indices into `switches`.
-        let mut active: Vec<u32> = Vec::new();
+        // The switches that disable and that no later one has undone, as indices into `switches`, in order: those for all
+        // rules, and those for each rule.
+        let mut active_for_all: Vec<u32> = Vec::new();
+        let mut active_for: FxHashMap<&RuleId, Vec<u32>> = FxHashMap::default();
         // For each rule that has been enabled by name: the index of the switch that did it last.
-        let mut enabled_at: Vec<(&RuleId, u32)> = Vec::new();
+        let mut enabled_at: FxHashMap<&RuleId, u32> = FxHashMap::default();
         let mut next = 0;
         for message in messages {
             while let Some(switch) = switches.get(next)
                 && (switch.line, switch.column) <= (message.line, message.column)
             {
                 match (switch.disables, self.rule(switch)) {
-                    (true, _) => active.push(next as u32),
+                    (true, None) => active_for_all.push(next as u32),
+                    (true, Some(rule)) => active_for.entry(rule).or_default().push(next as u32),
                     (false, None) => {
-                        active.clear();
+                        active_for_all.clear();
+                        active_for.clear();
                         enabled_at.clear();
                     }
                     (false, Some(rule)) => {
-                        active.retain(|&it| self.rule(&switches[it as usize]) != Some(rule));
-                        match enabled_at.iter_mut().find(|it| it.0 == rule) {
-                            Some(entry) => entry.1 = next as u32,
-                            None => enabled_at.push((rule, next as u32)),
-                        }
+                        active_for.remove(rule);
+                        enabled_at.insert(rule, next as u32);
                     }
                 }
                 next += 1;
             }
             let rule = message.rule_id.as_ref();
-            let since = enabled_at
-                .iter()
-                .find(|it| Some(it.0) == rule)
-                .map(|it| it.1);
-            let mut applying = active.iter().filter(|&&it| {
-                let of_switch = self.rule(&switches[it as usize]);
-                (of_switch.is_none() || of_switch == rule) && since.is_none_or(|since| it > since)
-            });
+            // What disables all rules does not apply to one that has been enabled since.
+            let for_all = match rule.and_then(|it| enabled_at.get(it)) {
+                Some(&since) => &active_for_all[active_for_all.partition_point(|&it| it <= since)..],
+                None => &active_for_all[..],
+            };
+            let for_rule = rule.and_then(|it| active_for.get(it)).map_or(&[][..], |it| &it[..]);
             let was_suppressed = !message.suppressions.is_empty();
-            let mut last = None;
-            for &it in &mut applying {
+            let mut suppress = |it: u32| {
                 let source = switches[it as usize].source;
                 let parent = &self.parents[self.directives[source as usize].parent as usize];
                 message
                     .suppressions
                     .push(Suppression::directive(parent.justification));
-                last = Some(source);
+            };
+            // The last decides which comment is used.
+            let last = for_all.last().max(for_rule.last()).map(|&it| switches[it as usize].source);
+            match self.wants_suppressions {
+                true => {
+                    let (mut all, mut one) = (for_all.iter().peekable(), for_rule.iter().peekable());
+                    while let Some(&it) = match (all.peek(), one.peek()) {
+                        (Some(a), Some(b)) if a < b => all.next(),
+                        (_, Some(_)) => one.next(),
+                        _ => all.next(),
+                    } {
+                        suppress(it);
+                    }
+                }
+                false => for_all.last().max(for_rule.last()).into_iter().for_each(|&it| suppress(it)),
             }
             if let Some(last) = last
                 && !was_suppressed

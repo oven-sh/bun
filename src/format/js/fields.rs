@@ -5,20 +5,13 @@
 //! empty, for a node that has no such field.
 
 use bun_lint::ast::{BinOp, Call, Expr, ExprKind, Func, Stmt, StmtKind, TypeNode, UnOp};
+use bun_sema::hir::ExprTag;
 
 pub(crate) trait ExprFields<'a>: Copy {
-    /// `MemberExpression.object`
-    fn object(self) -> Option<Expr<'a>>;
-    /// `CallExpression.callee`, `NewExpression.callee`
-    fn callee(self) -> Option<Expr<'a>>;
     /// `TaggedTemplateExpression.tag`
     fn tag_expression(self) -> Option<Expr<'a>>;
     /// The call of a `CallExpression`, a `NewExpression` or a `TaggedTemplateExpression`.
     fn call(self) -> Option<Call<'a>>;
-    /// `BinaryExpression.left`, `LogicalExpression.left`, `AssignmentExpression.left`
-    fn left(self) -> Option<Expr<'a>>;
-    /// `BinaryExpression.right`, `LogicalExpression.right`, `AssignmentExpression.right`
-    fn right(self) -> Option<Expr<'a>>;
     /// `BinaryExpression.operator`, `LogicalExpression.operator`
     fn binary_operator(self) -> Option<BinOp>;
     /// `UnaryExpression.operator`, `UpdateExpression.operator`
@@ -44,111 +37,91 @@ pub(crate) trait ExprFields<'a>: Copy {
 }
 
 impl<'a> ExprFields<'a> for Expr<'a> {
-    fn object(self) -> Option<Expr<'a>> {
-        match self.kind() {
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => Some(obj),
-            _ => None,
-        }
-    }
-
-    fn callee(self) -> Option<Expr<'a>> {
-        match self.kind() {
-            ExprKind::Call(call) | ExprKind::New(call) => Some(call.callee()),
-            _ => None,
-        }
-    }
-
+    #[inline]
     fn tag_expression(self) -> Option<Expr<'a>> {
-        match self.kind() {
-            ExprKind::TaggedTemplate(call) => Some(call.callee()),
+        match self.tag() {
+            ExprTag::TaggedTemplate => self.as_call_like().map(Call::callee),
             _ => None,
         }
     }
 
+    #[inline]
     fn call(self) -> Option<Call<'a>> {
-        match self.kind() {
-            ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => Some(call),
-            _ => None,
-        }
+        self.as_call_like()
     }
 
-    fn left(self) -> Option<Expr<'a>> {
-        match self.kind() {
-            ExprKind::Binary { left, .. } => Some(left),
-            ExprKind::Assign { target, .. } => Some(target),
-            _ => None,
-        }
-    }
-
-    fn right(self) -> Option<Expr<'a>> {
-        match self.kind() {
-            ExprKind::Binary { right, .. } => Some(right),
-            ExprKind::Assign { value, .. } => Some(value),
-            _ => None,
-        }
-    }
-
+    #[inline]
     fn binary_operator(self) -> Option<BinOp> {
-        match self.kind() {
-            ExprKind::Binary { op, .. } => Some(op),
-            _ => None,
-        }
+        self.binary_op()
     }
 
+    #[inline]
     fn unary_operator(self) -> Option<UnOp> {
-        match self.kind() {
-            ExprKind::Unary { op, .. } => Some(op),
-            _ => None,
-        }
+        self.unary_op()
     }
 
+    #[inline]
     fn test(self) -> Option<Expr<'a>> {
-        match self.kind() {
-            ExprKind::Cond { test, .. } => Some(test),
+        match self.tag() {
+            ExprTag::Cond => match self.kind() {
+                ExprKind::Cond { test, .. } => Some(test),
+                _ => None,
+            },
             _ => None,
         }
     }
 
+    #[inline]
     fn alternate(self) -> Option<Expr<'a>> {
-        match self.kind() {
-            ExprKind::Cond { no, .. } => Some(no),
+        match self.tag() {
+            ExprTag::Cond => match self.kind() {
+                ExprKind::Cond { no, .. } => Some(no),
+                _ => None,
+            },
             _ => None,
         }
     }
 
+    #[inline]
     fn argument(self) -> Option<Expr<'a>> {
-        match self.kind() {
-            ExprKind::Unary { operand, .. } | ExprKind::Await(operand) | ExprKind::Spread(operand) => {
-                Some(operand)
-            }
-            ExprKind::Yield { value, .. } => value,
+        match self.tag() {
+            ExprTag::Unary | ExprTag::Await | ExprTag::Spread => self.operand(),
+            ExprTag::Yield => match self.kind() {
+                ExprKind::Yield { value, .. } => value,
+                _ => None,
+            },
             _ => None,
         }
     }
 
+    #[inline]
     fn expression(self) -> Option<Expr<'a>> {
-        match self.kind() {
-            ExprKind::As { expr, .. }
-            | ExprKind::Satisfies { expr, .. }
-            | ExprKind::AsConst(expr)
-            | ExprKind::NonNull(expr)
-            | ExprKind::Instantiation { expr, .. } => Some(expr),
-            ExprKind::Index { index, .. } => Some(index),
+        match self.tag() {
+            ExprTag::As | ExprTag::Satisfies | ExprTag::AsConst | ExprTag::NonNull | ExprTag::Instantiation => {
+                self.operand()
+            }
+            ExprTag::Index => self.index(),
             _ => None,
         }
     }
 
+    #[inline]
     fn type_annotation(self) -> Option<TypeNode<'a>> {
-        match self.kind() {
-            ExprKind::As { ty, .. } | ExprKind::Satisfies { ty, .. } => Some(ty),
+        match self.tag() {
+            ExprTag::As | ExprTag::Satisfies => match self.kind() {
+                ExprKind::As { ty, .. } | ExprKind::Satisfies { ty, .. } => Some(ty),
+                _ => None,
+            },
             _ => None,
         }
     }
 
+    #[inline]
     fn arrow_function(self) -> Option<Func<'a>> {
         self.as_fn().filter(|func| func.is_arrow())
     }
 
+    #[inline]
     fn optional(self) -> bool {
         self.is_optional()
     }

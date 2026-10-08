@@ -21,10 +21,11 @@
 use bun_lint::ast::{
     BinOp, Case, Chain, Class, EnumMember, ExportSpec, Expr, ExprKind, File, Flags, FnBody, FnKind,
     Func, ImportSpec, Keyword, Member, MemberKind, ModuleName, Node, Param, Pat, PatKind, PatProp,
-    Prop, PropKind, Stmt, StmtKind, TupleElem, TypeKind, TypeNode, TypeParam, UnOp, VarDecl,
+    Prop, PropKind, Stmt, StmtKind, StmtTag, TupleElem, TypeKind, TypeNode, TypeParam, UnOp, VarDecl,
 };
 use bun_lint::span::{Span, Spanned};
 use bun_lint::tokens::skip_trivia_back;
+use bun_sema::hir::ExprTag;
 
 /// An expression statement, or the body of an arrow function that is an expression, which oxc has
 /// as an `ExpressionStatement` in a `FunctionBody`.
@@ -190,17 +191,7 @@ enum Level {
 /// Whether `e` is a link of an optional chain after its first `?.`. The `!` of `a?.b!` is one.
 #[inline]
 fn is_chain_link(e: Expr<'_>) -> bool {
-    use bun_sema::hir::ExprTag;
-    matches!(e.tag(), ExprTag::Dot | ExprTag::Index | ExprTag::Call | ExprTag::NonNull) && is_chain_link_slow(e)
-}
-
-fn is_chain_link_slow(e: Expr<'_>) -> bool {
-    match e.kind() {
-        ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain != Chain::No,
-        ExprKind::Call(call) => call.chain() != Chain::No,
-        ExprKind::NonNull(inner) => !inner.is_parenthesized() && is_chain_link(inner),
-        _ => false,
-    }
+    e.is_in_optional_chain()
 }
 
 /// Whether oxc has a `ChainExpression` around `e`: it is all of `a?.b.c!`, not a part of it.
@@ -216,31 +207,24 @@ fn is_last_chain_link(e: Expr<'_>) -> bool {
     let Node::Expr(parent) = e.parent() else {
         return true;
     };
-    match parent.kind() {
-        ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => {
-            obj != e || chain == Chain::No
-        }
-        ExprKind::Call(call) => call.callee() != e || call.chain() == Chain::No,
-        ExprKind::NonNull(_) => false,
+    match parent.tag() {
+        ExprTag::Dot | ExprTag::Index => parent.object() != Some(e) || parent.chain() == Chain::No,
+        ExprTag::Call => parent.callee() != Some(e) || parent.chain() == Chain::No,
+        ExprTag::NonNull => false,
         _ => true,
     }
 }
 
+#[inline]
 fn is_comma(e: Expr<'_>) -> bool {
-    matches!(e.kind(), ExprKind::Binary { op: BinOp::Comma, .. })
+    e.binary_op() == Some(BinOp::Comma)
 }
 
 /// Whether `e` is the `a, b` of `a, b, c`, which is not a node of its own in ESTree.
 fn is_inner_comma(e: Expr<'_>) -> bool {
     is_comma(e)
         && !e.is_parenthesized()
-        && matches!(
-            e.parent(),
-            Node::Expr(parent) if matches!(
-                parent.kind(),
-                ExprKind::Binary { op: BinOp::Comma, left, .. } if left == e
-            )
-        )
+        && matches!(e.parent(), Node::Expr(parent) if is_comma(parent) && parent.left() == Some(e))
 }
 
 /// Whether `e` is written where ESTree has a pattern: it is what an assignment or a `for`-`in` or
@@ -255,9 +239,9 @@ pub(crate) fn is_assignment_target(mut e: Expr<'_>) -> bool {
     }
     loop {
         match e.parent() {
-            Node::Expr(parent) => match parent.kind() {
-                ExprKind::Assign { target, .. } => return target == e,
-                ExprKind::Array(_) | ExprKind::Spread(_) => e = parent,
+            Node::Expr(parent) => match parent.tag() {
+                ExprTag::Assign => return parent.left() == Some(e),
+                ExprTag::Array | ExprTag::Spread => e = parent,
                 _ => return false,
             },
             Node::Prop(prop) => match (prop.value() == Some(e), prop.parent()) {
@@ -299,6 +283,12 @@ impl<'a> AsAstNodes<'a> for Expr<'a> {
             false => self.as_chain_element(),
         }
     }
+
+    /// What is around the `ChainExpression`, if there is one.
+    #[inline]
+    fn ast_parent(self) -> AstNodes<'a> {
+        parent_of_expr(self, Level::Chain)
+    }
 }
 
 pub(crate) trait ChainElement<'a> {
@@ -309,84 +299,88 @@ pub(crate) trait ChainElement<'a> {
 }
 
 impl<'a> ChainElement<'a> for Expr<'a> {
+    #[inline]
     fn as_chain_element(self) -> AstNodes<'a> {
         use AstNodes as N;
-        match self.kind() {
-            ExprKind::Missing if self.jsx_container_span().is_some() => N::JSXEmptyExpression(self),
-            ExprKind::Missing => N::Elision(self),
-            ExprKind::Ident(_) => N::IdentifierReference(self),
-            ExprKind::PrivateIdentifier(_) => N::PrivateIdentifier(self),
-            ExprKind::This => N::ThisExpression(self),
-            ExprKind::Super => N::Super(self),
-            ExprKind::Null => N::NullLiteral(self),
-            ExprKind::True | ExprKind::False => N::BooleanLiteral(self),
-            ExprKind::Number(_) => N::NumericLiteral(self),
-            ExprKind::String(_) if self.is_jsx_text() => N::JSXText(self),
-            ExprKind::String(_) => N::StringLiteral(self),
-            ExprKind::BigInt(_) => N::BigIntLiteral(self),
-            ExprKind::Regex(_) => N::RegExpLiteral(self),
-            ExprKind::Template(_) => N::TemplateLiteral(self),
-            ExprKind::TaggedTemplate(_) => N::TaggedTemplateExpression(self),
-            ExprKind::Array(_) if is_assignment_target(self) => N::ArrayAssignmentTarget(self),
-            ExprKind::Array(_) => N::ArrayExpression(self),
-            ExprKind::Object(_) if is_assignment_target(self) => N::ObjectAssignmentTarget(self),
-            ExprKind::Object(_) => N::ObjectExpression(self),
-            ExprKind::Fn(func) => func.as_ast_nodes(),
-            ExprKind::Class(class) => N::Class(class),
-            ExprKind::Dot { name, .. } if name.bytes().starts_with(b"#") => {
-                N::PrivateFieldExpression(self)
-            }
-            ExprKind::Dot { .. } => N::StaticMemberExpression(self),
-            ExprKind::Index { .. } => N::ComputedMemberExpression(self),
-            ExprKind::Call(_) => N::CallExpression(self),
-            ExprKind::New(_) => N::NewExpression(self),
-            ExprKind::Unary {
-                op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                ..
-            } => N::UpdateExpression(self),
-            ExprKind::Unary { .. } => N::UnaryExpression(self),
-            ExprKind::Binary {
-                op: BinOp::And | BinOp::Or | BinOp::Nullish,
-                ..
-            } => N::LogicalExpression(self),
-            ExprKind::Binary {
-                op: BinOp::Comma, ..
-            } => N::SequenceExpression(self),
-            ExprKind::Binary {
-                op: BinOp::In,
-                left,
-                ..
-            } if matches!(left.kind(), ExprKind::PrivateIdentifier(_)) => N::PrivateInExpression(self),
-            ExprKind::Binary { .. } => N::BinaryExpression(self),
-            ExprKind::Assign { op: None, .. } if is_default_in_assignment_target(self) => {
-                N::AssignmentTargetWithDefault(self)
-            }
-            ExprKind::Assign { .. } => N::AssignmentExpression(self),
-            ExprKind::Cond { .. } => N::ConditionalExpression(self),
-            ExprKind::Spread(_) if self.jsx_container_span().is_some() => N::JSXSpreadChild(self),
-            ExprKind::Spread(_) if is_assignment_target(self) => N::AssignmentTargetRest(self),
-            ExprKind::Spread(_) => N::SpreadElement(Node::Expr(self)),
-            ExprKind::Await(_) => N::AwaitExpression(self),
-            ExprKind::Yield { .. } => N::YieldExpression(self),
-            ExprKind::As { .. } | ExprKind::AsConst(_) if self.is_angle_bracket_assertion() => {
-                N::TSTypeAssertion(self)
-            }
-            ExprKind::As { .. } | ExprKind::AsConst(_) => N::TSAsExpression(self),
-            ExprKind::Satisfies { .. } => N::TSSatisfiesExpression(self),
-            ExprKind::NonNull(_) => N::TSNonNullExpression(self),
-            ExprKind::Instantiation { .. } => N::TSInstantiationExpression(self),
-            ExprKind::Jsx(jsx) if jsx.is_fragment() => N::JSXFragment(self),
-            ExprKind::Jsx(_) => N::JSXElement(self),
-            ExprKind::ImportCall { .. } => N::ImportExpression(self),
-            ExprKind::ImportMeta | ExprKind::NewTarget => N::MetaProperty(self),
+        match self.tag() {
+            ExprTag::Ident => N::IdentifierReference(self),
+            ExprTag::This => N::ThisExpression(self),
+            ExprTag::Call => N::CallExpression(self),
+            ExprTag::Dot if !self.is_private_member() => N::StaticMemberExpression(self),
+            ExprTag::Number => N::NumericLiteral(self),
+            _ => chain_element_in_general(self),
         }
+    }
+}
+
+/// For the kinds of expressions that are not the most frequent.
+fn chain_element_in_general<'a>(e: Expr<'a>) -> AstNodes<'a> {
+    use AstNodes as N;
+    match e.tag() {
+        ExprTag::Missing if e.jsx_container_span().is_some() => N::JSXEmptyExpression(e),
+        ExprTag::Missing => N::Elision(e),
+        ExprTag::Ident => N::IdentifierReference(e),
+        ExprTag::PrivateIdentifier => N::PrivateIdentifier(e),
+        ExprTag::This => N::ThisExpression(e),
+        ExprTag::Super => N::Super(e),
+        ExprTag::Null => N::NullLiteral(e),
+        ExprTag::True | ExprTag::False => N::BooleanLiteral(e),
+        ExprTag::Number => N::NumericLiteral(e),
+        ExprTag::String if e.is_jsx_text() => N::JSXText(e),
+        ExprTag::String => N::StringLiteral(e),
+        ExprTag::BigInt => N::BigIntLiteral(e),
+        ExprTag::Regex => N::RegExpLiteral(e),
+        ExprTag::Template => N::TemplateLiteral(e),
+        ExprTag::TaggedTemplate => N::TaggedTemplateExpression(e),
+        ExprTag::Array if is_assignment_target(e) => N::ArrayAssignmentTarget(e),
+        ExprTag::Array => N::ArrayExpression(e),
+        ExprTag::Object if is_assignment_target(e) => N::ObjectAssignmentTarget(e),
+        ExprTag::Object => N::ObjectExpression(e),
+        ExprTag::Fn => e.as_fn().map_or(N::Elision(e), Func::as_ast_nodes),
+        ExprTag::Class => e.as_class().map_or(N::Elision(e), N::Class),
+        ExprTag::Dot if e.is_private_member() => N::PrivateFieldExpression(e),
+        ExprTag::Dot => N::StaticMemberExpression(e),
+        ExprTag::Index => N::ComputedMemberExpression(e),
+        ExprTag::Call => N::CallExpression(e),
+        ExprTag::New => N::NewExpression(e),
+        ExprTag::Unary => match e.unary_op() {
+            Some(UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec) => N::UpdateExpression(e),
+            _ => N::UnaryExpression(e),
+        },
+        ExprTag::Binary => match e.binary_op() {
+            Some(BinOp::And | BinOp::Or | BinOp::Nullish) => N::LogicalExpression(e),
+            Some(BinOp::Comma) => N::SequenceExpression(e),
+            Some(BinOp::In) if e.left().is_some_and(|left| left.tag() == ExprTag::PrivateIdentifier) => {
+                N::PrivateInExpression(e)
+            }
+            _ => N::BinaryExpression(e),
+        },
+        ExprTag::Assign if e.assign_op() == Some(None) && is_default_in_assignment_target(e) => {
+            N::AssignmentTargetWithDefault(e)
+        }
+        ExprTag::Assign => N::AssignmentExpression(e),
+        ExprTag::Cond => N::ConditionalExpression(e),
+        ExprTag::Spread if e.jsx_container_span().is_some() => N::JSXSpreadChild(e),
+        ExprTag::Spread if is_assignment_target(e) => N::AssignmentTargetRest(e),
+        ExprTag::Spread => N::SpreadElement(Node::Expr(e)),
+        ExprTag::Await => N::AwaitExpression(e),
+        ExprTag::Yield => N::YieldExpression(e),
+        ExprTag::As | ExprTag::AsConst if e.is_angle_bracket_assertion() => N::TSTypeAssertion(e),
+        ExprTag::As | ExprTag::AsConst => N::TSAsExpression(e),
+        ExprTag::Satisfies => N::TSSatisfiesExpression(e),
+        ExprTag::NonNull => N::TSNonNullExpression(e),
+        ExprTag::Instantiation => N::TSInstantiationExpression(e),
+        ExprTag::Jsx if matches!(e.kind(), ExprKind::Jsx(jsx) if jsx.is_fragment()) => N::JSXFragment(e),
+        ExprTag::Jsx => N::JSXElement(e),
+        ExprTag::ImportCall => N::ImportExpression(e),
+        ExprTag::ImportMeta | ExprTag::NewTarget => N::MetaProperty(e),
     }
 }
 
 /// Whether `e`, an `=` assignment, is the `a = 1` of `[a = 1] = b` or `({ a = 1 } = b)`.
 fn is_default_in_assignment_target(e: Expr<'_>) -> bool {
     let is_element = match e.parent() {
-        Node::Expr(parent) => matches!(parent.kind(), ExprKind::Array(_)),
+        Node::Expr(parent) => parent.tag() == ExprTag::Array,
         Node::Prop(prop) => prop.value() == Some(e) && !prop.is_jsx_attribute(),
         _ => false,
     };
@@ -398,19 +392,24 @@ fn parent_of_expr<'a>(e: Expr<'a>, above: Level) -> AstNodes<'a> {
     if above < Level::Chain && is_chain_root(e) {
         return N::ChainExpression(e);
     }
-    // `{...e}` and `{}` are the container themselves.
+    let parent = e.parent();
+    // Braces are around a child of an element or the value of an attribute. `{...e}` and `{}` are
+    // the container themselves.
     if above < Level::JsxContainer
+        && match parent {
+            Node::Expr(parent) => parent.tag() == ExprTag::Jsx,
+            Node::Prop(_) => true,
+            _ => false,
+        }
         && e.jsx_container_span().is_some()
-        && !matches!(e.kind(), ExprKind::Spread(_))
+        && e.tag() != ExprTag::Spread
     {
         return N::JSXExpressionContainer(e);
     }
-    match e.parent() {
+    match parent {
         Node::File(file) => N::Program(Program(file)),
-        Node::Expr(parent) => match parent.kind() {
-            ExprKind::Binary {
-                op: BinOp::Comma, ..
-            } => {
+        Node::Expr(parent) => match is_comma(parent) {
+            true => {
                 let mut root = parent;
                 while is_inner_comma(root)
                     && let Node::Expr(outer) = root.parent()
@@ -419,11 +418,13 @@ fn parent_of_expr<'a>(e: Expr<'a>, above: Level) -> AstNodes<'a> {
                 }
                 N::SequenceExpression(root)
             }
-            _ => parent.as_chain_element(),
+            false => parent.as_chain_element(),
         },
-        Node::Stmt(statement) => match statement.kind() {
-            StmtKind::Expr(_) if statement.directive().is_some() => N::Directive(statement),
-            StmtKind::Expr(_) => N::ExpressionStatement(ExpressionStatement::Stmt(statement)),
+        Node::Stmt(statement) => match statement.tag() {
+            StmtTag::Expr if e.tag() == ExprTag::String && statement.directive().is_some() => {
+                N::Directive(statement)
+            }
+            StmtTag::Expr => N::ExpressionStatement(ExpressionStatement::Stmt(statement)),
             _ => inner_of_stmt(statement),
         },
         Node::VarDecl(declaration) => declaration.as_ast_nodes(),
@@ -502,10 +503,11 @@ impl<'a> AsAstNodes<'a> for Prop<'a> {
     fn as_ast_nodes(self) -> AstNodes<'a> {
         use AstNodes as N;
         let is_spread = self.kind() == PropKind::Spread;
-        if self.is_jsx_attribute() || matches!(self.parent(), Node::Expr(e) if matches!(e.kind(), ExprKind::Jsx(_))) {
+        let owner = self.parent();
+        if self.is_jsx_attribute() || matches!(owner, Node::Expr(e) if e.tag() == ExprTag::Jsx) {
             return if is_spread { N::JSXSpreadAttribute(self) } else { N::JSXAttribute(self) };
         }
-        let is_target = matches!(self.parent(), Node::Expr(object) if is_assignment_target(object));
+        let is_target = matches!(owner, Node::Expr(object) if is_assignment_target(object));
         match (is_target, self.kind()) {
             (false, PropKind::Spread) => N::SpreadElement(Node::Prop(self)),
             (false, _) => N::ObjectProperty(self),
@@ -522,9 +524,7 @@ impl<'a> AsAstNodes<'a> for Prop<'a> {
 impl<'a> AsAstNodes<'a> for VarDecl<'a> {
     fn as_ast_nodes(self) -> AstNodes<'a> {
         match self.parent() {
-            Node::Stmt(statement) if matches!(statement.kind(), StmtKind::Try { .. }) => {
-                AstNodes::CatchParameter(self)
-            }
+            Node::Stmt(statement) if statement.tag() == StmtTag::Try => AstNodes::CatchParameter(self),
             _ => AstNodes::VariableDeclarator(self),
         }
     }
@@ -533,6 +533,20 @@ impl<'a> AsAstNodes<'a> for VarDecl<'a> {
 /// The statement without the `export` around it.
 fn inner_of_stmt<'a>(statement: Stmt<'a>) -> AstNodes<'a> {
     use AstNodes as N;
+    match statement.tag() {
+        StmtTag::Var => return N::VariableDeclaration(statement),
+        StmtTag::Return => return N::ReturnStatement(statement),
+        StmtTag::If => return N::IfStatement(statement),
+        StmtTag::Throw => return N::ThrowStatement(statement),
+        StmtTag::For => return N::ForStatement(statement),
+        StmtTag::ForIn => return N::ForInStatement(statement),
+        StmtTag::ForOf => return N::ForOfStatement(statement),
+        StmtTag::While => return N::WhileStatement(statement),
+        StmtTag::Switch => return N::SwitchStatement(statement),
+        StmtTag::Try => return N::TryStatement(statement),
+        StmtTag::ExportDefault => return N::ExportDefaultDeclaration(statement),
+        _ => {}
+    }
     match statement.kind() {
         StmtKind::Empty => N::EmptyStatement(statement),
         StmtKind::Debugger => N::DebuggerStatement(statement),
@@ -575,10 +589,7 @@ fn inner_of_stmt<'a>(statement: Stmt<'a>) -> AstNodes<'a> {
 
 /// `export` or `export default` is written before `statement`, which is a declaration.
 fn export_around<'a>(statement: Stmt<'a>) -> Option<AstNodes<'a>> {
-    if matches!(
-        statement.kind(),
-        StmtKind::ExportNamed(_) | StmtKind::ExportDefault(_) | StmtKind::ExportStar { .. }
-    ) {
+    if matches!(statement.tag(), StmtTag::ExportNamed | StmtTag::ExportDefault | StmtTag::ExportStar) {
         return None;
     }
     let flags = statement.flags();
@@ -604,10 +615,12 @@ fn parent_of_stmt<'a>(statement: Stmt<'a>) -> AstNodes<'a> {
         Node::Func(func) if func.kind() == FnKind::StaticBlock => func.as_ast_nodes(),
         Node::Func(func) => N::FunctionBody(func),
         Node::Case(case) => N::SwitchCase(case),
-        Node::Stmt(parent) => match parent.kind() {
-            StmtKind::Try { handler, .. } if handler == Some(statement) => N::CatchClause(parent),
+        Node::Stmt(parent) => match parent.tag() {
+            StmtTag::Try if matches!(parent.kind(), StmtKind::Try { handler, .. } if handler == Some(statement)) => {
+                N::CatchClause(parent)
+            }
             // `namespace A.B { .. }` is one node, and what is between the braces is in it.
-            StmtKind::Module(_) => N::TSModuleBlock(parent),
+            StmtTag::Module => N::TSModuleBlock(parent),
             _ => inner_of_stmt(parent),
         },
         other => node_as_ast_nodes(other),
@@ -1001,10 +1014,7 @@ impl<'a> AstNodes<'a> {
     /// Whether it is a call or a `new` expression whose callee is `e`.
     pub(crate) fn is_call_like_callee(self, e: Expr<'a>) -> bool {
         match self {
-            AstNodes::CallExpression(call) | AstNodes::NewExpression(call) => match call.kind() {
-                ExprKind::Call(call) | ExprKind::New(call) => call.callee() == e,
-                _ => false,
-            },
+            AstNodes::CallExpression(call) | AstNodes::NewExpression(call) => call.callee() == Some(e),
             _ => false,
         }
     }

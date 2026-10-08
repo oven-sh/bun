@@ -65,6 +65,7 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("typescript/angular-component-examples", EMBEDDED),
     ("typescript/decorators-ts/angular.ts", EMBEDDED),
     ("typescript/as/as-const-embedded.ts", EMBEDDED),
+    ("js/template-literals/expression-break.js", EMBEDDED),
     ("misc/embedded-language-formatting", EMBEDDED),
     ("styled-components", EMBEDDED),
     ("styled-jsx", EMBEDDED),

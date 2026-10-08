@@ -38,9 +38,9 @@ impl std::fmt::Display for Difference {
         write!(
             f,
             "`{}` at {} is `{}` at {}",
-            String::from_utf8_lossy(&self.before.1),
+            bstr::BStr::new(&self.before.1),
             self.before.0,
-            String::from_utf8_lossy(&self.after.1),
+            bstr::BStr::new(&self.after.1),
             self.after.0
         )
     }
@@ -188,8 +188,8 @@ fn items<'a>(file: &'a File<'a>) -> Vec<Item<'a>> {
                 if before.is_some_and(|it| it.is_punctuator("=")) && matches!(text.first(), Some(b'"' | b'\'')) =>
             {
                 let content = text.get(1..text.len().saturating_sub(1)).unwrap_or_default();
-                let content = bstr::ByteSlice::replace(content, "&apos;", "'");
-                out.push((Cow::Owned(bstr::ByteSlice::replace(&content[..], "&quot;", "\"")), start));
+                let content = bun_core::strings::replace_owned(content, b"&apos;", b"'");
+                out.push((Cow::Owned(bun_core::strings::replace_owned(&content, b"&quot;", b"\"")), start));
                 continue;
             }
             TokenKind::JsxText => {

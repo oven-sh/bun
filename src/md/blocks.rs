@@ -571,10 +571,14 @@ impl Parser<'_> {
                     task_container.is_task = true;
                     task_container.task_mark_off = OFF::try_from(tmp + 1).expect("int cast");
                     off = OFF::try_from(tmp + 3).expect("int cast");
-                    while off < self.size && helpers::is_whitespace(self.text[off as usize]) {
+                    while off < self.size && helpers::is_blank(self.text[off as usize]) {
                         off += 1;
                     }
                     line.beg = off;
+                    // Nothing else is on the line
+                    if off >= self.size || helpers::is_newline(self.text[off as usize]) {
+                        line.r#type = LineType::Blank;
+                    }
                 }
             }
 

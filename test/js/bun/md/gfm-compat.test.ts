@@ -863,3 +863,11 @@ describe("strikethrough in a word", () => {
     expect(markdown.html("a~~b~~c\n")).toBe("<p>a<del>b</del>c</p>\n");
   });
 });
+
+describe("task list items with nothing behind the marker", () => {
+  test("what follows the item is not in it", () => {
+    expect(markdown.html("- [x] \n\nfoo\n")).toBe(
+      '<ul>\n<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled checked></li>\n</ul>\n<p>foo</p>\n',
+    );
+  });
+});

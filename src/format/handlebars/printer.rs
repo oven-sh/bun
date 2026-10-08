@@ -217,6 +217,11 @@ impl<'a> Printer<'a> {
         nodes.iter().all(|node| self.is_white_space_node(*node))
     }
 
+    /// `nodes`, which are white space to Prettier, are not printed. A no-break space is none in HTML.
+    fn drop_white_space(&mut self, nodes: &[NodeId]) {
+        self.is_damaged |= nodes.iter().any(|node| matches!(self.tree.kind(*node), Kind::Text { chars } if !trim_start(self.text(chars)).is_empty()));
+    }
+
     /// `isVoidElement`
     fn is_void_element(&self, tag: &[u8], children: &[NodeId], is_self_closing: bool) -> bool {
         let is_void_tag = || is_void_tag(&text::to_lower_case(tag)) && !starts_with_upper_case(tag);
@@ -426,6 +431,9 @@ impl<'a> Printer<'a> {
         let is_void = self.is_void_element(tag, children, is_self_closing);
         // `<imG>` counts as `<img>`, whatever is in it.
         self.is_damaged |= is_void && !self.are_white_space(children);
+        if is_void {
+            self.drop_white_space(children);
+        }
 
         if !self.is_white_space_sensitive && follows_element {
             self.out.line(Line::Soft);
@@ -469,7 +477,7 @@ impl<'a> Printer<'a> {
         let is_empty = children.is_empty()
             || ((!self.is_white_space_sensitive || is_style) && self.are_white_space(children));
         if is_empty {
-            // Nothing is between the tags.
+            self.drop_white_space(children);
         } else if is_style || !self.is_white_space_sensitive {
             self.start_indent();
             self.out.line(Line::Soft);
@@ -620,6 +628,10 @@ impl<'a> Printer<'a> {
         if !is_class {
             return self.with_literal_lines(chars, true);
         }
+        // What JavaScript takes for white space can be in the name of a class.
+        self.is_damaged |= (0..chars.len()).any(|at| {
+            chars[at] == 0x0B || white_space_len_at_start(&chars[at..]).is_some_and(|len| len > 1)
+        });
         let mut classes = text::trim(chars);
         if follows_mustache && text::starts_with_white_space(chars) {
             self.out.line(Line::Space);
@@ -652,15 +664,20 @@ impl<'a> Printer<'a> {
             }
             _ => {}
         }
+        let (is_first, is_last) = (index == 0, index + 1 == siblings.len());
         match parent {
             Parent::Pre => return self.with_literal_lines(chars, false),
-            Parent::Style => return self.text_in_style(chars),
+            Parent::Style => {
+                // The white space between it and a mustache is not kept.
+                self.is_damaged |= (!is_first && trim_start(chars).len() < chars.len())
+                    || (!is_last && trim_end(chars).len() < chars.len());
+                return self.text_in_style(chars);
+            }
             Parent::Template | Parent::Block | Parent::Element => {}
         }
         // Only what is right in a `<pre>` is kept as it is.
         self.is_damaged |= self.pre_depth > 0 && has_html_white_space(chars);
         let is_white_space_only = trim_start(chars).is_empty();
-        let (is_first, is_last) = (index == 0, index + 1 == siblings.len());
 
         if self.is_white_space_sensitive {
             let trims_leading = is_first && parent == Parent::Template;
@@ -897,7 +914,9 @@ impl<'a> Printer<'a> {
         }
         // `printProgram`
         let is_blank = self.are_white_space(body);
-        if !is_blank {
+        if is_blank {
+            self.drop_white_space(body);
+        } else {
             self.start_indent();
             if is_ignoring_white_space {
                 self.out.hard_line();

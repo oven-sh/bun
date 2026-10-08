@@ -73,8 +73,7 @@ impl<'a> Format<'a> for FormatArguments<'a> {
         let mut has_empty_line = false;
         for (index, argument) in self.iter().enumerate() {
             has |= kind(argument.tag());
-            has_empty_line =
-                has_empty_line || (index != last_index && is_next_line_empty(f.source_text(), argument.span().end));
+            has_empty_line = has_empty_line || (index != last_index && is_followed_by_empty_line(self.args, index, f));
         }
         let has_function = has & kind(ExprTag::Fn) != 0;
 
@@ -145,6 +144,33 @@ impl<'a> Format<'a> for FormatArguments<'a> {
     }
 }
 
+/// oxfmt goes by the line breaks between two arguments, wherever the comma is. Prettier goes by the
+/// line after the argument.
+fn counts_line_breaks_between_arguments(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// Whether the arguments break because of what is between the one at `index` and the next.
+fn is_followed_by_empty_line<'a>(args: List<'a, Expr<'a>>, index: usize, f: &Formatter<'a>) -> bool {
+    let Some(argument) = args.get(index) else {
+        return false;
+    };
+    match (counts_line_breaks_between_arguments(f), args.get(index + 1)) {
+        (true, Some(next)) => {
+            bun_core::strings::count_char(f.source_text().bytes_range(argument.span().end, next.span().start), b'\n') >= 2
+        }
+        _ => is_next_line_empty(f.source_text(), argument.span().end),
+    }
+}
+
+/// Whether there is an empty line after the argument at `index`, which has been written.
+fn is_empty_line_kept_after<'a>(args: List<'a, Expr<'a>>, index: usize, f: &Formatter<'a>) -> bool {
+    match (counts_line_breaks_between_arguments(f), args.get(index + 1)) {
+        (true, Some(next)) => f.lines_before(next.span()) > 1,
+        _ => is_followed_by_empty_line(args, index, f),
+    }
+}
+
 /// Prettier's `isFunctionCompositionArguments`: `compose(sortBy(x => x), flatten, map(x => [x, x * 2]))`
 /// has several functions among the arguments, or in the arguments of an argument.
 fn is_function_composition_args<'a>(args: List<'a, Expr<'a>>) -> bool {
@@ -208,7 +234,7 @@ fn format_all_args_broken_out<'a>(node: &FormatArguments<'a>, expand: bool, f: &
                 for (index, argument) in node.iter().enumerate() {
                     write!(f, argument);
                     if index != last_index {
-                        match is_next_line_empty(f.source_text(), argument.span().end) {
+                        match is_empty_line_kept_after(node.args, index, f) {
                             true => write!(f, [",", empty_line()]),
                             false => write!(f, [",", soft_line_break_or_space()]),
                         }

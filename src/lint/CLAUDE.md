@@ -38,13 +38,13 @@ The HIR keeps the nodes of a file in one vector per sort. So:
 - `on.string_literals(f)` / `on.number_literals(f)`: every ESTree `Literal` that is a string / a number, as a `Literal` (`span()`, `text()`, `owner()`). Only some are expressions here: the others are keys, literal types, module specifiers, names in quotes of imports and exports. Use these instead of listing the places by hand.
 - In `register`, `file.has_exprs(..)`, `file.has_stmts(..)`, `file.exprs_of_kind(tag)`, `file.stmts_of_kind(tag)`, `file.funcs()` tell whether there is anything to listen for.
 - `on.finish(f)`: once at the end. Collect in `cx.state` from unordered listeners, decide here.
-- ESLint rules often keep a stack only to know "which function/class/loop am I in". Do not port the stack: ask the node (`node.enclosing_function()`, `node.ancestors()`, `func.enclosing()`, `func.returns()`, `func.yields()`). `func.contains_this()` is TypeScript's notion, not ESLint's: it counts `this` types, and a `this` in a computed key or a decorator of a method counts for the method.
+- ESLint rules often keep a stack only to know "which function/class/loop am I in". Do not port the stack: ask the node (`node.enclosing_function()`, `node.ancestors()`, `func.enclosing()`, `func.returns()`, `func.yields()`).
 - Reports are sorted by position afterwards, so the order of reporting does not matter.
 
 ### Performance rules
 
 - Decide from the syntax first. Touch tokens, comments, line/column, references, scopes and types only when the cheap checks have passed: each of these is computed lazily for the whole file on first use.
-- `expr.symbol()` is a load. `symbol.declarations()`, `node.scope()`, `scope.symbols()/get/resolve` compute the scopes and variables of the file on first use (~1.6 ms/MB); `symbol.references()`, `expr.reference()`, `file.unresolved_references()` also the references (~1.3 ms/MB more). For comparison, parsing and binding is ~25 ms/MB.
+- Nothing is declared or resolved before a rule asks. `pat.symbol()`, `symbol.declarations()`, `node.scope()`, `scope.symbols()/get/resolve` compute the scopes and variables of the file on first use; `expr.symbol()`, `symbol.references()`, `expr.reference()`, `file.unresolved_references()` also the references. Together that costs a third of what parsing the file costs. After that each is a load or two.
 - `skip_trivia_back` takes a token that ends in `*/`, like the regex `/a*/`, for a comment. Where that can be, use `file.token_before(..)`.
 - `skip_trivia(text, end_of_node)` finds the next token after a node without scanning the file. `expr.operator_span()`, `func.open_paren()`, `func.arrow_span()`, `func.body_span()`, `class.body_span()`, `call.close_paren()` are positions the HIR already has or finds locally.
 - No allocation on the path that reports nothing. No `format!`, `to_vec`, `collect` before you know there is a report.

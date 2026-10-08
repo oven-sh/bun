@@ -42,6 +42,11 @@ struct Lists<'l> {
     class_scope: &'l mut [ScopeId],
     type_scope: &'l mut [ScopeId],
     type_param_scope: &'l mut [ScopeId],
+    /// For a linter: `Bound::expr_kinds` with `NOT_REACHED` in it, `Bound::expr_kind_counts` with zeros.
+    expr_kinds: &'l mut [u8],
+    expr_kind_counts: &'l mut [u32],
+    /// For a linter: the `return` statements are added, in the order of the list of the file.
+    returns: &'l mut Vec<u32>,
 }
 
 /// In place of the scope of what `bind` gets to.
@@ -73,7 +78,7 @@ pub fn bind_for_format<'s>(
     arena: &'s Arena,
 ) -> Bound<'s> {
     if is_for_the_binder(f) {
-        return bind_for_lint(f, options, atoms, arena);
+        return bind(f, options, atoms, arena);
     }
     let mut expr_parent = filled(arena, f.exprs.len(), Parent::None);
     let mut stmt_parent = filled(arena, f.stmts.len(), Parent::None);
@@ -90,7 +95,7 @@ pub fn bind_for_format<'s>(
     let mut type_param_scope = filled(arena, f.type_params.len(), ScopeId::NONE);
     let mut enum_member_owner = vec![EnumId::NONE; f.enum_members.len()];
     let mut type_query_operands = Vec::new();
-    let is_done = fill(
+    let is_done = fill::<_, false>(
         f,
         Lists {
             expr_parent: &mut expr_parent,
@@ -108,10 +113,13 @@ pub fn bind_for_format<'s>(
             class_scope: &mut class_scope,
             type_scope: &mut type_scope,
             type_param_scope: &mut type_param_scope,
+            expr_kinds: &mut [],
+            expr_kind_counts: &mut [],
+            returns: &mut Vec::new(),
         },
     );
     if !is_done {
-        return bind_for_lint(f, options, atoms, arena);
+        return bind(f, options, atoms, arena);
     }
     Bound {
         expr_parent,
@@ -142,7 +150,7 @@ pub fn bind_for_format_in<'r>(
 ) -> &'r BoundBuilder {
     match try_bind_for_format_in(f, recycled).is_some() {
         true => &recycled.room().b,
-        false => bind_for_lint_in(f, options, atoms, recycled),
+        false => leave_to_binder(f, options, atoms, recycled),
     }
 }
 
@@ -153,11 +161,22 @@ pub fn try_bind_for_format_in<'r, S: Storage>(
     f: &FileIn<S>,
     recycled: &'r mut Recycled,
 ) -> Option<&'r BoundBuilder> {
-    if is_for_the_binder(f) {
-        return None;
-    }
     let b = &mut recycled.room().b;
+    fill_in::<S, false>(f, b).then_some(&*b)
+}
+
+/// Makes `b` what [`bind_for_format`] says. With `LINT` also `expr_kinds` and `expr_kind_counts`, and
+/// `ids` are the `return` statements, in the order of the list of the file. `false`: the file takes the
+/// binder.
+pub(super) fn fill_in<S: Storage, const LINT: bool>(f: &FileIn<S>, b: &mut BoundBuilder) -> bool {
+    if is_for_the_binder(f) {
+        return false;
+    }
     b.clear();
+    if LINT {
+        refilled(&mut b.expr_kinds, f.exprs.len(), NOT_REACHED);
+        refilled(&mut b.expr_kind_counts, 2 * ExprTag::COUNT, 0);
+    }
     refilled(&mut b.expr_parent, f.exprs.len(), Parent::None);
     refilled(&mut b.stmt_parent, f.stmts.len(), Parent::None);
     refilled(&mut b.pat_parent, f.pats.len(), PatParent::None);
@@ -176,7 +195,7 @@ pub fn try_bind_for_format_in<'r, S: Storage>(
     refilled(&mut b.class_scope, f.classes.len(), ScopeId::NONE);
     refilled(&mut b.type_scope, f.types.len(), ScopeId::NONE);
     refilled(&mut b.type_param_scope, f.type_params.len(), ScopeId::NONE);
-    let is_done = fill(
+    fill::<S, LINT>(
         f,
         Lists {
             expr_parent: &mut b.expr_parent,
@@ -194,13 +213,15 @@ pub fn try_bind_for_format_in<'r, S: Storage>(
             class_scope: &mut b.class_scope,
             type_scope: &mut b.type_scope,
             type_param_scope: &mut b.type_param_scope,
+            expr_kinds: &mut b.expr_kinds,
+            expr_kind_counts: &mut b.expr_kind_counts,
+            returns: &mut b.ids,
         },
-    );
-    is_done.then_some(&*b)
+    )
 }
 
 /// `false`: it takes the binder.
-fn fill<S: Storage>(f: &FileIn<S>, lists: Lists) -> bool {
+fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
     let Lists {
         expr_parent,
         stmt_parent,
@@ -217,6 +238,9 @@ fn fill<S: Storage>(f: &FileIn<S>, lists: Lists) -> bool {
         class_scope,
         type_scope,
         type_param_scope,
+        expr_kinds,
+        expr_kind_counts,
+        returns,
     } = lists;
 
     // An id that is `NONE` is the index of nothing.
@@ -273,6 +297,7 @@ fn fill<S: Storage>(f: &FileIn<S>, lists: Lists) -> bool {
     for (i, e) in f.exprs.iter().enumerate() {
         let id = ExprId(i as u32);
         let me = Parent::Expr(id);
+        let mut chain = Chain::No;
         macro_rules! operands {
             ($($operand:expr),*) => {{ $(set!(expr_parent[$operand] = me);)* }};
         }
@@ -321,10 +346,25 @@ fn fill<S: Storage>(f: &FileIn<S>, lists: Lists) -> bool {
             | ExprKind::Regex
             | ExprKind::ImportMeta
             | ExprKind::NewTarget(_) => {}
-            ExprKind::Dot { obj, .. } => operands!(obj),
-            ExprKind::Index { obj, index, .. } => operands!(obj, index),
+            ExprKind::Dot {
+                obj, chain: link, ..
+            } => {
+                chain = link;
+                operands!(obj);
+            }
+            ExprKind::Index {
+                obj,
+                index,
+                chain: link,
+            } => {
+                chain = link;
+                operands!(obj, index);
+            }
             ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => {
                 if let Some(call) = f.calls.get(call.idx()) {
+                    if let ExprKind::Call(_) = e.kind {
+                        chain = call.chain;
+                    }
                     operands!(call.callee, call.template);
                     list!(call.args);
                     tys!(call.type_args);
@@ -368,6 +408,13 @@ fn fill<S: Storage>(f: &FileIn<S>, lists: Lists) -> bool {
                     props!(jsx.attrs);
                     list!(jsx.children);
                 }
+            }
+        }
+        if LINT && !matches!(e.kind, ExprKind::Missing) {
+            let kind = 2 * e.kind.tag() as u8 + u8::from(chain != Chain::No);
+            set!(expr_kinds[id] = kind);
+            if let Some(count) = expr_kind_counts.get_mut(kind as usize) {
+                *count += 1;
             }
         }
     }
@@ -508,8 +555,13 @@ fn fill<S: Storage>(f: &FileIn<S>, lists: Lists) -> bool {
             decorators!(s.modifiers, me);
         }
         match s.kind {
+            StmtKind::Return(e) => {
+                exprs!(e);
+                if LINT {
+                    returns.push(id.0);
+                }
+            }
             StmtKind::Expr(e)
-            | StmtKind::Return(e)
             | StmtKind::Throw(e)
             | StmtKind::ExportDefault(e)
             | StmtKind::ExportAssign(e) => exprs!(e),

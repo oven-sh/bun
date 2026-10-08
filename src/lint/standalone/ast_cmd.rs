@@ -9,8 +9,8 @@
 //! - `check <file>..`: whether `bun_lint::ast` is consistent with itself for these files.
 //! - `check-batch <inputs.jsonl>`: the same for many, summarized by the kind of problem.
 //! - `bench <file>`: how long the ways through a file take.
-//! - `bind-check <inputs.jsonl> [--espree] [--format]`: whether `bind_for_lint` has what `bind` has, in
-//!   all that `bun_lint::ast` and `bun_lint::semantic` read of it. `--format`: whether
+//! - `bind-check <inputs.jsonl> [--espree] [--format] [--verbose]`: whether `bind_for_lint_in` has what `bind` has, in
+//!   all that `bun_lint` reads of it. `--format`: whether
 //!   `bind_for_format` has, in what it promises.
 
 #[path = "estree/json.rs"]
@@ -45,11 +45,8 @@ pub(crate) fn run(args: &[String]) {
         [command, path] if command == "check-batch" => check_batch(path),
         [command, path] if command == "bench" => bench(path),
         [command, path, flags @ ..] if command == "bind-check" => {
-            bind_check(
-                path,
-                &language_of(flags),
-                flags.iter().any(|it| it == "--format"),
-            );
+            let has = |flag: &str| flags.iter().any(|it| it == flag);
+            bind_check(path, &language_of(flags), has("--format"), has("--verbose"));
         }
         _ => println!("usage: bun-lint ast estree|estree-batch|check|check-batch|bench <path>"),
     }
@@ -1014,118 +1011,12 @@ fn check_batch(path: &str) {
 
 // ───────────────────────────── the binder without a checker ─────────────────────────────
 
-/// The names of the side tables in which `lint`, from `bind_for_lint`, differs from `full`, from `bind`.
-fn differences(full: &bun_sema::bind::Bound, lint: &bun_sema::bind::Bound) -> Vec<String> {
-    use bun_sema::bind::UNREACHABLE;
-    let mut different = Vec::new();
-    macro_rules! same {
-        ($($field:ident)*) => {$(
-            if full.$field[..] != lint.$field[..] {
-                let at = full.$field.iter().zip(lint.$field.iter()).position(|(a, b)| a != b);
-                different.push(format!(
-                    "{}: {} and {} long, first at {at:?}: {:?} and {:?}",
-                    stringify!($field),
-                    full.$field.len(),
-                    lint.$field.len(),
-                    at.map(|at| &full.$field[at]),
-                    at.map(|at| &lint.$field[at]),
-                ));
-            }
-        )*};
-    }
-    same! {
-        ids expr_symbol expr_parent stmt_parent type_scope pat_parent pat_symbol prop_owner member_owner param_fn
-        type_param_symbol type_param_scope fn_symbol class_symbol class_owner class_scope interface_symbol alias_symbol
-        enum_symbol enum_member_symbol enum_member_owner module_symbol var_stmt case_stmt type_query_operands
-        requires_scope_change
-    }
-    let mut truth = |name: &str, full: Vec<bool>, lint: Vec<bool>| {
-        if full != lint {
-            let at = full.iter().zip(&lint).position(|(a, b)| a != b);
-            different.push(format!(
-                "{name}: {} and {} long, first at {at:?}",
-                full.len(),
-                lint.len()
-            ));
-        }
-    };
-    let reached =
-        |of: &bun_sema::bind::Bound| of.stmt_flow.iter().map(|it| *it != UNREACHABLE).collect();
-    truth("stmt_flow", reached(full), reached(lint));
-    let falls =
-        |of: &bun_sema::bind::Bound| of.case_fallthrough.iter().map(|it| it.is_some()).collect();
-    truth("case_fallthrough", falls(full), falls(lint));
-    let ends = |of: &bun_sema::bind::Bound| of.fns.iter().map(|it| it.end != UNREACHABLE).collect();
-    truth("fns.end", ends(full), ends(lint));
-    let exits = |of: &bun_sema::bind::Bound| {
-        of.fns
-            .iter()
-            .flat_map(|it| [it.exit.is_some(), it.exit != UNREACHABLE])
-            .collect()
-    };
-    truth("fns.exit", exits(full), exits(lint));
-    let functions = |of: &bun_sema::bind::Bound| -> Vec<String> {
-        let one = |it: &bun_sema::bind::FnInfo| {
-            let lists = (
-                it.returns.start,
-                it.returns.len,
-                it.yields.start,
-                it.yields.len,
-            );
-            format!(
-                "{:?} {:?} {:?} {lists:?} {}",
-                it.owner, it.scope, it.enclosing, it.contains_this
-            )
-        };
-        of.fns.iter().map(one).collect()
-    };
-    if functions(full) != functions(lint) {
-        different.push("fns".to_owned());
-    }
-    let symbols = |of: &bun_sema::bind::Bound| -> Vec<String> {
-        let one = |it: &bun_sema::bind::Symbol| {
-            let links = (it.value_declaration, it.parent, it.export_symbol);
-            format!(
-                "{:?} {:?} {:?} {links:?}",
-                it.name,
-                it.flags,
-                it.decls.as_slice()
-            )
-        };
-        of.symbols.iter().map(one).collect()
-    };
-    let (all, ours) = (symbols(full), symbols(lint));
-    if all != ours {
-        let at = all.iter().zip(&ours).position(|(a, b)| a != b);
-        let (a, b) = (at.map(|at| &all[at]), at.map(|at| &ours[at]));
-        different.push(format!(
-            "symbols: {} and {}, first at {at:?}: {a:?} and {b:?}",
-            all.len(),
-            ours.len()
-        ));
-    }
-    let refused = |of: &bun_sema::bind::Bound| -> Vec<String> {
-        of.redeclarations
-            .iter()
-            .map(|it| format!("{:?} {} {:?} {}", it.symbol, it.count, it.decl, it.code))
-            .collect()
-    };
-    if refused(full) != refused(lint) {
-        different.push("redeclarations".to_owned());
-    }
-    if full.ran_out_of_stack != lint.ran_out_of_stack {
-        different.push("ran_out_of_stack".to_owned());
-    }
-    different
-}
-
-/// What is wrong with the tables that only `bind_for_lint` has.
+/// What is wrong with the tables that only `bind_for_lint_in` has.
 fn problems_of_lint_tables(
     hir: &bun_sema::hir::File,
-    full: &bun_sema::bind::Bound,
-    lint: &bun_sema::bind::Bound,
+    lint: &bun_sema::bind::BoundBuilder,
 ) -> Vec<String> {
-    use bun_sema::bind::{Decl, NOT_REACHED, Parent, ScopeKind, ScopeNode};
+    use bun_sema::bind::{NOT_REACHED, Parent};
     use bun_sema::hir::{Chain, ExprKind};
     let mut problems = Vec::new();
     let mut counts = vec![0u32; 2 * ExprTag::COUNT];
@@ -1157,88 +1048,13 @@ fn problems_of_lint_tables(
     if lint.expr_kind_counts[..] != counts[..] {
         problems.push("expr_kind_counts".to_owned());
     }
-    let mut times: HashMap<Decl, u32> = HashMap::new();
-    for &(symbol, decl, scope) in lint.declared.iter() {
-        *times.entry(decl).or_insert(0) += 1;
-        if !lint
-            .symbols
-            .get(symbol.idx())
-            .is_some_and(|it| it.decls.as_slice().contains(&decl))
-        {
-            problems.push(format!(
-                "declared: not a declaration of the symbol: {decl:?}"
-            ));
-        }
-        if scope.idx() >= lint.scopes.len() {
-            problems.push(format!("declared: in no scope: {decl:?}"));
-        }
-    }
-    for (decl, times) in times.iter().filter(|it| *it.1 > 1) {
-        let name: String = format!("{decl:?}")
-            .chars()
-            .take_while(|c| c.is_alphabetic())
-            .collect();
-        problems.push(format!("declared {times} times, a {name}: {decl:?}"));
-    }
-    // What `semantic` makes variables of.
-    for decl in lint.symbols.iter().flat_map(|it| it.decls.as_slice()) {
-        let is_of_a_variable = matches!(
-            decl,
-            Decl::Var(_)
-                | Decl::Param(_)
-                | Decl::Require(_)
-                | Decl::Fn(_)
-                | Decl::Class(_)
-                | Decl::Interface(_)
-                | Decl::Alias(_)
-                | Decl::Enum(_)
-                | Decl::EnumMember(_)
-                | Decl::Module(_)
-                | Decl::TypeParam(_)
-                | Decl::ImportDefault(_)
-                | Decl::ImportNamespace(_)
-                | Decl::ImportSpec(_)
-                | Decl::ImportEquals(_)
-        );
-        // Its symbol is in no table.
-        let has_no_name = match *decl {
-            Decl::Class(class) => hir.classes[class.idx()].name.is_none(),
-            Decl::Fn(func) => hir.fns[func.idx()].name.is_none(),
-            Decl::Module(module) => {
-                let module = &hir.modules[module.idx()];
-                matches!(module.name, bun_sema::hir::ModuleName::String(_))
-                    || module.flags.contains(bun_sema::hir::Flags::CLASS_ELEMENT)
-            }
-            _ => false,
-        };
-        if is_of_a_variable && !has_no_name && !times.contains_key(decl) {
-            let name: String = format!("{decl:?}")
-                .chars()
-                .take_while(|c| c.is_alphabetic())
-                .collect();
-            problems.push(format!("declared lacks a {name}: {decl:?}"));
-        }
-    }
-    if lint.scope_node.len() != lint.scopes.len() {
-        problems.push("scope_node: not as long as the scopes".to_owned());
-    }
-    for (scope, node) in lint.scopes.iter().zip(lint.scope_node.iter()) {
-        if matches!(scope.kind, ScopeKind::Block | ScopeKind::TypeParams)
-            != (*node != ScopeNode::None)
-        {
-            problems.push(format!("scope_node: {node:?} of a {:?}", scope.kind));
-        }
-    }
-    if !full.expr_kinds.is_empty() || !full.declared.is_empty() || !full.scope_node.is_empty() {
-        problems.push("bind has what is for a linter".to_owned());
-    }
     problems
 }
 
 /// The same for `ours`, from `bind_for_format`.
-fn differences_for_format(
+fn differences_for_format<S: bun_sema::hir::Storage>(
     full: &bun_sema::bind::Bound,
-    ours: &bun_sema::bind::Bound,
+    ours: &bun_sema::bind::BoundIn<S>,
 ) -> Vec<String> {
     use bun_sema::bind::{ClassOwner, MemberOwner, Parent, PatParent};
     use bun_sema::hir::{ExprId, StmtId};
@@ -1253,13 +1069,12 @@ fn differences_for_format(
             }
         )*};
     }
-    let is_operand =
-        |of: &bun_sema::bind::Bound, e: ExprId| of.type_query_operands.binary_search(&e).is_ok();
+    let is_operand = |operands: &[ExprId], e: ExprId| operands.binary_search(&e).is_ok();
     same! {
         // The parent of the `a.b` of `typeof a.b` is what the type is in.
         expr_parent unless |i: usize, it: &Parent| match it {
             Parent::None | Parent::Expr(_) => false,
-            _ => is_operand(full, ExprId(i as u32)),
+            _ => is_operand(&full.type_query_operands, ExprId(i as u32)),
         };
         stmt_parent unless |_, _: &Parent| false;
         pat_parent unless |_, _: &PatParent| false;
@@ -1295,11 +1110,45 @@ fn differences_for_format(
     let reached = (0..full.expr_parent.len())
         .filter(|&i| full.expr_parent[i] != Parent::None)
         .map(|i| ExprId(i as u32));
-    if let Some(e) = reached
-        .into_iter()
-        .find(|&e| is_operand(full, e) != is_operand(ours, e))
-    {
+    if let Some(e) = reached.into_iter().find(|&e| {
+        is_operand(&full.type_query_operands, e) != is_operand(&ours.type_query_operands, e)
+    }) {
         different.push(format!("type_query_operands: {e:?}"));
+    }
+    different
+}
+
+/// The same for `ours`, from `bind_for_lint_in`.
+fn differences_for_lint(
+    full: &bun_sema::bind::Bound,
+    ours: &bun_sema::bind::BoundBuilder,
+) -> Vec<String> {
+    let mut different = differences_for_format(full, ours);
+    for (i, (a, b)) in full.fns.iter().zip(ours.fns.iter()).enumerate() {
+        if a.enclosing != b.enclosing {
+            different.push(format!(
+                "lists fns.enclosing: of {i}: {:?} and {:?}",
+                a.enclosing, b.enclosing
+            ));
+        }
+        if full.ids[a.returns.range()] != ours.ids[b.returns.range()] {
+            different.push(format!(
+                "lists fns.returns: of {i}: {:?} and {:?}",
+                &full.ids[a.returns.range()],
+                &ours.ids[b.returns.range()]
+            ));
+        }
+        let (mut theirs, mut yields) = (
+            full.ids[a.yields.range()].to_vec(),
+            ours.ids[b.yields.range()].to_vec(),
+        );
+        theirs.sort_unstable();
+        yields.sort_unstable();
+        if theirs != yields {
+            different.push(format!(
+                "lists fns.yields: of {i}: {theirs:?} and {yields:?}"
+            ));
+        }
     }
     different
 }
@@ -1373,16 +1222,17 @@ fn differences_of_recycled<A: bun_sema::hir::Storage, B: bun_sema::hir::Storage>
     different
 }
 
-fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool) {
+fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool, is_verbose: bool) {
     use bun_sema::bind::{
-        BindOptions, Recycled, bind, bind_for_format, bind_for_format_in, bind_for_lint,
-        bind_for_lint_in,
+        BindOptions, Recycled, bind, bind_for_format, bind_for_format_in, bind_for_lint_in,
     };
     std::panic::set_hook(Box::new(|_| {}));
     let inputs = read_inputs(path);
     let (mut same, mut by_kind) = (0, BTreeMap::<String, (usize, Vec<String>)>::new());
     // How many inputs have expressions, statements, functions or classes that `bind` does not get to.
     let left_behind = std::cell::Cell::new([0usize; 6]);
+    // How many `bind_for_lint_in` leaves to the binder.
+    let left_to_binder = std::cell::Cell::new(0usize);
     for input in &inputs {
         let language = LanguageOptions {
             parser: language.parser,
@@ -1442,14 +1292,18 @@ fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool) {
                     different
                 }
                 false => {
-                    let lint = bind_for_lint(&hir, options, &atoms, arena);
-                    let mut different = differences(&full, &lint);
-                    different.extend(problems_of_lint_tables(&hir, &full, &lint));
                     let mut recycled = Recycled::of_this_thread();
-                    different.extend(differences_of_recycled(
-                        &lint,
-                        bind_for_lint_in(&hir, options, &atoms, &mut recycled),
-                    ));
+                    let ours = bind_for_lint_in(&hir, options, &atoms, &mut recycled);
+                    let mut different = differences_for_lint(&full, ours);
+                    match ours.scopes.is_empty() {
+                        true => different.extend(problems_of_lint_tables(&hir, ours)),
+                        false => {
+                            left_to_binder.set(left_to_binder.get() + 1);
+                            if is_verbose {
+                                println!("left to the binder: {}", input.id);
+                            }
+                        }
+                    }
                     different
                 }
             }
@@ -1473,6 +1327,9 @@ fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool) {
     println!(
         "not reached by bind: expressions in {exprs} inputs, statements in {stmts}, functions in {fns}, classes in {classes}, types in {types}, type parameters in {type_params}"
     );
+    if !is_for_format {
+        println!("left to the binder: {}", left_to_binder.get());
+    }
     println!(
         "{} inputs, {same} the same, {} tables differ",
         inputs.len(),

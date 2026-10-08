@@ -154,8 +154,6 @@ slices! {
         enum_member_owner: hir::EnumId,
         var_stmt: hir::StmtId,
         case_stmt: hir::StmtId,
-        stmt_flow: bind::FlowId,
-        case_fallthrough: bind::FlowId,
         type_query_operands: hir::ExprId,
         expr_kinds: u8,
         expr_kind_counts: u32,

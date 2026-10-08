@@ -122,36 +122,12 @@ thread_local! {
     static ROOM: std::cell::Cell<Option<Box<Room>>> = const { std::cell::Cell::new(None) };
 }
 
-/// [`bind_for_lint`]
-pub(super) fn run_for_lint<'s>(
-    f: &File,
-    options: BindOptions,
-    atoms: &dyn crate::atom::Intern,
-    arena: &'s Arena,
-) -> Bound<'s> {
-    let mut room = take_room();
-    let bound = run_for_lint_in(f, options, atoms, &mut room).move_to_arena(arena);
-    leave_room(room);
-    bound
-}
-
 pub(super) fn take_room() -> Box<Room> {
     ROOM.take().unwrap_or_default()
 }
 
 pub(super) fn leave_room(room: Box<Room>) {
     ROOM.set(Some(room));
-}
-
-/// [`bind_for_lint_in`]
-pub(super) fn run_for_lint_in<'r>(
-    f: &File,
-    options: BindOptions,
-    atoms: &dyn crate::atom::Intern,
-    room: &'r mut Room,
-) -> &'r mut BoundBuilder {
-    room.b = Binder::<true>::run_in(f, options, atoms, room);
-    &mut room.b
 }
 
 /// `list`, which is empty, with `len` times `value`.
@@ -161,7 +137,7 @@ fn filled<T: Clone>(mut list: Vec<T>, len: usize, value: T) -> Vec<T> {
     list
 }
 
-/// `LINT`: for a linter without types. See [`bind_for_lint`].
+/// `LINT`: without a flow graph and without what only a checker reads. Nobody asks for that any more.
 pub(super) struct Binder<'f, 's, const LINT: bool> {
     f: &'f File<'s>,
     options: BindOptions,

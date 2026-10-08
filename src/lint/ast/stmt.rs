@@ -304,17 +304,6 @@ impl<'a> Stmt<'a> {
         (self.try_raw()).map_or(StmtTag::Empty, |raw| StmtTag::of(&raw.kind))
     }
 
-    /// Whether the control flow analysis of TypeScript's binder finds a way to its start. That is a
-    /// load. It is not ESLint's code path analysis.
-    #[inline]
-    pub fn is_reached_by_binder(self) -> bool {
-        self.file
-            .bound
-            .stmt_flow
-            .get(self.id.idx())
-            .is_some_and(|flow| *flow != bun_sema::bind::UNREACHABLE)
-    }
-
     /// From its first token, which can be a decorator or a modifier such as `export`, to the end
     /// of its last, which can be a `;`.
     #[inline]
@@ -751,17 +740,6 @@ impl<'a> Case<'a> {
     #[inline]
     pub fn span(self) -> Span {
         Span::new(self.raw().pos, self.raw().end)
-    }
-
-    /// It is followed by another clause and TypeScript's binder finds a way to its end. See
-    /// [`Stmt::is_reached_by_binder`].
-    #[inline]
-    pub fn falls_through_for_binder(self) -> bool {
-        self.file
-            .bound
-            .case_fallthrough
-            .get(self.id.idx())
-            .is_some_and(|flow| flow.is_some())
     }
 
     /// The `Switch` statement.

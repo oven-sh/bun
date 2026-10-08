@@ -3,6 +3,7 @@
 //! thread.
 
 mod binder;
+mod lint;
 mod parents;
 
 pub use parents::{bind_for_format, bind_for_format_in, try_bind_for_format_in};
@@ -1037,7 +1038,7 @@ pub struct BoundIn<S: Storage> {
     /// Number of flow nodes the binder encountered. `flow` omits the labels that nothing follows,
     /// and has a single start node for all the functions without a body.
     pub flow_places: u32,
-    /// From here on: only from [`bind_for_lint`], empty otherwise.
+    /// From here on: only from [`bind_for_lint_in`], empty otherwise.
     ///
     /// For each expression `2 * ExprTag + 1` if it is a `Dot`, an `Index` or a `Call` whose `Chain` is
     /// not `No`, `2 * ExprTag` if it is anything else. [`NOT_REACHED`] if the binder does not get to
@@ -1082,7 +1083,7 @@ pub type Bound<'s> = BoundIn<InArena<'s>>;
 pub type BoundBuilder = BoundIn<Growable>;
 
 pub const UNREACHABLE: FlowId = FlowId(0);
-/// What [`bind_for_lint`] has in place of every flow node other than [`UNREACHABLE`].
+/// What a binder without a flow graph has in place of every flow node other than [`UNREACHABLE`].
 pub const REACHABLE: FlowId = FlowId(1);
 
 /// What the binder also calls while it binds.
@@ -2135,31 +2136,6 @@ pub fn bind<'s>(
     binder::Binder::<false>::run(file, options, atoms).into_arena(arena)
 }
 
-/// [`bind`] for a linter or a formatter that has no checker: without what only a checker reads.
-///
-/// The same as in the result of `bind`: the symbols with their declarations and flags,
-/// `redeclarations`, every `*_symbol`, `*_parent` and `*_owner` list, `param_fn`, `var_stmt`,
-/// `case_stmt`, `type_query_operands`, `ids`, `scopes`, `requires_scope_change`, and of `fns`
-/// everything but `end` and `exit`.
-///
-/// There is no flow graph. Where `bind` has a flow node in `stmt_flow`, `case_fallthrough`,
-/// `FnInfo::end` and `FnInfo::exit`, this has [`REACHABLE`]. [`UNREACHABLE`] and `FlowId::NONE` are
-/// where `bind` has them.
-///
-/// Only here: `expr_kinds`, `expr_kind_counts`, `declared`, `scope_node`.
-///
-/// Empty: the tables of names, `expr_flow`, `stmt_scope`, `type_by_alias`, `expr_scope`,
-/// `free_idents`, `alias_idents`, `assignments`, and what is listed for the checker to skip, to
-/// report or to look at again. `specifiers` is not complete.
-pub fn bind_for_lint<'s>(
-    file: &File,
-    options: BindOptions,
-    atoms: &dyn crate::atom::Intern,
-    arena: &'s Arena,
-) -> Bound<'s> {
-    binder::run_for_lint(file, options, atoms, arena)
-}
-
 /// The lists of the last file that was bound on this thread, for the next one to use their room. They
 /// go back to the thread when this is dropped.
 pub struct Recycled(Option<Box<binder::Room>>);
@@ -2182,13 +2158,33 @@ impl Drop for Recycled {
     }
 }
 
-/// [`bind_for_lint`] without an arena: the result is in `recycled`, where it is until the next file is
-/// bound there. Nothing is copied, and little is allocated after the first few files.
+/// [`bind`] for a linter that has no checker: what each node is part of and where each function
+/// returns and yields. Nothing is declared and nothing is resolved. The result is in `recycled`, where
+/// it is until the next file is bound there: little is allocated after the first few files.
+///
+/// As in the result of `bind`: what [`bind_for_format`] lists, with the same exception, and of `fns`
+/// also `enclosing`, `returns` and, in another order, `yields`. Only here: `expr_kinds`,
+/// `expr_kind_counts`. Of the few files that are left to the binder it is the result of `bind`.
 pub fn bind_for_lint_in<'r>(
     file: &File,
     options: BindOptions,
     atoms: &dyn crate::atom::Intern,
     recycled: &'r mut Recycled,
 ) -> &'r BoundBuilder {
-    binder::run_for_lint_in(file, options, atoms, recycled.room())
+    match lint::fill_in(file, &mut recycled.room().b) {
+        true => &recycled.room().b,
+        false => leave_to_binder(file, options, atoms, recycled),
+    }
+}
+
+/// The result of [`bind`], in `recycled`.
+fn leave_to_binder<'r>(
+    file: &File,
+    options: BindOptions,
+    atoms: &dyn crate::atom::Intern,
+    recycled: &'r mut Recycled,
+) -> &'r BoundBuilder {
+    let room = recycled.room();
+    room.b = binder::Binder::<false>::run(file, options, atoms);
+    &room.b
 }

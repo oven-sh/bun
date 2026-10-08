@@ -303,12 +303,6 @@ impl<'a> Func<'a> {
         let ids = file.bound.ids.get(list.range()).unwrap_or_default();
         ids.iter().map(move |&e| Expr::new(file, hir::ExprId(e)))
     }
-
-    /// It contains a `this`, possibly inside arrow functions.
-    #[inline]
-    pub fn contains_this(self) -> bool {
-        (self.file.bound.fns.get(self.id.idx())).is_some_and(|info| info.contains_this)
-    }
 }
 
 handle! {

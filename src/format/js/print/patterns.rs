@@ -66,10 +66,23 @@ pub(crate) fn write_array_pattern_element<'a>(element: PatElem<'a>, f: &mut Form
 
 /// `a`, `a: b`, `a = 1`, `a: b = 1`, `...a` in an object pattern.
 pub(crate) fn write_binding_property<'a>(property: PatProp<'a>, f: &mut Formatter<'a>) {
-    match property.is_rest() {
-        true => write!(f, ["...", property.value()]),
-        false => AssignmentLike::BindingProperty(property).fmt(f),
+    if property.is_rest() {
+        return write!(f, ["...", property.value()]);
     }
+    // Prettier's `handlePropertyComments`: a comment at the end of the line of the key leads the
+    // property.
+    if !f.is_quiet()
+        && !property.is_shorthand()
+        && let Some(key) = property.key()
+        && !f.comments().has_comment_in_span(key.span(f.file()))
+    {
+        let value_start = property.value().span().start;
+        let comments = Some(f.comments().end_of_line_comments_after_left_side(key.span(f.file()).end))
+            .filter(|comments| comments.last().is_none_or(|last| !last.is_moved() && last.end() <= value_start))
+            .unwrap_or_default();
+        write!(f, FormatLeadingComments::Comments(comments));
+    }
+    AssignmentLike::BindingProperty(property).fmt(f);
 }
 
 /// `BindingProperty.value`: the `b = 1` of `a: b = 1`, the `a = 1` of `{ a = 1 }`.

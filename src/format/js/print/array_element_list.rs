@@ -81,7 +81,7 @@ pub(crate) fn can_concisely_print_array_list<'a>(
         return false;
     };
     let comments = f.comments();
-    let mut comments_iter = comments.comments_before_iter(array_expression_span.end);
+    let mut comments_iter = comments.comments_before_iter(array_expression_span.end).peekable();
 
     for item in list {
         match item.kind() {
@@ -92,7 +92,8 @@ pub(crate) fn can_concisely_print_array_list<'a>(
             } if matches!(operand.kind(), ExprKind::Number(_)) => {
                 // `-(/* comment */ 1)`
                 let span = item.span();
-                if comments_iter.find(|comment| comment.span.start > span.start).is_some_and(|it| span.contains(it.span)) {
+                while comments_iter.next_if(|comment| comment.span.start <= span.start).is_some() {}
+                if comments_iter.peek().is_some_and(|it| span.contains(it.span)) {
                     return false;
                 }
             }

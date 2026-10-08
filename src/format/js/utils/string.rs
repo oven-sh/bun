@@ -22,25 +22,25 @@ pub(crate) struct FormatLiteralStringToken<'a> {
     parent_kind: StringLiteralParentKind,
 }
 
-/// ES5's `IdentifierName`. Prettier only removes the quotes of a name that is an identifier in ES5:
-/// no characters outside the BMP, and none that are letters only by `Other_ID_Start` or
-/// `Other_ID_Continue`.
+#[path = "es5_identifier_tables.rs"]
+mod es5_identifier_tables;
+
+/// ES5's `IdentifierName`, as the package `is-es5-identifier-name` has it, whose letters are those of
+/// an old version of Unicode. Prettier only removes the quotes of such a name.
 pub(crate) fn is_es5_identifier_name(name: &[u8]) -> bool {
-    use bun_lint::utils::text::{code_points, is_identifier_name};
-    if name.is_ascii() {
-        return match name.split_first() {
-            Some((first, rest)) => {
-                (first.is_ascii_alphabetic() || matches!(first, b'$' | b'_'))
-                    && rest.iter().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'$' | b'_'))
+    use es5_identifier_tables::{PART, START};
+    let is_in = |table: &[(u16, u16)], c: u32| {
+        u16::try_from(c).is_ok_and(|c| {
+            let index = table.partition_point(|&(_, end)| end < c);
+            table.get(index).is_some_and(|&(start, _)| start <= c)
+        })
+    };
+    !name.is_empty()
+        && bun_lint::utils::text::code_points(name).all(|(at, c)| match u8::try_from(c) {
+            Ok(b) if b.is_ascii() => {
+                b.is_ascii_alphabetic() || matches!(b, b'$' | b'_') || (at != 0 && b.is_ascii_digit())
             }
-            None => false,
-        };
-    }
-    is_identifier_name(name)
-        && code_points(name).all(|(at, c)| match c {
-            0x1885 | 0x1886 => at != 0,
-            0x2118 | 0x212E | 0x309B | 0x309C | 0xB7 | 0x387 | 0x1369..=0x1371 | 0x19DA => false,
-            _ => c <= 0xFFFF,
+            _ => is_in(if at == 0 { START } else { PART }, c),
         })
 }
 

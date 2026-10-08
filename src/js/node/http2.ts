@@ -3564,6 +3564,7 @@ class ServerHttp2Stream extends Http2Stream {
     // date header appended when missing. The derived object form (original-case
     // keys, array values for duplicates) backs sentHeaders.
     let rawHeadersList: any[] | null = null;
+    let rawHeadersExpanded = false;
     let statusCode;
     if (headers == undefined) {
       headers = {};
@@ -3595,19 +3596,11 @@ class ServerHttp2Stream extends Http2Stream {
       if (!isDateSet && (sendDateOption == null || sendDateOption)) {
         headers.push(HTTP2_HEADER_DATE, utcDate());
       }
-      rawHeadersList = headers as any[];
       const headersObject = { __proto__: null };
-      for (let i = 0; i < rawHeadersList.length; i += 2) {
-        const key = rawHeadersList[i];
-        let value = rawHeadersList[i + 1];
-        if (typeof value === "object" && $isArray(value)) value = copyHeaderValueArray(value);
-        const existing = headersObject[key];
-        if (existing === undefined) headersObject[key] = value;
-        else if ($isArray(existing)) existing.push(value);
-        else headersObject[key] = [existing, value];
-      }
-      if (rawHeadersList[sensitiveHeaders] !== undefined) {
-        headersObject[sensitiveHeaders] = rawHeadersList[sensitiveHeaders];
+      rawHeadersList = foldRawHeaders(headers as any[], headersObject, session[kStrictSingleValueFields] !== false);
+      rawHeadersExpanded = rawHeadersList !== headers;
+      if (sensitiveNamesForCopy !== undefined) {
+        headersObject[sensitiveHeaders] = sensitiveNamesForCopy;
       }
       headers = headersObject;
     } else if (!$isObject(headers)) {
@@ -3626,7 +3619,9 @@ class ServerHttp2Stream extends Http2Stream {
     const sensitiveNames = buildSensitiveNames(headers, sensitives);
     // Pre-validate single-value headers in JS so a throwing respond() leaves no partial state in
     // the shared HPACK table (same rule request() applies).
-    if (session[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
+    if (rawHeadersExpanded) {
+      assertExpandedRawHeaders(rawHeadersList!, session[kStrictSingleValueFields] !== false);
+    } else if (session[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
     // node keeps the never-index list visible on sentHeaders (symbol keys are not iterated by the
     // wire-encoding path, so re-attaching is safe).
     if (sensitives !== undefined) headers[sensitiveHeaders] = sensitives;
@@ -3922,6 +3917,79 @@ function copyHeaderValueArray(values: any[]): any[] {
   const copy = $newArrayWithSize(length);
   for (let i = 0; i < length; i++) $putByValDirect(copy, i, values[i]);
   return copy;
+}
+
+// Folds a raw [name, value, ...] list into `object`, which backs sentHeaders, and returns the list to encode.
+function foldRawHeaders(list: any[], object: Record<string, any>, strictSingleValue: boolean): any[] {
+  let wire = list;
+  for (let i = 0; i < list.length; i += 2) {
+    const key = list[i];
+    let value = list[i + 1];
+    if (typeof value === "object" && $isArray(value)) {
+      if (wire === list) {
+        wire = [];
+        for (let j = 0; j < i; j++) $arrayPush(wire, list[j]);
+      }
+      value = copyHeaderValueArray(value);
+      const length = value.length;
+      if (
+        !strictSingleValue &&
+        length > 1 &&
+        (typeof key === "string" ? key : String(key)).charCodeAt(0) === 0x3a /* ':' */
+      ) {
+        // node joins the elements of a pseudo-header: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/util.js#L809
+        $arrayPush(wire, key);
+        $arrayPush(wire, String(value));
+      } else {
+        // One field per element: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/util.js#L819-L826
+        for (let j = 0; j < length; j++) {
+          $arrayPush(wire, key);
+          $arrayPush(wire, String(value[j]));
+        }
+      }
+    } else if (wire !== list) {
+      $arrayPush(wire, key);
+      $arrayPush(wire, value);
+    }
+    const existing = object[key];
+    if (existing === undefined) object[key] = value;
+    else if ($isArray(existing)) existing.push(value);
+    else object[key] = [existing, value];
+  }
+  return wire;
+}
+
+// For a list that foldRawHeaders() expanded: the single-value rule per pair, then the value bytes the encoder refuses.
+function assertExpandedRawHeaders(list: any[], strictSingleValue: boolean) {
+  if (strictSingleValue) {
+    let seen: Set<string> | null = null;
+    for (let i = 0; i < list.length; i += 2) {
+      if (list[i + 1] === undefined) continue;
+      const name = list[i];
+      const lower = StringPrototypeToLowerCase.$call(typeof name === "string" ? name : String(name));
+      if (!kSingleValueHeaders.has(lower)) continue;
+      if (seen !== null && seen.has(lower)) {
+        throw $ERR_HTTP2_HEADER_SINGLE_VALUE(`Header field "${lower}" must only have a single value`);
+      }
+      if (seen === null) seen = new SafeSet();
+      seen.add(lower);
+    }
+  }
+  for (let i = 0; i < list.length; i += 2) {
+    const value = list[i + 1];
+    if (typeof value !== "string") continue;
+    for (let j = 0; j < value.length; j++) {
+      const c = value.charCodeAt(j);
+      if (c === 0x00 || c === 0x0a || c === 0x0d) {
+        const name = list[i];
+        const lower = StringPrototypeToLowerCase.$call(typeof name === "string" ? name : String(name));
+        // The encoder's message for this value.
+        const error = new TypeError(`Invalid value for header "${lower}"`);
+        error.code = "ERR_HTTP2_INVALID_HEADER_VALUE";
+        throw error;
+      }
+    }
+  }
 }
 
 function toHeaderObject(headers, sensitiveHeadersValue) {
@@ -5997,6 +6065,7 @@ class ClientHttp2Session extends Http2Session {
       // given order. The derived object form (original-case keys, array values
       // for duplicates) backs sentHeaders.
       let rawHeadersList: any[] | null = null;
+      let rawHeadersExpanded = false;
       if (headers == undefined) {
         headers = {};
       } else if ($isArray(headers)) {
@@ -6045,17 +6114,14 @@ class ClientHttp2Session extends Http2Session {
           if (scheme !== undefined) throw $ERR_HTTP2_CONNECT_SCHEME();
           if (path !== undefined) throw $ERR_HTTP2_CONNECT_PATH();
         }
-        rawHeadersList = additionalPseudoHeaders.length ? additionalPseudoHeaders.concat(raw) : raw;
-        const headersObject = { __proto__: null };
-        for (let i = 0; i < rawHeadersList.length; i += 2) {
-          const key = rawHeadersList[i];
-          let value = rawHeadersList[i + 1];
-          if (typeof value === "object" && $isArray(value)) value = copyHeaderValueArray(value);
-          const existing = headersObject[key];
-          if (existing === undefined) headersObject[key] = value;
-          else if ($isArray(existing)) existing.push(value);
-          else headersObject[key] = [existing, value];
+        let list = raw;
+        if (additionalPseudoHeaders.length) {
+          list = additionalPseudoHeaders;
+          for (let i = 0; i < raw.length; i++) $arrayPush(list, raw[i]);
         }
+        const headersObject = { __proto__: null };
+        rawHeadersList = foldRawHeaders(list, headersObject, this[kStrictSingleValueFields] !== false);
+        rawHeadersExpanded = rawHeadersList !== list;
         if (raw[sensitiveHeaders] !== undefined) {
           headersObject[sensitiveHeaders] = raw[sensitiveHeaders];
         }
@@ -6117,7 +6183,9 @@ class ClientHttp2Session extends Http2Session {
       }
       // Validate single-value constraints before anything is encoded (a mid-encode throw would
       // desync the shared HPACK table from the peer).
-      if (this[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
+      if (rawHeadersExpanded) {
+        assertExpandedRawHeaders(rawHeadersList!, this[kStrictSingleValueFields] !== false);
+      } else if (this[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
       // node keeps the never-index list visible on the request's sentHeaders (symbol keys are
       // not iterated by the wire-encoding path, so re-attaching is safe).
       if (sensitives !== undefined) headers[sensitiveHeaders] = sensitives;
@@ -6176,7 +6244,7 @@ class ClientHttp2Session extends Http2Session {
       }
 
       let rejectContentLengthOnNoPayload = false;
-      if (NoPayloadMethods.has(method.toUpperCase())) {
+      if (typeof method === "string" && NoPayloadMethods.has(method.toUpperCase())) {
         // Like Node, a payload-meaningless method only defaults endStream to
         // true when the caller expressed no preference; an explicit endStream
         // (validated above) is honored, so { endStream: false } stays open.

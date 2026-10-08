@@ -50,7 +50,14 @@ pub(crate) fn write_as_or_satisfies_expression<'a>(e: Expr<'a>, f: &mut Formatte
         } else if block_comments.is_empty() {
             write!(f, [FormatNodeWithoutTrailingComments(&expression), space(), operation, space(), format_type]);
         } else {
-            write!(f, [expression, space(), operation, space(), format_type]);
+            write!(f, [expression, space(), operation]);
+            // Prettier's space is text, which is seen before a line comment that trails the expression if
+            // the type starts on the next line: `a as  // comment`.
+            let is_after_line_comment = f.comments().printed_comments().last().is_some_and(|it| it.is_line());
+            match is_after_line_comment {
+                true => write!(f, [" ", format_type]),
+                false => write!(f, [space(), format_type]),
+            }
         }
     });
 

@@ -122,6 +122,7 @@ impl Parser<'_> {
                     && self.containers[n_parents as usize].ch != b'>'
                 {
                     n_parents += 1;
+                    line.indent = 0;
                 }
             }
         }

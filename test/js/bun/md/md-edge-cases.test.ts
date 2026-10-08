@@ -1841,3 +1841,9 @@ describe("indented HTML in a paragraph", () => {
     expect(Markdown.html("a\n    <!-- b -->\n\nc\n    <div>\n")).toBe("<p>a\n<!-- b --></p>\n<p>c\n<div></p>\n");
   });
 });
+
+describe("blank lines of code in list items", () => {
+  test("blanks that are less than the indentation of the item are not code", () => {
+    expect(Markdown.html("- ```\n  a\n \n  ```\n")).toBe("<ul>\n<li>\n<pre><code>a\n\n</code></pre>\n</li>\n</ul>\n");
+  });
+});

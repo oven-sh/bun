@@ -98,7 +98,7 @@ pub fn run_eslint_tests(args: &[&[u8]], environment: &Environment) -> bool {
         &Tester {
             linter: Linter::new(Registry::new(&[bun_lint_eslint::RULES, bun_lint_typescript::RULES, bun_lint_plugins::RULES])),
             environment,
-            js_plugins: js_plugin::Host::with_engine(environment.js_engine, &environment.cwd),
+            js_plugins: js_plugin::Host::with_engine(environment.js_engine, &crate::paths::to_native(environment.cwd.clone())),
         },
     )
 }

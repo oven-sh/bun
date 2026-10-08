@@ -808,10 +808,24 @@ impl<'a> Member<'a> {
         self.raw().kind
     }
 
-    /// ESLint's `kind === "constructor"`.
-    #[inline]
+    /// ESLint's `kind === "constructor"`: a `Constructor` that is not `static`. Also a method of a
+    /// class that is written `"constructor"` where TypeScript's parser does not take that for the
+    /// constructor: `"constructor"<T>() {}`, `*"constructor"() {}`.
     pub fn is_constructor(self) -> bool {
-        self.raw().kind == MemberKind::Constructor && !self.raw().flags.contains(Flags::STATIC)
+        let raw = self.raw();
+        if raw.flags.contains(Flags::STATIC) {
+            return false;
+        }
+        match raw.kind {
+            MemberKind::Constructor => true,
+            MemberKind::Method => {
+                raw.flags.contains(Flags::STRING_NAME)
+                    && !raw.flags.contains(Flags::COMPUTED_NAME)
+                    && !self.is_signature()
+                    && self.key().is_some_and(|key| key.is("constructor"))
+            }
+            _ => false,
+        }
     }
 
     /// `None` for a constructor, a static block and a signature without a name.

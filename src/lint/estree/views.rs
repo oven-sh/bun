@@ -4,7 +4,7 @@ use super::Dialect;
 use super::value::Nodes;
 use super::vnode::{Part, VNode};
 use crate::ast::{
-    Call, Case, Class, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Jsx, Key, KeyKind, List, Member,
+    Call, Case, Class, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Jsx, Key, List, Member,
     MemberKind, Modifier, Module, Node, Param, Prop, Stmt, StmtKind, StmtTag, TupleElem, TypeKind,
     TypeNode, TypeParam, TypeTag, VarDecl,
 };
@@ -292,16 +292,10 @@ pub(super) fn is_computed(key: Option<Key>) -> bool {
 }
 
 pub(super) fn method_kind(member: Member) -> &'static str {
-    let is_quoted_constructor =
-        |key: Key| matches!(key.kind(), KeyKind::String(name) if name.is("constructor"));
     match member.kind() {
         MemberKind::Getter => "get",
         MemberKind::Setter => "set",
-        MemberKind::Constructor if member.is_constructor() => "constructor",
-        // `"constructor"<T>() {}`
-        MemberKind::Method if !member.is_static() && member.key().is_some_and(is_quoted_constructor) => {
-            "constructor"
-        }
+        _ if member.is_constructor() => "constructor",
         _ => "method",
     }
 }

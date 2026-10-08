@@ -296,7 +296,8 @@ impl<'a> File<'a> {
         self.has_module_syntax
     }
 
-    /// The parser reported an error. No rule runs on such a file.
+    /// The parser reported an error. Whether ESLint would refuse the file is another question, which
+    /// depends on its parser: `linter::parse_error`.
     #[inline]
     pub fn has_parse_errors(&self) -> bool {
         self.has_parse_errors

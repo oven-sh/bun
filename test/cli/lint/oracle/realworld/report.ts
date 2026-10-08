@@ -10,8 +10,9 @@
 
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { addCounts, differencesOf, type Counts } from "./plans.ts";
 import type { PassResult } from "./run.ts";
-import type { Counts, Example, Message } from "./worker.ts";
+import type { Example, Message } from "./worker.ts";
 
 const EXAMPLES_PER_RULE = 20;
 const LINES_AROUND = 7;
@@ -33,7 +34,6 @@ for (const plan of readdirSync(join(out, "results")).sort()) {
   }
 }
 
-const differencesOf = (it: Counts) => it.onlyEslint + it.onlyOurs + it.fixDiffers;
 const sumOf = (rules: Record<string, Counts>, field: (it: Counts) => number) =>
   Object.values(rules).reduce((sum, it) => sum + field(it), 0);
 
@@ -41,8 +41,7 @@ function merge(list: PassResult[]): Record<string, Counts> {
   const rules: Record<string, Counts> = {};
   for (const pass of list) {
     for (const [rule, counts] of Object.entries(pass.rules)) {
-      const sum = (rules[rule] ??= { eslint: 0, ours: 0, onlyEslint: 0, onlyOurs: 0, fixDiffers: 0 });
-      for (const key of Object.keys(sum) as (keyof Counts)[]) sum[key] += counts[key];
+      addCounts(rules, rule, counts);
     }
   }
   return rules;
@@ -142,7 +141,8 @@ const text: string[] = ["# Real ESLint against `bun lint` on real code\n"];
 text.push(
   "Every rule enabled at once; every message compared (file, rule, severity, line, column, endLine, endColumn, messageId, message, " +
     "fix range and text, suggestions). *only ESLint*: we miss it or have it elsewhere. *only ours*: ESLint does not report it (there). " +
-    "*fix differs*: the same message at the same place, another fix or other suggestions. A message that is misplaced counts twice.\n",
+    "*text differs*: the same rule at the same place, another message. *fix differs*: the same message at the same place, another fix or " +
+    "other suggestions. A message that is misplaced counts twice.\n",
 );
 
 {
@@ -167,8 +167,8 @@ for (const pass of passes) {
 
 function table(list: PassResult[], withLinks: boolean) {
   const rules = merge(list);
-  text.push(`| rule | ESLint | ours | only ESLint | only ours | fix differs | differences |${withLinks ? " mostly in |" : ""}`);
-  text.push(`| --- | ---: | ---: | ---: | ---: | ---: | ---: |${withLinks ? " --- |" : ""}`);
+  text.push(`| rule | ESLint | ours | only ESLint | only ours | text differs | fix differs | differences |${withLinks ? " mostly in |" : ""}`);
+  text.push(`| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |${withLinks ? " --- |" : ""}`);
   const rows = Object.entries(rules)
     .filter(([, it]) => differencesOf(it) > 0)
     .sort((a, b) => differencesOf(b[1]) - differencesOf(a[1]) || (a[0] < b[0] ? -1 : 1));
@@ -181,11 +181,11 @@ function table(list: PassResult[], withLinks: boolean) {
     const mostly = where.slice(0, 2).map(([pass, n]) => `${pass}: ${n}`);
     if (where.length > 2) mostly.push(`${where.length - 2} more`);
     text.push(
-      `| ${name} | ${it.eslint} | ${it.ours} | ${it.onlyEslint} | ${it.onlyOurs} | ${it.fixDiffers} | ${differencesOf(it)} |` +
+      `| ${name} | ${it.eslint} | ${it.ours} | ${it.onlyEslint} | ${it.onlyOurs} | ${it.textDiffers} | ${it.fixDiffers} | ${differencesOf(it)} |` +
         (withLinks ? ` ${mostly.join(", ")} |` : ""),
     );
   }
-  if (rows.length === 0) text.push("| none | | | | | | |");
+  if (rows.length === 0) text.push("| none | | | | | | | |");
 }
 
 const merged = merge(open);

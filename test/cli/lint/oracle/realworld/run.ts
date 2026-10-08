@@ -16,8 +16,18 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { EXTENSIONS, PSEUDO_RULES, RESULT_MARKER, buildPlans, configModule, type Plan } from "./plans.ts";
-import type { Batch, BatchResult, Counts, Example } from "./worker.ts";
+import {
+  EXTENSIONS,
+  PSEUDO_RULES,
+  RESULT_MARKER,
+  addCounts,
+  buildPlans,
+  configModule,
+  differencesOf,
+  type Counts,
+  type Plan,
+} from "./plans.ts";
+import type { Batch, BatchResult, Example } from "./worker.ts";
 
 interface Corpus {
   name: string;
@@ -246,8 +256,7 @@ async function pass(plan: Plan, corpus: Corpus): Promise<void> {
     total.seconds.eslint += result.seconds.eslint;
     total.seconds.ours += result.seconds.ours;
     for (const [rule, counts] of Object.entries(result.rules)) {
-      const sum = (total.rules[rule] ??= { eslint: 0, ours: 0, onlyEslint: 0, onlyOurs: 0, fixDiffers: 0 });
-      for (const key of Object.keys(sum) as (keyof Counts)[]) sum[key] += counts[key];
+      addCounts(total.rules, rule, counts);
     }
     if (corpus.confidential && result.examples.length > 0) throw new Error("an example of a confidential corpus");
     if (corpus.confidential && Object.keys(result.rules).some(id => !(id in plan.rules) && !PSEUDO_RULES.includes(id))) {
@@ -266,7 +275,7 @@ async function pass(plan: Plan, corpus: Corpus): Promise<void> {
       process.stderr.write(`\r${plan.name} ${corpus.name}: ${done}/${batches.length} batches, ${total.files} files `);
     }
   });
-  const differences = Object.values(total.rules).reduce((n, it) => n + it.onlyEslint + it.onlyOurs + it.fixDiffers, 0);
+  const differences = Object.values(total.rules).reduce((n, it) => n + differencesOf(it), 0);
   const messages = Object.values(total.rules).reduce((n, it) => n + it.eslint, 0);
   console.error(
     `\n${plan.name} ${corpus.name}: ${total.files} files, ${total.equalFiles} equal, ${messages} messages of ESLint, ` +

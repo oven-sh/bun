@@ -14,11 +14,14 @@ import { Script } from "node:vm";
 import {
   LINTER,
   NOT_IN_A_PROJECT,
+  NO_COUNTS,
   PARSE_ERROR,
   PSEUDO_RULES,
   RESULT_MARKER,
   UNKNOWN_RULE,
+  addCounts,
   configObjects,
+  type Counts,
   type Plan,
 } from "./plans.ts";
 
@@ -33,15 +36,6 @@ export interface Batch {
   config: string;
   confidential: boolean;
   threads: number;
-}
-
-export interface Counts {
-  eslint: number;
-  ours: number;
-  onlyEslint: number;
-  onlyOurs: number;
-  /** The same message at the same place, with another fix or other suggestions. */
-  fixDiffers: number;
 }
 
 export interface Message {
@@ -60,7 +54,7 @@ export interface Message {
 
 export interface Example {
   rule: string;
-  kind: "onlyEslint" | "onlyOurs" | "fixDiffers";
+  kind: "onlyEslint" | "onlyOurs" | "fixDiffers" | "textDiffers";
   file: string;
   eslint?: Message;
   ours?: Message;
@@ -194,7 +188,7 @@ function compare(
   perRule: Map<string, number>,
 ) {
   const counts = (rule: string) =>
-    (result.rules[rule] ??= { eslint: 0, ours: 0, onlyEslint: 0, onlyOurs: 0, fixDiffers: 0 });
+    (result.rules[rule] ??= { ...NO_COUNTS });
   const example = (made: Example) => {
     const n = perRule.get(made.rule) ?? 0;
     perRule.set(made.rule, n + 1);
@@ -235,12 +229,12 @@ function compare(
     else byPlace.set(key, [m]);
   }
   let equal = true;
+  const missing: Message[] = [];
   for (const m of expected) {
     const list = byPlace.get(placeKey(m));
     if (!list || list.length === 0) {
       equal = false;
-      counts(idOf(m)).onlyEslint++;
-      example({ rule: idOf(m), kind: "onlyEslint", file, eslint: m });
+      missing.push(m);
       continue;
     }
     const wanted = fixKey(m);
@@ -252,12 +246,22 @@ function compare(
       example({ rule: idOf(m), kind: "fixDiffers", file, eslint: m, ours: other });
     }
   }
-  for (const list of byPlace.values()) {
-    for (const m of list) {
-      equal = false;
-      counts(idOf(m)).onlyOurs++;
-      example({ rule: idOf(m), kind: "onlyOurs", file, ours: m });
-    }
+  // What is left on both sides is paired by rule and place alone.
+  const rangeKey = (m: Message) => JSON.stringify([m.ruleId, m.line, m.column, m.endLine, m.endColumn]);
+  const extra = new Map<string, Message[]>();
+  for (const m of [...byPlace.values()].flat()) {
+    equal = false;
+    if (!extra.has(rangeKey(m))) extra.set(rangeKey(m), []);
+    extra.get(rangeKey(m))!.push(m);
+  }
+  for (const m of missing) {
+    const other = extra.get(rangeKey(m))?.shift();
+    counts(idOf(m))[other ? "textDiffers" : "onlyEslint"]++;
+    example({ rule: idOf(m), kind: other ? "textDiffers" : "onlyEslint", file, eslint: m, ours: other });
+  }
+  for (const m of [...extra.values()].flat()) {
+    counts(idOf(m)).onlyOurs++;
+    example({ rule: idOf(m), kind: "onlyOurs", file, ours: m });
   }
   return equal;
 }
@@ -312,8 +316,7 @@ async function run(batch: Batch): Promise<BatchResult> {
     const known: Record<string, Counts> = {};
     for (const [rule, counts] of Object.entries(result.rules)) {
       const id = rule in batch.plan.rules || PSEUDO_RULES.includes(rule) ? rule : UNKNOWN_RULE;
-      const sum = (known[id] ??= { eslint: 0, ours: 0, onlyEslint: 0, onlyOurs: 0, fixDiffers: 0 });
-      for (const key of Object.keys(sum) as (keyof Counts)[]) sum[key] += counts[key];
+      addCounts(known, id, counts);
     }
     result.rules = known;
     const kinds: Record<string, string[]> = {};

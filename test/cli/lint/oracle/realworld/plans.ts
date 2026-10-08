@@ -17,6 +17,27 @@ export interface Plan {
   rules: Record<string, unknown[]>;
 }
 
+export interface Counts {
+  eslint: number;
+  ours: number;
+  onlyEslint: number;
+  onlyOurs: number;
+  /** The same message at the same place, with another fix or other suggestions. */
+  fixDiffers: number;
+  /** The same rule at the same place, with another text: a type that is printed differently, for example. */
+  textDiffers: number;
+}
+
+export const NO_COUNTS: Counts = { eslint: 0, ours: 0, onlyEslint: 0, onlyOurs: 0, fixDiffers: 0, textDiffers: 0 };
+
+export const differencesOf = (it: Counts) => it.onlyEslint + it.onlyOurs + it.fixDiffers + (it.textDiffers ?? 0);
+
+/** Adds `counts` to the entry of `rule` in `rules`. */
+export function addCounts(rules: Record<string, Counts>, rule: string, counts: Counts) {
+  const sum = (rules[rule] ??= { ...NO_COUNTS });
+  for (const key of Object.keys(sum) as (keyof Counts)[]) sum[key] += counts[key] ?? 0;
+}
+
 /** Starts a line of a worker's output that is a result. A parser or a rule can print, too. */
 export const RESULT_MARKER = "\x1eresult ";
 

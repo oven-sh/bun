@@ -1,5 +1,7 @@
 use super::no_extra_bind::own_keywords;
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
+use rustc_hash::FxHashSet;
 
 /// Require using arrow functions for callbacks.
 pub struct PreferArrowCallback {
@@ -10,31 +12,40 @@ pub struct PreferArrowCallback {
 const PREFER_ARROW_CALLBACK: Message =
     Message::new("preferArrowCallback", "Unexpected function expression.");
 
+/// By an operand of a logical or a conditional expression: the outermost of these expressions that
+/// can have its value.
+type Values<'a> = AncestorMemo<'a, Node<'a>>;
+
+/// Whether the value of `child` is not that of `parent`, which it is directly in.
+fn is_outermost_with_value<'a>(child: Node<'a>, parent: Node<'a>) -> Option<Node<'a>> {
+    let is_value_of_parent = match parent.as_expr().map(Expr::kind) {
+        Some(ExprKind::Binary {
+            op: BinOp::And | BinOp::Or | BinOp::Nullish,
+            ..
+        }) => true,
+        // The test of a conditional is never its value.
+        Some(ExprKind::Cond { test, .. }) => Node::Expr(test) != child,
+        _ => false,
+    };
+    (!is_value_of_parent).then_some(child)
+}
+
 /// ESLint's `getCallbackInfo`. `None` if `function` is not a callback, otherwise whether it is with
 /// `.bind(this)`.
-fn is_callback_with_lexical_this(function: Expr) -> Option<bool> {
+fn is_callback_with_lexical_this<'a>(function: Expr<'a>, values: &mut Values<'a>) -> Option<bool> {
     let mut current = function;
     let mut is_lexical_this = None;
     loop {
+        current = values.find(current.into(), is_outermost_with_value)?.as_expr()?;
         let parent = current.parent().as_expr()?;
-        let is_bind = match parent.kind() {
-            ExprKind::Binary {
-                op: BinOp::And | BinOp::Or | BinOp::Nullish,
-                ..
-            } => false,
-            // The test of a conditional is never its value.
-            ExprKind::Cond { test, .. } if test != current => false,
-            ExprKind::Dot { obj, name, .. } if obj == current && name.name().is("bind") => true,
+        match parent.kind() {
+            ExprKind::Dot { obj, name, .. } if obj == current && name.name().is("bind") => {}
             // Upstream takes `[bind]` for `.bind`.
-            ExprKind::Index { obj, index, .. } if obj == current && index.is_ident("bind") => true,
+            ExprKind::Index { obj, index, .. } if obj == current && index.is_ident("bind") => {}
             ExprKind::Call(call) | ExprKind::New(call) => {
                 return (call.callee() != current).then(|| is_lexical_this.unwrap_or(false));
             }
             _ => return None,
-        };
-        if !is_bind {
-            current = parent;
-            continue;
         }
         let bound = parent.parent().as_expr()?;
         let call = bound.as_call().filter(|call| call.callee() == parent)?;
@@ -54,11 +65,15 @@ fn simple_name(param: Param<'_>) -> Option<Name<'_>> {
 
 /// ESLint's `hasDuplicateParams`.
 fn has_duplicate_params(func: Func) -> bool {
-    let params = func.params();
-    params.iter().all(|it| simple_name(it).is_some())
-        && params.iter().enumerate().any(|(i, param)| {
-            params.iter().take(i).any(|earlier| simple_name(earlier) == simple_name(param))
-        })
+    let mut names = FxHashSet::default();
+    let mut has_duplicate = false;
+    for param in func.params() {
+        match simple_name(param) {
+            Some(name) => has_duplicate |= !names.insert(name),
+            None => return false,
+        }
+    }
+    has_duplicate
 }
 
 fn uses_arguments(func: Func) -> bool {
@@ -121,7 +136,7 @@ impl PreferArrowCallback {
         {
             return;
         }
-        let Some(is_lexical_this) = is_callback_with_lexical_this(e) else {
+        let Some(is_lexical_this) = is_callback_with_lexical_this(e, &mut cx.state) else {
             return;
         };
         let own = own_keywords(func, false);
@@ -145,7 +160,7 @@ impl PreferArrowCallback {
 
 impl Rule for PreferArrowCallback {
     const META: Meta = Meta::eslint("prefer-arrow-callback", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    type State<'a> = Values<'a>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -155,7 +170,8 @@ impl Rule for PreferArrowCallback {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Values<'a> {
         on.exprs([ExprTag::Fn], Self::check);
+        Values::default()
     }
 }

@@ -89,7 +89,7 @@ For each file, `bun format` uses the nearest configuration file: it looks in the
 }
 ```
 
-See [Prettier's options](https://prettier.io/docs/options) for what each option does. Plugins do not load, with one exception: what `@trivago/prettier-plugin-sort-imports`, `@ianvs/prettier-plugin-sort-imports`, and `prettier-plugin-organize-imports` do is built in. If `plugins` names one of them, `bun format` sorts imports as the options of that plugin say.
+See [Prettier's options](https://prettier.io/docs/options) for what each option does. Plugins do not load. The three that sort imports are built in: see [Sort imports](#sort-imports).
 
 A flag overrides the configuration file:
 
@@ -100,6 +100,40 @@ bun format --no-semi --print-width 100
 ### `.editorconfig`
 
 `bun format` reads `indent_style`, `indent_size`, `tab_width`, `max_line_length`, and `end_of_line` from `.editorconfig`, like Prettier. A configuration file overrides them. Use `--no-editorconfig` to ignore `.editorconfig`.
+
+## Sort imports
+
+`bun format` sorts imports itself. No plugin has to be installed. It does so if the configuration asks for it:
+
+| In the configuration file                                                                              | Sorts like                                                                                                                                                                       |
+| ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `importOrder`, or another option that starts with `importOrder`                                        | [`@trivago/prettier-plugin-sort-imports`](https://github.com/trivago/prettier-plugin-sort-imports)                                                                               |
+| `"plugins": ["@ianvs/prettier-plugin-sort-imports"]`, or an option or a special word only it has       | [`@ianvs/prettier-plugin-sort-imports`](https://github.com/IanVS/prettier-plugin-sort-imports)                                                                                   |
+| `"plugins": ["prettier-plugin-organize-imports"]`                                                      | [`prettier-plugin-organize-imports`](https://github.com/simonhaenisch/prettier-plugin-organize-imports): TypeScript's "Organize Imports", which also removes unused imports      |
+| `sortImports` in `.oxfmtrc.json`                                                                       | [oxfmt](https://oxc.rs/docs/guide/usage/formatter)                                                                                                                               |
+
+```json .prettierrc icon="file-json"
+{
+  "importOrder": ["<BUILTIN_MODULES>", "<THIRD_PARTY_MODULES>", "^@/(.*)$", "^[./]"],
+  "importOrderSeparation": true,
+  "importOrderSortSpecifiers": true
+}
+```
+
+```ts
+import { readFile } from "node:fs/promises";
+
+import { z } from "zod";
+
+import { db } from "@/db";
+
+import { a, b } from "./util";
+```
+
+Every option of the four works as it does there. Comments move with their imports the same way, and the comments that turn sorting off work too: `// sort-imports-ignore`, `// prettier-ignore` before an import, `// organize-imports-ignore`.
+
+- `importOrderParserPlugins` is accepted and not needed: `bun format` reads TypeScript, JSX, and decorators in every file.
+- `<BUILTIN_MODULES>` are the modules of Node.js 26, whatever runs `bun format`.
 
 ## Choose what to format
 

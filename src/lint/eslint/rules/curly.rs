@@ -29,7 +29,7 @@ const UNEXPECTED_CURLY_AFTER_CONDITION: Message = Message::new(
 );
 
 /// What ESLint's `prepareCheck` returns.
-struct Check<'a> {
+pub struct Check<'a> {
     body: Stmt<'a>,
     name: &'static str,
     has_condition: bool,
@@ -152,6 +152,23 @@ impl Curly {
         }
     }
 
+    /// Keeps `check` for [`Curly::report_all`] if there is something to report.
+    fn note<'a>(check: Check<'a>, cx: &mut Cx<'a, Self>) {
+        if check.expected.is_some_and(|expected| expected != check.actual) {
+            cx.state.push(check);
+        }
+    }
+
+    /// Of bodies that are in each other, only the fix of the outermost can be applied, and each has all the text of its
+    /// body. So the outermost come first: a rule that reports more than it can loses what it reports last.
+    fn report_all<'a>(&self, cx: &mut Cx<'a, Self>) {
+        let mut checks = std::mem::take(&mut cx.state);
+        checks.sort_unstable_by_key(|it| it.body.span().start);
+        for check in &checks {
+            self.report(check, cx);
+        }
+    }
+
     /// The whole chain of `if`, `else if` and `else` that starts with `first`.
     fn check_if<'a>(&self, first: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if let Node::Stmt(parent) = first.parent()
@@ -172,8 +189,8 @@ impl Curly {
             let expected = checks.iter().any(|it| it.expected.unwrap_or(it.actual));
             checks.iter_mut().for_each(|it| it.expected = Some(expected));
         }
-        for check in &checks {
-            self.report(check, cx);
+        for check in checks {
+            Self::note(check, cx);
         }
     }
 
@@ -186,13 +203,14 @@ impl Curly {
             StmtKind::ForOf { body, .. } => (body, "for-of", false),
             _ => return,
         };
-        self.report(&self.prepare_check(body, name, has_condition), cx);
+        Self::note(self.prepare_check(body, name, has_condition), cx);
     }
 }
 
 impl Rule for Curly {
     const META: Meta = Meta::eslint("curly", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    /// What is to be reported.
+    type State<'a> = Vec<Check<'a>>;
 
     fn new(options: &Options) -> Self {
         Curly {
@@ -206,11 +224,13 @@ impl Rule for Curly {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Vec<Check<'a>> {
+        const LOOPS: [StmtTag; 5] = [StmtTag::While, StmtTag::DoWhile, StmtTag::For, StmtTag::ForIn, StmtTag::ForOf];
         on.stmts([StmtTag::If], Self::check_if);
-        on.stmts(
-            [StmtTag::While, StmtTag::DoWhile, StmtTag::For, StmtTag::ForIn, StmtTag::ForOf],
-            Self::check_loop,
-        );
+        on.stmts(LOOPS, Self::check_loop);
+        if file.has_stmts([StmtTag::If]) || file.has_stmts(LOOPS) {
+            on.finish(Self::report_all);
+        }
+        Vec::new()
     }
 }

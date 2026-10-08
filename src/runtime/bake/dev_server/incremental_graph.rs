@@ -136,8 +136,7 @@ impl File {
         self.kind
     }
 
-    /// Whether a re-bundle of this file queues it for the SSR graph. The server
-    /// parse of a client component boundary queues its SSR copy itself.
+    /// False for a client component boundary: its server parse queues the SSR copy.
     #[inline]
     fn rebundles_for_ssr_graph(&self) -> bool {
         self.is_ssr && !self.is_client_component_boundary

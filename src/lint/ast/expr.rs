@@ -510,6 +510,27 @@ impl<'a> Expr<'a> {
         }
     }
 
+    /// The `name` of a `Dot`.
+    #[inline]
+    pub fn member_name(self) -> Option<Ident<'a>> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Dot { name, name_pos, .. } => Some(match self.file.spells_private_names_apart() {
+                true if self.is_private_member() => self.file.ident(self.file.private_name(name).atom(), name_pos),
+                _ => self.file.ident(name, name_pos),
+            }),
+            _ => None,
+        }
+    }
+
+    /// Where the `name` of a `Dot` starts.
+    #[inline]
+    pub fn member_name_start(self) -> Option<u32> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Dot { name_pos, .. } => Some(name_pos),
+            _ => None,
+        }
+    }
+
     /// `obj.#name`
     #[inline]
     pub fn is_private_member(self) -> bool {

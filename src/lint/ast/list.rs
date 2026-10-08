@@ -68,11 +68,17 @@ impl<'a, T: Handle<'a>> List<'a, T> {
         }
     }
 
+    #[inline]
     pub fn len(self) -> usize {
         match self.file.has_synthetic_nodes() {
-            true => self.iter().count(),
+            true => self.count_written(),
             false => self.len as usize,
         }
+    }
+
+    #[inline(never)]
+    fn count_written(self) -> usize {
+        self.iter().count()
     }
 
     #[inline]
@@ -80,11 +86,17 @@ impl<'a, T: Handle<'a>> List<'a, T> {
         self.len() == 0
     }
 
+    #[inline]
     pub fn get(self, i: usize) -> Option<T> {
         match self.file.has_synthetic_nodes() {
-            true => self.iter().nth(i),
+            true => self.get_written(i),
             false => (i < self.len as usize).then(|| self.at(i as u32)),
         }
+    }
+
+    #[inline(never)]
+    fn get_written(self, i: usize) -> Option<T> {
+        self.iter().nth(i)
     }
 
     #[inline]
@@ -92,6 +104,7 @@ impl<'a, T: Handle<'a>> List<'a, T> {
         self.get(0)
     }
 
+    #[inline]
     pub fn last(self) -> Option<T> {
         self.iter().next_back()
     }
@@ -126,14 +139,13 @@ impl<'a, T: Handle<'a>> Iterator for Iter<'a, T> {
 
     #[inline]
     fn next(&mut self) -> Option<T> {
-        while self.front < self.back {
-            let it = self.list.at(self.front);
-            self.front += 1;
-            if !self.hides || !it.is_synthetic() {
-                return Some(it);
-            }
+        if self.hides {
+            return self.next_written();
         }
-        None
+        (self.front < self.back).then(|| {
+            self.front += 1;
+            self.list.at(self.front - 1)
+        })
     }
 
     #[inline]
@@ -146,10 +158,36 @@ impl<'a, T: Handle<'a>> Iterator for Iter<'a, T> {
 impl<'a, T: Handle<'a>> DoubleEndedIterator for Iter<'a, T> {
     #[inline]
     fn next_back(&mut self) -> Option<T> {
+        if self.hides {
+            return self.next_back_written();
+        }
+        (self.front < self.back).then(|| {
+            self.back -= 1;
+            self.list.at(self.back)
+        })
+    }
+}
+
+/// In a file that has nodes which are synthesized from JSDoc comments.
+impl<'a, T: Handle<'a>> Iter<'a, T> {
+    #[inline(never)]
+    fn next_written(&mut self) -> Option<T> {
+        while self.front < self.back {
+            let it = self.list.at(self.front);
+            self.front += 1;
+            if !it.is_synthetic() {
+                return Some(it);
+            }
+        }
+        None
+    }
+
+    #[inline(never)]
+    fn next_back_written(&mut self) -> Option<T> {
         while self.front < self.back {
             self.back -= 1;
             let it = self.list.at(self.back);
-            if !self.hides || !it.is_synthetic() {
+            if !it.is_synthetic() {
                 return Some(it);
             }
         }

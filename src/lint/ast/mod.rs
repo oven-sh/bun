@@ -67,14 +67,15 @@ use bun_sema::{bind, hir};
 use std::cell::OnceCell;
 
 macro_rules! slices {
-    ($(#[$doc:meta])* $name:ident of $source:ty { $($field:ident: $ty:ty,)* }) => {
+    ($(#[$doc:meta])* $name:ident of $module:ident::$source:ident { $($field:ident: $ty:ty,)* }) => {
         $(#[$doc])*
         pub(crate) struct $name<'a> {
             $(pub(crate) $field: &'a [$ty],)*
         }
 
         impl<'a> $name<'a> {
-            fn new(source: &'a $source) -> Self {
+            /// Wherever the lists are stored.
+            fn new<S: hir::Storage>(source: &'a $module::$source<S>) -> Self {
                 $name { $($field: &source.$field[..],)* }
             }
         }
@@ -84,7 +85,7 @@ macro_rules! slices {
 slices! {
     /// The vectors of a `hir::File`. That type is invariant in the lifetime of its session, these
     /// are not, which is what lets every handle have a single lifetime.
-    Hir of hir::File<'_> {
+    Hir of hir::FileIn {
         text: u8,
         ids: u32,
         numbers: f64,
@@ -136,7 +137,7 @@ slices! {
 
 slices! {
     /// The same for the side tables of a `bind::Bound`.
-    Bound of bind::Bound<'_> {
+    Bound of bind::BoundIn {
         ids: u32,
         expr_symbol: bind::SymbolId,
         expr_parent: bind::Parent,
@@ -212,10 +213,10 @@ pub struct File<'a> {
 impl<'a> File<'a> {
     /// `path`: as it is reported. `types`: the type checker, if the file is part of a program that
     /// has been checked.
-    pub fn new(
+    pub fn new<H: hir::Storage, B: hir::Storage + 'a>(
         path: &'a [u8],
-        hir: &'a hir::File<'_>,
-        bound: &'a bind::Bound<'_>,
+        hir: &'a hir::FileIn<H>,
+        bound: &'a bind::BoundIn<B>,
         atoms: &'a dyn Intern,
         language: &'a LanguageOptions,
         types: Option<crate::types::Checker<'a>>,

@@ -37,6 +37,37 @@ export async function linesOf(cmd: string[], cwd: string, root: string) {
     .map(line => line.replace(prefix, ""));
 }
 
+/**
+ * Whichever file is checked first enters each cycle: the variances of type parameters, recursive aliases, and functions
+ * and constants without annotations, each through a ring of `n` modules. What tsc reports depends on `--checkers`.
+ */
+export function modulesInRings(n: number) {
+  const files: Record<string, string> = {};
+  for (let i = 0; i < n; i++) {
+    const [a, b, d] = [(i + 1) % n, (i + 7) % n, (i * 3 + 2) % n];
+    files[`m${i}.ts`] = [
+      ...[...new Set([a, b, d])]
+        .filter(j => j !== i)
+        .map(j => `import { f${j}, g${j}, C${j}, v${j}, type T${j}, type R${j} } from "./m${j}";`),
+      `export interface T${i}<A> { a: A; next: T${a}<A[]> | null; take(x: T${b}<A>): void; give(): T${d}<A> }`,
+      `export type R${i}<X, N extends unknown[] = []> = N["length"] extends 6 ? X : R${a}<{ m${i}: X }, [...N, 1]>;`,
+      `export function f${i}(x: number) { return x > 0 ? { k: "m${i}" as const, inner: f${a}(x - 1) } : null; }`,
+      `export function g${i}(x: number) { return ${i === 0 ? "x" : `{ k: ${i}, inner: g${Math.floor(i / 2)}(x) }`}; }`,
+      `export class C${i}<A> { constructor(public v: A) {} map<B>(h: (a: A) => B): C${b}<B> { return new C${b}(h(this.v)); } }`,
+      `export const v${i} = new C${a}(${i}).map(x => [x, v${d}] as const);`,
+      // `never` puts the types in the messages.
+      `const r${i}: never = f${d}(1);`,
+      `const s${i}: never = g${b}(1);`,
+      `const t${i}: T${a}<string> = null! as T${a}<unknown>;`,
+      `const u${i}: T${b}<unknown> = null! as T${b}<string>;`,
+      `const w${i}: never = null! as R${d}<${i}>;`,
+      `const y${i}: never = v${b};`,
+      `r${i}; s${i}; t${i}; u${i}; w${i}; y${i};\n`,
+    ].join("\n");
+  }
+  return files;
+}
+
 /** `run` for each of `items`, a few at a time. */
 export async function inTurns<T>(items: T[], run: (item: T) => Promise<void>) {
   for (let at = 0; at < items.length; at += 6) await Promise.all(items.slice(at, at + 6).map(run));
@@ -79,11 +110,13 @@ export function programsThatOnceDiffered(part: number, parts: number) {
             }
           });
         const different: Record<string, object> = {};
-        await inTurns(cases, async ([name, it]) => {
+        await inTurns([...cases.entries()], async ([index, [name, it]]) => {
           const cwd = join(root, name);
           // In this order: `tsc -b` writes files.
           const build = it.build ? ["-b"] : [];
-          const ours = await linesOf([bunExe(), "check", ...build], cwd, root);
+          // One thread checks all files in one task, several divide them. Every other program takes the first way.
+          const threads = index % 2 ? ["--threads=1"] : [];
+          const ours = await linesOf([bunExe(), "check", ...build, ...threads], cwd, root);
           const theirs = await linesOf([tsc!, ...build, "--pretty", "false", "--singleThreaded"], cwd, root);
           if (!Bun.deepEquals(theirs, ours)) different[name] = { theirs, ours };
         });

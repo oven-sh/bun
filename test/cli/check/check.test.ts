@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
+import { modulesInRings } from "./differential";
 
 // The directory of the `lib.*.d.ts` files of the `typescript7` package, which has them in a package for the platform.
 const typescript7 = (() => {
@@ -632,43 +633,19 @@ describe.concurrent("bun check", () => {
     `);
   });
 
-  test("modules that enter the same cycles produce the same output on any number of threads", async () => {
-    // Whichever file is checked first enters each cycle: the variances of type parameters, recursive aliases, and
-    // functions and constants without annotations, each through a ring of modules.
+  // One thread checks the files in program order, like `tsc --singleThreaded`: see differential.test.ts.
+  test("modules that enter the same cycles produce the same output on any number of threads above one", async () => {
     const n = isDebug || isASAN ? 24 : 60;
-    const files: Record<string, string> = {};
-    for (let i = 0; i < n; i++) {
-      const [a, b, d] = [(i + 1) % n, (i + 7) % n, (i * 3 + 2) % n];
-      files[`m${i}.ts`] = [
-        ...[...new Set([a, b, d])]
-          .filter(j => j !== i)
-          .map(j => `import { f${j}, g${j}, C${j}, v${j}, type T${j}, type R${j} } from "./m${j}";`),
-        `export interface T${i}<A> { a: A; next: T${a}<A[]> | null; take(x: T${b}<A>): void; give(): T${d}<A> }`,
-        `export type R${i}<X, N extends unknown[] = []> = N["length"] extends 6 ? X : R${a}<{ m${i}: X }, [...N, 1]>;`,
-        `export function f${i}(x: number) { return x > 0 ? { k: "m${i}" as const, inner: f${a}(x - 1) } : null; }`,
-        `export function g${i}(x: number) { return ${i === 0 ? "x" : `{ k: ${i}, inner: g${Math.floor(i / 2)}(x) }`}; }`,
-        `export class C${i}<A> { constructor(public v: A) {} map<B>(h: (a: A) => B): C${b}<B> { return new C${b}(h(this.v)); } }`,
-        `export const v${i} = new C${a}(${i}).map(x => [x, v${d}] as const);`,
-        // `never` puts the types in the messages.
-        `const r${i}: never = f${d}(1);`,
-        `const s${i}: never = g${b}(1);`,
-        `const t${i}: T${a}<string> = null! as T${a}<unknown>;`,
-        `const u${i}: T${b}<unknown> = null! as T${b}<string>;`,
-        `const w${i}: never = null! as R${d}<${i}>;`,
-        `const y${i}: never = v${b};`,
-        `r${i}; s${i}; t${i}; u${i}; w${i}; y${i};\n`,
-      ].join("\n");
-    }
-    using dir = project(files);
-    const [one, ...others] = await Promise.all(
-      [1, 2, 3, 8, 16].map(threads => check(dir, ["--threads", String(threads)])),
+    using dir = project(modulesInRings(n));
+    const [two, ...others] = await Promise.all(
+      [2, 3, 8, 16].map(threads => check(dir, ["--threads", String(threads)])),
     );
-    expect(one.stdout.split("\n").length).toBeGreaterThan(n * 6);
+    expect(two.stdout.split("\n").length).toBeGreaterThan(n * 6);
     for (const { stdout, exitCode } of others) {
-      expect(stdout).toBe(one.stdout);
+      expect(stdout).toBe(two.stdout);
       expect(exitCode).toBe(1);
     }
-    expect(one.exitCode).toBe(1);
+    expect(two.exitCode).toBe(1);
   });
 
   test("prints related information under an error", async () => {

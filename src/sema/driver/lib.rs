@@ -182,6 +182,8 @@ pub struct PlanOptions {
     pub split_tolerates: u8,
     /// Whether a range publishes the tables keyed by a type, a signature or a mapper too.
     pub split_publishes_everything: bool,
+    /// Whether one thread gets the plan of several. For measuring the tasks one at a time.
+    pub tasks_on_one_thread: bool,
     /// `--checkers`. Nonzero: `checkerPool` is used, and none of the above applies.
     pub checkers: usize,
     /// One checker (`checkers`) hands out symbol ids as `tsc --singleThreaded` does. Not for
@@ -205,6 +207,7 @@ impl Default for PlanOptions {
             split_files: 64,
             split_tolerates: 0,
             split_publishes_everything: false,
+            tasks_on_one_thread: false,
             checkers: 0,
             reproduces_symbol_ids: true,
             projects_at_once: 4,
@@ -213,7 +216,8 @@ impl Default for PlanOptions {
 }
 
 /// Which task is in which step, and in which order the tasks of a step are published. A function of
-/// the program alone: not of the thread count, not of time. During a step the published state is
+/// the program and of whether there is more than one thread (`Plan::of_one_thread`): not of how many
+/// there are, not of time. During a step the published state is
 /// read-only and a task writes to its own buffer, so the result of a task is a function of the
 /// program and of the published state at the start of its step. By induction over the steps, so is
 /// the output.
@@ -241,6 +245,19 @@ impl Plan {
         }
         Plan {
             steps: vec![tasks],
+            ahead: Vec::new(),
+        }
+    }
+
+    /// All `count` files in program order, like `tsc --singleThreaded`. Every task computes its own
+    /// copy of what it shares with the other tasks of its step. That occupies threads that have
+    /// nothing else to do, and one thread has: it is a fifth to a half of all the work.
+    fn of_one_thread(count: usize) -> Plan {
+        Plan {
+            steps: match count {
+                0 => Vec::new(),
+                _ => vec![vec![(0..count).collect()]],
+            },
             ahead: Vec::new(),
         }
     }
@@ -3067,6 +3084,9 @@ fn check_named_files(
         ranges
     };
     let plan = match request.plan_options.checkers {
+        0 if threads == 1 && !request.plan_options.tasks_on_one_thread => {
+            Plan::of_one_thread(to_check.len())
+        }
         0 => Plan::new(
             to_check.len(),
             &bytes_of,

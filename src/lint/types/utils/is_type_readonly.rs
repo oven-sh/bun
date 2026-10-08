@@ -71,8 +71,12 @@ impl<'a> Recurser<'_, 'a> {
     }
 
     fn check_type_arguments(&mut self, array_type: Type<'a>, depth: u32) -> Readonlyness {
-        let is_mutable =
-            |type_arg| self.is_type_readonly_recurser(type_arg, depth) == Readonlyness::Mutable;
+        // What has been looked into was not mutable, or this would not be asked. To look into it again for each path that leads
+        // to it takes two to the power of the depth for a `[T, T]` of a `[U, U]` of ..
+        let is_mutable = |type_arg: Type<'a>| {
+            !self.seen_types.contains(&type_arg)
+                && self.is_type_readonly_recurser(type_arg, depth) == Readonlyness::Mutable
+        };
         match array_type.get_type_arguments().iter().any(is_mutable) {
             true => Readonlyness::Mutable,
             false => Readonlyness::Readonly,

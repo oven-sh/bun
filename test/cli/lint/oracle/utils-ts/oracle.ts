@@ -6,7 +6,7 @@
 // Writes `cases.jsonl` (the input of `bun-lint utils-ts batch`) and `expected.jsonl`. A line of the latter is
 // `{ id, rows: [[function, start, end, result], ..] }`, where `start` and `end` are the range of the node. Only ASCII code,
 // so that offsets in UTF-16 code units are offsets in bytes. With rule names, only the cases of those rules. With `CORPUS`,
-// also the `.js`, `.jsx`, `.ts` and `.tsx` files in those directories.
+// also the `.js`, `.jsx`, `.ts` and `.tsx` files in those directories. The files in `cases/` are always included.
 
 import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
@@ -271,7 +271,7 @@ for (const plugin of ["eslint", "typescript-eslint"]) {
     }
   }
 }
-for (const directory of (process.env.CORPUS ?? "").split(":").filter(Boolean)) {
+for (const directory of [join(import.meta.dir, "cases"), ...(process.env.CORPUS ?? "").split(":").filter(Boolean)]) {
   for (const file of readdirSync(directory, { recursive: true }) as string[]) {
     if (!/\.(js|jsx|ts|tsx)$/.test(file) || file.includes("node_modules")) continue;
     const jsx = /x$/.test(file);

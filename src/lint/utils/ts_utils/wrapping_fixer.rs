@@ -19,28 +19,29 @@ pub struct WrappingFixerParams<'a, 'i, W> {
     pub wrap: W,
 }
 
-/// The code of the inner nodes of a wrapping fixer. With `is_chain_element`, a `node` that is all of
-/// an optional chain is the call or the member access, not the `ChainExpression`.
+/// The code of the inner nodes of a wrapping fixer. With `is_in_chain_expression`, `node` is the call
+/// or the member access in the `ChainExpression` that has the same range.
 fn inner_codes<'a>(
     node: Expr<'a>,
     inner_nodes: &[Expr<'a>],
-    is_chain_element: bool,
+    is_in_chain_expression: bool,
 ) -> SmallVec<[Cow<'a, [u8]>; 2]> {
     let itself = [node];
     let inner_nodes: &[Expr<'a>] = if inner_nodes.is_empty() { &itself } else { inner_nodes };
     inner_nodes
         .iter()
         .map(|&inner| {
-            let is_strong = is_strong_precedence_node(inner)
-                || (is_chain_element
-                    && inner == node
-                    && matches!(
-                        inner.kind(),
-                        ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::Call(_)
-                    ));
-            match is_strong && !is_object_expression_in_one_line_return(node, inner) {
-                true => Cow::Borrowed(inner.text()),
-                false => Cow::Owned(parenthesize(inner.text())),
+            let needs_parentheses = match is_in_chain_expression {
+                true if inner == node => matches!(inner.kind(), ExprKind::NonNull(_)),
+                true => !is_strong_precedence_node(inner),
+                false => {
+                    !is_strong_precedence_node(inner)
+                        || is_object_expression_in_one_line_return(node, inner)
+                }
+            };
+            match needs_parentheses {
+                true => Cow::Owned(parenthesize(inner.text())),
+                false => Cow::Borrowed(inner.text()),
             }
         })
         .collect()
@@ -60,11 +61,12 @@ where
         inner_nodes,
         wrap,
     } = params;
-    let codes = inner_codes(node, inner_nodes, is_chain_element);
+    // Its parent is the `ChainExpression`, which is neither an arrow function, nor a weak parent,
+    // nor an expression statement, nor has it a left.
+    let is_in_chain_expression = is_chain_element && node.is_chain_root();
+    let codes = inner_codes(node, inner_nodes, is_in_chain_expression);
     let codes: SmallVec<[&[u8]; 2]> = codes.iter().map(|code| &**code).collect();
     let mut code = wrap(&codes).into_text();
-    // A `ChainExpression` is neither a weak parent nor the left of anything.
-    let is_in_chain_expression = is_chain_element && node.is_chain_root();
     if !is_in_chain_expression && is_weak_precedence_parent(node) && !node.is_parenthesized() {
         code = Cow::Owned(parenthesize(&code));
     }

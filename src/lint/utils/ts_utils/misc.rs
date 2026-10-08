@@ -1,6 +1,8 @@
 //! `misc.ts`, and `requiresQuoting` of `@typescript-eslint/type-utils`.
 
-use crate::ast::{Expr, ExprKind, Func, KeyKind, Member, MemberKind, Node, Prop, TypeKind, TypeNode};
+use crate::ast::{
+    Expr, ExprKind, Func, KeyKind, Member, MemberKind, Node, Param, Prop, TypeKind, TypeNode,
+};
 use crate::semantic::Declaration;
 use crate::tokens::{skip_trivia, skip_trivia_back};
 use crate::utils::ast_utils::get_static_string_value;
@@ -68,9 +70,13 @@ pub fn find_last_index<T>(members: &[T], predicate: impl FnMut(&T) -> bool) -> O
 }
 
 /// typescript-eslint's `getNameFromIndexSignature`: the `key` of `[key: string]: T`.
-pub fn get_name_from_index_signature(member: Member<'_>) -> &[u8] {
-    let params = member.func().map(Func::params);
-    match params.and_then(|params| params.iter().find_map(|param| param.pat().as_ident())) {
+pub fn get_name_from_index_signature<'a>(member: Member<'a>) -> &'a [u8] {
+    // An `Identifier`, as opposed to a `RestElement` or an `AssignmentPattern`.
+    let name_of = |param: Param<'a>| match param.is_rest() || param.default().is_some() {
+        true => None,
+        false => param.pat().as_ident(),
+    };
+    match member.func().and_then(|func| func.params().iter().find_map(name_of)) {
         Some(name) => name.bytes(),
         None => b"(index signature)",
     }

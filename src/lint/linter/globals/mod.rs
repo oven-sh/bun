@@ -229,6 +229,15 @@ impl LanguageOptions {
     pub fn configured_global(&self, name: &[u8]) -> Option<Global> {
         self.config_globals().setting(name)
     }
+
+    /// What the libraries of TypeScript define, sorted by name: the name, whether it is a type, whether it is a value.
+    pub fn lib_variables(&self) -> impl Iterator<Item = (&'static [u8], bool, bool)> + '_ {
+        let libs = &self.config_globals().libs;
+        (0..tables::NAME_ENDS.len()).filter_map(move |id| {
+            let flags = (libs.get(id / 4)? >> (id % 4 * 2)) & 3;
+            (flags != 0).then(|| (name_at(id), flags & TYPE != 0, flags & VALUE != 0))
+        })
+    }
 }
 
 /// A variable that `/* global */` comments of the file define, or turn off.

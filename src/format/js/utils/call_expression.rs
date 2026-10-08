@@ -148,17 +148,17 @@ fn contains_a_test_pattern_of_oxfmt(e: Expr<'_>) -> bool {
     };
     let (first, second, third) = (names.next(), names.next(), names.next());
     third.is_none()
-        && match (first, second) {
+        && matches!(
+            (first, second),
             (Some(b"it"), Some(b"skipIf" | b"runIf" | b"concurrent" | b"sequential" | b"todo" | b"fails"))
-            | (Some(b"describe"), Some(b"skipIf" | b"runIf" | b"concurrent" | b"sequential" | b"shuffle" | b"todo"))
-            | (
-                Some(b"test"),
-                Some(b"skipIf" | b"runIf" | b"concurrent" | b"sequential" | b"todo" | b"fails" | b"extend"),
-            )
-            | (Some(b"bench"), None | Some(b"only" | b"skip" | b"todo"))
-            | (Some(b"Deno"), Some(b"test")) => true,
-            _ => false,
-        }
+                | (Some(b"describe"), Some(b"skipIf" | b"runIf" | b"concurrent" | b"sequential" | b"shuffle" | b"todo"))
+                | (
+                    Some(b"test"),
+                    Some(b"skipIf" | b"runIf" | b"concurrent" | b"sequential" | b"todo" | b"fails" | b"extend"),
+                )
+                | (Some(b"bench"), None | Some(b"only" | b"skip" | b"todo"))
+                | (Some(b"Deno"), Some(b"test"))
+        )
 }
 
 fn is_test_call(e: Expr<'_>, is_test_callee: fn(Expr<'_>) -> bool) -> bool {

@@ -11,6 +11,7 @@ pub(crate) fn write_binding_pattern<'a>(pat: Pat<'a>, f: &mut Formatter<'a>) {
     match pat.kind() {
         PatKind::Missing => {}
         PatKind::Ident(_) => write!(f, source_text(pat.span())),
+        PatKind::Object(_) | PatKind::Array(_) if !f.context_mut().has_stack_left() => {}
         PatKind::Object(props) => ObjectPatternLike::ObjectPattern(pat, props).fmt(f),
         PatKind::Array(elements) => write_array_pattern(pat, elements, f),
     }

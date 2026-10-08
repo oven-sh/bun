@@ -2602,8 +2602,8 @@ where
                 // (here, `blob`) may still be live across it. Nothing is written
                 // to the socket in between, so the wire output is unchanged.
                 let blob_size = if shim::blob_is_s3(blob) {
-                    // Not in memory: GET sends no bytes. `resolve_size()` would store the 0 in it.
-                    0
+                    // The bytes GET sends (`render_bytes`). `resolve_size()` would store a 0 in the blob.
+                    blob.shared_view().len() as BlobSizeType
                 } else {
                     blob.resolve_size();
                     blob.size.get()

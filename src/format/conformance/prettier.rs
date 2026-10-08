@@ -17,6 +17,7 @@ use std::collections::BTreeMap;
 
 const PROPOSAL: &str = "syntax of a proposal at stage 2 or below, which only Babel parses";
 const BABEL_TS: &str = "an input that Prettier's `typescript` parser rejects: the snapshot is made with `babel-ts`";
+const ONLY_BABEL_TS_REJECTS: &str = "an input that only `babel-ts` rejects: Prettier's `typescript` parser accepts it, and the output is the same";
 const FLOW: &str = "Flow's type syntax";
 const EMBEDDED: &str = "embedded HTML or Markdown, which needs a formatter for that language";
 const PLUGIN: &str = "formatted by a plugin of Prettier";
@@ -70,6 +71,10 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("markdown/code/lwc/lwc.md", EMBEDDED),
     ("markdown/cursor/17227.md", EMBEDDED),
     ("misc/front-matter/with-plugins", PLUGIN),
+    ("typescript/_errors_/babel-ts2/multiline-declaration-abstract-class.ts", ONLY_BABEL_TS_REJECTS),
+    ("typescript/_errors_/babel-ts2/multiline-declaration-interface.ts", ONLY_BABEL_TS_REJECTS),
+    ("typescript/_errors_/babel-ts2/multiline-declaration-module.ts", ONLY_BABEL_TS_REJECTS),
+    ("typescript/_errors_/babel-ts2/parenthesized-decorators-tagged-template.ts", ONLY_BABEL_TS_REJECTS),
 ];
 
 /// Formatting their output again changes it, in Prettier too: `unstableTests` of

@@ -116,7 +116,7 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
         }
     };
     fn format<'a>(file: &'a File<'a>, is_script: bool, options: &FormatOptions) -> Result<WithCursor, FormatError> {
-        if file.language().parser == Parser::TypeScript && bun_lint::linter::parse_error(file).is_some() {
+        if bun_lint::linter::refused_by_prettier(file) {
             return Err(FormatError::SyntaxError);
         }
         let (mut scratch, mut out) = (Scratch::default(), Vec::new());

@@ -131,6 +131,11 @@
   "a.tsx:6:5 react-hooks(exhaustive-deps)",
   "a.tsx:9:7 react-hooks(exhaustive-deps)"
  ],
+ "exhaustive-deps/order": [
+  "a.tsx:20:31 react-hooks(exhaustive-deps)",
+  "a.tsx:23:28 react-hooks(exhaustive-deps)",
+  "a.tsx:24:33 react-hooks(exhaustive-deps)"
+ ],
  "exhaustive-deps/comments": [
   "a.tsx:8:17 react-hooks(exhaustive-deps)"
  ],

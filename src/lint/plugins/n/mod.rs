@@ -202,10 +202,10 @@ impl Builtins {
             let tracker = ReferenceTracker::new(file).with_mode(Mode::Legacy);
             if !tables.modules.is_empty() {
                 let modules = TraceMap::new(&tables.modules);
-                if file.has_expr_named("require") {
+                if file.mentions("require") {
                     self.report(tables, &[], &tracker.iterate_cjs_references(&modules), cx);
                 }
-                let get_builtin_module = match file.has_expr_named("getBuiltinModule") {
+                let get_builtin_module = match file.mentions("getBuiltinModule") {
                     true => tracker.iterate_global_references(&GET_BUILTIN_MODULE),
                     false => Vec::new(),
                 };
@@ -233,7 +233,7 @@ impl Builtins {
                 }
                 self.report(tables, &[], &tracker.iterate_esm_references(&modules), cx);
             }
-            let globals: Vec<(&'static str, Map)> = tables.globals.iter().filter(|it| file.has_expr_named(it.0)).copied().collect();
+            let globals: Vec<(&'static str, Map)> = tables.globals.iter().filter(|it| file.mentions(it.0)).copied().collect();
             if !globals.is_empty() {
                 self.report(tables, &[], &tracker.iterate_global_references(&TraceMap::new(&globals)), cx);
             }

@@ -4,7 +4,9 @@
 //! oxlint walks the callback. Here the references in it are looked at, each with what is around it.
 
 use bun_lint::prelude::*;
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
+use std::hash::{Hash, Hasher};
 
 const MISSING_CALLBACK: Message = Message::new("", "React hook {{hook}} requires an effect callback.");
 const DEPENDENCY_ARRAY_REQUIRED: Message = Message::new("", "React Hook {{hook}} does nothing when called with only one argument.");
@@ -191,18 +193,111 @@ fn is_second_of_array_pattern<'a>(declarator: VarDecl<'a>, name: Name<'a>) -> bo
 /// What is read in a function.
 #[derive(Default)]
 struct Found<'a> {
-    /// In the order of the source. oxlint has them in the order of a hash table.
+    /// In the order of the source.
     dependencies: Vec<Dependency<'a>>,
+    /// Every time that one was found: its position in `dependencies`.
+    inserted: Vec<u32>,
     /// A function that `useState` or `useReducer` returns is named, outside the functions in the function.
     has_set_state_call: bool,
 }
 
 impl<'a> Found<'a> {
     fn insert(&mut self, dependency: Dependency<'a>) {
-        if !self.dependencies.contains(&dependency) {
+        let at = self.dependencies.iter().position(|it| *it == dependency).unwrap_or_else(|| {
             self.dependencies.push(dependency);
+            self.dependencies.len() - 1
+        });
+        self.inserted.push(at as u32);
+    }
+
+    /// The positions in `dependencies` in the order in which oxlint has them, which is that of its hash table. It names what is
+    /// missing in that order, and prints the report where the first is. The same hashes in the same table give the same order.
+    fn order_of_oxlint(&self, file: &'a File<'a>) -> Vec<u32> {
+        let symbols = places_of_symbols(file);
+        let mut table: FxHashSet<Hashed> = FxHashSet::default();
+        for &at in &self.inserted {
+            if let Some(dependency) = self.dependencies.get(at as usize) {
+                let place = dependency.symbol.and_then(place_of_symbol);
+                table.insert(Hashed {
+                    dependency,
+                    // oxc keeps the number so that `u32::MAX` is 0.
+                    symbol: place.and_then(|it| symbols.binary_search(&it).ok()).map(|it| it as u32 ^ u32::MAX),
+                    at,
+                });
+            }
+        }
+        table.iter().map(|it| it.at).collect()
+    }
+}
+
+/// A dependency that is hashed and compared as oxlint's `Dependency`.
+struct Hashed<'d, 'a> {
+    dependency: &'d Dependency<'a>,
+    /// oxc's `SymbolId`
+    symbol: Option<u32>,
+    at: u32,
+}
+
+/// As a `str` is hashed.
+fn write_str<H: Hasher>(state: &mut H, text: Name) {
+    state.write(text.bytes());
+    state.write_u8(0xFF);
+}
+
+impl Hash for Hashed<'_, '_> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        write_str(state, self.dependency.name);
+        self.symbol.hash(state);
+        state.write_usize(self.dependency.chain.len());
+        for part in &self.dependency.chain {
+            write_str(state, *part);
         }
     }
+}
+
+impl PartialEq for Hashed<'_, '_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.dependency == other.dependency
+    }
+}
+
+impl Eq for Hashed<'_, '_> {}
+
+/// Where oxc comes to the node that declares the symbol, and where the name is. It numbers the symbols in that order.
+fn place_of_symbol(symbol: Symbol) -> Option<(u32, u32)> {
+    let places = symbol.declarations().filter_map(|declaration| {
+        let name = declaration.name_span()?.start;
+        let node = match declaration {
+            Declaration::Var(_) => declaration.node()?.span().start,
+            // For oxc `this` is not a parameter.
+            Declaration::Param(_) if symbol.name().is("this") => return None,
+            Declaration::Param(pat) => Node::Pat(pat).ancestors().find(|it| matches!(it, Node::Param(_)))?.span().start,
+            Declaration::Class(class) => class.estree_span().start,
+            Declaration::Other => return None,
+            _ => name,
+        };
+        Some((node, name))
+    });
+    places.min()
+}
+
+/// The [`place_of_symbol`] of all symbols, sorted. ESLint has the name of a class and of an enum twice.
+fn places_of_symbols<'a>(file: &'a File<'a>) -> Vec<(u32, u32)> {
+    let mut places: Vec<(u32, u32)> = file.symbols().filter_map(place_of_symbol).collect();
+    // What ESLint has no variable for: a member of an enum with a computed name, and the names in `namespace A.B.C`.
+    for stmt in file.stmts_of_kind(StmtTag::Enum).chain(file.stmts_of_kind(StmtTag::Module)) {
+        match stmt.kind() {
+            StmtKind::Enum(it) => places.extend(it.members().iter().map(|it| (it.span().start, it.span().start))),
+            StmtKind::Module(it) if it.nested().is_some() => {
+                let names = std::iter::successors(Some(it), |it| it.nested()).map(|it| it.name_span().start);
+                places.extend(names.map(|it| (it, it)));
+            }
+            _ => {}
+        }
+    }
+    places.sort_unstable();
+    places.dedup();
+    places
 }
 
 /// Nothing in `e` makes oxlint forget that it is in what is called.
@@ -543,7 +638,7 @@ pub(crate) fn run<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, additional_hooks:
     });
 
     let found = find_dependencies(callback, true);
-    if is_effect && cx.file().has_expr_named("current") {
+    if is_effect && cx.file().mentions("current") {
         report_refs_in_cleanups(cx, callback, &component);
     }
     let Some(array) = array else {
@@ -596,13 +691,20 @@ pub(crate) fn run<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, additional_hooks:
             .fix(|fixer| fixer.replace(array, without_dependency(cx.file(), array, dependency.span)));
     }
 
-    let undeclared: Vec<&Dependency<'a>> = (found.dependencies.iter())
+    let mut undeclared: Vec<&Dependency<'a>> = (found.dependencies.iter())
         .filter(|it| !declared.contains(it))
         // What is read of `foo.current` counts for `foo`.
         .filter(|it| !(it.ends_in_current() && found.dependencies.contains(&it.base())))
         .filter(|it| !declared.iter().any(|declared| it.contains(declared)))
         .filter(|it| component.is_dependency(it))
         .collect();
+    if undeclared.len() > 1 {
+        let order = found.order_of_oxlint(cx.file());
+        undeclared.sort_by_cached_key(|wanted| {
+            let at = found.dependencies.iter().position(|it| it == *wanted);
+            order.iter().position(|it| Some(*it as usize) == at)
+        });
+    }
     if !undeclared.is_empty() {
         let mutable = declared.iter().find(|it| it.ends_in_current() && undeclared.iter().any(|missing| **missing == it.base()));
         let missing: Vec<(Span, Vec<u8>)> = undeclared.iter().map(|it| (it.span, it.text())).collect();

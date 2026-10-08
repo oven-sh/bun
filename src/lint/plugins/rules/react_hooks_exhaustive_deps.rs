@@ -368,7 +368,7 @@ impl Rule for ExhaustiveDeps {
         let additional_hooks = if self.additional_hooks.is_none() && !follows_oxlint { from_settings() } else { None };
         if self.additional_hooks.is_none()
             && additional_hooks.is_none()
-            && !file.has_expr_named_any(&["useEffect", "useLayoutEffect", "useCallback", "useMemo", "useImperativeHandle"])
+            && !file.mentions_any(&["useEffect", "useLayoutEffect", "useCallback", "useMemo", "useImperativeHandle"])
         {
             return State::default();
         }

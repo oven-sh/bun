@@ -238,7 +238,7 @@ impl Rule for EsSyntax {
         }
         let mut methods = smallvec::SmallVec::new();
         for (at, &(method, ..)) in active.methods.iter().enumerate() {
-            if active.methods.get(at.wrapping_sub(1)).is_none_or(|it| it.0 != method) && file.has_expr_named(method) {
+            if active.methods.get(at.wrapping_sub(1)).is_none_or(|it| it.0 != method) && file.mentions(method) {
                 methods.push(file.name_of(method));
             }
         }
@@ -766,7 +766,7 @@ impl EsSyntax {
         for feature in active.iter() {
             let map = &FEATURES[feature].globals;
             let is_named = |(name, properties): &(&str, TraceMap<'static, ()>)| {
-                file.has_expr_named(name) && (properties.members.is_empty() || properties.members.iter().any(|it| file.mentions(it.0)))
+                file.mentions(name) && (properties.members.is_empty() || properties.members.iter().any(|it| file.mentions(it.0)))
             };
             if map.members.iter().any(is_named) {
                 for reference in tracker.iterate_global_references(map) {
@@ -774,7 +774,7 @@ impl EsSyntax {
                 }
             }
         }
-        if active.has_regexp() && file.has_expr_named("RegExp") {
+        if active.has_regexp() && file.mentions("RegExp") {
             for reference in tracker.iterate_global_references(&REGEXP) {
                 let Some(call) = reference.call() else {
                     continue;
@@ -807,7 +807,7 @@ impl EsSyntax {
         if active.has(ERROR_CAUSE) && file.mentions("cause") {
             self.error_cause(cx, &tracker);
         }
-        if active.has(RESIZABLE_AND_GROWABLE_ARRAYBUFFERS) && file.has_expr_named_any(&["ArrayBuffer", "SharedArrayBuffer"]) {
+        if active.has(RESIZABLE_AND_GROWABLE_ARRAYBUFFERS) && file.mentions_any(&["ArrayBuffer", "SharedArrayBuffer"]) {
             const BUFFERS: TraceMap<'static, ()> = TraceMap::new(&[
                 ("ArrayBuffer", TraceMap::EMPTY.construct(())),
                 ("SharedArrayBuffer", TraceMap::EMPTY.construct(())),

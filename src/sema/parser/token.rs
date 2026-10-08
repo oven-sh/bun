@@ -185,6 +185,38 @@ impl T {
         self >= T::Identifier
     }
 
+    /// Whether no expression goes on with it.
+    #[inline(always)]
+    pub(crate) fn ends_expression(self) -> bool {
+        matches!(
+            self,
+            T::Comma
+                | T::CloseParen
+                | T::CloseBracket
+                | T::CloseBrace
+                | T::Semicolon
+                | T::Colon
+                | T::Eof
+        )
+    }
+
+    /// Whether a member access, a call, a `!`, type arguments or a template can start with it.
+    #[inline(always)]
+    pub(crate) fn can_follow_member_expression(self) -> bool {
+        matches!(
+            self,
+            T::Dot
+                | T::OpenParen
+                | T::OpenBracket
+                | T::Exclamation
+                | T::QuestionDot
+                | T::NoSubstitutionTemplate
+                | T::TemplateHead
+                | T::LessThan
+                | T::LessThanLessThan
+        )
+    }
+
     /// `IsAssignmentOperator`
     #[inline(always)]
     pub(crate) fn is_assignment_operator(self) -> bool {

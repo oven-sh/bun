@@ -497,6 +497,13 @@ impl<'a> Lexer<'a> {
     fn name_of_any_length(&mut self, start: usize) {
         let src = self.src;
         let mut end = start;
+        while let Some(chunk) = src.get(end..).and_then(|rest| rest.first_chunk::<16>()) {
+            let len = name_run(u8x16::from_array(*chunk)) as usize;
+            end += len;
+            if len < 16 {
+                break;
+            }
+        }
         while src.get(end).is_some_and(|&byte| is_name_byte(byte)) {
             end += 1;
         }

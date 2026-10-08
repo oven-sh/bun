@@ -292,13 +292,24 @@ impl Names {
         }
     }
 
-    /// The atom of a text that is in no table yet. `bit`: its `hir::mention_bit`.
-    fn new_atom(&mut self, text: Text<'_>, bit: usize, atoms: &dyn Intern) -> Atom {
+    /// The atom of a text that is in no table yet. `bit`: its `hir::mention_bit`. `words`: its
+    /// padded bytes if it is short.
+    fn new_atom(
+        &mut self,
+        text: Text<'_>,
+        bit: usize,
+        words: Option<[u64; 2]>,
+        atoms: &dyn Intern,
+    ) -> Atom {
         if !self.is_own {
             return atoms.intern(text.text);
         }
         self.mentioned[bit / 64 % MENTIONED_WORDS] |= 1 << (bit % 64);
-        let atom = match self.known(text.text) {
+        let known = match words {
+            Some(words) => self.known_short(words),
+            None => self.known_other(text.text),
+        };
+        let atom = match known {
             Some(known) => {
                 self.known_in_file[known as usize / 64] |= 1 << (known % 64);
                 known
@@ -317,13 +328,20 @@ impl Names {
     }
 
     /// The number of `text` if it is fixed.
-    #[inline]
     fn known(&self, text: &[u8]) -> Option<u32> {
-        if !is_short(text) {
-            let found = self.known_others.iter().find(|it| it.0 == text);
-            return found.map(|it| it.1);
+        match is_short(text) {
+            true => self.known_short(padded(text)),
+            false => self.known_other(text),
         }
-        let words = padded(text);
+    }
+
+    fn known_other(&self, text: &[u8]) -> Option<u32> {
+        let found = self.known_others.iter().find(|it| it.0 == text);
+        found.map(|it| it.1)
+    }
+
+    #[inline]
+    fn known_short(&self, words: [u64; 2]) -> Option<u32> {
         let mut at = known_place(words);
         loop {
             match self.known[at] {
@@ -365,9 +383,9 @@ impl Names {
         let kind = keyword(text.text);
         // `short_place` is `hir::mention_bit_of`.
         let (atom, at) = match free {
-            Some(at) => (self.new_atom(text, first, atoms), at),
+            Some(at) => (self.new_atom(text, first, Some(words), atoms), at),
             None if self.is_own => return (self.other(text, atoms), kind),
-            None => (self.new_atom(text, first, atoms), first),
+            None => (self.new_atom(text, first, Some(words), atoms), first),
         };
         self.short[at] = Short {
             words,
@@ -413,9 +431,9 @@ impl Names {
         }
         let bit = mention_bit_of([words[0], words[1]], text.text.len()) as usize;
         let (atom, at) = match free {
-            Some(at) => (self.new_atom(text, bit, atoms), at),
+            Some(at) => (self.new_atom(text, bit, None, atoms), at),
             None if self.is_own => return self.other(text, atoms),
-            None => (self.new_atom(text, bit, atoms), first),
+            None => (self.new_atom(text, bit, None, atoms), first),
         };
         self.long[at] = Long {
             words,
@@ -440,7 +458,8 @@ impl Names {
             Some(words) => mention_bit_of([words[0], words[1]], text.text.len()),
             None => bun_sema::hir::mention_bit(text.text),
         };
-        let atom = self.new_atom(text, bit as usize, atoms);
+        let words = is_short(text.text).then(|| padded(text.text));
+        let atom = self.new_atom(text, bit as usize, words, atoms);
         self.other.insert(hash, atom.0);
         atom
     }

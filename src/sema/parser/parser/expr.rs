@@ -161,6 +161,39 @@ impl Parser<'_> {
 
     /// `parseAssignmentExpressionOrHigher`
     pub(crate) fn assignment_expression_or_higher(&mut self, allow_return_type: bool) -> ExprId {
+        let (start, full) = (self.pos(), self.full_start());
+        // Most arguments, elements and initializers are a name or a literal and nothing more.
+        let Some(primary) = self.name_or_literal() else {
+            return self.assignment_expression_in_general(allow_return_type);
+        };
+        if self.token().ends_expression() {
+            return primary;
+        }
+        if self.is_too_deep() {
+            return ExprId::NONE;
+        }
+        let operand = self.rest_of_operand(start, primary);
+        let expression = self.binary_expression_rest(0, operand, start);
+        self.assignment_expression_rest(expression, (start, full), allow_return_type)
+    }
+
+    /// `parsePrimaryExpression` if the token is all of it.
+    #[inline(always)]
+    fn name_or_literal(&mut self) -> Option<ExprId> {
+        let kind = match self.token() {
+            T::Identifier => ExprKind::Ident(self.note_identifier(self.lx.atom, self.lx.start)),
+            T::String => ExprKind::String(self.lx.atom),
+            T::Number => ExprKind::Number(self.f.number(self.lx.number)),
+            T::This => ExprKind::This,
+            T::True => ExprKind::True,
+            T::False => ExprKind::False,
+            T::Null => ExprKind::Null,
+            _ => return None,
+        };
+        Some(self.token_expr(kind))
+    }
+
+    fn assignment_expression_in_general(&mut self, allow_return_type: bool) -> ExprId {
         if self.is_too_deep() {
             return ExprId::NONE;
         }
@@ -184,7 +217,21 @@ impl Parser<'_> {
             _ => {}
         }
         let expression = self.binary_expression(0);
+        self.assignment_expression_rest(expression, (start, full), allow_return_type)
+    }
+
+    /// What `parseAssignmentExpressionOrHigher` does after `parseBinaryExpressionOrHigher`.
+    #[inline]
+    fn assignment_expression_rest(
+        &mut self,
+        expression: ExprId,
+        (start, full): (u32, u32),
+        allow_return_type: bool,
+    ) -> ExprId {
         let token = self.token();
+        if token.ends_expression() {
+            return expression;
+        }
         if token == T::EqualsGreaterThan {
             // `parseSimpleArrowFunctionExpression`
             if expression.idx() + 1 == self.f.exprs.len()
@@ -334,7 +381,21 @@ impl Parser<'_> {
     }
 
     /// `parseBinaryExpressionRest`
-    fn binary_expression_rest(&mut self, precedence: u8, mut left: ExprId, start: u32) -> ExprId {
+    #[inline(always)]
+    fn binary_expression_rest(&mut self, precedence: u8, left: ExprId, start: u32) -> ExprId {
+        // No operator is here, nor a `>` that one may start with.
+        if self.token().binary_precedence() == 0 {
+            return left;
+        }
+        self.binary_expression_rest_at_operator(precedence, left, start)
+    }
+
+    fn binary_expression_rest_at_operator(
+        &mut self,
+        precedence: u8,
+        mut left: ExprId,
+        start: u32,
+    ) -> ExprId {
         loop {
             // "We either have a binary operator here, or we're finished."
             if self.token() == T::GreaterThan {
@@ -417,7 +478,16 @@ impl Parser<'_> {
     }
 
     /// `parseUnaryExpressionOrHigher`
+    #[inline]
     fn unary_expression(&mut self) -> ExprId {
+        let start = self.pos();
+        match self.name_or_literal() {
+            Some(primary) => self.rest_of_operand(start, primary),
+            None => self.unary_expression_in_general(),
+        }
+    }
+
+    fn unary_expression_in_general(&mut self) -> ExprId {
         let start = self.pos();
         match self.token() {
             T::Plus
@@ -431,11 +501,7 @@ impl Parser<'_> {
             T::LessThan if !self.options.is_jsx => {}
             _ => {
                 let expression = self.update_expression();
-                if self.token() == T::AsteriskAsterisk {
-                    let precedence = T::AsteriskAsterisk.binary_precedence();
-                    return self.binary_expression_rest(precedence, expression, start);
-                }
-                return expression;
+                return self.rest_of_power(start, expression);
             }
         }
         let is_await_name = self.token() == T::Await && !self.is_await_expression();
@@ -449,6 +515,24 @@ impl Parser<'_> {
             self.refuse(Refusal::Reported);
         }
         expression
+    }
+
+    /// What `parseUnaryExpressionOrHigher` does after `parseUpdateExpression`.
+    #[inline(always)]
+    fn rest_of_power(&mut self, start: u32, base: ExprId) -> ExprId {
+        if self.token() == T::AsteriskAsterisk {
+            let precedence = T::AsteriskAsterisk.binary_precedence();
+            return self.binary_expression_rest(precedence, base, start);
+        }
+        base
+    }
+
+    /// What `parseUnaryExpressionOrHigher` does after `parsePrimaryExpression`.
+    #[inline]
+    fn rest_of_operand(&mut self, start: u32, primary: ExprId) -> ExprId {
+        let operand = self.expression_rest(start, primary, true);
+        let operand = self.rest_of_update(start, operand);
+        self.rest_of_power(start, operand)
     }
 
     /// `isAwaitExpression`
@@ -529,6 +613,12 @@ impl Parser<'_> {
             _ => {}
         }
         let operand = self.left_hand_side_expression();
+        self.rest_of_update(start, operand)
+    }
+
+    /// What `parseUpdateExpression` does after `parseLeftHandSideExpressionOrHigher`.
+    #[inline(always)]
+    fn rest_of_update(&mut self, start: u32, operand: ExprId) -> ExprId {
         let token = self.token();
         if matches!(token, T::PlusPlus | T::MinusMinus) && !self.newline_before() {
             self.next();
@@ -683,7 +773,20 @@ impl Parser<'_> {
     }
 
     /// `parseMemberExpressionRest` and, with `allows_calls`, `parseCallExpressionRest`.
-    fn expression_rest(&mut self, start: u32, mut expression: ExprId, allows_calls: bool) -> ExprId {
+    #[inline(always)]
+    fn expression_rest(&mut self, start: u32, expression: ExprId, allows_calls: bool) -> ExprId {
+        if !self.token().can_follow_member_expression() {
+            return expression;
+        }
+        self.expression_rest_in_general(start, expression, allows_calls)
+    }
+
+    fn expression_rest_in_general(
+        &mut self,
+        start: u32,
+        mut expression: ExprId,
+        allows_calls: bool,
+    ) -> ExprId {
         let mut chain = Chain::No;
         // `expression`, if it is a `NonNull` with nothing after it yet.
         let mut non_null = ExprId::NONE;
@@ -692,7 +795,7 @@ impl Parser<'_> {
                 T::Dot => {
                     self.next();
                     if chain != Chain::No && self.token() == T::PrivateIdentifier {
-                        self.report();
+                        self.private_name_in_optional_chain();
                     }
                     let (name, name_pos) = self.right_side_of_dot();
                     let kind = ExprKind::Dot {
@@ -755,7 +858,7 @@ impl Parser<'_> {
                         }
                         _ => {
                             if self.token() == T::PrivateIdentifier {
-                                self.report();
+                                self.private_name_in_optional_chain();
                             }
                             let (name, name_pos) = self.right_side_of_dot();
                             let kind = ExprKind::Dot {
@@ -803,6 +906,15 @@ impl Parser<'_> {
                 _ => return expression,
             }
             non_null = ExprId::NONE;
+        }
+    }
+
+    /// At the `#b` of `a?.#b` or `a?.b.#c`, which is an error of TypeScript's parser.
+    #[cold]
+    fn private_name_in_optional_chain(&mut self) {
+        match self.is_ecmascript {
+            true => self.flag(DiagnosticKind::Grammar, 18030, (self.lx.start, self.lx.end), &[]),
+            false => self.report(),
         }
     }
 

@@ -221,15 +221,13 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, atoms: &dyn Intern, scr
 
 fn print<'a>(file: &'a File<'a>, first_error: Option<&Diagnostic>, how: &How, scratch: &mut Scratch) -> Result<Formatted, Failure> {
     let options = &how.resolved.options;
-    // What typescript-estree refuses while it converts the tree, Prettier refuses too.
-    if file.language().parser == Parser::TypeScript
-        && let Some(error) = bun_lint::linter::parse_error(file)
-    {
+    if bun_lint::linter::refused_by_prettier(file) {
+        // What typescript-estree refuses while it converts the tree has words of its own.
+        let Some(error) = bun_lint::linter::parse_error(file).filter(|_| file.language().parser == Parser::TypeScript) else {
+            return Err(Failure::Syntax(syntax_error(file, first_error)));
+        };
         let message = error.message.strip_prefix(b"Parsing error: ").unwrap_or(&error.message);
         return Err(Failure::Syntax(format!("SyntaxError: {} ({}:{})", BStr::new(message), error.line, error.column).into_bytes()));
-    }
-    if bun_lint::linter::refused_by_prettier(file) {
-        return Err(Failure::Syntax(syntax_error(file, first_error)));
     }
     let mut out = Vec::new();
     let parse = |part: &[u8], then: &mut dyn for<'b> FnMut(&'b File<'b>)| with_file(how, part, |file, _| then(file));

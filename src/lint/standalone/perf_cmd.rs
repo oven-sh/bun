@@ -13,7 +13,7 @@ use bun_lint::options::{Json, Options};
 use bun_lint::rule::Plugin;
 use bun_lint::runner::{Enabled, run};
 use bun_sema::atom::Interner;
-use bun_sema::bind::{BindOptions, bind_for_lint};
+use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
 use bun_sema::session::Session;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::time::Instant;
@@ -88,14 +88,15 @@ fn rules(args: &[String]) {
             before_es2020: false,
             before_es2017: false,
         };
-        let bound = bind_for_lint(&hir, bind_options, &atoms, arena);
+        let mut recycled = Recycled::of_this_thread();
+        let bound = bind_for_lint_in(&hir, bind_options, &atoms, &mut recycled);
         front_end.fetch_add(started.elapsed().as_nanos() as u64, Relaxed);
         for (count, len) in nodes.iter().zip([hir.exprs.len(), hir.stmts.len(), hir.types.len(), hir.pats.len()]) {
             count.fetch_add(len as u64, Relaxed);
         }
         // On a file of which nothing is computed yet, then once more: how long each takes, and how much is reported.
         let measure = |rules: &[Enabled]| {
-            let file = File::new(path.as_bytes(), &hir, &bound, &atoms, &language, None);
+            let file = File::new(path.as_bytes(), &hir, bound, &atoms, &language, None);
             let (cold, found) = nanos_of(&file, rules);
             (cold, nanos_of(&file, rules).0, found)
         };

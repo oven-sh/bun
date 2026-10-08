@@ -23,7 +23,8 @@ use crate::prelude::*;
 /// `connect(a, b, c)(d)`: `call` is the callee of a call that has fewer arguments, but some.
 #[inline]
 pub(crate) fn is_long_curried_call(call: Expr<'_>) -> bool {
-    matches!(call.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call && is_long_curried_callee(call, parent))
+    call.call().is_some_and(|call| call.args().len() > 1)
+        && matches!(call.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call && is_long_curried_callee(call, parent))
 }
 
 /// `parent`: the call that `call` is in. The whole of an optional chain is in a `ChainExpression`.

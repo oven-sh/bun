@@ -359,7 +359,7 @@ impl<'a> Format<'a> for FormatCommentsBeforeArrow<'a> {
             return;
         }
         let span = self.0.as_ast_nodes().span();
-        FormatContentWithCacheMode::new(Span::empty(span.start), format_leading_comments(span), self.1).fmt(f);
+        FormatContentWithCacheMode::new(|| Span::empty(span.start), format_leading_comments(span), self.1).fmt(f);
     }
 }
 
@@ -400,7 +400,7 @@ impl<'a> Format<'a> for FormatSignature<'a> {
         // parameters. Without parameters, that is only the return type.
         let fixed = format_with(|f| {
             if !has_parameters {
-                let key = Span::new(params.span().start, params.span().start + 1);
+                let key = || Span::new(params.span().start, params.span().start + 1);
                 let content = format_with(|f| write!(f, [type_params, params]));
                 FormatContentWithCacheMode::new(key, content, cache_mode).fmt(f);
             }
@@ -412,7 +412,7 @@ impl<'a> Format<'a> for FormatSignature<'a> {
             (false, None) if matches!(cache_mode, FunctionCacheMode::Cache) => f.write_element(FormatElement::Nop),
             (false, None) => {}
         });
-        let flattened = FormatContentWithCacheMode::new(params.span(), flattened, cache_mode);
+        let flattened = FormatContentWithCacheMode::new(|| params.span(), flattened, cache_mode);
         let flattened = format_with(|f| match should_remove_soft_lines {
             true => f.write_without_soft_lines(&flattened),
             false => flattened.fmt(f),
@@ -432,7 +432,7 @@ impl<'a> Format<'a> for FormatSignature<'a> {
             _ => comments,
         };
         let content = FormatTrailingComments::Comments(comments);
-        write!(f, FormatContentWithCacheMode::new(arrow.as_ast_nodes().span(), content, cache_mode));
+        write!(f, FormatContentWithCacheMode::new(|| arrow.as_ast_nodes().span(), content, cache_mode));
     }
 }
 
@@ -445,7 +445,7 @@ pub(crate) struct FormatMaybeCachedFunctionBody<'a> {
 impl<'a> Format<'a> for FormatMaybeCachedFunctionBody<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let body = FormatFunctionBody(self.func);
-        FormatContentWithCacheMode::new(body.span(), body, self.mode).fmt(f);
+        FormatContentWithCacheMode::new(|| body.span(), body, self.mode).fmt(f);
     }
 }
 
@@ -470,13 +470,13 @@ impl<'a> Format<'a> for FormatArrowBody<'a> {
             return write_arrow(body, next, self.options, true, f);
         }
 
-        let span = AstNodes::FunctionBody(arrow).span();
+        let span = || AstNodes::FunctionBody(arrow).span();
         let content = format_with(|f| match arrow.body() {
             FnBody::Expr(body) => write_expression_body(body, f),
             _ => {
                 // Otherwise the block takes the block comments, and the others are moved into it.
                 if self.has_own_line_comment {
-                    write!(f, format_leading_comments(span));
+                    write!(f, format_leading_comments(span()));
                 }
                 write!(f, FormatFunctionBody(arrow));
             }

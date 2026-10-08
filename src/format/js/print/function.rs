@@ -37,11 +37,10 @@ pub(crate) fn write_function<'a>(func: Func<'a>, options: FormatFunctionOptions,
             ]
         );
     });
-    FormatContentWithCacheMode::new(node.span(), head, options.cache_mode).fmt(f);
+    FormatContentWithCacheMode::new(|| node.span(), head, options.cache_mode).fmt(f);
 
     let format_parameters =
-        FormatContentWithCacheMode::new(FormatFormalParameters(func).span(), FormatFormalParameters(func), options.cache_mode)
-            .memoized();
+        FormatContentWithCacheMode::new(|| FormatFormalParameters(func).span(), FormatFormalParameters(func), options.cache_mode);
 
     let format_return_type = func
         .return_type()
@@ -55,13 +54,16 @@ pub(crate) fn write_function<'a>(func: Func<'a>, options: FormatFunctionOptions,
                     false => write!(f, [maybe_space(needs_space), return_type]),
                 }
             });
-            FormatContentWithCacheMode::new(return_type.span(), content, options.cache_mode)
-        })
-        .memoized();
+            FormatContentWithCacheMode::new(|| return_type.span(), content, options.cache_mode)
+        });
 
     write!(
         f,
         group(&format_with(|f| {
+            if !can_group_function_parameters(func) {
+                return write!(f, [format_parameters, format_return_type]);
+            }
+            let (format_parameters, format_return_type) = ((&format_parameters).memoized(), (&format_return_type).memoized());
             // The parameters have to be formatted before the return type, which
             // `should_group_function_parameters` may do.
             format_parameters.inspect(f);
@@ -239,6 +241,15 @@ pub(crate) fn should_group_function_parameters<'a>(
     formatted_return_type: &Memoized<impl Format<'a>>,
     f: &mut Formatter<'a>,
 ) -> bool {
+    can_group_function_parameters(func)
+        && func.return_type().is_some_and(|return_type| {
+            matches!(return_type.kind(), TypeKind::Object(_) | TypeKind::Mapped(_))
+                || formatted_return_type.inspect(f).will_break()
+        })
+}
+
+/// What it takes, whatever the return type is written as.
+fn can_group_function_parameters(func: Func<'_>) -> bool {
     let type_parameters = func.type_params();
     match type_parameters.len() {
         0 => {}
@@ -249,12 +260,7 @@ pub(crate) fn should_group_function_parameters<'a>(
         }
         _ => return false,
     }
-    let Some(return_type) = func.return_type() else {
-        return false;
-    };
-    func.params().len() + usize::from(func.this_param().is_some()) == 1
-        && (matches!(return_type.kind(), TypeKind::Object(_) | TypeKind::Mapped(_))
-            || formatted_return_type.inspect(f).will_break())
+    func.return_type().is_some() && func.params().len() + usize::from(func.this_param().is_some()) == 1
 }
 
 /// Content that is formatted once and written as often as it takes to find the layout of a call
@@ -267,9 +273,13 @@ pub(crate) struct FormatContentWithCacheMode<T> {
 
 impl<T> FormatContentWithCacheMode<T> {
     /// `key`: a span that nothing else is cached under.
-    pub(crate) fn new(key: Span, content: T, cache_mode: FunctionCacheMode) -> Self {
+    #[inline]
+    pub(crate) fn new(key: impl FnOnce() -> Span, content: T, cache_mode: FunctionCacheMode) -> Self {
         Self {
-            key,
+            key: match cache_mode {
+                FunctionCacheMode::NoCache => Span::default(),
+                FunctionCacheMode::Cache => key(),
+            },
             content,
             cache_mode,
         }

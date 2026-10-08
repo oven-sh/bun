@@ -17,6 +17,9 @@ impl Spanned for FormatFormalParameters<'_> {
 impl<'a> Format<'a> for FormatFormalParameters<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let func = self.0;
+        if f.is_quiet() {
+            return write_formal_parameters(func, f);
+        }
         format_node_without_comments(self.span(), || func.as_ast_nodes(), f, |f| write_formal_parameters(func, f));
     }
 }
@@ -26,8 +29,14 @@ fn has_modifier(param: Param<'_>) -> bool {
 }
 
 fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
-    let span = FormatFormalParameters(func).span();
     let has_parameters = func.params_with_this().next().is_some();
+    if f.is_quiet() {
+        return match has_parameters {
+            true => write_parameters_in_parentheses(func, Span::default(), f),
+            false => write!(f, "()"),
+        };
+    }
+    let span = FormatFormalParameters(func).span();
     let comments = f.comments().comments_before(span.start);
     if !comments.is_empty() {
         let count = comments_trailing_the_name(func, has_parameters, comments);
@@ -35,7 +44,11 @@ fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
             write!(f, [space(), FormatTrailingComments::Comments(comments.get(..count).unwrap_or_default())]);
         }
     }
+    write_parameters_in_parentheses(func, span, f);
+}
 
+/// `span`: of the parentheses. It is only looked at if there are no parameters.
+fn write_parameters_in_parentheses<'a>(func: Func<'a>, span: Span, f: &mut Formatter<'a>) {
     let parentheses_not_needed = func.is_arrow() && can_avoid_parentheses(func, f);
     let has_any_decorated_parameter = func.params().iter().any(|param| param.decorators().next().is_some());
     let can_hug = should_hug_function_parameters(func, parentheses_not_needed, f) && !has_any_decorated_parameter;
@@ -46,8 +59,13 @@ fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
         // The callback of a test. Not that of `inject`, `async`, `fakeAsync` and `waitForAsync`,
         // whose parameters can break.
         || matches!(
-            func.as_ast_nodes().parent(),
-            AstNodes::CallExpression(call) if is_test_call_expression_in_flavor(call, f) && !is_angular_test_wrapper(call)
+            func.owner(),
+            Node::Expr(function) if matches!(
+                function.parent(),
+                Node::Expr(call) if call.tag() == ExprTag::Call
+                    && is_test_call_expression_in_flavor(call, f)
+                    && !is_angular_test_wrapper(call)
+            )
         )
     {
         ParameterLayout::Hug
@@ -136,6 +154,16 @@ pub(crate) fn comments_between<'a>(
     printed.chain(f.comments().comments_before_iter(end)).filter(move |c| c.start() >= start && c.end() <= end)
 }
 
+/// The modifiers of a parameter, in the order that they are written in.
+const MODIFIERS: [(Flags, &str); 6] = [
+    (Flags::PUBLIC, "public"),
+    (Flags::PROTECTED, "protected"),
+    (Flags::PRIVATE, "private"),
+    (Flags::STATIC, "static"),
+    (Flags::OVERRIDE, "override"),
+    (Flags::READONLY, "readonly"),
+];
+
 /// `private a?: T = 1`, `...a: T`, `this: T`
 pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>) {
     if matches!(param.as_ast_nodes(), AstNodes::TSThisParameter(_)) {
@@ -153,29 +181,26 @@ pub(crate) fn write_formal_parameter<'a>(param: Param<'a>, f: &mut Formatter<'a>
     let content = format_with(|f| {
         let left = format_with(|f| {
             let modifiers = param.modifiers();
-            for (flag, keyword) in [
-                (Flags::PUBLIC, "public"),
-                (Flags::PROTECTED, "protected"),
-                (Flags::PRIVATE, "private"),
-                (Flags::STATIC, "static"),
-                (Flags::OVERRIDE, "override"),
-                (Flags::READONLY, "readonly"),
-            ] {
+            let keywords: &[_] = match modifiers.is_empty() {
+                true => &[],
+                false => &MODIFIERS,
+            };
+            for &(flag, keyword) in keywords {
                 if modifiers.iter().any(|it| it.flag() == flag) {
                     write!(f, [keyword, space()]);
                 }
             }
             write!(f, [param.pat(), param.is_optional().then_some("?")]);
             if let Some(type_annotation) = param.ty().map(FormatTypeAnnotation) {
-                if f.comments().has_comment_before(type_annotation.span().start) {
+                if !f.is_quiet() && f.comments().has_comment_before(type_annotation.span().start) {
                     write!(f, space());
                 }
                 write!(f, type_annotation);
             }
-        })
-        .memoized();
+        });
 
         if let Some(initializer) = param.default() {
+            let left = (&left).memoized();
             // So that the comments in it are not taken for comments before the `=`.
             left.inspect(f);
             let leading_comments = f.comments().own_line_comments_before(initializer.span().start);
@@ -308,25 +333,22 @@ pub(crate) fn should_hug_function_parameters<'a>(func: Func<'a>, parentheses_not
     };
 
     if let Some(this_param) = func.this_param() {
-        return !has_comments_around(this_param)
-            && list.is_empty()
-            && this_param.ty().is_some_and(|ty| matches!(ty.kind(), TypeKind::Object(_) | TypeKind::Mapped(_)));
+        return list.is_empty()
+            && this_param.ty().is_some_and(|ty| matches!(ty.kind(), TypeKind::Object(_) | TypeKind::Mapped(_)))
+            && !has_comments_around(this_param);
     }
     let Some(only_parameter) = list.first() else {
         return false;
     };
-    if has_modifier(only_parameter) || has_comments_around(only_parameter) {
-        return false;
-    }
-
-    match only_parameter.pat().kind() {
+    let is_huggable = match only_parameter.pat().kind() {
         PatKind::Array(_) | PatKind::Object(_) => only_parameter.default().is_none_or(is_huggable_expression),
         PatKind::Ident(_) | PatKind::Missing => {
             only_parameter.default().is_none()
                 && (parentheses_not_needed
                     || only_parameter.ty().is_some_and(|ty| matches!(ty.kind(), TypeKind::Object(_) | TypeKind::Mapped(_))))
         }
-    }
+    };
+    is_huggable && !has_modifier(only_parameter) && !has_comments_around(only_parameter)
 }
 
 /// Whether all parameters are plain names, without default values. A rest parameter is not.

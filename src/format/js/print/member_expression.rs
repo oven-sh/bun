@@ -19,9 +19,17 @@ fn write_static_member_expression<'a>(e: Expr<'a>, object: Expr<'a>, property: I
     let start = f.elements().len();
     write!(f, [object, line_suffix_boundary()]);
 
+    if f.is_quiet() {
+        let lookup = format_with(|f| write_lookup_without_comments(e, property, f));
+        return match should_inline(e, object, start, f) {
+            true => write!(f, lookup),
+            false => write!(f, group(&indent(&format_args!(soft_line_break(), lookup)))),
+        };
+    }
+
     let operator = if e.is_optional() { "?." } else { "." };
     let property_start = property.start();
-    let has_own_line_comment = !f.is_quiet() && f.comments().has_leading_own_line_comment(property_start);
+    let has_own_line_comment = f.comments().has_leading_own_line_comment(property_start);
     let is_inline = !has_own_line_comment && should_inline(e, object, start, f);
     let property = identifier(property, e.as_chain_element());
 
@@ -42,6 +50,19 @@ fn write_static_member_expression<'a>(e: Expr<'a>, object: Expr<'a>, property: I
             property,
         )))
     );
+}
+
+/// The `.b` or `?.b` of `member`, where there are no comments. `name`: the `b`.
+pub(crate) fn write_lookup_without_comments<'a>(member: Expr<'a>, name: Ident<'a>, f: &mut Formatter<'a>) {
+    let operator = if member.is_optional() { "?." } else { "." };
+    // The member access ends with the name.
+    let name = Span::new(name.start(), member.span().end);
+    let start = name.start.saturating_sub(operator.len() as u32);
+    // As a rule nothing is between the two, and they are one piece of the source text.
+    match f.source_text().bytes_range(start, name.start) == operator.as_bytes() {
+        true => write!(f, source_text(Span::new(start, name.end))),
+        false => write!(f, [operator, source_text(name)]),
+    }
 }
 
 fn is_member(node: AstNodes<'_>) -> bool {

@@ -1,6 +1,7 @@
 use crate::js::format::{FormatNonNullMarks, identifier, write_trailing_comments_of};
 use crate::js::print::call_like_expression::FormatTypeArguments;
 use crate::js::print::call_like_expression::arguments::FormatArguments;
+use crate::js::print::member_expression::write_lookup_without_comments;
 use crate::js::utils::call_expression::callee_trailing_comments;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::prelude::*;
@@ -132,11 +133,11 @@ impl<'a> ChainMember<'a> {
                 let ExprKind::Dot { obj, name, .. } = member.kind() else {
                     return;
                 };
+                if f.is_quiet() {
+                    return write_lookup_without_comments(member, name, f);
+                }
                 let lookup =
                     format_args!(member.is_optional().then_some("?"), ".", identifier(name, member.as_chain_element()));
-                if f.is_quiet() {
-                    return write!(f, lookup);
-                }
                 // The comments after the `.` lead the name.
                 let object_end = obj.span().end;
                 let end = f.comments().comments_before_character(object_end, b'.').last().map_or(object_end, |it| it.span.end);

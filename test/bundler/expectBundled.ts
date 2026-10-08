@@ -247,7 +247,8 @@ export interface BundlerTestInput {
   publicPath?: string;
   keepNames?: boolean;
   legalComments?: "none" | "inline" | "eof" | "linked" | "external";
-  loader?: Record<`.${string}`, Loader>;
+  /** `""` maps files with no extension. */
+  loader?: { [ext: `.${string}`]: Loader; ""?: Loader };
   mangleProps?: RegExp;
   mangleQuoted?: boolean;
   mainFields?: string[];

@@ -96,9 +96,21 @@ fn calls_super_plainly<'a>(constructor: Func<'a>, cx: &mut Cx<'a, ConstructorSup
         callees.sort_unstable_by_key(|e| e.span().start);
         callees
     });
-    let inside = callees.get(callees.partition_point(|e| e.span().start < whole.start)..).unwrap_or_default();
-    let is_own = |e: Expr<'a>| Node::Expr(e).enclosing_function() == Some(constructor);
-    !inside.iter().take_while(|e| e.span().start < whole.end).any(|&e| e != callee && is_own(e))
+    let mut rest = callees.get(callees.partition_point(|e| e.span().start < whole.start)..).unwrap_or_default();
+    while let Some((&e, after)) = rest.split_first()
+        && e.span().start < whole.end
+    {
+        rest = match Node::Expr(e).enclosing_function() {
+            Some(function) if function == constructor && e == callee => after,
+            // All that is in a function in it is passed over at once.
+            Some(function) if function != constructor => {
+                let end = function.span().end;
+                after.get(after.partition_point(|it| it.span().start < end)..).unwrap_or_default()
+            }
+            _ => return false,
+        };
+    }
+    true
 }
 
 fn is_update_of_for(node: Node<'_>) -> bool {

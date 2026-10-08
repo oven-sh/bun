@@ -5,17 +5,18 @@ json: format 785/785 (0 syntax errors), rejected 191/191, second format 696/696,
 jsx: format 186/186 (0 syntax errors), rejected 20/20, second format 166/166, CRLF 185/185, CR 185/185, BOM 186/186
 less: format 238/238 (0 syntax errors), rejected 4/4, second format 191/191, CRLF 236/236, CR 236/236, BOM 238/238
 markdown: format 1565/1565 (0 syntax errors), rejected 0/0, second format 946/946, CRLF 1561/1561, CR 1561/1561, BOM 1565/1565
-misc: format 342/342 (0 syntax errors), rejected 7/7, second format 295/295, CRLF 45/45, CR 45/45, BOM 341/341
+mdx: format 32/32 (0 syntax errors), rejected 0/0, second format 22/22, CRLF 32/32, CR 32/32, BOM 32/32
+misc: format 374/374 (0 syntax errors), rejected 7/7, second format 323/323, CRLF 55/55, CR 55/55, BOM 373/373
 scss: format 136/136 (0 syntax errors), rejected 1/1, second format 117/117, CRLF 136/136, CR 136/136, BOM 136/136
 typescript: format 746/746 (0 syntax errors), rejected 355/355, second format 599/599, CRLF 745/745, CR 745/745, BOM 733/733
 yaml: format 1623/1623 (0 syntax errors), rejected 3/3, second format 1118/1118, CRLF 1616/1616, CR 1616/1616, BOM 1622/1622
-format: 7229/7229 (100.00%)
-all checks: 34399/34399 (100.00%)
+format: 7293/7293 (100.00%)
+all checks: 34661/34661 (100.00%)
 not run: 17: Flow's type syntax
 not run: 2: `babel` rejects HTML-like comments, but the snapshots of js/comments/html-like and of jsx/jsx-test-suite, made with `acorn`, have them formatted
-not run: 41: a language that is not there: HTML, Vue, Angular, Handlebars, MDX
+not run: 41: a language that is not there: HTML, Vue, Angular, Handlebars
 not run: 2: an input that Prettier's `typescript` parser rejects: the snapshot is made with `babel-ts`
 not run: 4: an input that only `babel-ts` rejects: Prettier's `typescript` parser accepts it, and the output is the same
-not run: 45: embedded HTML, which needs a formatter for that language
+not run: 35: embedded HTML, which needs a formatter for that language
 not run: 2: formatted by a plugin of Prettier
 not run: 66: syntax of a proposal at stage 2 or below, which only Babel parses

@@ -8,9 +8,9 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { collect, extract, writeBundle } from "../bundle.ts";
 
-const languages = ["js", "jsx", "typescript", "json", "css", "less", "scss", "graphql", "yaml", "markdown", "misc"];
+const languages = ["js", "jsx", "typescript", "json", "css", "less", "scss", "graphql", "yaml", "markdown", "mdx", "misc"];
 
-const ours = ["babel", "typescript", "json", "json5", "jsonc", "json-stringify", "css", "less", "scss", "graphql", "yaml", "markdown"];
+const ours = ["babel", "typescript", "json", "json5", "jsonc", "json-stringify", "css", "less", "scss", "graphql", "yaml", "markdown", "mdx"];
 /** The name of a file that is parsed with the parser. */
 const fileFor = (parser: string, name: string) =>
   parser === "json-stringify" ? `${name}/package.json` : `${name}.${{ babel: "js", typescript: "ts", markdown: "md" }[parser] ?? parser}`;

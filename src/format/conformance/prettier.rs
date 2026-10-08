@@ -21,7 +21,7 @@ const ONLY_BABEL_TS_REJECTS: &str = "an input that only `babel-ts` rejects: Pret
 const HTML_LIKE_COMMENT: &str = "`babel` rejects HTML-like comments, but the snapshots of js/comments/html-like and of jsx/jsx-test-suite, made with `acorn`, have them formatted";
 const FLOW: &str = "Flow's type syntax";
 const EMBEDDED: &str = "embedded HTML, which needs a formatter for that language";
-const OTHER_LANGUAGE: &str = "a language that is not there: HTML, Vue, Angular, Handlebars, MDX";
+const OTHER_LANGUAGE: &str = "a language that is not there: HTML, Vue, Angular, Handlebars";
 const PLUGIN: &str = "formatted by a plugin of Prettier";
 
 /// What is not run, and why. A case is left out if its path contains the text.
@@ -64,7 +64,9 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("typescript/decorators-ts/angular.ts", EMBEDDED),
     ("typescript/as/as-const-embedded.ts", EMBEDDED),
     ("js/template-literals/expression-break.js", EMBEDDED),
-    ("misc/embedded-language-formatting", EMBEDDED),
+    ("misc/embedded-language-formatting/in-html", EMBEDDED),
+    ("misc/embedded-language-formatting/in-javascript", EMBEDDED),
+    ("misc/embedded-language-formatting/in-vue", EMBEDDED),
     ("js/last-argument-expansion/embed.js", EMBEDDED),
     ("misc/plugins/embed", EMBEDDED),
     ("markdown/code/angular/angular-html.md", EMBEDDED),
@@ -356,7 +358,7 @@ fn is_javascript_parser(name: &[u8]) -> bool {
 /// Prints `FAIL <check> <case> <options>` for each check that fails, how many pass of each kind,
 /// and how many cases are not run for which reason.
 pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
-    let languages = flags.languages.unwrap_or(b"js,jsx,typescript,json,css,less,scss,graphql,yaml,markdown,misc");
+    let languages = flags.languages.unwrap_or(b"js,jsx,typescript,json,css,less,scss,graphql,yaml,markdown,mdx,misc");
     let mut by_directory: BTreeMap<Vec<u8>, Tally> = BTreeMap::new();
     let mut excluded: BTreeMap<&str, usize> = BTreeMap::new();
     let fail = |kind: &str, id: &[u8], described: &[u8]| output_line!("FAIL {kind} {}{}", BStr::new(id), BStr::new(described));

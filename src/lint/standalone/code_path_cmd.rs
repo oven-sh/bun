@@ -539,7 +539,8 @@ impl<'a> Log<'a> {
         self.lines.push(format!(
             "graph {path} origin={:?} upper={} initial={} final={} returned={} thrown={}",
             path.origin(),
-            path.upper().map_or("none".to_owned(), |it| it.to_string()),
+            path.upper()
+                .map_or_else(|| "none".to_owned(), |it| it.to_string()),
             path.initial_segment(),
             list(&path.final_segments()),
             list(&path.returned_segments()),
@@ -681,10 +682,7 @@ fn trace(path: &str, code: &[u8], listen: &str) -> Vec<String> {
 fn batch(path: &str, listen: &str) {
     let input = std::fs::read(path).expect("the file");
     let mut output = String::new();
-    for line in input
-        .split(|&byte| byte == b'\n')
-        .filter(|line| !line.is_empty())
-    {
+    for line in bun_core::strings::split(&input, b"\n").filter(|line| !line.is_empty()) {
         let case = bun_lint::json::parse(line).expect("JSON");
         let path = case.get(b"path").and_then(Json::as_str).unwrap_or_default();
         let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();

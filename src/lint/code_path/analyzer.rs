@@ -922,7 +922,9 @@ impl<'s, 'a> Builder<'s, 'a> {
     /// `leaveNode`, before it calls the listeners of the node.
     #[inline]
     fn before_exit(&mut self, node: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
-        let is = self.ancestors.last().map_or(Is::empty(), |frame| frame.is);
+        let Some(&Frame { is, .. }) = self.ancestors.last() else {
+            return;
+        };
         if is.contains(Is::ABSENT) || self.is_settled && !is.contains(Is::HAS_EXIT) {
             return;
         }
@@ -1150,44 +1152,5 @@ impl<'a> Iterator for Steps<'a> {
             self.file.lazy.code_paths.follow(event);
         }
         Some(step)
-    }
-}
-
-/// [`steps`] for a caller that walks the file itself.
-pub(crate) struct Analyzer<'a> {
-    steps: std::iter::Peekable<Steps<'a>>,
-}
-
-impl<'a> Analyzer<'a> {
-    pub(crate) fn new(file: &'a File<'a>) -> Self {
-        Analyzer {
-            steps: steps(file, NodeTags::ALL, NodeTags::ALL).peekable(),
-        }
-    }
-
-    /// Emits the events up to the next node.
-    fn events(&mut self, emit: &mut dyn FnMut(Event<'a>)) {
-        while let Some(Step::Event(event)) =
-            self.steps.next_if(|step| matches!(step, Step::Event(_)))
-        {
-            emit(event);
-        }
-    }
-
-    /// ESLint's `enterNode`, up to where it calls the listeners of the node.
-    pub(crate) fn enter(&mut self, _: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
-        self.events(emit);
-        self.steps.next();
-    }
-
-    /// `leaveNode`, before it calls the listeners of the node.
-    pub(crate) fn before_exit(&mut self, _: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
-        self.events(emit);
-        self.steps.next();
-    }
-
-    /// `leaveNode`, after it has called them.
-    pub(crate) fn after_exit(&mut self, _: Node<'a>, emit: &mut dyn FnMut(Event<'a>)) {
-        self.events(emit);
     }
 }

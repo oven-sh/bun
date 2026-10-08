@@ -57,7 +57,6 @@ mod analyzer;
 mod matters;
 mod state;
 
-pub(crate) use analyzer::Analyzer;
 #[doc(hidden)]
 pub use analyzer::{Step, Steps, steps};
 

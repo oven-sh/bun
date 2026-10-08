@@ -128,8 +128,8 @@ impl Store {
             *count += 1;
             *count
         };
-        let is_reachable_at = |&id: &u32| segments[id as usize].is_reachable;
-        let prev = all_prev.iter().copied().filter(is_reachable_at).collect();
+        let is_reachable_at = |id: &&u32| segments[**id as usize].is_reachable;
+        let prev = all_prev.iter().filter(is_reachable_at).copied().collect();
         segments.push(SegmentData {
             prev,
             all_prev,
@@ -1166,7 +1166,7 @@ impl State {
         let test_segments = fork.make_next(store, -1, -1);
         fork.replace_head(store, &test_segments);
         context.test = test;
-        context.continue_dest_segments = test_segments.clone();
+        context.continue_dest_segments.clone_from(&test_segments);
         context.test_segments = test_segments;
     }
 
@@ -1208,7 +1208,7 @@ impl State {
         };
         let update_segments = fork.make_disconnected(store, -1, -1);
         fork.replace_head(store, &update_segments);
-        context.continue_dest_segments = update_segments.clone();
+        context.continue_dest_segments.clone_from(&update_segments);
         context.update_segments = update_segments;
     }
 
@@ -1241,7 +1241,7 @@ impl State {
             body_segments = prev.make_next(store, 0, -1);
         }
         if context.continue_dest_segments.is_empty() {
-            context.continue_dest_segments = body_segments.clone();
+            context.continue_dest_segments.clone_from(&body_segments);
         }
         fork.replace_head(store, &body_segments);
     }
@@ -1253,7 +1253,7 @@ impl State {
         let left_segments = fork.make_disconnected(store, -1, -1);
         context.prev_segments = SegmentIds::from_slice(fork.head());
         fork.replace_head(store, &left_segments);
-        context.continue_dest_segments = left_segments.clone();
+        context.continue_dest_segments.clone_from(&left_segments);
         context.left_segments = left_segments;
     }
 

@@ -506,6 +506,7 @@ pub(crate) struct Context<'c> {
     pub(crate) text: &'c [u8],
     /// See `block::parse_content`.
     pub(crate) is_plain: bool,
+    pub(crate) has: Has,
     pub(crate) tree: &'c mut Tree,
     pub(crate) content: &'c Content,
     pub(crate) definitions: &'c FxHashSet<Vec<u8>>,
@@ -533,7 +534,7 @@ impl Context<'_> {
     fn raw(&mut self, start: usize, end: usize) -> Str {
         let (source_start, source_end) = (self.content.source(start), self.content.source_end(end));
         let bytes = &self.content.bytes[start..end];
-        if (source_end - source_start) as usize == end - start && !bun_core::strings::contains_char(bytes, 0) {
+        if (source_end - source_start) as usize == end - start && !(self.has.nul && bun_core::strings::contains_char(bytes, 0)) {
             return Str::source(source_start, source_end);
         }
         self.tree.owned(|out| push_without_nul(bytes, out))
@@ -606,6 +607,27 @@ static IS_SPECIAL: [bool; 256] = special_bytes(false);
 /// The same with what an address or a URL can start with.
 static IS_SPECIAL_OR_ATEXT: [bool; 256] = special_bytes(true);
 
+/// What is somewhere in the whole text, so that it is worth looking for in a part of it.
+#[derive(Copy, Clone)]
+pub(crate) struct Has {
+    pub(crate) nul: bool,
+    /// For links that are not marked as such.
+    at: bool,
+    scheme: bool,
+    www: bool,
+}
+
+impl Has {
+    pub(crate) fn new(text: &[u8], is_plain: bool) -> Has {
+        Has {
+            nul: bun_core::strings::contains_char(text, 0),
+            at: !is_plain && bun_core::strings::contains_char(text, b'@'),
+            scheme: !is_plain && bun_core::strings::contains(text, b"://"),
+            www: !is_plain && has_www(text),
+        }
+    }
+}
+
 /// Whether `www.` is in `bytes`, in any case.
 fn has_www(bytes: &[u8]) -> bool {
     let mut from = 0;
@@ -655,8 +677,8 @@ impl Context<'_> {
         // The indices of the label starts that can still be matched.
         let mut label_starts: smallvec::SmallVec<[usize; 8]> = smallvec::SmallVec::new();
         // Letters and digits only matter where a link can start that is not marked as one.
-        let can_have_email = !self.is_plain && bun_core::strings::contains_char(bytes, b'@');
-        let can_have_url = !self.is_plain && (bun_core::strings::contains(bytes, b"://") || has_www(bytes));
+        let can_have_email = self.has.at && bun_core::strings::contains_char(bytes, b'@');
+        let can_have_url = (self.has.scheme && bun_core::strings::contains(bytes, b"://")) || (self.has.www && has_www(bytes));
         let is_special = if can_have_email || can_have_url { &IS_SPECIAL_OR_ATEXT } else { &IS_SPECIAL };
         let mut first_resolver = None;
         let mut next_wiki_link_end = 0;

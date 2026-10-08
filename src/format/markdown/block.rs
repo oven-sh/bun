@@ -103,6 +103,7 @@ struct Line<'t> {
 pub(crate) struct Parser<'t> {
     text: &'t [u8],
     is_plain: bool,
+    has: inline::Has,
     line: Line<'t>,
     tree: &'t mut Tree,
     root: NodeId,
@@ -131,17 +132,29 @@ pub(crate) fn is_blank(text: &[u8]) -> bool {
     text.iter().all(|&byte| is_space(byte))
 }
 
-/// Fills `tree` with the syntax of `text`, in which every line break is `\n`. Returns the root.
-pub(crate) fn parse(text: &[u8], tree: &mut Tree) -> Option<NodeId> {
-    // What is parsed has blanks in the place of the front matter, so that all positions stay.
-    let Some(front_matter) = super::front_matter::parse(text) else {
-        return parse_content(text, tree, false);
-    };
+/// What Prettier parses has blanks in the place of the front matter. That only makes a difference if something
+/// follows the front matter on its last line. Then this is the text with the blanks.
+pub(crate) fn blank_front_matter(text: &[u8]) -> Option<Vec<u8>> {
+    let end = super::front_matter::parse(text)?.end;
+    if matches!(text.get(end), None | Some(b'\n')) {
+        return None;
+    }
     let mut blanked = text.to_vec();
-    for byte in blanked[..front_matter.end].iter_mut().filter(|byte| **byte != b'\n') {
+    for byte in blanked[..end].iter_mut().filter(|byte| **byte != b'\n') {
         *byte = b' ';
     }
-    let root = parse_content(&blanked, tree, false)?;
+    Some(blanked)
+}
+
+/// Fills `tree` with the syntax of `text`, in which every line break is `\n`. Returns the root. `original`: the
+/// same, or the text that `text` is for [`blank_front_matter`].
+pub(crate) fn parse(text: &[u8], original: &[u8], tree: &mut Tree) -> Option<NodeId> {
+    let Some(front_matter) = super::front_matter::parse(original) else {
+        return parse_lines(text, tree, false, 0);
+    };
+    let is_blanked = !matches!(original.get(front_matter.end), None | Some(b'\n'));
+    let first_line = if is_blanked { front_matter.end - 3 } else { front_matter.end + 1 };
+    let root = parse_lines(text, tree, false, first_line)?;
     let node = tree.add(Kind::FrontMatter, 0, front_matter.end as u32);
     tree.prepend(root, node);
     Some(root)
@@ -150,6 +163,11 @@ pub(crate) fn parse(text: &[u8], tree: &mut Tree) -> Option<NodeId> {
 /// `is_plain`: CommonMark with strikethrough, footnotes and task lists, and nothing else: no tables, math, Liquid,
 /// wiki links, or links that are not marked as such.
 pub(crate) fn parse_content(text: &[u8], tree: &mut Tree, is_plain: bool) -> Option<NodeId> {
+    parse_lines(text, tree, is_plain, 0)
+}
+
+/// `first_line`: where the first line starts that is looked at.
+fn parse_lines(text: &[u8], tree: &mut Tree, is_plain: bool, first_line: usize) -> Option<NodeId> {
     tree.clear();
     if u32::try_from(text.len()).is_err() || text.len() >= (1 << 30) {
         return None;
@@ -158,6 +176,7 @@ pub(crate) fn parse_content(text: &[u8], tree: &mut Tree, is_plain: bool) -> Opt
     let mut parser = Parser {
         text,
         is_plain,
+        has: inline::Has::new(text, is_plain),
         line: Line { text, end: 0 },
         tree,
         root,
@@ -168,7 +187,7 @@ pub(crate) fn parse_content(text: &[u8], tree: &mut Tree, is_plain: bool) -> Opt
         definitions: FxHashSet::default(),
         footnotes: FxHashSet::default(),
         has_blank_line: false,
-        skip_to: 0,
+        skip_to: first_line,
         content: Content::default(),
         stack_check: bun_core::StackCheck::init(),
         is_nested_too_deeply: false,
@@ -1436,7 +1455,8 @@ impl<'t> Parser<'t> {
         // Nothing has been taken away from the lines: the value is in the text as it is.
         let is_plain = segments.iter().all(|it| it.virtual_spaces == 0)
             && segments.iter().zip(&segments[1..]).all(|(line, next)| line.end + 1 == next.start)
-            && !bun_core::strings::contains_char(&self.text[first_segment.start as usize..last_segment.end as usize], 0);
+            && !(self.has.nul
+                && bun_core::strings::contains_char(&self.text[first_segment.start as usize..last_segment.end as usize], 0));
         if is_plain {
             return Str::source(first_segment.start, last_segment.end);
         }
@@ -1651,6 +1671,7 @@ impl<'t> Parser<'t> {
             let mut context = inline::Context {
                 text: self.text,
                 is_plain: self.is_plain,
+                has: self.has,
                 tree: self.tree,
                 content: &content,
                 definitions: &self.definitions,

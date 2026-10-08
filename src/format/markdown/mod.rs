@@ -44,8 +44,10 @@ pub struct Scratch {
 /// The syntax tree of `text`, for debugging.
 pub fn dump_ast(text: &[u8], out: &mut Vec<u8>) {
     let mut tree = ast::Tree::default();
-    if let Some(root) = block::parse(text, &mut tree) {
-        ast::dump(text, &tree, root, out);
+    let blanked = block::blank_front_matter(text);
+    let content = blanked.as_deref().unwrap_or(text);
+    if let Some(root) = block::parse(content, text, &mut tree) {
+        ast::dump(content, &tree, root, out);
     }
 }
 
@@ -236,9 +238,13 @@ fn with_document<R>(
     is_in_template: bool,
     then: impl FnOnce(doc::Doc<'_>) -> R,
 ) -> Result<R, FormatError> {
-    let root = block::parse(text, tree).ok_or(FormatError::NestedTooDeeply)?;
+    let blanked = block::blank_front_matter(text);
+    let original = text;
+    let text = blanked.as_deref().unwrap_or(text);
+    let root = block::parse(text, original, tree).ok_or(FormatError::NestedTooDeeply)?;
     let mut preprocessor = preprocess::Preprocessor {
         text,
+        original,
         wraps_lines: options.prose_wrap == crate::options::ProseWrap::Always,
         tree,
         tab_width: usize::from(options.indent_width.value()),
@@ -257,6 +263,7 @@ fn with_document<R>(
     };
     let mut printer = printer::Printer {
         text,
+        original,
         tree,
         options,
         embed: &mut embed,

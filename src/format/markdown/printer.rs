@@ -20,6 +20,8 @@ pub(crate) struct Embedded<'x> {
 
 pub(crate) struct Printer<'a, 'e> {
     pub(crate) text: &'a [u8],
+    /// The same with the front matter in any case: see `block::blank_front_matter`.
+    pub(crate) original: &'a [u8],
     pub(crate) tree: &'a Tree,
     pub(crate) options: &'a FormatOptions,
     /// Formats code in another language. `None`: it stays as it is.
@@ -213,7 +215,7 @@ impl<'a> Printer<'a, '_> {
     }
 
     fn source(&self, node: &Node) -> &'a [u8] {
-        self.text.get(node.start as usize..node.end as usize).unwrap_or_default()
+        self.original.get(node.start as usize..node.end as usize).unwrap_or_default()
     }
 
     fn start_line(&self, node: &Node) -> u32 {
@@ -246,6 +248,21 @@ impl<'a> Printer<'a, '_> {
     fn tokens(&self, sentence: &Node) -> &'a [Token] {
         let first = sentence.first_align as usize;
         self.tree.tokens.get(first..first + sentence.number as usize).unwrap_or_default()
+    }
+
+    /// The lines of `text`, with `hardline` between them, or with `markAsRoot(literalline)`.
+    ///
+    /// Where lines are not indented and nothing is to be taken away at their ends, the text is written as it is.
+    fn lines(&self, text: &'a [u8], is_literal: bool) -> Doc<'a> {
+        let is_as_it_is = self.indentation == 0
+            && !self.is_in_template
+            && !self.options.is_in_markdown
+            && (is_literal || !(bun_core::strings::contains(text, b" \n") || bun_core::strings::contains(text, b"\t\n")));
+        match (is_as_it_is, is_literal) {
+            (true, _) => Doc::from(text),
+            (false, false) => replace_end_of_line(text, hardline),
+            (false, true) => replace_end_of_line(text, || mark_as_root(literalline())),
+        }
     }
 
     /// `contents`, written with `width` more columns of indentation around it.
@@ -565,11 +582,20 @@ impl<'a> Printer<'a, '_> {
         // Where what has not been written yet starts.
         let mut start = 0;
         let mut index = 0;
+        // Where the next line break or tab is, and the next two spaces, if not before `index`.
+        let mut next_break = bun_core::strings::index_of_any(text, b"\n\t").unwrap_or(text.len());
+        let mut next_spaces = bun_core::strings::index_of(text, b"  ").unwrap_or(text.len());
         while index < text.len() {
             // The next white space that is not a single space.
+            if next_break < index {
+                next_break = bun_core::strings::index_of_any(&text[index..], b"\n\t").map_or(text.len(), |at| index + at);
+            }
+            if next_spaces < index {
+                next_spaces = bun_core::strings::index_of(&text[index..], b"  ").map_or(text.len(), |at| index + at);
+            }
             let rest = &text[index..];
-            let line_len = bun_core::strings::index_of_any(rest, b"\n\t").unwrap_or(rest.len());
-            let len = bun_core::strings::index_of(&rest[..line_len], b"  ").unwrap_or(line_len);
+            let line_len = next_break - index;
+            let len = line_len.min(next_spaces - index);
             // A space before a line break or a tab belongs to the same white space.
             index += len - usize::from(len == line_len && len > 0 && rest[len - 1] == b' ');
             let blanks = text[index..].iter().take_while(|&&byte| is_white(byte)).count();
@@ -940,7 +966,7 @@ impl<'a> Printer<'a, '_> {
             }
             Kind::Heading => {
                 if self.is_setext_heading(node) {
-                    let last_line = &self.text[self.tree.line_start(node.end.saturating_sub(1)) as usize..node.end as usize];
+                    let last_line = &self.original[self.tree.line_start(node.end.saturating_sub(1)) as usize..node.end as usize];
                     let find = |marker: u8| bun_core::strings::index_of_char_usize(last_line, marker);
                     let underline = &last_line[find(b'=').max(find(b'-')).unwrap_or_else(|| last_line.len().saturating_sub(1))..];
                     return docs![self.print_children(id), hardline(), underline];
@@ -954,10 +980,7 @@ impl<'a> Printer<'a, '_> {
                     value = crate::range::trim_end(value);
                 }
                 let is_comment = value.len() >= 7 && value.starts_with(b"<!--") && value.ends_with(b"-->");
-                match is_comment {
-                    true => replace_end_of_line(value, hardline),
-                    false => replace_end_of_line(value, || mark_as_root(literalline())),
-                }
+                self.lines(value, !is_comment)
             }
             Kind::List => self.print_list(id, node),
             Kind::ListItem | Kind::TableRow => Doc::EMPTY,
@@ -1081,7 +1104,7 @@ impl<'a> Printer<'a, '_> {
     /// `formatted`: the code, if it has been formatted.
     fn print_code(&self, id: NodeId, node: &Node, formatted: Option<Doc<'a>>) -> Doc<'a> {
         let value = self.str(node.value);
-        if formatted.is_none() && is_indented_code(self.text, self.tree, id) {
+        if formatted.is_none() && is_indented_code(self.original, self.tree, id) {
             return align_with_spaces(4, docs!["    ", replace_end_of_line(value, hardline)]);
         }
         let style_unit = if self.is_in_template { b'~' } else { b'`' };
@@ -1092,7 +1115,7 @@ impl<'a> Printer<'a, '_> {
             self.str(node.second),
             if meta.is_empty() { Doc::EMPTY } else { docs![" ", meta] },
             hardline(),
-            formatted.unwrap_or_else(|| replace_end_of_line(value, hardline)),
+            formatted.unwrap_or_else(|| self.lines(value, false)),
             hardline(),
             style
         ]
@@ -1115,19 +1138,24 @@ impl<'a> Printer<'a, '_> {
             width,
         })?;
         let formatted = crate::range::trim_end(&formatted);
-        Some(mark_as_root(self.print_code(id, node, Some(lines_of(formatted)))))
+        let is_as_it_is = self.indentation == 0
+            && !self.is_in_template
+            && !self.options.is_in_markdown
+            && !bun_core::strings::contains_char(formatted, b'\r');
+        let formatted = if is_as_it_is { Doc::from(formatted.to_vec()) } else { lines_of(formatted) };
+        Some(mark_as_root(self.print_code(id, node, Some(formatted))))
     }
 
     /// Prettier's `printEmbedFrontMatter`
     fn print_front_matter(&mut self, node: &Node) -> Doc<'a> {
-        let raw = self.source(node);
-        let Some(front_matter) = super::front_matter::parse(self.text) else {
+        let raw = &self.original[..node.end as usize];
+        let Some(front_matter) = super::front_matter::parse(self.original) else {
             return Doc::from(raw);
         };
-        let language = &self.text[front_matter.explicit_language.0..front_matter.explicit_language.1];
+        let language = &self.original[front_matter.explicit_language.0..front_matter.explicit_language.1];
         let is_toml = language == b"toml" || (language.is_empty() && raw.starts_with(b"+++"));
         let is_yaml = language == b"yaml" || (language.is_empty() && !is_toml);
-        let value = &self.text[front_matter.value.0..front_matter.value.1];
+        let value = &self.original[front_matter.value.0..front_matter.value.1];
         let value = crate::range::trim_end(crate::range::trim_start(value));
         let formatted = match value {
             b"" if is_yaml || is_toml => (self.embed)(&Embedded {
@@ -1200,7 +1228,7 @@ impl<'a> Printer<'a, '_> {
 
     /// Prettier's `hasGitDiffFriendlyOrderedList`: `1. 1. 1.` or `0. 0. 0.`
     fn is_git_diff_friendly(&self, list: &Node) -> bool {
-        let number = |item: NodeId| ordered_item_info(self.text, self.tree, item).0;
+        let number = |item: NodeId| ordered_item_info(self.original, self.tree, item).0;
         let first = list.first_child;
         let Some(second) = self.node(first).map(|it| it.next).filter(|&it| it != NONE && list.ordered) else {
             return false;
@@ -1219,7 +1247,7 @@ impl<'a> Printer<'a, '_> {
         let nth_sibling_index = self.nth_list_sibling_index(id);
         let is_git_diff_friendly = self.is_git_diff_friendly(list);
         // Before indented code, the content has to be indented deeper than that is.
-        let min_indent = match self.node(list.next).filter(|_| is_indented_code(self.text, self.tree, list.next)) {
+        let min_indent = match self.node(list.next).filter(|_| is_indented_code(self.original, self.tree, list.next)) {
             Some(code) => {
                 let blanks = self.str(code.value).iter().take_while(|byte| matches!(byte, b' ' | b'\t'));
                 4 + blanks.map(|&byte| if byte == b'\t' { 4 } else { 1 }).sum::<usize>() + 1
@@ -1286,7 +1314,7 @@ impl<'a> Printer<'a, '_> {
                 let doc = printer.indented(prefix.len(), |printer| printer.print(child));
                 return Some(align_with_spaces(prefix.len() as u32, doc));
             }
-            if is_indented_code(printer.text, printer.tree, child) {
+            if is_indented_code(printer.original, printer.tree, child) {
                 return Some(printer.print(child));
             }
             // Four or more would make it indented code.

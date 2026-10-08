@@ -292,6 +292,8 @@ pub(crate) const PLAIN: u32 = u32::MAX;
 
 pub(crate) struct Preprocessor<'x> {
     pub(crate) text: &'x [u8],
+    /// See `Printer::original`.
+    pub(crate) original: &'x [u8],
     /// Lines are wrapped: `proseWrap: "always"`.
     pub(crate) wraps_lines: bool,
     pub(crate) tree: &'x mut Tree,
@@ -351,7 +353,7 @@ impl Preprocessor<'_> {
             match node.kind {
                 Kind::WikiLink => mark(self.tree, &open),
                 Kind::Text => {
-                    let raw = &self.text[node.start as usize..node.end as usize];
+                    let raw = &self.original[node.start as usize..node.end as usize];
                     if bun_core::strings::contains(raw, b"[[") {
                         open.iter_mut().for_each(|it| it.1 = true);
                     }
@@ -383,7 +385,7 @@ impl Preprocessor<'_> {
             Kind::Text => return self.split_into_sentence(id, around),
             Kind::List if node.first_child != super::ast::NONE => {
                 let is_aligned = around.is_in_aligned_lists
-                    && !is_indented_code(self.text, self.tree, node.next)
+                    && !is_indented_code(self.original, self.tree, node.next)
                     && self.is_aligned(id);
                 around.is_in_aligned_lists = is_aligned;
                 if let Some(node) = self.tree.get_mut(id) {
@@ -414,7 +416,7 @@ impl Preprocessor<'_> {
         }
         let first = node.first_child;
         let second = self.tree.get(first).map_or(super::ast::NONE, |item| item.next);
-        if ordered_item_info(self.text, self.tree, first).1 > 1 {
+        if ordered_item_info(self.original, self.tree, first).1 > 1 {
             return true;
         }
         // The column that the content of an item starts in.
@@ -432,7 +434,7 @@ impl Preprocessor<'_> {
         if Some(first_start) != item_start(second) {
             return false;
         }
-        first_start % tab_width == 0 || ordered_item_info(self.text, self.tree, second).1 > 1
+        first_start % tab_width == 0 || ordered_item_info(self.original, self.tree, second).1 > 1
     }
 
     /// Prettier's `splitTextIntoSentences`, for one text.
@@ -440,7 +442,7 @@ impl Preprocessor<'_> {
         let Some(&node) = self.tree.get(id) else {
             return;
         };
-        let raw = &self.text[node.start as usize..node.end as usize];
+        let raw = &self.original[node.start as usize..node.end as usize];
         let mut without_markers = Vec::new();
         let mut text = raw;
         if let Some((_, true)) = around.paragraph

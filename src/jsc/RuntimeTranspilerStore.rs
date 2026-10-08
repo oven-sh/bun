@@ -1,4 +1,3 @@
-#![allow(clippy::needless_return)]
 #![warn(unused_must_use)]
 
 use core::cell::Cell;

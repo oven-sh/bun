@@ -950,7 +950,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                             previous_step == Step::RunPostInstallAndPrePostPrepare as u32
                         );
                     }
-                    let _ = previous_step;
                     installer.on_task_complete(ctx.entry_id, CompleteState::Success);
                 }
 

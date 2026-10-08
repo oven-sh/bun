@@ -3210,6 +3210,7 @@ declare module "bun" {
      * that absorbs a folded chunk exports the symbols other chunks import
      * from it. Requires `splitting: true`. CLI: `--min-chunk-size`. For browser
      * builds, where every chunk is a request, 16384 is a good value.
+     * Nothing folds into an entry point without `[hash]` in its name.
      *
      * @default 0 (disabled)
      */
@@ -3503,6 +3504,36 @@ declare module "bun" {
     optimizeImports?: string[];
 
     /**
+     * Type check the entrypoints and everything they import, like `bun check`.
+     * Equivalent to `--check` in the CLI.
+     *
+     * A type error fails the build like any other build error: nothing is
+     * written, and each error is a {@link BuildMessage} whose message starts
+     * with TypeScript's error code.
+     *
+     * The compiler options come from the `tsconfig.json` of the project, or
+     * from the file that `tsconfig` names. The check also uses the `conditions`
+     * and the `loader` of the build.
+     *
+     * @default false
+     *
+     * @example
+     * ```ts
+     * const result = await Bun.build({
+     *   entrypoints: ['./src/index.ts'],
+     *   outdir: './dist',
+     *   check: true,
+     *   throw: false,
+     * });
+     * for (const log of result.logs) {
+     *   // TS2322: Type 'string' is not assignable to type 'number'.
+     *   console.error(`${log.position?.file}:${log.position?.line}: ${log.message}`);
+     * }
+     * ```
+     */
+    check?: boolean;
+
+    /**
      * - When set to `true`, the returned promise rejects with an AggregateError when a build failure happens.
      * - When set to `false`, returns a {@link BuildOutput} with `{success: false}`
      *
@@ -3511,7 +3542,9 @@ declare module "bun" {
     throw?: boolean;
 
     /**
-     * Custom tsconfig.json file path to use for path resolution.
+     * Custom tsconfig.json file path. This build reads it in place of every
+     * `tsconfig.json` it would otherwise find, for `paths`, JSX and decorator
+     * settings, and for `check`. A directory means the `tsconfig.json` in it.
      * Equivalent to `--tsconfig-override` in the CLI.
      * @example
      * ```ts
@@ -3745,6 +3778,22 @@ declare module "bun" {
      * @default false
      */
     autoloadPackageJson?: boolean;
+    /**
+     * Profile-guided layout for the executable's bytecode. Requires `bytecode: true`.
+     *
+     * Run an executable built with `bytecode: true` with `BUN_BYTECODE_ORDER_OUT=<path>`
+     * to record which functions it uses, then build again with that file. Bun places
+     * the bytecode the run used together at the front, so the executable starts faster
+     * and uses less memory. A profile from an older build of the app still applies.
+     *
+     * With several files, list the most common way of starting the app first.
+     * `false` and `null` mean no profile, so `bytecodeOrder: haveProfile && path` works.
+     *
+     * Equivalent CLI flag: `--bytecode-order <file>[,<file>...]`
+     *
+     * @see https://bun.com/docs/bundler/executables#profile-guided-bytecode-layout
+     */
+    bytecodeOrder?: string | string[] | false | null;
     /**
      * The JIT policy the executable starts with (see {@link Bun.unsafe.setJITPolicy}).
      * `1` is the normal policy. A value `> 1` multiplies JavaScriptCore's tier-up
@@ -6372,6 +6421,15 @@ declare module "bun" {
   interface OnResolveResult {
     /**
      * The destination of the import
+     *
+     * In a runtime plugin, a path without a `namespace` is resolved from the
+     * importing module like any other import, without running `onResolve`
+     * callbacks on it. If nothing is found there, it is used as it is when an
+     * `onLoad` callback matches it.
+     *
+     * A bare name could also be a package in the registry, so `onResolve`
+     * callbacks run on it once more. If one of them returns a path, the name is
+     * the plugin's own and is never auto-installed.
      */
     path: string;
     /**

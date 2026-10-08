@@ -22,7 +22,6 @@ export const prestartMap = {
   "js/sql/sql-onconnect-onclose-throw": ["postgres_plain", "mysql_plain"],
   "js/sql/sql-prepare-false": ["postgres_plain"],
   "js/valkey/": ["redis_unified"],
-  "js/bun/s3/": ["minio"],
   "js/web/websocket/autobahn": ["autobahn"],
   "js/web/websocket/websocket-proxy": ["squid"],
   "integration/mysql2/": ["mysql_plain", "mysql_native_password"],

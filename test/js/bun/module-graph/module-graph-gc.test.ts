@@ -63,6 +63,17 @@ const dir = String(
         const w = new Worker("data:text/javascript,setInterval(() => {}, 1000); postMessage('up')");
         return new Promise(resolve => { w.onmessage = () => resolve(); w.addEventListener("close", () => control.heard.push("worker close")); });
       }
+      // A rewrite whose <div> is never closed, with an onEndTag() callback that reaches the output Response.
+      export function rewriteThatWaitsForAnEndTag() {
+        let controller;
+        const holder = {};
+        const registered = Promise.withResolvers();
+        holder.response = new HTMLRewriter()
+          .on("div", { element(el) { el.onEndTag(() => void holder.response); registered.resolve(); } })
+          .transform(new Response(new ReadableStream({ start: c => void (controller = c) })));
+        controller.enqueue(new TextEncoder().encode("<div>x"));
+        return registered.promise;
+      }
     `,
   }),
 );
@@ -516,6 +527,18 @@ describe("ModuleGraph GC: what the graph's context owns", () => {
     expect(await lifetimes.stillAlive("graph")).toEqual([]);
   });
 
+  // The callback was a GC root until its end tag came, and it reached its own rewrite through the Response.
+  test("an HTMLRewriter rewrite that waits for an end tag when its graph is disposed goes with the graph", async () => {
+    const lifetimes = new Lifetimes();
+    await (async () => {
+      const graph = lifetimes.track("graph", new ModuleGraph());
+      const io = await graph.import(file("io.mjs"));
+      await graph.run(() => io.rewriteThatWaitsForAnEndTag());
+      graph.dispose();
+    })();
+    expect(await lifetimes.stillAlive("graph")).toEqual([]);
+  });
+
   // The tick's promise is the host's to settle: the job is still there when it does, and gone afterwards.
   for (const how of ["resolves", "rejects"] as const) {
     test(`a Bun.cron() job whose tick waits on a promise the host ${how} after the graph was disposed: the job outlives the wait, and the graph goes`, async () => {
@@ -704,3 +727,41 @@ test("ModuleGraph GC: survives collecting continuously", async () => {
   expect(stdout).toBe("ok\n");
   expect(exitCode).toBe(0);
 }, 60_000);
+
+// The period puts a collection in the middle of the signal's abort steps, whatever came before.
+test.concurrent.each([2, 3, 4])(
+  "ModuleGraph GC: aborting a signal whose fetch responses are garbage, collecting every %i slow allocations",
+  async period => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+        const graph = new Bun.ModuleGraph(), other = new Bun.ModuleGraph();
+        const controller = new AbortController();
+        const signal = AbortSignal.any([controller.signal]);
+        const held = { responses: [] };
+        await (async () => {
+          for (let i = 0; i < 1000; i += 50) {
+            const batch = await graph.run(() => Promise.all(Array.from({ length: 50 }, () => fetch(server.url, { signal }))));
+            for (const response of batch) await response.text();
+            held.responses.push(...batch);
+          }
+        })();
+        // Runs between the controller's signal's abort steps and the dependent signal's.
+        controller.signal.addEventListener("abort", () => { held.responses = undefined; });
+        other.run(() => controller.abort());
+        console.log("ok");
+        `,
+      ],
+      env: { ...bunEnv, BUN_JSC_slowPathAllocsBetweenGCs: String(period) },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);

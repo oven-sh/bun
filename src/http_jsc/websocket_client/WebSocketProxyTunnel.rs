@@ -25,7 +25,6 @@
 
 use core::cell::{Cell, OnceCell};
 
-use bun_boringssl as boringssl;
 use bun_io::StreamBuffer;
 use bun_ptr::{BackRef, JsCell, RefPtr, Root, ThisPtr};
 use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
@@ -189,6 +188,7 @@ impl WebSocketProxyTunnel {
                 // SSL off the parked session/keylog queues entirely.
                 on_session: None,
                 on_keylog: None,
+                server_identity: Some(Self::server_identity),
             },
         )
         .map_err(|_| crate::Error::InvalidOptions)?;
@@ -241,6 +241,17 @@ impl WebSocketProxyTunnel {
     }
 
     /// SSLWrapper callback: Called before TLS handshake starts
+    fn server_identity(
+        this: ThisPtr<Self>,
+        ssl: &mut bun_boringssl::c::SSL,
+    ) -> bun_boringssl::ServerIdentity {
+        let hostname = this
+            .sni_hostname
+            .as_deref()
+            .filter(|_| this.reject_unauthorized);
+        bun_boringssl::server_identity(ssl, hostname)
+    }
+
     fn on_open(this: ThisPtr<Self>) {
         let _guard = RefPtr::from_this(this);
         bun_core::scoped_log!(WebSocketProxyTunnel, "onOpen");
@@ -309,7 +320,7 @@ impl WebSocketProxyTunnel {
             // Verify server identity.
             let ssl = this.wrapper.get().and_then(|w| w.ssl.get());
             let failed_identity = match (ssl, this.sni_hostname.as_deref()) {
-                (Some(ssl_ptr), Some(hostname)) => !boringssl::check_server_identity(
+                (Some(ssl_ptr), Some(hostname)) => !bun_uws::check_server_identity(
                     bun_opaque::opaque_deref_mut(ssl_ptr.as_ptr()),
                     hostname,
                 ),

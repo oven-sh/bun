@@ -191,7 +191,6 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
             // `formatter` drops here.
         }
     }
-    let _ = func;
     assert!(
         value.is_empty() == global_this.has_exception(),
         "host fn return/exception state mismatch"

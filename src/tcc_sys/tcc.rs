@@ -27,23 +27,39 @@ pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char
 // and `ENABLE_TINYCC` in `scripts/build/buildOptionsRs.ts`.
 macro_rules! tcc_externs {
     ($($(#[$attr:meta])* fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?;)*) => {
-        #[cfg(not(any(target_os = "android", target_os = "freebsd")))]
-        unsafe extern "C" {
-            $($(#[$attr])* fn $name($($arg: $ty),*) $(-> $ret)?;)*
+        mod raw {
+            use super::*;
+
+            #[cfg(not(any(target_os = "android", target_os = "freebsd")))]
+            unsafe extern "C" {
+                $($(#[$attr])* pub(super) fn $name($($arg: $ty),*) $(-> $ret)?;)*
+            }
+            $(
+                #[cfg(any(target_os = "android", target_os = "freebsd"))]
+                #[allow(unused_variables, clippy::missing_safety_doc)]
+                pub(super) unsafe extern "C" fn $name($($arg: $ty),*) $(-> $ret)? {
+                    unreachable!(concat!(
+                        stringify!($name),
+                        " called but TinyCC is disabled on this target — keep the ",
+                        "ENABLE_TINYCC early-returns in bun_runtime::ffi in sync with this stub"
+                    ));
+                }
+            )*
         }
         $(
-            #[cfg(any(target_os = "android", target_os = "freebsd"))]
-            #[allow(unused_variables, clippy::missing_safety_doc)]
-            unsafe extern "C" fn $name($($arg: $ty),*) $(-> $ret)? {
-                unreachable!(concat!(
-                    stringify!($name),
-                    " called but TinyCC is disabled on this target — keep the ",
-                    "ENABLE_TINYCC early-returns in bun_runtime::ffi in sync with this stub"
-                ));
+            unsafe fn $name($($arg: $ty),*) $(-> $ret)? {
+                let _lock = LIBTCC_LOCK.lock();
+                // SAFETY: same contract as the libtcc function; the caller upholds it.
+                unsafe { raw::$name($($arg),*) }
             }
         )*
     };
 }
+
+/// The only lock around TinyCC's process globals: its own are compiled out
+/// (`CONFIG_TCC_SEMLOCK=0`, scripts/build/deps/tinycc.ts). Held across the
+/// error callback, which must not call into libtcc.
+static LIBTCC_LOCK: bun_core::Mutex<()> = bun_core::Mutex::new(());
 
 tcc_externs! {
     fn tcc_new() -> *mut TCCState;

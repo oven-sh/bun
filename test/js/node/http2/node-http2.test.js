@@ -5681,6 +5681,122 @@ it("Http2SecureServer#close() calls closeIdleConnections() exactly when allowHTT
   expect(calls).toEqual({ "allowHTTP1: true": [[]], "allowHTTP1: false": [] });
 });
 
+it("http2 allowHTTP1 fallback enforces maxRequestsPerSocket like http.Server", async () => {
+  const served = [];
+  const dropped = [];
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    served.push([req.url, res.maxRequestsOnConnectionReached]);
+    res.end("served");
+  });
+  // Like http.Server (and Node's Http2SecureServer), the limit is a property on the server.
+  server.maxRequestsPerSocket = 1;
+  server.on("dropRequest", (req, socket) => dropped.push([req.url, socket.encrypted === true]));
+  await new Promise(resolve => server.listen(0, resolve));
+  let socket;
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    socket = tls.connect(
+      { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () => socket.write("GET /1 HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+    );
+    const chunks = [];
+    let sentSecond = false;
+    socket.on("error", reject);
+    socket.on("data", chunk => {
+      chunks.push(chunk);
+      if (!sentSecond && Buffer.concat(chunks).toString("latin1").endsWith("served")) {
+        // The first response is complete; send the over-limit request. Its Connection: close
+        // makes the server end the connection after answering it, which resolves the promise.
+        sentSecond = true;
+        socket.write("GET /2 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      }
+    });
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString("latin1")));
+    const raw = await promise;
+    expect([...raw.matchAll(/HTTP\/1\.1 (\d+) /g)].map(match => match[1])).toEqual(["200", "503"]);
+    // The first response is the one that reaches the limit, so it already advertises close.
+    expect(raw.slice(0, raw.indexOf("\r\n\r\n") + 4)).toContain("\r\nConnection: close\r\n");
+    expect(served).toEqual([["/1", true]]);
+    expect(dropped).toEqual([["/2", true]]);
+  } finally {
+    socket?.destroy();
+    server.close();
+  }
+});
+
+// Sends a request with two Authorization and two Cookie lines over a TLS connection that negotiated
+// http/1.1 (the allowHTTP1 fallback) and returns what the handler saw, plus the option as stored on
+// the server.
+async function duplicateHeadersSeenOverAllowHTTP1(options) {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true, ...options }, (req, res) => {
+    res.end(JSON.stringify({ authorization: req.headers.authorization, cookie: req.headers.cookie }));
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const socket = tls.connect(
+      { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () =>
+        socket.write(
+          "GET / HTTP/1.1\r\nHost: localhost\r\n" +
+            "Authorization: one\r\nAuthorization: two\r\n" +
+            "Cookie: a=1\r\nCookie: b=2\r\n" +
+            "Connection: close\r\n\r\n",
+        ),
+    );
+    const chunks = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    const raw = await promise;
+    expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+    return { server: server.joinDuplicateHeaders, ...JSON.parse(raw.slice(raw.indexOf("\r\n\r\n") + 4)) };
+  } finally {
+    server.close();
+  }
+}
+
+it("http2 allowHTTP1 fallback applies joinDuplicateHeaders from options or options.http1Options like Node", async () => {
+  // Authorization is one of the headers Node keeps only the first value of unless the option is
+  // set; Cookie is joined either way. Node reads the option through
+  // storeHTTPOptions({ ...options, ...options.http1Options }), so http1Options takes precedence.
+  const joined = { authorization: "one, two", cookie: "a=1; b=2" };
+  const firstValueWins = { authorization: "one", cookie: "a=1; b=2" };
+  expect(
+    await Promise.all([
+      duplicateHeadersSeenOverAllowHTTP1({ joinDuplicateHeaders: true }),
+      duplicateHeadersSeenOverAllowHTTP1({ http1Options: { joinDuplicateHeaders: true } }),
+      duplicateHeadersSeenOverAllowHTTP1({ joinDuplicateHeaders: true, http1Options: { joinDuplicateHeaders: false } }),
+      duplicateHeadersSeenOverAllowHTTP1({ joinDuplicateHeaders: false }),
+      duplicateHeadersSeenOverAllowHTTP1({}),
+    ]),
+  ).toEqual([
+    { server: true, ...joined },
+    { server: true, ...joined },
+    { server: false, ...firstValueWins },
+    { server: false, ...firstValueWins },
+    { server: undefined, ...firstValueWins },
+  ]);
+});
+
+it("http2 createSecureServer type-checks joinDuplicateHeaders only when allowHTTP1 is set, like Node", () => {
+  for (const [options, received] of [
+    [{ joinDuplicateHeaders: "yes" }, "type string ('yes')"],
+    [{ http1Options: { joinDuplicateHeaders: 1 } }, "type number (1)"],
+  ]) {
+    expect(() => {
+      http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true, ...options });
+    }).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "options.joinDuplicateHeaders" property must be of type boolean. Received ${received}`,
+      }),
+    );
+    // Without allowHTTP1 there is no HTTP/1 side to configure: Node neither validates nor stores it.
+    expect(Object.hasOwn(http2.createSecureServer({ ...TLS_CERT, ...options }), "joinDuplicateHeaders")).toBe(false);
+  }
+});
+
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
 // waits on nghttp2_session_want_write()/want_read(), which does not track outstanding
 // ACKs. A server that never ACKs a client-sent SETTINGS must not stall close().

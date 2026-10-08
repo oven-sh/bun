@@ -356,7 +356,9 @@ impl<'a> Context<'a> {
                     false => self.concat(&[raw.selector, raw.between]),
                 };
                 // Prettier has no way to print a selector that is still a string.
-                if text::trim(&node.raw_selector).is_empty() {
+                if text::trim(&node.raw_selector).is_empty()
+                    || (node.raw_selector.starts_with(b"@") && node.raw_selector.ends_with(b":"))
+                {
                     return Err(SyntaxError);
                 }
                 {

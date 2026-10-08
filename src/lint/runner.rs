@@ -517,6 +517,8 @@ struct Run<'r, 'a, R: Rule> {
 }
 
 impl<'a, R: Rule> Run<'_, 'a, R> {
+    /// Not inlined: it is the same code for most rules, of which the linker then keeps one copy.
+    #[inline(never)]
     fn run_unordered(&mut self) {
         let (rule, cx) = (self.rule, &mut self.cx);
         let file = cx.file;

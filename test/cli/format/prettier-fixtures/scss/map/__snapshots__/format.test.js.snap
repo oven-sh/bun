@@ -1,0 +1,1351 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`2554.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$map: (key: value, other-key: other-value);
+$map: (key: value, other-key: other-value) !default;
+$map: (key: value, other-key: other-value)  !default;
+$map: (key: value, other-key: other-value)
+!default;
+$map:
+(key: value, other-key: other-value)
+!default;
+$map: ( key : value , other-key : other-value);
+$map: (  key  :  value  ,  other-key  :  other-value  );
+$map: (
+  key: value,
+  other-key: other-value
+);
+$map: (
+key: value,
+other-key: other-value
+);
+$map: (
+key
+:
+value,
+other-key
+:
+other-value
+);
+$map: (
+key
+:
+value
+,
+other-key
+:
+other-value
+);
+$map: (very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key: very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value, very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key: very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value);
+$map: ( very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key : very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value , very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key : very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value );
+$map: (  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key  :  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value  ,  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key: very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value  );
+$map: (
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key: very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value,
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key: very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value
+);
+$map: (
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key: very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value,
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key: very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value
+);
+$map:
+(
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key
+:
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value
+,
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key
+:
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value
+);
+$map: (
+  key: (#d82d2d, #666),
+  other-key: (#52bf4a, #fff),
+  other-other-key: (#c23435, #fff)
+);
+$map: (
+key: (#d82d2d, #666),
+other-key: (#52bf4a, #fff),
+other-other-key: (#c23435, #fff)
+);
+$map: (
+  key : ( #d82d2d , #666 ),
+  other-key : ( #52bf4a , #fff ),
+  other-other-key : ( #c23435 , #fff )
+);
+$map: (
+  key  : (  #d82d2d  ,  #666  )  ,
+  other-key  :  (  #52bf4a  ,  #fff  ),
+  other-other-key  :  (  #c23435  ,  #fff  )
+);
+$map: (
+key
+:
+(
+#d82d2d,
+#666
+)
+,
+other-key
+:
+(
+#52bf4a,
+#fff
+)
+,
+other-other-key
+:
+(
+#c23435
+,
+#fff
+)
+);
+$map: map-merge($map, ($key: $value));
+$map: map-merge( $map , ( $key : $value ) );
+$map: map-merge(  $map  ,  (  $key  :  $value  )  );
+$map: map-merge(
+  $map,
+  ($key:  $value)
+);
+$map: map-merge(
+$map,
+($key:  $value)
+);
+$map:
+map-merge(
+$map
+,
+(
+$key
+:
+$value
+)
+);
+
+=====================================output=====================================
+$map: (
+  key: value,
+  other-key: other-value,
+);
+$map: (
+  key: value,
+  other-key: other-value,
+) !default;
+$map: (
+  key: value,
+  other-key: other-value,
+) !default;
+$map: (
+  key: value,
+  other-key: other-value,
+) !default;
+$map: (
+  key: value,
+  other-key: other-value,
+) !default;
+$map: (
+  key: value,
+  other-key: other-value,
+);
+$map: (
+  key: value,
+  other-key: other-value,
+);
+$map: (
+  key: value,
+  other-key: other-value,
+);
+$map: (
+  key: value,
+  other-key: other-value,
+);
+$map: (
+  key: value,
+  other-key: other-value,
+);
+$map: (
+  key: value,
+  other-key: other-value,
+);
+$map: (
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value,
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value,
+);
+$map: (
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value,
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value,
+);
+$map: (
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value,
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value,
+);
+$map: (
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value,
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value,
+);
+$map: (
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value,
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value,
+);
+$map: (
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value,
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value,
+);
+$map: (
+  key: (
+    #d82d2d,
+    #666,
+  ),
+  other-key: (
+    #52bf4a,
+    #fff,
+  ),
+  other-other-key: (
+    #c23435,
+    #fff,
+  ),
+);
+$map: (
+  key: (
+    #d82d2d,
+    #666,
+  ),
+  other-key: (
+    #52bf4a,
+    #fff,
+  ),
+  other-other-key: (
+    #c23435,
+    #fff,
+  ),
+);
+$map: (
+  key: (
+    #d82d2d,
+    #666,
+  ),
+  other-key: (
+    #52bf4a,
+    #fff,
+  ),
+  other-other-key: (
+    #c23435,
+    #fff,
+  ),
+);
+$map: (
+  key: (
+    #d82d2d,
+    #666,
+  ),
+  other-key: (
+    #52bf4a,
+    #fff,
+  ),
+  other-other-key: (
+    #c23435,
+    #fff,
+  ),
+);
+$map: (
+  key: (
+    #d82d2d,
+    #666,
+  ),
+  other-key: (
+    #52bf4a,
+    #fff,
+  ),
+  other-other-key: (
+    #c23435,
+    #fff,
+  ),
+);
+$map: map-merge(
+  $map,
+  (
+    $key: $value,
+  )
+);
+$map: map-merge(
+  $map,
+  (
+    $key: $value,
+  )
+);
+$map: map-merge(
+  $map,
+  (
+    $key: $value,
+  )
+);
+$map: map-merge(
+  $map,
+  (
+    $key: $value,
+  )
+);
+$map: map-merge(
+  $map,
+  (
+    $key: $value,
+  )
+);
+$map: map-merge(
+  $map,
+  (
+    $key: $value,
+  )
+);
+
+================================================================================
+`;
+
+exports[`2554.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$map: (key: value, other-key: other-value);
+$map: (key: value, other-key: other-value) !default;
+$map: (key: value, other-key: other-value)  !default;
+$map: (key: value, other-key: other-value)
+!default;
+$map:
+(key: value, other-key: other-value)
+!default;
+$map: ( key : value , other-key : other-value);
+$map: (  key  :  value  ,  other-key  :  other-value  );
+$map: (
+  key: value,
+  other-key: other-value
+);
+$map: (
+key: value,
+other-key: other-value
+);
+$map: (
+key
+:
+value,
+other-key
+:
+other-value
+);
+$map: (
+key
+:
+value
+,
+other-key
+:
+other-value
+);
+$map: (very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key: very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value, very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key: very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value);
+$map: ( very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key : very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value , very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key : very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value );
+$map: (  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key  :  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value  ,  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key: very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value  );
+$map: (
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key: very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value,
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key: very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value
+);
+$map: (
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key: very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value,
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key: very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value
+);
+$map:
+(
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key
+:
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value
+,
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key
+:
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value
+);
+$map: (
+  key: (#d82d2d, #666),
+  other-key: (#52bf4a, #fff),
+  other-other-key: (#c23435, #fff)
+);
+$map: (
+key: (#d82d2d, #666),
+other-key: (#52bf4a, #fff),
+other-other-key: (#c23435, #fff)
+);
+$map: (
+  key : ( #d82d2d , #666 ),
+  other-key : ( #52bf4a , #fff ),
+  other-other-key : ( #c23435 , #fff )
+);
+$map: (
+  key  : (  #d82d2d  ,  #666  )  ,
+  other-key  :  (  #52bf4a  ,  #fff  ),
+  other-other-key  :  (  #c23435  ,  #fff  )
+);
+$map: (
+key
+:
+(
+#d82d2d,
+#666
+)
+,
+other-key
+:
+(
+#52bf4a,
+#fff
+)
+,
+other-other-key
+:
+(
+#c23435
+,
+#fff
+)
+);
+$map: map-merge($map, ($key: $value));
+$map: map-merge( $map , ( $key : $value ) );
+$map: map-merge(  $map  ,  (  $key  :  $value  )  );
+$map: map-merge(
+  $map,
+  ($key:  $value)
+);
+$map: map-merge(
+$map,
+($key:  $value)
+);
+$map:
+map-merge(
+$map
+,
+(
+$key
+:
+$value
+)
+);
+
+=====================================output=====================================
+$map: (
+  key: value,
+  other-key: other-value
+);
+$map: (
+  key: value,
+  other-key: other-value
+) !default;
+$map: (
+  key: value,
+  other-key: other-value
+) !default;
+$map: (
+  key: value,
+  other-key: other-value
+) !default;
+$map: (
+  key: value,
+  other-key: other-value
+) !default;
+$map: (
+  key: value,
+  other-key: other-value
+);
+$map: (
+  key: value,
+  other-key: other-value
+);
+$map: (
+  key: value,
+  other-key: other-value
+);
+$map: (
+  key: value,
+  other-key: other-value
+);
+$map: (
+  key: value,
+  other-key: other-value
+);
+$map: (
+  key: value,
+  other-key: other-value
+);
+$map: (
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value,
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value
+);
+$map: (
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value,
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value
+);
+$map: (
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value,
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value
+);
+$map: (
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value,
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value
+);
+$map: (
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value,
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value
+);
+$map: (
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-value,
+  very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-key:
+    very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-verylong-other-value
+);
+$map: (
+  key: (
+    #d82d2d,
+    #666
+  ),
+  other-key: (
+    #52bf4a,
+    #fff
+  ),
+  other-other-key: (
+    #c23435,
+    #fff
+  )
+);
+$map: (
+  key: (
+    #d82d2d,
+    #666
+  ),
+  other-key: (
+    #52bf4a,
+    #fff
+  ),
+  other-other-key: (
+    #c23435,
+    #fff
+  )
+);
+$map: (
+  key: (
+    #d82d2d,
+    #666
+  ),
+  other-key: (
+    #52bf4a,
+    #fff
+  ),
+  other-other-key: (
+    #c23435,
+    #fff
+  )
+);
+$map: (
+  key: (
+    #d82d2d,
+    #666
+  ),
+  other-key: (
+    #52bf4a,
+    #fff
+  ),
+  other-other-key: (
+    #c23435,
+    #fff
+  )
+);
+$map: (
+  key: (
+    #d82d2d,
+    #666
+  ),
+  other-key: (
+    #52bf4a,
+    #fff
+  ),
+  other-other-key: (
+    #c23435,
+    #fff
+  )
+);
+$map: map-merge(
+  $map,
+  (
+    $key: $value
+  )
+);
+$map: map-merge(
+  $map,
+  (
+    $key: $value
+  )
+);
+$map: map-merge(
+  $map,
+  (
+    $key: $value
+  )
+);
+$map: map-merge(
+  $map,
+  (
+    $key: $value
+  )
+);
+$map: map-merge(
+  $map,
+  (
+    $key: $value
+  )
+);
+$map: map-merge(
+  $map,
+  (
+    $key: $value
+  )
+);
+
+================================================================================
+`;
+
+exports[`3235.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a {
+  transition-timing-function: func1(
+      func2(
+          func3(
+              "veryVeryVeryVeryVeryLongValue",
+              "veryVeryVeryVeryVeryLongValue",
+              "veryVeryVeryVeryVeryLongValue",
+              "veryVeryVeryVeryVeryLongValue",
+          ),
+          "veryVeryVeryVeryVeryLongValue",
+          "veryVeryVeryVeryVeryLongValue",
+          "veryVeryVeryVeryVeryLongValue",
+      ),
+      "veryVeryVeryVeryVeryLongValue",
+      "veryVeryVeryVeryVeryLongValue",
+      func3(
+          "veryVeryVeryVeryVeryLongValue",
+          "veryVeryVeryVeryVeryLongValue",
+          "veryVeryVeryVeryVeryLongValue",
+          "veryVeryVeryVeryVeryLongValue"
+      )
+  );
+}
+
+$empty-map: ();
+$empty-nested-map: (
+nested-key: (empty-key: (color: red)),
+empty-key: (),
+empty-key: (),
+empty-key: ()
+);
+
+$o-grid-default-config: (
+columns: 12,
+gutter: 10px,
+min-width: 240px,
+max-width: 1330px,
+layouts: (
+S:  370px,
+M:  610px,
+L:  850px,
+XL: 1090px
+),
+fluid: true,
+debug: false,
+fixed-layout: M,
+enhanced-experience: true
+);
+
+$a: ();
+$b: unquote('');
+$c: null;
+$d: (null);
+
+$threads-properties: map-merge($threads-properties,  ($border-label: ()));
+$o-grid-default-config: (layouts: (S:  370px));
+
+$map: (
+key: (value),
+other-key: (key: other-other-value)
+);
+
+=====================================output=====================================
+a {
+  transition-timing-function: func1(
+    func2(
+      func3(
+        "veryVeryVeryVeryVeryLongValue",
+        "veryVeryVeryVeryVeryLongValue",
+        "veryVeryVeryVeryVeryLongValue",
+        "veryVeryVeryVeryVeryLongValue"
+      ),
+      "veryVeryVeryVeryVeryLongValue",
+      "veryVeryVeryVeryVeryLongValue",
+      "veryVeryVeryVeryVeryLongValue"
+    ),
+    "veryVeryVeryVeryVeryLongValue",
+    "veryVeryVeryVeryVeryLongValue",
+    func3(
+      "veryVeryVeryVeryVeryLongValue",
+      "veryVeryVeryVeryVeryLongValue",
+      "veryVeryVeryVeryVeryLongValue",
+      "veryVeryVeryVeryVeryLongValue"
+    )
+  );
+}
+
+$empty-map: ();
+$empty-nested-map: (
+  nested-key: (
+    empty-key: (
+      color: red,
+    ),
+  ),
+  empty-key: (),
+  empty-key: (),
+  empty-key: (),
+);
+
+$o-grid-default-config: (
+  columns: 12,
+  gutter: 10px,
+  min-width: 240px,
+  max-width: 1330px,
+  layouts: (
+    S: 370px,
+    M: 610px,
+    L: 850px,
+    XL: 1090px,
+  ),
+  fluid: true,
+  debug: false,
+  fixed-layout: M,
+  enhanced-experience: true,
+);
+
+$a: ();
+$b: unquote("");
+$c: null;
+$d: (null);
+
+$threads-properties: map-merge(
+  $threads-properties,
+  (
+    $border-label: (),
+  )
+);
+$o-grid-default-config: (
+  layouts: (
+    S: 370px,
+  ),
+);
+
+$map: (
+  key: (value),
+  other-key: (
+    key: other-other-value,
+  ),
+);
+
+================================================================================
+`;
+
+exports[`3235.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a {
+  transition-timing-function: func1(
+      func2(
+          func3(
+              "veryVeryVeryVeryVeryLongValue",
+              "veryVeryVeryVeryVeryLongValue",
+              "veryVeryVeryVeryVeryLongValue",
+              "veryVeryVeryVeryVeryLongValue",
+          ),
+          "veryVeryVeryVeryVeryLongValue",
+          "veryVeryVeryVeryVeryLongValue",
+          "veryVeryVeryVeryVeryLongValue",
+      ),
+      "veryVeryVeryVeryVeryLongValue",
+      "veryVeryVeryVeryVeryLongValue",
+      func3(
+          "veryVeryVeryVeryVeryLongValue",
+          "veryVeryVeryVeryVeryLongValue",
+          "veryVeryVeryVeryVeryLongValue",
+          "veryVeryVeryVeryVeryLongValue"
+      )
+  );
+}
+
+$empty-map: ();
+$empty-nested-map: (
+nested-key: (empty-key: (color: red)),
+empty-key: (),
+empty-key: (),
+empty-key: ()
+);
+
+$o-grid-default-config: (
+columns: 12,
+gutter: 10px,
+min-width: 240px,
+max-width: 1330px,
+layouts: (
+S:  370px,
+M:  610px,
+L:  850px,
+XL: 1090px
+),
+fluid: true,
+debug: false,
+fixed-layout: M,
+enhanced-experience: true
+);
+
+$a: ();
+$b: unquote('');
+$c: null;
+$d: (null);
+
+$threads-properties: map-merge($threads-properties,  ($border-label: ()));
+$o-grid-default-config: (layouts: (S:  370px));
+
+$map: (
+key: (value),
+other-key: (key: other-other-value)
+);
+
+=====================================output=====================================
+a {
+  transition-timing-function: func1(
+    func2(
+      func3(
+        "veryVeryVeryVeryVeryLongValue",
+        "veryVeryVeryVeryVeryLongValue",
+        "veryVeryVeryVeryVeryLongValue",
+        "veryVeryVeryVeryVeryLongValue"
+      ),
+      "veryVeryVeryVeryVeryLongValue",
+      "veryVeryVeryVeryVeryLongValue",
+      "veryVeryVeryVeryVeryLongValue"
+    ),
+    "veryVeryVeryVeryVeryLongValue",
+    "veryVeryVeryVeryVeryLongValue",
+    func3(
+      "veryVeryVeryVeryVeryLongValue",
+      "veryVeryVeryVeryVeryLongValue",
+      "veryVeryVeryVeryVeryLongValue",
+      "veryVeryVeryVeryVeryLongValue"
+    )
+  );
+}
+
+$empty-map: ();
+$empty-nested-map: (
+  nested-key: (
+    empty-key: (
+      color: red
+    )
+  ),
+  empty-key: (),
+  empty-key: (),
+  empty-key: ()
+);
+
+$o-grid-default-config: (
+  columns: 12,
+  gutter: 10px,
+  min-width: 240px,
+  max-width: 1330px,
+  layouts: (
+    S: 370px,
+    M: 610px,
+    L: 850px,
+    XL: 1090px
+  ),
+  fluid: true,
+  debug: false,
+  fixed-layout: M,
+  enhanced-experience: true
+);
+
+$a: ();
+$b: unquote("");
+$c: null;
+$d: (null);
+
+$threads-properties: map-merge(
+  $threads-properties,
+  (
+    $border-label: ()
+  )
+);
+$o-grid-default-config: (
+  layouts: (
+    S: 370px
+  )
+);
+
+$map: (
+  key: (value),
+  other-key: (
+    key: other-other-value
+  )
+);
+
+================================================================================
+`;
+
+exports[`15193.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$foo: (
+    'property1': (),
+    // comment 1
+    // comment 2
+
+    'property2': 1,
+    /** comment 1 */
+    /* comment 2 */
+);
+
+=====================================output=====================================
+$foo: (
+  "property1": (),
+  // comment 1
+  // comment 2
+  "property2": 1,
+  /** comment 1 */ /* comment 2 */
+);
+
+================================================================================
+`;
+
+exports[`15193.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$foo: (
+    'property1': (),
+    // comment 1
+    // comment 2
+
+    'property2': 1,
+    /** comment 1 */
+    /* comment 2 */
+);
+
+=====================================output=====================================
+$foo: (
+  "property1": (),
+  // comment 1
+  // comment 2
+  "property2": 1,
+  /** comment 1 */ /* comment 2 */
+);
+
+================================================================================
+`;
+
+exports[`comment.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$map: (
+  /* comment */
+  key1: value,
+
+  // comment
+  key2: value,
+
+  /* comment */ /* comment */
+  key3: value,
+
+  /* comment */
+  key4: (
+    key: value,
+    key: value,
+    key: value,
+    key: value,
+    key: value,
+  ),
+);
+
+$map: (
+  /* comment */
+);
+
+$map: (
+  // comment
+);
+
+=====================================output=====================================
+$map: (
+  /* comment */ key1: value,
+
+  // comment
+  key2: value,
+
+  /* comment */ /* comment */ key3: value,
+
+  /* comment */
+  key4: (
+      key: value,
+      key: value,
+      key: value,
+      key: value,
+      key: value,
+    )
+);
+
+$map: (/* comment */);
+
+$map: (
+  // comment
+);
+
+================================================================================
+`;
+
+exports[`comment.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$map: (
+  /* comment */
+  key1: value,
+
+  // comment
+  key2: value,
+
+  /* comment */ /* comment */
+  key3: value,
+
+  /* comment */
+  key4: (
+    key: value,
+    key: value,
+    key: value,
+    key: value,
+    key: value,
+  ),
+);
+
+$map: (
+  /* comment */
+);
+
+$map: (
+  // comment
+);
+
+=====================================output=====================================
+$map: (
+  /* comment */ key1: value,
+
+  // comment
+  key2: value,
+
+  /* comment */ /* comment */ key3: value,
+
+  /* comment */
+  key4: (
+      key: value,
+      key: value,
+      key: value,
+      key: value,
+      key: value
+    )
+);
+
+$map: (/* comment */);
+
+$map: (
+  // comment
+);
+
+================================================================================
+`;
+
+exports[`key-values.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$map: (
+  ('key': 'value', 'key': 'value','key': 'value','key': 'value','key': 'value',):
+  ('key': 'value',),
+  ('key': 'value', 'key': 'value','key': 'value','key': 'value','key': 'value',):
+  ('list'),
+  ('list', 'list', 'list', 'list', 'list', 'list', 'list', 'list', 'list', 'list'):
+  ('list'),
+  ('list', 'list', 'list', 'list', 'list', 'list', 'list', 'list', 'list', 'list'):
+  ('key': 'value',),
+  ('key': 'value', 'key': 'value','key': 'value','key': 'value','key': 'value',):
+  1,
+);
+
+=====================================output=====================================
+$map: (
+  (
+    "key": "value",
+    "key": "value",
+    "key": "value",
+    "key": "value",
+    "key": "value",
+  ): (
+      "key": "value",
+    ),
+  (
+    "key": "value",
+    "key": "value",
+    "key": "value",
+    "key": "value",
+    "key": "value",
+  ): ("list"),
+  (
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+  ): ("list"),
+  (
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+  ): (
+      "key": "value",
+    ),
+  (
+    "key": "value",
+    "key": "value",
+    "key": "value",
+    "key": "value",
+    "key": "value",
+  ): 1,
+);
+
+================================================================================
+`;
+
+exports[`key-values.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$map: (
+  ('key': 'value', 'key': 'value','key': 'value','key': 'value','key': 'value',):
+  ('key': 'value',),
+  ('key': 'value', 'key': 'value','key': 'value','key': 'value','key': 'value',):
+  ('list'),
+  ('list', 'list', 'list', 'list', 'list', 'list', 'list', 'list', 'list', 'list'):
+  ('list'),
+  ('list', 'list', 'list', 'list', 'list', 'list', 'list', 'list', 'list', 'list'):
+  ('key': 'value',),
+  ('key': 'value', 'key': 'value','key': 'value','key': 'value','key': 'value',):
+  1,
+);
+
+=====================================output=====================================
+$map: (
+  (
+    "key": "value",
+    "key": "value",
+    "key": "value",
+    "key": "value",
+    "key": "value"
+  ): (
+      "key": "value"
+    ),
+  (
+    "key": "value",
+    "key": "value",
+    "key": "value",
+    "key": "value",
+    "key": "value"
+  ): ("list"),
+  (
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list"
+  ): ("list"),
+  (
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list",
+    "list"
+  ): (
+      "key": "value"
+    ),
+  (
+    "key": "value",
+    "key": "value",
+    "key": "value",
+    "key": "value",
+    "key": "value"
+  ): 1
+);
+
+================================================================================
+`;
+
+exports[`keys.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$map: (
+  'string': 'hello world',
+  ('list'): 'hello world',
+  ('key': 'value'): 'hello world',
+  ('list', 'long long long long long long long long long long long long long list'): 'hello world',
+  ('key': 'value','long long long long long long long long long long long long long map': 'value',): 'hello world',
+);
+
+// #10000
+$map: (
+	('my list'): 'hello world',
+);
+
+=====================================output=====================================
+$map: (
+  "string": "hello world",
+  ("list"): "hello world",
+  ("key": "value"): "hello world",
+  (
+    "list",
+    "long long long long long long long long long long long long long list",
+  ): "hello world",
+  (
+    "key": "value",
+    "long long long long long long long long long long long long long map":
+      "value",
+  ): "hello world",
+);
+
+// #10000
+$map: (
+  ("my list"): "hello world",
+);
+
+================================================================================
+`;
+
+exports[`keys.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$map: (
+  'string': 'hello world',
+  ('list'): 'hello world',
+  ('key': 'value'): 'hello world',
+  ('list', 'long long long long long long long long long long long long long list'): 'hello world',
+  ('key': 'value','long long long long long long long long long long long long long map': 'value',): 'hello world',
+);
+
+// #10000
+$map: (
+	('my list'): 'hello world',
+);
+
+=====================================output=====================================
+$map: (
+  "string": "hello world",
+  ("list"): "hello world",
+  ("key": "value"): "hello world",
+  (
+    "list",
+    "long long long long long long long long long long long long long list"
+  ): "hello world",
+  (
+    "key": "value",
+    "long long long long long long long long long long long long long map":
+      "value"
+  ): "hello world"
+);
+
+// #10000
+$map: (
+  ("my list"): "hello world"
+);
+
+================================================================================
+`;

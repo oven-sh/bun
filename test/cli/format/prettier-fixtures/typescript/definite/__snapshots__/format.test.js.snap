@@ -1,0 +1,76 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`asi.ts format 1`] = `
+====================================options=====================================
+parsers: ["babel-ts"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let x
+!function() {};
+
+=====================================output=====================================
+let x;
+!function () {};
+
+================================================================================
+`;
+
+exports[`definite.ts format 1`] = `
+====================================options=====================================
+parsers: ["babel-ts"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class MyComponent {
+ngModel!: ng.INgModelController;
+}
+
+const x!: string = '';
+
+var y!: MyComponent
+
+=====================================output=====================================
+class MyComponent {
+  ngModel!: ng.INgModelController;
+}
+
+const x!: string = "";
+
+var y!: MyComponent;
+
+================================================================================
+`;
+
+exports[`without-annotation.ts format 1`] = `
+====================================options=====================================
+parsers: ["babel-ts"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Foo {
+  a!
+  #b!
+  static c!
+  [d]! = 1
+  'e'!
+}
+
+let a! = x
+const b! = x
+var c/* */! = x
+export const d! = x
+
+=====================================output=====================================
+class Foo {
+  a!;
+  #b!;
+  static c!;
+  [d]! = 1;
+  "e"!;
+}
+
+let a! = x;
+const b! = x;
+var c! /* */ = x;
+export const d! = x;
+
+================================================================================
+`;

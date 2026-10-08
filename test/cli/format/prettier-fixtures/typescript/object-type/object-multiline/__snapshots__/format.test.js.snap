@@ -1,0 +1,150 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`multiline.ts - {"objectWrap":"collapse"} format 1`] = `
+====================================options=====================================
+objectWrap: "collapse"
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A = {
+  name1: 'value1',
+  name2: 'value2',
+};
+
+const a: A = {
+  name1: 'value1',
+  name2: 'value2',
+};
+
+type B = { name1: 'value1',
+  name2: 'value2',
+};
+
+const b: B = { name1: 'value1',
+  name2: 'value2',
+};
+
+type C = {
+  name1: 'value1', name2: 'value2',
+};
+
+const c: C = {
+  name1: 'value1', name2: 'value2',
+};
+
+type D = {
+  name1: 'value1', name2: 'value2', };
+
+const d: D = {
+    name1: 'value1', name2: 'value2', };
+
+  type E = { name1: 'value1', name2: 'value2', };
+
+const e: E = { name1: 'value1', name2: 'value2', };
+
+=====================================output=====================================
+type A = { name1: "value1"; name2: "value2" };
+
+const a: A = { name1: "value1", name2: "value2" };
+
+type B = { name1: "value1"; name2: "value2" };
+
+const b: B = { name1: "value1", name2: "value2" };
+
+type C = { name1: "value1"; name2: "value2" };
+
+const c: C = { name1: "value1", name2: "value2" };
+
+type D = { name1: "value1"; name2: "value2" };
+
+const d: D = { name1: "value1", name2: "value2" };
+
+type E = { name1: "value1"; name2: "value2" };
+
+const e: E = { name1: "value1", name2: "value2" };
+
+================================================================================
+`;
+
+exports[`multiline.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A = {
+  name1: 'value1',
+  name2: 'value2',
+};
+
+const a: A = {
+  name1: 'value1',
+  name2: 'value2',
+};
+
+type B = { name1: 'value1',
+  name2: 'value2',
+};
+
+const b: B = { name1: 'value1',
+  name2: 'value2',
+};
+
+type C = {
+  name1: 'value1', name2: 'value2',
+};
+
+const c: C = {
+  name1: 'value1', name2: 'value2',
+};
+
+type D = {
+  name1: 'value1', name2: 'value2', };
+
+const d: D = {
+    name1: 'value1', name2: 'value2', };
+
+  type E = { name1: 'value1', name2: 'value2', };
+
+const e: E = { name1: 'value1', name2: 'value2', };
+
+=====================================output=====================================
+type A = {
+  name1: "value1";
+  name2: "value2";
+};
+
+const a: A = {
+  name1: "value1",
+  name2: "value2",
+};
+
+type B = { name1: "value1"; name2: "value2" };
+
+const b: B = { name1: "value1", name2: "value2" };
+
+type C = {
+  name1: "value1";
+  name2: "value2";
+};
+
+const c: C = {
+  name1: "value1",
+  name2: "value2",
+};
+
+type D = {
+  name1: "value1";
+  name2: "value2";
+};
+
+const d: D = {
+  name1: "value1",
+  name2: "value2",
+};
+
+type E = { name1: "value1"; name2: "value2" };
+
+const e: E = { name1: "value1", name2: "value2" };
+
+================================================================================
+`;

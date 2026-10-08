@@ -1,0 +1,405 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`asi.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/facebook/flow/commit/78f657e8da014e16ff509ad34f8178b158c47af7
+class C {
+  foo
+    () {}
+}
+
+=====================================output=====================================
+// https://github.com/facebook/flow/commit/78f657e8da014e16ff509ad34f8178b158c47af7
+class C {
+  foo() {}
+}
+
+================================================================================
+`;
+
+exports[`assignment.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+aaaaaaaa.bbbbbbbb.cccccccc.dddddddd.eeeeeeee.ffffffff.gggggggg2 = class extends (
+  aaaaaaaa.bbbbbbbb.cccccccc.dddddddd.eeeeeeee.ffffffff.gggggggg1
+) {
+  method () {
+    console.log("foo");
+  }
+};
+
+foo = class extends bar {
+  method() {
+    console.log("foo");
+  }
+};
+
+aaaaaaaa.bbbbbbbb.cccccccc.dddddddd.eeeeeeee.ffffffff.gggggggg2 = class extends bar {
+  method() {
+    console.log("foo");
+  }
+};
+
+foo = class extends aaaaaaaa.bbbbbbbb.cccccccc.dddddddd.eeeeeeee.ffffffff.gggggggg2 {
+  method() {
+    console.log("foo");
+  }
+};
+
+module.exports = class A extends B {
+  method () {
+    console.log("foo");
+  }
+};
+
+=====================================output=====================================
+aaaaaaaa.bbbbbbbb.cccccccc.dddddddd.eeeeeeee.ffffffff.gggggggg2 = class extends (
+  aaaaaaaa.bbbbbbbb.cccccccc.dddddddd.eeeeeeee.ffffffff.gggggggg1
+) {
+  method() {
+    console.log("foo");
+  }
+};
+
+foo = class extends bar {
+  method() {
+    console.log("foo");
+  }
+};
+
+aaaaaaaa.bbbbbbbb.cccccccc.dddddddd.eeeeeeee.ffffffff.gggggggg2 = class extends (
+  bar
+) {
+  method() {
+    console.log("foo");
+  }
+};
+
+foo = class extends (
+  aaaaaaaa.bbbbbbbb.cccccccc.dddddddd.eeeeeeee.ffffffff.gggggggg2
+) {
+  method() {
+    console.log("foo");
+  }
+};
+
+module.exports = class A extends B {
+  method() {
+    console.log("foo");
+  }
+};
+
+================================================================================
+`;
+
+exports[`binary.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(class {}) + 1;
+(class a {}) + 1;
+(class extends b {}) + 1;
+(class a extends b {}) + 1;
+
+=====================================output=====================================
+(class {}) + 1;
+(class a {}) + 1;
+(class extends b {}) + 1;
+(class a extends b {}) + 1;
+
+================================================================================
+`;
+
+exports[`call.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(class {})(class {});
+
+=====================================output=====================================
+(class {})(class {});
+
+================================================================================
+`;
+
+exports[`class-fields-features.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Foo {
+  static epoch = new CustomDate(0);
+  #xValue = 0;
+  get #x() { return this.#xValue; }
+  set #x(value) {
+    this.#xValue = value;
+    window.requestAnimationFrame(this.#render.bind(this));
+  }
+  #clicked() {
+    this.#x++;
+  }
+  #render() {
+    this.textContent = this.#x.toString();
+  }
+}
+
+=====================================output=====================================
+class Foo {
+  static epoch = new CustomDate(0);
+  #xValue = 0;
+  get #x() {
+    return this.#xValue;
+  }
+  set #x(value) {
+    this.#xValue = value;
+    window.requestAnimationFrame(this.#render.bind(this));
+  }
+  #clicked() {
+    this.#x++;
+  }
+  #render() {
+    this.textContent = this.#x.toString();
+  }
+}
+
+================================================================================
+`;
+
+exports[`computed-constructor-property.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+  [constructor]
+}
+
+class B {
+  ["constructor"]
+}
+
+=====================================output=====================================
+class A {
+  [constructor];
+}
+
+class B {
+  ["constructor"];
+}
+
+================================================================================
+`;
+
+exports[`constructor.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Literal
+class A {
+  "constructor"() { }
+}
+
+// Identifier
+class B {
+  constructor() { }
+}
+
+=====================================output=====================================
+// Literal
+class A {
+  constructor() {}
+}
+
+// Identifier
+class B {
+  constructor() {}
+}
+
+================================================================================
+`;
+
+exports[`empty.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A4 {
+  m() {}
+}
+
+=====================================output=====================================
+class A4 {
+  m() {}
+}
+
+================================================================================
+`;
+
+exports[`member.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(class {})[1];
+(class {}).a;
+
+=====================================output=====================================
+(class {})[1];
+(class {}).a;
+
+================================================================================
+`;
+
+exports[`method.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+class C {
+  name/*comment*/() {
+  }
+};
+
+
+({
+  name/*comment*/() {
+  }
+});
+
+=====================================output=====================================
+class C {
+  name /*comment*/() {}
+}
+
+({
+  name /*comment*/() {},
+});
+
+================================================================================
+`;
+
+exports[`multiple-static.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class C {
+  static
+  static
+  static
+  a() {}
+}
+
+=====================================output=====================================
+class C {
+  static static;
+  static a() {}
+}
+
+================================================================================
+`;
+
+exports[`new.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+new class {};
+new Ctor(class {});
+
+=====================================output=====================================
+new (class {})();
+new Ctor(class {});
+
+================================================================================
+`;
+
+exports[`property.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+  foobar =
+    // comment to break
+    1 +
+    // comment to break again
+    2;
+}
+
+class B {
+  someInstanceProperty = this.props.foofoofoofoofoofoo &&
+    this.props.barbarbarbar;
+  
+  someInstanceProperty2 = { foo: this.props.foofoofoofoofoofoo &&
+    this.props.barbarbarbar };
+  
+    someInstanceProperty3 =
+  "foo";
+}
+
+=====================================output=====================================
+class A {
+  foobar =
+    // comment to break
+    1 +
+    // comment to break again
+    2;
+}
+
+class B {
+  someInstanceProperty =
+    this.props.foofoofoofoofoofoo && this.props.barbarbarbar;
+
+  someInstanceProperty2 = {
+    foo: this.props.foofoofoofoofoofoo && this.props.barbarbarbar,
+  };
+
+  someInstanceProperty3 = "foo";
+}
+
+================================================================================
+`;
+
+exports[`super.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A extends B {
+    #a() {
+        super.x();
+    }
+}
+
+=====================================output=====================================
+class A extends B {
+  #a() {
+    super.x();
+  }
+}
+
+================================================================================
+`;
+
+exports[`ternary.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (1) (class {}) ? 1 : 2;
+
+=====================================output=====================================
+if (1) (class {}) ? 1 : 2;
+
+================================================================================
+`;

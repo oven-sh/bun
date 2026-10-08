@@ -1,0 +1,306 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`18106.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export interface DirectiveArgumentNode1 extends ArrayExpression {
+  elements: // dir, exp, arg, modifiers
+    | [string]
+    | [string, ExpressionNode]
+    | [string, ExpressionNode, ExpressionNode]
+    | [string, ExpressionNode, ExpressionNode, ObjectExpression]
+}
+
+export class DirectiveArgumentNode12 extends ArrayExpression {
+  elements: // dir, exp, arg, modifiers
+    | [string]
+    | [string, ExpressionNode]
+    | [string, ExpressionNode, ExpressionNode]
+    | [string, ExpressionNode, ExpressionNode, ObjectExpression]
+  = 1
+}
+
+type A = // dir, exp, arg, modifiers
+  | [string]
+  | [string, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode, ObjectExpression]
+
+const elements: // dir, exp, arg, modifiers
+  | [string]
+  | [string, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode, ObjectExpression]
+  = 1
+
+type A2 = /* block comment */
+  | [string]
+  | [string, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode, ObjectExpression]
+
+type A3 = /* block comment
+ */
+  | [string]
+  | [string, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode, ObjectExpression]
+
+=====================================output=====================================
+export interface DirectiveArgumentNode1 extends ArrayExpression {
+  elements:
+    // dir, exp, arg, modifiers
+    | [string]
+    | [string, ExpressionNode]
+    | [string, ExpressionNode, ExpressionNode]
+    | [string, ExpressionNode, ExpressionNode, ObjectExpression];
+}
+
+export class DirectiveArgumentNode12 extends ArrayExpression {
+  elements:
+    // dir, exp, arg, modifiers
+    | [string]
+    | [string, ExpressionNode]
+    | [string, ExpressionNode, ExpressionNode]
+    | [string, ExpressionNode, ExpressionNode, ObjectExpression] = 1;
+}
+
+type A =
+  // dir, exp, arg, modifiers
+  | [string]
+  | [string, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode, ObjectExpression];
+
+const elements:
+  // dir, exp, arg, modifiers
+  | [string]
+  | [string, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode, ObjectExpression] = 1;
+
+type A2 =
+  /* block comment */
+  | [string]
+  | [string, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode, ObjectExpression];
+
+type A3 =
+  /* block comment
+   */
+  | [string]
+  | [string, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode, ObjectExpression];
+
+================================================================================
+`;
+
+exports[`18379.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A1 =
+  (
+    A | B // comment 1
+  ) & (
+    // comment2
+    A | B
+  )
+
+type A2 =
+  (
+  	A | B // prettier-ignore
+  ) & (
+  	// prettier-ignore
+    A | B
+  )
+
+type A1 =
+  // comment 1
+  (A | B)
+  & (
+  	// comment2
+    A | B
+  )
+
+type A1 =
+  // prettier-ignore
+  (A | B)
+  & (
+  	// prettier-ignore
+    A | B
+  )
+
+=====================================output=====================================
+type A1 = (
+  | A
+  | B // comment 1
+) &
+  // comment2
+  (A | B);
+
+type A2 = (
+  | A
+  | B // prettier-ignore
+) &
+  // prettier-ignore
+  (A | B);
+
+type A1 =
+  // comment 1
+  (A | B) &
+    // comment2
+    (A | B);
+
+type A1 =
+  // prettier-ignore
+  (A | B)
+  & (
+  	// prettier-ignore
+    A | B
+  );
+
+================================================================================
+`;
+
+exports[`18389.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A1 =     | /**
+     * octahedralRhinocerosTransformer
+     */
+    a
+    | (b | c);
+
+type A2 =     | /**
+     * hippopotamicKangarooMutator
+     */
+    (a | b)
+    | c;
+
+type A4 =
+  (
+  	A | B // comment 1
+  ) | (
+  	// comment2
+    A | B
+  )
+
+=====================================output=====================================
+type A1 =
+  | /**
+     * octahedralRhinocerosTransformer
+     */
+    a
+  | (b | c);
+
+type A2 =
+  | /**
+     * hippopotamicKangarooMutator
+     */
+    (a | b)
+  | c;
+
+type A4 =
+  | (
+      | A
+      | B // comment 1
+    )
+  // comment2
+  | (A | B);
+
+================================================================================
+`;
+
+exports[`18787.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// TODO[@fisker]: comments not attached correctly after first element
+type A1 =
+  | /**
+   * 11
+   */
+  a
+  | b
+
+type A2 =
+  | /**
+   * 21
+   */ a
+  | b
+
+type A3 =
+  | // 31
+  a
+  |
+  b;
+
+type A4 =
+  |
+// 41
+/**
+   * 42
+   */
+  a
+  | b
+
+=====================================output=====================================
+// TODO[@fisker]: comments not attached correctly after first element
+type A1 =
+  | /**
+     * 11
+     */
+    a
+  | b;
+
+type A2 =
+  | /**
+     * 21
+     */ a
+  | b;
+
+type A3 =
+  | // 31
+    a
+  | b;
+
+type A4 =
+  | // 41
+    /**
+     * 42
+     */
+    a
+  | b;
+
+================================================================================
+`;
+
+exports[`mutiple.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type _Test =
+  // forcing the test onto a new line so it isn't covered by the expect error
+  // If there are any enum members that don't have a corresponding TSESTree.Node, then this line will error with "Type 'string | number | symbol' is not assignable to type 'string'."
+  // eslint-disable-next-line @typescript-eslint/no-invalid-void-type
+  TakesString<AllKeys> | void;
+
+=====================================output=====================================
+type _Test =
+  // forcing the test onto a new line so it isn't covered by the expect error
+  // If there are any enum members that don't have a corresponding TSESTree.Node, then this line will error with "Type 'string | number | symbol' is not assignable to type 'string'."
+  // eslint-disable-next-line @typescript-eslint/no-invalid-void-type
+  TakesString<AllKeys> | void;
+
+================================================================================
+`;

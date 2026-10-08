@@ -1,0 +1,23 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`media-indent.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.foo {
+    @media(max-width:1000px)
+    {
+        display: none;
+          }
+        }
+
+=====================================output=====================================
+.foo {
+  @media (max-width: 1000px) {
+    display: none;
+  }
+}
+
+================================================================================
+`;

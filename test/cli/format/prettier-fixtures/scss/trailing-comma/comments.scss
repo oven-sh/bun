@@ -1,0 +1,19 @@
+.simplification {
+  foo: (
+    calc(), // It is a comment
+  );
+}
+
+.simplification {
+  foo: (
+    calc() // It is a comment
+  );
+}
+
+$z-indexes: (
+  header: 1035,
+  header: 1035,
+  overlay: 1202, // TODO
+  header: 1035,
+  header: 1035,
+);

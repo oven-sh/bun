@@ -1,0 +1,38 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`type-member-get-set.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+interface Foo {
+  get foo(): string;
+  set bar(v);
+}
+
+type Foo = {
+  get foo(): string;
+  set bar(v);
+}
+
+interface Foo {
+  set bar(foo: string);
+}
+
+=====================================output=====================================
+interface Foo {
+  get foo(): string;
+  set bar(v);
+}
+
+type Foo = {
+  get foo(): string;
+  set bar(v);
+};
+
+interface Foo {
+  set bar(foo: string);
+}
+
+================================================================================
+`;

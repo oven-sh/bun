@@ -1,0 +1,38 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`bitwise.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/prettier/prettier/issues/18145
+1 << bit % 8;
+1 >> bit - 8;
+1 | bit % 8;
+1 & bit % 8;
+1 ^ bit % 8;
+1 >>> bit % 8;
+(a + b) % c;
+a % (b + c);
+1 << bit * 8;
+1 >> bit / 8;
+1 << bit + 8;
+1 >> bit - 8;
+
+=====================================output=====================================
+// https://github.com/prettier/prettier/issues/18145
+1 << (bit % 8);
+1 >> (bit - 8);
+1 | (bit % 8);
+1 & (bit % 8);
+1 ^ (bit % 8);
+1 >>> (bit % 8);
+(a + b) % c;
+a % (b + c);
+1 << (bit * 8);
+1 >> (bit / 8);
+1 << (bit + 8);
+1 >> (bit - 8);
+
+================================================================================
+`;

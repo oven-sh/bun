@@ -1,0 +1,16 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`cursor-without-pragma.js - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+cursorOffset: 27
+parsers: ["babel", "typescript", "flow"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(function() {return        <|> 15})()
+
+=====================================output=====================================
+(function() {return        <|> 15})()
+
+================================================================================
+`;

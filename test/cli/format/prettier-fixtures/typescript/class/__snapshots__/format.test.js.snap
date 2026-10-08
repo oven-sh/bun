@@ -1,0 +1,665 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`abstract-method.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Foo {
+  abstract foo();
+}
+
+abstract class Bar {
+  method() {
+    return class {
+      abstract m();
+    }
+  }
+}
+
+=====================================output=====================================
+class Foo {
+  abstract foo();
+}
+
+abstract class Bar {
+  method() {
+    return class {
+      abstract m();
+    };
+  }
+}
+
+================================================================================
+`;
+
+exports[`constructor.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class C {constructor(override a: number) {}}
+class D {constructor(private a: number) {}}
+class E {constructor(protected a: number) {}}
+class F {constructor(public a: number) {}}
+class G {constructor(readonly a: number) {}}
+
+class A {
+    static Foo() {
+        return new A()
+    }
+}
+
+
+=====================================output=====================================
+class C {
+  constructor(override a: number) {}
+}
+class D {
+  constructor(private a: number) {}
+}
+class E {
+  constructor(protected a: number) {}
+}
+class F {
+  constructor(public a: number) {}
+}
+class G {
+  constructor(readonly a: number) {}
+}
+
+class A {
+  static Foo() {
+    return new A();
+  }
+}
+
+================================================================================
+`;
+
+exports[`declare-field.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+  declare private readonly name: string;
+   private declare readonly name2: string;
+}
+
+=====================================output=====================================
+class A {
+  declare private readonly name: string;
+  declare private readonly name2: string;
+}
+
+================================================================================
+`;
+
+exports[`declare-readonly-field-initializer.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+  declare readonly bar = "test";
+  declare readonly foo = 1;
+  declare readonly baz = a.b;
+}
+
+=====================================output=====================================
+class A {
+  declare readonly bar = "test";
+  declare readonly foo = 1;
+  declare readonly baz = a.b;
+}
+
+================================================================================
+`;
+
+exports[`declare-readonly-field-initializer-w-annotation.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+  declare readonly bar: string = "test";
+  declare baz: string = "test";
+}
+
+=====================================output=====================================
+class A {
+  declare readonly bar: string = "test";
+  declare baz: string = "test";
+}
+
+================================================================================
+`;
+
+exports[`declare-readonly-field-initializer-w-annotation.ts format[babel-ts] 1`] = `
+"Initializers are not allowed in ambient contexts. (2:32)
+  1 | class A {
+> 2 |   declare readonly bar: string = "test";
+    |                                ^
+  3 |   declare baz: string = "test";
+  4 | }
+  5 |
+Cause: Initializers are not allowed in ambient contexts. (2:31)"
+`;
+
+exports[`declare-readonly-field-initializer-w-annotation.ts format[oxc-ts] 1`] = `
+"Initializers are not allowed in ambient contexts. (2:34)
+  1 | class A {
+> 2 |   declare readonly bar: string = "test";
+    |                                  ^^^^^^
+  3 |   declare baz: string = "test";
+  4 | }
+  5 |"
+`;
+
+exports[`dunder.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class F<__T> {}
+
+=====================================output=====================================
+class F<__T> {}
+
+================================================================================
+`;
+
+exports[`empty-method-body.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// #9324
+
+class foo1 {
+  bar() /* 11 */;
+  bar2/* 12 */() ;
+}
+
+// #9367
+class Test {
+  foo (/* 21 */) /* 22 */;
+  foo2 /* 31 */ (/* 32 */) ;
+}
+
+=====================================output=====================================
+// #9324
+
+class foo1 {
+  bar(); /* 11 */
+  bar2 /* 12 */();
+}
+
+// #9367
+class Test {
+  foo(/* 21 */); /* 22 */
+  foo2 /* 31 */(/* 32 */);
+}
+
+================================================================================
+`;
+
+exports[`extends_implements.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Class extends AbstractClass implements Interface1, Interface2, Interface3, Interface4 {}
+
+class ExtendsAbstractClassAndImplementsInterfaces1 extends AbstractClass
+  implements Interface1, Interface2, Interface3, Interface4 {}
+
+class ExtendsAbstractClassAndImplementsInterfaces2
+  extends AAAAAAAAAAAAAAbstractClass
+  implements Interface1, Interface2, Interface3, Interface4 {}
+
+class ExtendsAbstractClassAndImplementsInterfaces3
+  extends AAAAAAAAAAAAAAbstractClass
+  implements
+    Interface1,
+    Interface2,
+    Interface3,
+    Interface4,
+    Interface5,
+    Interface6,
+    Interface7,
+    Interface8 {}
+
+class ExtendsAbstractClassAndImplementsInterfaces4
+  extends AAAAAAAAAAAAAAbstractClass<Type1, Type2, Type3, Type4, Type5, Type6, Type7> {}
+
+class ExtendsAbstractClassAndImplementsInterfaces5
+  extends AAAAAAAAAAAAAAbstractClass<Type1, Type2, Type3, Type4, Type5, Type6, Type7>
+  implements
+    Interface1,
+    Interface2,
+    Interface3,
+    Interface4,
+    Interface5,
+    Interface6,
+    Interface7,
+    Interface8 {}
+
+class ImplementsInterfaceAndExtendsAbstractClass1<Foo>
+  extends FOOOOOOOOOOOOOOOOO
+  implements FOOOOOOOOOOOOOOOOO, BARRRRRRRRRR {}
+
+class Foo<FOOOOOOOOOOOOOOOOOOOOOOOOOOO, FOOOOOOOOOOOOOOOOOOOOOOOOOOO> implements Foo {}
+class Foo___<FOOOOOOOOOOOOOOOOOOOOOOOOOOO, FOOOOOOOOOOOOOOOOOOOOOOOOOOO> extends Foo {}
+interface Foo<FOOOOOOOOOOOOOOOOOOOOOOOOOOO, FOOOOOOOOOOOOOOOOOOOOOOOOOO> extends Foo {}
+
+class ImplementsInterfaceAndExtendsAbstractClass2<
+    TypeArgumentNumberOne,
+    TypeArgumentNumberTwo,
+    TypeArgumentNumberThree
+  >
+   extends FOOOOOOOOOOOOOOOOOO implements BaseInterface {}
+
+class ImplementsInterfaceClass1<
+    TypeArgumentNumberOne,
+    TypeArgumentNumberTwo,
+    TypeArgumentNumberThree
+  >
+    implements BaseInterface {}
+
+class ImplementsInterfaceClassWithComments1<
+    TypeArgumentNumberOne,
+    TypeArgumentNumberTwo,
+    TypeArgumentNumberThree
+  > // comments
+    implements BaseInterface {}
+
+=====================================output=====================================
+class Class
+  extends AbstractClass
+  implements Interface1, Interface2, Interface3, Interface4 {}
+
+class ExtendsAbstractClassAndImplementsInterfaces1
+  extends AbstractClass
+  implements Interface1, Interface2, Interface3, Interface4 {}
+
+class ExtendsAbstractClassAndImplementsInterfaces2
+  extends AAAAAAAAAAAAAAbstractClass
+  implements Interface1, Interface2, Interface3, Interface4 {}
+
+class ExtendsAbstractClassAndImplementsInterfaces3
+  extends AAAAAAAAAAAAAAbstractClass
+  implements
+    Interface1,
+    Interface2,
+    Interface3,
+    Interface4,
+    Interface5,
+    Interface6,
+    Interface7,
+    Interface8 {}
+
+class ExtendsAbstractClassAndImplementsInterfaces4 extends AAAAAAAAAAAAAAbstractClass<
+  Type1,
+  Type2,
+  Type3,
+  Type4,
+  Type5,
+  Type6,
+  Type7
+> {}
+
+class ExtendsAbstractClassAndImplementsInterfaces5
+  extends AAAAAAAAAAAAAAbstractClass<
+    Type1,
+    Type2,
+    Type3,
+    Type4,
+    Type5,
+    Type6,
+    Type7
+  >
+  implements
+    Interface1,
+    Interface2,
+    Interface3,
+    Interface4,
+    Interface5,
+    Interface6,
+    Interface7,
+    Interface8 {}
+
+class ImplementsInterfaceAndExtendsAbstractClass1<Foo>
+  extends FOOOOOOOOOOOOOOOOO
+  implements FOOOOOOOOOOOOOOOOO, BARRRRRRRRRR {}
+
+class Foo<
+  FOOOOOOOOOOOOOOOOOOOOOOOOOOO,
+  FOOOOOOOOOOOOOOOOOOOOOOOOOOO,
+> implements Foo {}
+class Foo___<
+  FOOOOOOOOOOOOOOOOOOOOOOOOOOO,
+  FOOOOOOOOOOOOOOOOOOOOOOOOOOO,
+> extends Foo {}
+interface Foo<
+  FOOOOOOOOOOOOOOOOOOOOOOOOOOO,
+  FOOOOOOOOOOOOOOOOOOOOOOOOOO,
+> extends Foo {}
+
+class ImplementsInterfaceAndExtendsAbstractClass2<
+  TypeArgumentNumberOne,
+  TypeArgumentNumberTwo,
+  TypeArgumentNumberThree,
+>
+  extends FOOOOOOOOOOOOOOOOOO
+  implements BaseInterface {}
+
+class ImplementsInterfaceClass1<
+  TypeArgumentNumberOne,
+  TypeArgumentNumberTwo,
+  TypeArgumentNumberThree,
+> implements BaseInterface {}
+
+class ImplementsInterfaceClassWithComments1<
+  TypeArgumentNumberOne,
+  TypeArgumentNumberTwo,
+  TypeArgumentNumberThree,
+> // comments
+  implements BaseInterface {}
+
+================================================================================
+`;
+
+exports[`generics.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A<T> implements Map<T> {}
+
+interface AudioBufferList {
+	mBuffers: interop.Reference<any /*AudioBuffer*/>;
+}
+
+=====================================output=====================================
+class A<T> implements Map<T> {}
+
+interface AudioBufferList {
+  mBuffers: interop.Reference<any /*AudioBuffer*/>;
+}
+
+================================================================================
+`;
+
+exports[`issue-16723.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export class JiraCreatePixFraudDetectionGateway
+  implements Pick<IssuePixFraudDetectionGateway, "createPixFraudDetectionIssue">
+{
+  constructor(private readonly logger: Logger) {
+    this.logger = logger.child({
+      context: JiraCreatePixFraudDetectionGateway.name,
+    });
+  }
+}
+export class JiraCreatePixFraudDetectionGateway
+  extends Pick<IssuePixFraudDetectionGateway___, "createPixFraudDetectionIssue">
+{
+  constructor(private readonly logger: Logger) {
+    this.logger = logger.child({
+      context: JiraCreatePixFraudDetectionGateway.name,
+    });
+  }
+}
+export interface JiraCreatePiFraudDetectionGate
+  extends Pick<IssuePixFraudDetectionGateway, "createPixFraudDetectionIssue">
+{
+  method(logger: Logger): string
+}
+
+export class JiraCreatePixFraudDetectionGateway
+  implements
+    Pick<IssuePixFraudDetectionGateway, "createPixFraudDetectionIssue">,
+    Pick<IssuePixFraudDetectionGateway, "createPixFraudDetectionIssue">
+{
+  constructor(private readonly logger: Logger) {
+    this.logger = logger.child({
+      context: JiraCreatePixFraudDetectionGateway.name,
+    });
+  }
+}
+
+=====================================output=====================================
+export class JiraCreatePixFraudDetectionGateway implements Pick<
+  IssuePixFraudDetectionGateway,
+  "createPixFraudDetectionIssue"
+> {
+  constructor(private readonly logger: Logger) {
+    this.logger = logger.child({
+      context: JiraCreatePixFraudDetectionGateway.name,
+    });
+  }
+}
+export class JiraCreatePixFraudDetectionGateway extends Pick<
+  IssuePixFraudDetectionGateway___,
+  "createPixFraudDetectionIssue"
+> {
+  constructor(private readonly logger: Logger) {
+    this.logger = logger.child({
+      context: JiraCreatePixFraudDetectionGateway.name,
+    });
+  }
+}
+export interface JiraCreatePiFraudDetectionGate extends Pick<
+  IssuePixFraudDetectionGateway,
+  "createPixFraudDetectionIssue"
+> {
+  method(logger: Logger): string;
+}
+
+export class JiraCreatePixFraudDetectionGateway
+  implements
+    Pick<IssuePixFraudDetectionGateway, "createPixFraudDetectionIssue">,
+    Pick<IssuePixFraudDetectionGateway, "createPixFraudDetectionIssue">
+{
+  constructor(private readonly logger: Logger) {
+    this.logger = logger.child({
+      context: JiraCreatePixFraudDetectionGateway.name,
+    });
+  }
+}
+
+================================================================================
+`;
+
+exports[`methods.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class X {
+    optionalMethod?() {}
+}
+
+interface Iterable<T> {
+  [Symbol.iterator](): Iterator<T>;
+}
+
+export class Check {
+  private static property = 'test';
+}
+
+=====================================output=====================================
+class X {
+  optionalMethod?() {}
+}
+
+interface Iterable<T> {
+  [Symbol.iterator](): Iterator<T>;
+}
+
+export class Check {
+  private static property = "test";
+}
+
+================================================================================
+`;
+
+exports[`optional.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class X {
+  private foo? = undefined;
+  "a-prop"?: boolean;
+}
+
+class A {
+  protected [s]?() {}
+}
+
+=====================================output=====================================
+class X {
+  private foo? = undefined;
+  "a-prop"?: boolean;
+}
+
+class A {
+  protected [s]?() {}
+}
+
+================================================================================
+`;
+
+exports[`parameter-properties.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class MyClass {
+  constructor(protected x: number, private y: string) {
+  }
+}
+
+[
+  class {
+    "constructor"(protected x: number, private y: string) {
+    }
+  },
+]
+
+class Mixed {
+  constructor(public a: number, b: unknown) {
+  }
+}
+
+class OneParameterProperty {
+  constructor(public foobar: boolean) {
+  }
+}
+
+=====================================output=====================================
+class MyClass {
+  constructor(
+    protected x: number,
+    private y: string,
+  ) {}
+}
+
+[
+  class {
+    constructor(
+      protected x: number,
+      private y: string,
+    ) {}
+  },
+];
+
+class Mixed {
+  constructor(
+    public a: number,
+    b: unknown,
+  ) {}
+}
+
+class OneParameterProperty {
+  constructor(public foobar: boolean) {}
+}
+
+================================================================================
+`;
+
+exports[`quoted-property.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class User {
+    "username": string;
+}
+
+=====================================output=====================================
+class User {
+  "username": string;
+}
+
+================================================================================
+`;
+
+exports[`standard_private_fields.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Square {
+    #sideLength: number;
+    readonly #area: number;
+    #unit?: string;
+
+    constructor(sideLength: number, unit?: string) {
+        this.#sideLength = sideLength;
+        this.#area = this.#sideLength ** 2;
+        if (unit) {
+          this.#unit = unit;
+        }
+    }
+
+    equals(other: any) {
+        return this.#sideLength === other.#sideLength;
+    }
+
+    getArea() {
+      return this.#area + (this.#unit ?? 'px') + '²';
+    }
+}
+
+=====================================output=====================================
+class Square {
+  #sideLength: number;
+  readonly #area: number;
+  #unit?: string;
+
+  constructor(sideLength: number, unit?: string) {
+    this.#sideLength = sideLength;
+    this.#area = this.#sideLength ** 2;
+    if (unit) {
+      this.#unit = unit;
+    }
+  }
+
+  equals(other: any) {
+    return this.#sideLength === other.#sideLength;
+  }
+
+  getArea() {
+    return this.#area + (this.#unit ?? "px") + "²";
+  }
+}
+
+================================================================================
+`;

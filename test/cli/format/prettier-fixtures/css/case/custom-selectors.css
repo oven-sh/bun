@@ -1,0 +1,5 @@
+@custom-selector :--camelCase .my-css-selector;
+
+:--camelCase {
+  content: red;
+}

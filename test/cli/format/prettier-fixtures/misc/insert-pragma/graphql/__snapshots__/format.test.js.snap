@@ -1,0 +1,39 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`with-pragma.graphql - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["graphql"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+# @prettier
+
+query Browse($offset:Int){browse(offset:$offset)}
+
+=====================================output=====================================
+# @prettier
+
+query Browse($offset: Int) {
+  browse(offset: $offset)
+}
+
+================================================================================
+`;
+
+exports[`without-pragma.graphql - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["graphql"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+query Browse($offset:Int){browse(offset:$offset)}
+
+=====================================output=====================================
+# @format
+
+query Browse($offset: Int) {
+  browse(offset: $offset)
+}
+
+================================================================================
+`;

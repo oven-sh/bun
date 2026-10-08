@@ -1,0 +1,802 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`abstract.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+abstract class AbstractSocket {
+  createSocket?(): Promise<string>
+}
+
+=====================================output=====================================
+abstract class AbstractSocket {
+  createSocket?(): Promise<string>;
+}
+
+================================================================================
+`;
+
+exports[`classExpression.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var x = class C {
+}
+
+var y = {
+    foo: class C2 {
+    }
+}
+
+var z = class C4 {
+}
+
+=====================================output=====================================
+var x = class C {};
+
+var y = {
+  foo: class C2 {},
+};
+
+var z = class C4 {};
+
+================================================================================
+`;
+
+exports[`mixinAccessModifiers.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// @declaration: true
+
+type Constructable = new (...args: any[]) => object;
+
+class Private {
+	constructor (...args: any[]) {}
+	private p: string;
+}
+
+class Private2 {
+	constructor (...args: any[]) {}
+	private p: string;
+}
+
+class Protected {
+	constructor (...args: any[]) {}
+	protected p: string;
+	protected static s: string;
+}
+
+class Protected2 {
+	constructor (...args: any[]) {}
+	protected p: string;
+	protected static s: string;
+}
+
+class Public {
+	constructor (...args: any[]) {}
+	public p: string;
+	public static s: string;
+}
+
+class Public2 {
+	constructor (...args: any[]) {}
+	public p: string;
+	public static s: string;
+}
+
+function f1(x: Private & Private2) {
+	x.p;  // Error, private constituent makes property inaccessible
+}
+
+function f2(x: Private & Protected) {
+	x.p;  // Error, private constituent makes property inaccessible
+}
+
+function f3(x: Private & Public) {
+	x.p;  // Error, private constituent makes property inaccessible
+}
+
+function f4(x: Protected & Protected2) {
+	x.p;  // Error, protected when all constituents are protected
+}
+
+function f5(x: Protected & Public) {
+	x.p;  // Ok, public if any constituent is public
+}
+
+function f6(x: Public & Public2) {
+	x.p;  // Ok, public if any constituent is public
+}
+
+declare function Mix<T, U>(c1: T, c2: U): T & U;
+
+// Can't derive from type with inaccessible properties
+
+class C1 extends Mix(Private, Private2) {}
+class C2 extends Mix(Private, Protected) {}
+class C3 extends Mix(Private, Public) {}
+
+class C4 extends Mix(Protected, Protected2) {
+	f(c4: C4, c5: C5, c6: C6) {
+		c4.p;
+		c5.p;
+		c6.p;
+	}
+	static g() {
+		C4.s;
+		C5.s;
+		C6.s
+	}
+}
+
+class C5 extends Mix(Protected, Public) {
+	f(c4: C4, c5: C5, c6: C6) {
+		c4.p;  // Error, not in class deriving from Protected2
+		c5.p;
+		c6.p;
+	}
+	static g() {
+		C4.s;  // Error, not in class deriving from Protected2
+		C5.s;
+		C6.s
+	}
+}
+
+class C6 extends Mix(Public, Public2) {
+	f(c4: C4, c5: C5, c6: C6) {
+		c4.p;  // Error, not in class deriving from Protected2
+		c5.p;
+		c6.p;
+	}
+	static g() {
+		C4.s;  // Error, not in class deriving from Protected2
+		C5.s;
+		C6.s
+	}
+}
+
+=====================================output=====================================
+// @declaration: true
+
+type Constructable = new (...args: any[]) => object;
+
+class Private {
+  constructor(...args: any[]) {}
+  private p: string;
+}
+
+class Private2 {
+  constructor(...args: any[]) {}
+  private p: string;
+}
+
+class Protected {
+  constructor(...args: any[]) {}
+  protected p: string;
+  protected static s: string;
+}
+
+class Protected2 {
+  constructor(...args: any[]) {}
+  protected p: string;
+  protected static s: string;
+}
+
+class Public {
+  constructor(...args: any[]) {}
+  public p: string;
+  public static s: string;
+}
+
+class Public2 {
+  constructor(...args: any[]) {}
+  public p: string;
+  public static s: string;
+}
+
+function f1(x: Private & Private2) {
+  x.p; // Error, private constituent makes property inaccessible
+}
+
+function f2(x: Private & Protected) {
+  x.p; // Error, private constituent makes property inaccessible
+}
+
+function f3(x: Private & Public) {
+  x.p; // Error, private constituent makes property inaccessible
+}
+
+function f4(x: Protected & Protected2) {
+  x.p; // Error, protected when all constituents are protected
+}
+
+function f5(x: Protected & Public) {
+  x.p; // Ok, public if any constituent is public
+}
+
+function f6(x: Public & Public2) {
+  x.p; // Ok, public if any constituent is public
+}
+
+declare function Mix<T, U>(c1: T, c2: U): T & U;
+
+// Can't derive from type with inaccessible properties
+
+class C1 extends Mix(Private, Private2) {}
+class C2 extends Mix(Private, Protected) {}
+class C3 extends Mix(Private, Public) {}
+
+class C4 extends Mix(Protected, Protected2) {
+  f(c4: C4, c5: C5, c6: C6) {
+    c4.p;
+    c5.p;
+    c6.p;
+  }
+  static g() {
+    C4.s;
+    C5.s;
+    C6.s;
+  }
+}
+
+class C5 extends Mix(Protected, Public) {
+  f(c4: C4, c5: C5, c6: C6) {
+    c4.p; // Error, not in class deriving from Protected2
+    c5.p;
+    c6.p;
+  }
+  static g() {
+    C4.s; // Error, not in class deriving from Protected2
+    C5.s;
+    C6.s;
+  }
+}
+
+class C6 extends Mix(Public, Public2) {
+  f(c4: C4, c5: C5, c6: C6) {
+    c4.p; // Error, not in class deriving from Protected2
+    c5.p;
+    c6.p;
+  }
+  static g() {
+    C4.s; // Error, not in class deriving from Protected2
+    C5.s;
+    C6.s;
+  }
+}
+
+================================================================================
+`;
+
+exports[`mixinClassesAnnotated.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// @declaration: true
+
+type Constructor<T> = new(...args: any[]) => T;
+
+class Base {
+    constructor(public x: number, public y: number) {}
+}
+
+class Derived extends Base {
+    constructor(x: number, y: number, public z: number) {
+        super(x, y);
+    }
+}
+
+const Printable = <T extends Constructor<Base>>(superClass: T): Constructor<Printable> & { message: string } & T =>
+    class extends superClass {
+        static message = "hello";
+        print() {
+            const output = this.x + "," + this.y;
+        }
+    }
+
+
+function Tagged<T extends Constructor<{}>>(superClass: T): Constructor<Tagged> & T {
+    class C extends superClass {
+        _tag: string;
+        constructor(...args: any[]) {
+            super(...args);
+            this._tag = "hello";
+        }
+    }
+    return C;
+}
+
+const Thing1 = Tagged(Derived);
+const Thing2 = Tagged(Printable(Derived));
+Thing2.message;
+
+function f1() {
+    const thing = new Thing1(1, 2, 3);
+    thing.x;
+    thing._tag;
+}
+
+function f2() {
+    const thing = new Thing2(1, 2, 3);
+    thing.x;
+    thing._tag;
+    thing.print();
+}
+
+class Thing3 extends Thing2 {
+    constructor(tag: string) {
+        super(10, 20, 30);
+        this._tag = tag;
+    }
+    test() {
+        this.print();
+    }
+}
+
+=====================================output=====================================
+// @declaration: true
+
+type Constructor<T> = new (...args: any[]) => T;
+
+class Base {
+  constructor(
+    public x: number,
+    public y: number,
+  ) {}
+}
+
+class Derived extends Base {
+  constructor(
+    x: number,
+    y: number,
+    public z: number,
+  ) {
+    super(x, y);
+  }
+}
+
+const Printable = <T extends Constructor<Base>>(
+  superClass: T,
+): Constructor<Printable> & { message: string } & T =>
+  class extends superClass {
+    static message = "hello";
+    print() {
+      const output = this.x + "," + this.y;
+    }
+  };
+
+function Tagged<T extends Constructor<{}>>(
+  superClass: T,
+): Constructor<Tagged> & T {
+  class C extends superClass {
+    _tag: string;
+    constructor(...args: any[]) {
+      super(...args);
+      this._tag = "hello";
+    }
+  }
+  return C;
+}
+
+const Thing1 = Tagged(Derived);
+const Thing2 = Tagged(Printable(Derived));
+Thing2.message;
+
+function f1() {
+  const thing = new Thing1(1, 2, 3);
+  thing.x;
+  thing._tag;
+}
+
+function f2() {
+  const thing = new Thing2(1, 2, 3);
+  thing.x;
+  thing._tag;
+  thing.print();
+}
+
+class Thing3 extends Thing2 {
+  constructor(tag: string) {
+    super(10, 20, 30);
+    this._tag = tag;
+  }
+  test() {
+    this.print();
+  }
+}
+
+================================================================================
+`;
+
+exports[`mixinClassesAnonymous.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type Constructor<T> = new(...args: any[]) => T;
+
+class Base {
+    constructor(public x: number, public y: number) {}
+}
+
+class Derived extends Base {
+    constructor(x: number, y: number, public z: number) {
+        super(x, y);
+    }
+}
+
+const Printable = <T extends Constructor<Base>>(superClass: T) => class extends superClass {
+    static message = "hello";
+    print() {
+        const output = this.x + "," + this.y;
+    }
+}
+
+function Tagged<T extends Constructor<{}>>(superClass: T) {
+    class C extends superClass {
+        _tag: string;
+        constructor(...args: any[]) {
+            super(...args);
+            this._tag = "hello";
+        }
+    }
+    return C;
+}
+
+const Thing1 = Tagged(Derived);
+const Thing2 = Tagged(Printable(Derived));
+Thing2.message;
+
+function f1() {
+    const thing = new Thing1(1, 2, 3);
+    thing.x;
+    thing._tag;
+}
+
+function f2() {
+    const thing = new Thing2(1, 2, 3);
+    thing.x;
+    thing._tag;
+    thing.print();
+}
+
+class Thing3 extends Thing2 {
+    constructor(tag: string) {
+        super(10, 20, 30);
+        this._tag = tag;
+    }
+    test() {
+        this.print();
+    }
+}
+
+// Repro from #13805
+
+const Timestamped = <CT extends Constructor<object>>(Base: CT) => {
+    return class extends Base {
+        timestamp = new Date();
+    };
+}
+
+=====================================output=====================================
+type Constructor<T> = new (...args: any[]) => T;
+
+class Base {
+  constructor(
+    public x: number,
+    public y: number,
+  ) {}
+}
+
+class Derived extends Base {
+  constructor(
+    x: number,
+    y: number,
+    public z: number,
+  ) {
+    super(x, y);
+  }
+}
+
+const Printable = <T extends Constructor<Base>>(superClass: T) =>
+  class extends superClass {
+    static message = "hello";
+    print() {
+      const output = this.x + "," + this.y;
+    }
+  };
+
+function Tagged<T extends Constructor<{}>>(superClass: T) {
+  class C extends superClass {
+    _tag: string;
+    constructor(...args: any[]) {
+      super(...args);
+      this._tag = "hello";
+    }
+  }
+  return C;
+}
+
+const Thing1 = Tagged(Derived);
+const Thing2 = Tagged(Printable(Derived));
+Thing2.message;
+
+function f1() {
+  const thing = new Thing1(1, 2, 3);
+  thing.x;
+  thing._tag;
+}
+
+function f2() {
+  const thing = new Thing2(1, 2, 3);
+  thing.x;
+  thing._tag;
+  thing.print();
+}
+
+class Thing3 extends Thing2 {
+  constructor(tag: string) {
+    super(10, 20, 30);
+    this._tag = tag;
+  }
+  test() {
+    this.print();
+  }
+}
+
+// Repro from #13805
+
+const Timestamped = <CT extends Constructor<object>>(Base: CT) => {
+  return class extends Base {
+    timestamp = new Date();
+  };
+};
+
+================================================================================
+`;
+
+exports[`mixinClassesMembers.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// @declaration: true
+
+declare class C1 {
+    public a: number;
+    protected b: number;
+    private c: number;
+    constructor(s: string);
+    constructor(n: number);
+}
+
+declare class M1 {
+    constructor(...args: any[]);
+    p: number;
+    static p: number;
+}
+
+declare class M2 {
+    constructor(...args: any[]);
+    f(): number;
+    static f(): number;
+}
+
+declare const Mixed1: typeof M1 & typeof C1;
+declare const Mixed2: typeof C1 & typeof M1;
+declare const Mixed3: typeof M2 & typeof M1 & typeof C1;
+declare const Mixed4: typeof C1 & typeof M1 & typeof M2;
+declare const Mixed5: typeof M1 & typeof M2;
+
+function f1() {
+    let x1 = new Mixed1("hello");
+    let x2 = new Mixed1(42);
+    let x3 = new Mixed2("hello");
+    let x4 = new Mixed2(42);
+    let x5 = new Mixed3("hello");
+    let x6 = new Mixed3(42);
+    let x7 = new Mixed4("hello");
+    let x8 = new Mixed4(42);
+    let x9 = new Mixed5();
+}
+
+function f2() {
+    let x = new Mixed1("hello");
+    x.a;
+    x.p;
+    Mixed1.p;
+}
+
+function f3() {
+    let x = new Mixed2("hello");
+    x.a;
+    x.p;
+    Mixed2.p;
+}
+
+function f4() {
+    let x = new Mixed3("hello");
+    x.a;
+    x.p;
+    x.f();
+    Mixed3.p;
+    Mixed3.f();
+}
+
+function f5() {
+    let x = new Mixed4("hello");
+    x.a;
+    x.p;
+    x.f();
+    Mixed4.p;
+    Mixed4.f();
+}
+
+function f6() {
+    let x = new Mixed5();
+    x.p;
+    x.f();
+    Mixed5.p;
+    Mixed5.f();
+}
+
+class C2 extends Mixed1 {
+    constructor() {
+        super("hello");
+        this.a;
+        this.b;
+        this.p;
+    }
+}
+
+class C3 extends Mixed3 {
+    constructor() {
+        super(42);
+        this.a;
+        this.b;
+        this.p;
+        this.f();
+    }
+    f() { return super.f(); }
+}
+
+=====================================output=====================================
+// @declaration: true
+
+declare class C1 {
+  public a: number;
+  protected b: number;
+  private c: number;
+  constructor(s: string);
+  constructor(n: number);
+}
+
+declare class M1 {
+  constructor(...args: any[]);
+  p: number;
+  static p: number;
+}
+
+declare class M2 {
+  constructor(...args: any[]);
+  f(): number;
+  static f(): number;
+}
+
+declare const Mixed1: typeof M1 & typeof C1;
+declare const Mixed2: typeof C1 & typeof M1;
+declare const Mixed3: typeof M2 & typeof M1 & typeof C1;
+declare const Mixed4: typeof C1 & typeof M1 & typeof M2;
+declare const Mixed5: typeof M1 & typeof M2;
+
+function f1() {
+  let x1 = new Mixed1("hello");
+  let x2 = new Mixed1(42);
+  let x3 = new Mixed2("hello");
+  let x4 = new Mixed2(42);
+  let x5 = new Mixed3("hello");
+  let x6 = new Mixed3(42);
+  let x7 = new Mixed4("hello");
+  let x8 = new Mixed4(42);
+  let x9 = new Mixed5();
+}
+
+function f2() {
+  let x = new Mixed1("hello");
+  x.a;
+  x.p;
+  Mixed1.p;
+}
+
+function f3() {
+  let x = new Mixed2("hello");
+  x.a;
+  x.p;
+  Mixed2.p;
+}
+
+function f4() {
+  let x = new Mixed3("hello");
+  x.a;
+  x.p;
+  x.f();
+  Mixed3.p;
+  Mixed3.f();
+}
+
+function f5() {
+  let x = new Mixed4("hello");
+  x.a;
+  x.p;
+  x.f();
+  Mixed4.p;
+  Mixed4.f();
+}
+
+function f6() {
+  let x = new Mixed5();
+  x.p;
+  x.f();
+  Mixed5.p;
+  Mixed5.f();
+}
+
+class C2 extends Mixed1 {
+  constructor() {
+    super("hello");
+    this.a;
+    this.b;
+    this.p;
+  }
+}
+
+class C3 extends Mixed3 {
+  constructor() {
+    super(42);
+    this.a;
+    this.b;
+    this.p;
+    this.f();
+  }
+  f() {
+    return super.f();
+  }
+}
+
+================================================================================
+`;
+
+exports[`nestedClassDeclaration.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// nested classes are not allowed
+
+class C {
+    x: string;
+}
+
+function foo() {
+    class C3 {
+    }
+}
+
+=====================================output=====================================
+// nested classes are not allowed
+
+class C {
+  x: string;
+}
+
+function foo() {
+  class C3 {}
+}
+
+================================================================================
+`;

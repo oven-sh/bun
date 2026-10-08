@@ -1,0 +1,559 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`arrow-params.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "babel-flow", "babel-ts"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class C {
+  #x = 1;
+  #p = ({ #x: x }) => {}
+}
+
+=====================================output=====================================
+class C {
+  #x = 1;
+  #p = ({ #x: x }) => {};
+}
+
+================================================================================
+`;
+
+exports[`arrow-params.js format[acorn] 1`] = `
+"Unexpected token (3:11)
+  1 | class C {
+  2 |   #x = 1;
+> 3 |   #p = ({ #x: x }) => {}
+    |           ^
+  4 | }
+  5 |
+Cause: Unexpected token (3:10)"
+`;
+
+exports[`arrow-params.js format[espree] 1`] = `
+"Unexpected token #x (3:11)
+  1 | class C {
+  2 |   #x = 1;
+> 3 |   #p = ({ #x: x }) => {}
+    |           ^
+  4 | }
+  5 |
+Cause: Unexpected token #x"
+`;
+
+exports[`arrow-params.js format[meriyah] 1`] = `
+"Unexpected token: 'PrivateField' (3:11)
+  1 | class C {
+  2 |   #x = 1;
+> 3 |   #p = ({ #x: x }) => {}
+    |           ^
+  4 | }
+  5 |
+Cause: [3:10-3:11]: Unexpected token: 'PrivateField'"
+`;
+
+exports[`arrow-params.js format[oxc] 1`] = `
+"Private identifier '#x' is not allowed in property names (3:11)
+  1 | class C {
+  2 |   #x = 1;
+> 3 |   #p = ({ #x: x }) => {}
+    |           ^^
+  4 | }
+  5 |"
+`;
+
+exports[`arrow-params.js format[yuku] 1`] = `
+"Unexpected token '#x' as property key (3:11)
+  1 | class C {
+  2 |   #x = 1;
+> 3 |   #p = ({ #x: x }) => {}
+    |           ^^
+  4 | }
+  5 |"
+`;
+
+exports[`assignment.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "babel-flow", "babel-ts"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class C {
+  #x = 1;
+  m() {
+    let x;
+    ({ #x: x } = this);
+  }
+}
+
+=====================================output=====================================
+class C {
+  #x = 1;
+  m() {
+    let x;
+    ({ #x: x } = this);
+  }
+}
+
+================================================================================
+`;
+
+exports[`assignment.js format[acorn] 1`] = `
+"Unexpected token (5:8)
+  3 |   m() {
+  4 |     let x;
+> 5 |     ({ #x: x } = this);
+    |        ^
+  6 |   }
+  7 | }
+  8 |
+Cause: Unexpected token (5:7)"
+`;
+
+exports[`assignment.js format[espree] 1`] = `
+"Unexpected token #x (5:8)
+  3 |   m() {
+  4 |     let x;
+> 5 |     ({ #x: x } = this);
+    |        ^
+  6 |   }
+  7 | }
+  8 |
+Cause: Unexpected token #x"
+`;
+
+exports[`assignment.js format[meriyah] 1`] = `
+"Unexpected token: 'PrivateField' (5:8)
+  3 |   m() {
+  4 |     let x;
+> 5 |     ({ #x: x } = this);
+    |        ^
+  6 |   }
+  7 | }
+  8 |
+Cause: [5:7-5:8]: Unexpected token: 'PrivateField'"
+`;
+
+exports[`assignment.js format[oxc] 1`] = `
+"Private identifier '#x' is not allowed in property names (5:8)
+  3 |   m() {
+  4 |     let x;
+> 5 |     ({ #x: x } = this);
+    |        ^^
+  6 |   }
+  7 | }
+  8 |"
+`;
+
+exports[`assignment.js format[yuku] 1`] = `
+"Unexpected token '#x' as property key (5:8)
+  3 |   m() {
+  4 |     let x;
+> 5 |     ({ #x: x } = this);
+    |        ^^
+  6 |   }
+  7 | }
+  8 |"
+`;
+
+exports[`async-arrow-params.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "babel-flow", "babel-ts"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class C {
+  #x = 1;
+  #p = async ({ #x: x }) => {}
+}
+
+=====================================output=====================================
+class C {
+  #x = 1;
+  #p = async ({ #x: x }) => {};
+}
+
+================================================================================
+`;
+
+exports[`async-arrow-params.js format[acorn] 1`] = `
+"Unexpected token (3:17)
+  1 | class C {
+  2 |   #x = 1;
+> 3 |   #p = async ({ #x: x }) => {}
+    |                 ^
+  4 | }
+  5 |
+Cause: Unexpected token (3:16)"
+`;
+
+exports[`async-arrow-params.js format[espree] 1`] = `
+"Unexpected token #x (3:17)
+  1 | class C {
+  2 |   #x = 1;
+> 3 |   #p = async ({ #x: x }) => {}
+    |                 ^
+  4 | }
+  5 |
+Cause: Unexpected token #x"
+`;
+
+exports[`async-arrow-params.js format[meriyah] 1`] = `
+"Unexpected token: 'PrivateField' (3:17)
+  1 | class C {
+  2 |   #x = 1;
+> 3 |   #p = async ({ #x: x }) => {}
+    |                 ^
+  4 | }
+  5 |
+Cause: [3:16-3:17]: Unexpected token: 'PrivateField'"
+`;
+
+exports[`async-arrow-params.js format[oxc] 1`] = `
+"Private identifier '#x' is not allowed in property names (3:17)
+  1 | class C {
+  2 |   #x = 1;
+> 3 |   #p = async ({ #x: x }) => {}
+    |                 ^^
+  4 | }
+  5 |"
+`;
+
+exports[`async-arrow-params.js format[yuku] 1`] = `
+"Unexpected token '#x' as property key (3:17)
+  1 | class C {
+  2 |   #x = 1;
+> 3 |   #p = async ({ #x: x }) => {}
+    |                 ^^
+  4 | }
+  5 |"
+`;
+
+exports[`bindings.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "babel-flow", "babel-ts"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class C {
+  #x = 1;
+  m() {
+    const {#x: x} = this;
+  }
+}
+
+=====================================output=====================================
+class C {
+  #x = 1;
+  m() {
+    const { #x: x } = this;
+  }
+}
+
+================================================================================
+`;
+
+exports[`bindings.js format[acorn] 1`] = `
+"Unexpected token (4:12)
+  2 |   #x = 1;
+  3 |   m() {
+> 4 |     const {#x: x} = this;
+    |            ^
+  5 |   }
+  6 | }
+  7 |
+Cause: Unexpected token (4:11)"
+`;
+
+exports[`bindings.js format[espree] 1`] = `
+"Unexpected token #x (4:12)
+  2 |   #x = 1;
+  3 |   m() {
+> 4 |     const {#x: x} = this;
+    |            ^
+  5 |   }
+  6 | }
+  7 |
+Cause: Unexpected token #x"
+`;
+
+exports[`bindings.js format[meriyah] 1`] = `
+"Unexpected token: 'PrivateField' (4:12)
+  2 |   #x = 1;
+  3 |   m() {
+> 4 |     const {#x: x} = this;
+    |            ^
+  5 |   }
+  6 | }
+  7 |
+Cause: [4:11-4:12]: Unexpected token: 'PrivateField'"
+`;
+
+exports[`bindings.js format[oxc] 1`] = `
+"Private identifier '#x' is not allowed in property names (4:12)
+  2 |   #x = 1;
+  3 |   m() {
+> 4 |     const {#x: x} = this;
+    |            ^^
+  5 |   }
+  6 | }
+  7 |"
+`;
+
+exports[`bindings.js format[yuku] 1`] = `
+"Unexpected token '#x' as property key (4:12)
+  2 |   #x = 1;
+  3 |   m() {
+> 4 |     const {#x: x} = this;
+    |            ^^
+  5 |   }
+  6 | }
+  7 |"
+`;
+
+exports[`for-lhs.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "babel-flow", "babel-ts"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class C {
+  #x = 1;
+  m() {
+    let x;
+    for ({#x: x} of [this]);
+  }
+}
+
+=====================================output=====================================
+class C {
+  #x = 1;
+  m() {
+    let x;
+    for ({ #x: x } of [this]);
+  }
+}
+
+================================================================================
+`;
+
+exports[`for-lhs.js format[acorn] 1`] = `
+"Unexpected token (5:11)
+  3 |   m() {
+  4 |     let x;
+> 5 |     for ({#x: x} of [this]);
+    |           ^
+  6 |   }
+  7 | }
+  8 |
+Cause: Unexpected token (5:10)"
+`;
+
+exports[`for-lhs.js format[espree] 1`] = `
+"Unexpected token #x (5:11)
+  3 |   m() {
+  4 |     let x;
+> 5 |     for ({#x: x} of [this]);
+    |           ^
+  6 |   }
+  7 | }
+  8 |
+Cause: Unexpected token #x"
+`;
+
+exports[`for-lhs.js format[meriyah] 1`] = `
+"Unexpected token: 'PrivateField' (5:11)
+  3 |   m() {
+  4 |     let x;
+> 5 |     for ({#x: x} of [this]);
+    |           ^
+  6 |   }
+  7 | }
+  8 |
+Cause: [5:10-5:11]: Unexpected token: 'PrivateField'"
+`;
+
+exports[`for-lhs.js format[oxc] 1`] = `
+"Private identifier '#x' is not allowed in property names (5:11)
+  3 |   m() {
+  4 |     let x;
+> 5 |     for ({#x: x} of [this]);
+    |           ^^
+  6 |   }
+  7 | }
+  8 |"
+`;
+
+exports[`for-lhs.js format[yuku] 1`] = `
+"Unexpected token '#x' as property key (5:11)
+  3 |   m() {
+  4 |     let x;
+> 5 |     for ({#x: x} of [this]);
+    |           ^^
+  6 |   }
+  7 | }
+  8 |"
+`;
+
+exports[`nested-bindings.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "babel-flow", "babel-ts"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class C {
+  #x = 1;
+  m() {
+    const {x: { #x: [x] }, y: [...{ #x: y }]} = this;
+  }
+}
+
+=====================================output=====================================
+class C {
+  #x = 1;
+  m() {
+    const {
+      x: {
+        #x: [x],
+      },
+      y: [...{ #x: y }],
+    } = this;
+  }
+}
+
+================================================================================
+`;
+
+exports[`nested-bindings.js format[acorn] 1`] = `
+"Unexpected token (4:17)
+  2 |   #x = 1;
+  3 |   m() {
+> 4 |     const {x: { #x: [x] }, y: [...{ #x: y }]} = this;
+    |                 ^
+  5 |   }
+  6 | }
+  7 |
+Cause: Unexpected token (4:16)"
+`;
+
+exports[`nested-bindings.js format[espree] 1`] = `
+"Unexpected token #x (4:17)
+  2 |   #x = 1;
+  3 |   m() {
+> 4 |     const {x: { #x: [x] }, y: [...{ #x: y }]} = this;
+    |                 ^
+  5 |   }
+  6 | }
+  7 |
+Cause: Unexpected token #x"
+`;
+
+exports[`nested-bindings.js format[meriyah] 1`] = `
+"Unexpected token: 'PrivateField' (4:17)
+  2 |   #x = 1;
+  3 |   m() {
+> 4 |     const {x: { #x: [x] }, y: [...{ #x: y }]} = this;
+    |                 ^
+  5 |   }
+  6 | }
+  7 |
+Cause: [4:16-4:17]: Unexpected token: 'PrivateField'"
+`;
+
+exports[`nested-bindings.js format[oxc] 1`] = `
+"Private identifier '#x' is not allowed in property names (4:17)
+  2 |   #x = 1;
+  3 |   m() {
+> 4 |     const {x: { #x: [x] }, y: [...{ #x: y }]} = this;
+    |                 ^^
+  5 |   }
+  6 | }
+  7 |"
+`;
+
+exports[`nested-bindings.js format[yuku] 1`] = `
+"Unexpected token '#x' as property key (4:17)
+  2 |   #x = 1;
+  3 |   m() {
+> 4 |     const {x: { #x: [x] }, y: [...{ #x: y }]} = this;
+    |                 ^^
+  5 |   }
+  6 | }
+  7 |"
+`;
+
+exports[`valid-multiple-bindings.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "babel-flow", "babel-ts"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class C {
+  #x = 1;
+  m() {
+    const {#x: x1, #x: x2 = x1 } = this;
+  }
+}
+
+=====================================output=====================================
+class C {
+  #x = 1;
+  m() {
+    const { #x: x1, #x: x2 = x1 } = this;
+  }
+}
+
+================================================================================
+`;
+
+exports[`valid-multiple-bindings.js format[acorn] 1`] = `
+"Unexpected token (4:12)
+  2 |   #x = 1;
+  3 |   m() {
+> 4 |     const {#x: x1, #x: x2 = x1 } = this;
+    |            ^
+  5 |   }
+  6 | }
+  7 |
+Cause: Unexpected token (4:11)"
+`;
+
+exports[`valid-multiple-bindings.js format[espree] 1`] = `
+"Unexpected token #x (4:12)
+  2 |   #x = 1;
+  3 |   m() {
+> 4 |     const {#x: x1, #x: x2 = x1 } = this;
+    |            ^
+  5 |   }
+  6 | }
+  7 |
+Cause: Unexpected token #x"
+`;
+
+exports[`valid-multiple-bindings.js format[meriyah] 1`] = `
+"Unexpected token: 'PrivateField' (4:12)
+  2 |   #x = 1;
+  3 |   m() {
+> 4 |     const {#x: x1, #x: x2 = x1 } = this;
+    |            ^
+  5 |   }
+  6 | }
+  7 |
+Cause: [4:11-4:12]: Unexpected token: 'PrivateField'"
+`;
+
+exports[`valid-multiple-bindings.js format[oxc] 1`] = `
+"Private identifier '#x' is not allowed in property names (4:12)
+  2 |   #x = 1;
+  3 |   m() {
+> 4 |     const {#x: x1, #x: x2 = x1 } = this;
+    |            ^^
+  5 |   }
+  6 | }
+  7 |"
+`;
+
+exports[`valid-multiple-bindings.js format[yuku] 1`] = `
+"Unexpected token '#x' as property key (4:12)
+  2 |   #x = 1;
+  3 |   m() {
+> 4 |     const {#x: x1, #x: x2 = x1 } = this;
+    |            ^^
+  5 |   }
+  6 | }
+  7 |"
+`;

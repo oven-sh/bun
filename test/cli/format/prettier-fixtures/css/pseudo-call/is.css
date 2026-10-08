@@ -1,0 +1,33 @@
+:is(ol, ul, menu:unsupported) :is(ol, ul) {
+    color: green;
+}
+
+:is(ol, ul) :is(ol, ul) ol {
+    list-style-type: lower-greek;
+    color: chocolate;
+}
+
+:is(ol, ul, menu, dir) :is(ol, ul, menu, dir) :is(ul, menu, dir) {
+  list-style-type: square;
+}
+
+/* Level 0 */
+h1 {
+  font-size: 30px;
+}
+/* Level 1 */
+:is(section, article, aside, nav) h1 {
+  font-size: 25px;
+}
+/* Level 2 */
+:is(section, article, aside, nav) :is(section, article, aside, nav) h1 {
+  font-size: 20px;
+}
+/* Level 3 */
+:is(section, article, aside, nav)  :is(section, article, aside, nav)  :is(section, article, aside, nav)  h1 {
+  font-size: 15px;
+}
+
+some-element:is(::before, ::after) {
+  display: block;
+}

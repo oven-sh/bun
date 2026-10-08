@@ -1,0 +1,163 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`empty-front-matter-with-pragma.css - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---
+---
+
+/** @prettier */
+
+.class {    display: none;    }
+
+=====================================output=====================================
+---
+---
+
+/** @prettier */
+
+.class {
+  display: none;
+}
+
+================================================================================
+`;
+
+exports[`empty-front-matter-without-pragma.css - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---
+---
+
+.class {    display: none;    }
+
+=====================================output=====================================
+---
+---
+
+.class {    display: none;    }
+
+================================================================================
+`;
+
+exports[`front-matter-with-pragma.css - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---
+something
+---
+
+/** @prettier */
+
+.class {    display: none;    }
+
+=====================================output=====================================
+---
+something
+---
+
+/** @prettier */
+
+.class {
+  display: none;
+}
+
+================================================================================
+`;
+
+exports[`front-matter-without-pragma.css - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---
+something
+---
+
+.class {    display: none;    }
+
+=====================================output=====================================
+---
+something
+---
+
+.class {    display: none;    }
+
+================================================================================
+`;
+
+exports[`with-pragma.css - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/** @prettier */
+
+.class {    display: none;    }
+
+=====================================output=====================================
+/** @prettier */
+
+.class {
+  display: none;
+}
+
+================================================================================
+`;
+
+exports[`with-pragma-in-multiline.css - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/**
+ * MIT LICENSE
+ * 
+ * bla bla bla
+ *
+ * @format
+ */
+
+.class {    display: none;    }
+
+=====================================output=====================================
+/**
+ * MIT LICENSE
+ * 
+ * bla bla bla
+ *
+ * @format
+ */
+
+.class {
+  display: none;
+}
+
+================================================================================
+`;
+
+exports[`without-pragma.css - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.class {    display: none;    }
+
+=====================================output=====================================
+.class {    display: none;    }
+
+================================================================================
+`;

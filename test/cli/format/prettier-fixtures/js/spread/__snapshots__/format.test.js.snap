@@ -1,0 +1,22 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`spread.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const foo = { ...(a || b) };
+const foo2 = { ...a || b };
+const foo3 = { ...(a ? b : c) };
+
+async () => ({ ...(await foo) });
+
+=====================================output=====================================
+const foo = { ...(a || b) };
+const foo2 = { ...(a || b) };
+const foo3 = { ...(a ? b : c) };
+
+async () => ({ ...(await foo) });
+
+================================================================================
+`;

@@ -1,0 +1,699 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`array-and-object.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo = /** @type A */ ({
+  // comment
+  width,
+  height,
+  ...margins,
+});
+
+foo = /** @type A */ ([
+  // comment
+  width,
+  height,
+  ...margins,
+]);
+
+=====================================output=====================================
+foo = /** @type A */ ({
+  // comment
+  width,
+  height,
+  ...margins,
+});
+
+foo = /** @type A */ ([
+  // comment
+  width,
+  height,
+  ...margins,
+]);
+
+================================================================================
+`;
+
+exports[`binary-expr.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var a = b || /** @type {string} */
+    (c);
+
+=====================================output=====================================
+var a = b || /** @type {string} */ (c);
+
+================================================================================
+`;
+
+exports[`closure-compiler-type-cast.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// test to make sure comments are attached correctly
+let inlineComment = /* some comment */ (
+  someReallyLongFunctionCall(withLots, ofArguments));
+
+let object = {
+  key: /* some comment */ (someReallyLongFunctionCall(withLots, ofArguments))
+};
+
+// preserve parens only for type casts
+let assignment = /** @type {string} */ (getValue());
+let value = /** @type {string} */ (this.members[0]).functionCall();
+
+functionCall(1 + /** @type {string} */ (value), /** @type {!Foo} */ ({}));
+
+function returnValue() {
+  return /** @type {!Array.<string>} */ (['hello', 'you']);
+}
+
+// Only numberOrString is typecast
+var newArray = /** @type {array} */ (numberOrString).map(x => x);
+var newArray = /** @type {array} */ ((numberOrString)).map(x => x);
+var newArray = test(/** @type {array} */ (numberOrString).map(x => x));
+var newArray = test(/** @type {array} */ ((numberOrString)).map(x => x));
+
+// The numberOrString.map CallExpression is typecast
+var newArray = /** @type {array} */ (numberOrString.map(x => x));
+var newArray = /** @type {array} */ ((numberOrString).map(x => x));
+var newArray = test(/** @type {array} */ (numberOrString.map(x => x)));
+var newArray = test(/** @type {array} */ ((numberOrString).map(x => x)));
+
+test(/** @type {number} */(num) + 1);
+test(/** @type {!Array} */(arrOrString).length + 1);
+test(/** @type {!Array} */((arrOrString)).length + 1);
+
+const data = functionCall(
+  arg1,
+  arg2,
+  /** @type {{height: number, width: number}} */ (arg3));
+
+const style = /** @type {{
+  width: number,
+  height: number,
+  marginTop: number,
+  marginLeft: number,
+  marginRight: number,
+  marginBottom: number,
+}} */ ({
+  width,
+  height,
+  ...margins,
+});
+
+const style2 =/**
+ * @type {{
+ *   width: number,
+ * }}
+*/({
+  width,
+});
+
+
+=====================================output=====================================
+// test to make sure comments are attached correctly
+let inlineComment = /* some comment */ someReallyLongFunctionCall(
+  withLots,
+  ofArguments,
+);
+
+let object = {
+  key: /* some comment */ someReallyLongFunctionCall(withLots, ofArguments),
+};
+
+// preserve parens only for type casts
+let assignment = /** @type {string} */ (getValue());
+let value = /** @type {string} */ (this.members[0]).functionCall();
+
+functionCall(1 + /** @type {string} */ (value), /** @type {!Foo} */ ({}));
+
+function returnValue() {
+  return /** @type {!Array.<string>} */ (["hello", "you"]);
+}
+
+// Only numberOrString is typecast
+var newArray = /** @type {array} */ (numberOrString).map((x) => x);
+var newArray = /** @type {array} */ (numberOrString).map((x) => x);
+var newArray = test(/** @type {array} */ (numberOrString).map((x) => x));
+var newArray = test(/** @type {array} */ (numberOrString).map((x) => x));
+
+// The numberOrString.map CallExpression is typecast
+var newArray = /** @type {array} */ (numberOrString.map((x) => x));
+var newArray = /** @type {array} */ (numberOrString.map((x) => x));
+var newArray = test(/** @type {array} */ (numberOrString.map((x) => x)));
+var newArray = test(/** @type {array} */ (numberOrString.map((x) => x)));
+
+test(/** @type {number} */ (num) + 1);
+test(/** @type {!Array} */ (arrOrString).length + 1);
+test(/** @type {!Array} */ (arrOrString).length + 1);
+
+const data = functionCall(
+  arg1,
+  arg2,
+  /** @type {{height: number, width: number}} */ (arg3),
+);
+
+const style = /** @type {{
+  width: number,
+  height: number,
+  marginTop: number,
+  marginLeft: number,
+  marginRight: number,
+  marginBottom: number,
+}} */ ({
+  width,
+  height,
+  ...margins,
+});
+
+const style2 =
+  /**
+   * @type {{
+   *   width: number,
+   * }}
+   */ ({
+    width,
+  });
+
+================================================================================
+`;
+
+exports[`comment-in-the-middle.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var a =
+/**
+ * bla bla bla
+ * @type {string |
+  * number
+ * }
+* bla bla bla
+ */
+//2
+ ((window['s'])).toString();
+console.log(a.foo());
+
+=====================================output=====================================
+var a =
+  /**
+   * bla bla bla
+   * @type {string |
+   * number
+   * }
+   * bla bla bla
+   */
+  //2
+  window["s"].toString();
+console.log(a.foo());
+
+================================================================================
+`;
+
+exports[`comment-placement.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const foo1 = /** @type {string} */
+  (value);
+
+const foo2 =
+  /** @type {string} */
+  (value);
+
+const foo3 =
+
+  /** @type {string} */
+  (value);
+
+
+const foo4 =
+  /** @type {string} */(value);
+
+const foo5 =
+  /** @type {string} */ (
+    value
+  );
+
+=====================================output=====================================
+const foo1 = /** @type {string} */ (value);
+
+const foo2 =
+  /** @type {string} */
+  (value);
+
+const foo3 =
+  /** @type {string} */
+  (value);
+
+const foo4 = /** @type {string} */ (value);
+
+const foo5 = /** @type {string} */ (value);
+
+================================================================================
+`;
+
+exports[`extra-spaces-and-asterisks.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const foo1 = /** @type {!Foo} */(bar);
+const foo2 = /** @type {!Foo} **/(bar);
+const foo3 = /** @type {!Foo} * */(bar);
+const foo4 = /** @type {!Foo} ***/(bar);
+const foo5 = /** @type {!Foo} * * */(bar);
+const foo6 = /** @type {!Foo} *****/(bar);
+const foo7 = /** @type {!Foo} *   *   *   *   */(bar);
+const foo8 = /** @type {!Foo}    ** *   *   */(bar);
+
+=====================================output=====================================
+const foo1 = /** @type {!Foo} */ (bar);
+const foo2 = /** @type {!Foo} **/ (bar);
+const foo3 = /** @type {!Foo} * */ (bar);
+const foo4 = /** @type {!Foo} ***/ (bar);
+const foo5 = /** @type {!Foo} * * */ (bar);
+const foo6 = /** @type {!Foo} *****/ (bar);
+const foo7 = /** @type {!Foo} *   *   *   *   */ (bar);
+const foo8 = /** @type {!Foo}    ** *   *   */ (bar);
+
+================================================================================
+`;
+
+exports[`iife.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const helpers1 = /** @type {Helpers} */ ((
+  (helpers = {}) => helpers
+)());
+
+const helpers2 = /** @type {Helpers} */ ((
+  function() { return something }
+)());
+
+const helpers = /** @type {Helpers} */ ((
+  /** @param {Partial<Helpers>} helpers */
+  (helpers = {}) => helpers
+)());
+
+=====================================output=====================================
+const helpers1 = /** @type {Helpers} */ (((helpers = {}) => helpers)());
+
+const helpers2 = /** @type {Helpers} */ (
+  (function () {
+    return something;
+  })()
+);
+
+const helpers = /** @type {Helpers} */ (
+  (
+    /** @param {Partial<Helpers>} helpers */
+    (helpers = {}) => helpers
+  )()
+);
+
+================================================================================
+`;
+
+exports[`iife-issue-5850-isolated.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const a = /** @param {*} b */
+((b) => {})();
+
+=====================================output=====================================
+const a = /** @param {*} b */ ((b) => {})();
+
+================================================================================
+`;
+
+exports[`issue-4124.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/** @type {Object} */(myObject.property).someProp = true;
+(/** @type {Object} */(myObject.property)).someProp = true;
+
+const prop = /** @type {Object} */(myObject.property).someProp;
+
+const test = /** @type (function (*): ?|undefined) */
+      (goog.partial(NewThing.onTemplateChange, rationaleField, typeField));
+
+const foo1 = /** @type (function (*): ?|undefined) */ (goog.partial(NewThing.onTemplateChange, rationaleField, typeField));
+
+const model = /** @type {?{getIndex: Function}} */ (model);
+
+const foo = /** @type {string} */
+  (bar);
+
+const foo2 = /** @type (function (*): ?|undefined) */ (foo);
+
+=====================================output=====================================
+/** @type {Object} */ (myObject.property).someProp = true;
+/** @type {Object} */ (myObject.property).someProp = true;
+
+const prop = /** @type {Object} */ (myObject.property).someProp;
+
+const test =
+  /** @type (function (*): ?|undefined) */
+  (goog.partial(NewThing.onTemplateChange, rationaleField, typeField));
+
+const foo1 = /** @type (function (*): ?|undefined) */ (
+  goog.partial(NewThing.onTemplateChange, rationaleField, typeField)
+);
+
+const model = /** @type {?{getIndex: Function}} */ (model);
+
+const foo = /** @type {string} */ (bar);
+
+const foo2 = /** @type (function (*): ?|undefined) */ (foo);
+
+================================================================================
+`;
+
+exports[`issue-8045.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const myLongVariableName = /** @type {ThisIsAVeryLongTypeThatShouldTriggerLineWrapping} */ (fooBarBaz);
+
+function jsdocCastInReturn() {
+  return /** @type {ThisIsAVeryLongTypeThatShouldTriggerLineWrapping} */ (fooBarBaz);
+}
+
+const myLongVariableFoo1 = /** @type {ThisIsAVeryLongTypeThatShouldTriggerLineWrapping} */
+      (fooBarBaz);
+
+function jsdocCastInReturn() {
+  return (/** @type {ThisIsAVeryLongTypeThatShouldTriggerLineWrapping} */
+    (fooBarBaz));
+}
+
+const myLongVariableFoo2 = /** @type {ThisIsAVeryLongTypeThatShouldTriggerLineWrapping} */
+      (fooBarBaz);
+
+function jsdocCastInReturn() {
+  return (/** @type {ThisIsAVeryLongTypeThatShouldTriggerLineWrapping} */
+    (fooBarBaz));
+}
+
+=====================================output=====================================
+const myLongVariableName =
+  /** @type {ThisIsAVeryLongTypeThatShouldTriggerLineWrapping} */ (fooBarBaz);
+
+function jsdocCastInReturn() {
+  return /** @type {ThisIsAVeryLongTypeThatShouldTriggerLineWrapping} */ (
+    fooBarBaz
+  );
+}
+
+const myLongVariableFoo1 =
+  /** @type {ThisIsAVeryLongTypeThatShouldTriggerLineWrapping} */
+  (fooBarBaz);
+
+function jsdocCastInReturn() {
+  return (
+    /** @type {ThisIsAVeryLongTypeThatShouldTriggerLineWrapping} */
+    (fooBarBaz)
+  );
+}
+
+const myLongVariableFoo2 =
+  /** @type {ThisIsAVeryLongTypeThatShouldTriggerLineWrapping} */
+  (fooBarBaz);
+
+function jsdocCastInReturn() {
+  return (
+    /** @type {ThisIsAVeryLongTypeThatShouldTriggerLineWrapping} */
+    (fooBarBaz)
+  );
+}
+
+================================================================================
+`;
+
+exports[`issue-9358.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const fooooba1 = /** @type {Array.<fooo.barr.baaaaaaz>} */ (fooobaarbazzItems || foo);
+const fooooba2 = /** @type {Array.<fooo.barr.baaaaaaz>} */ (fooobaarbazzItems + foo);
+const fooooba3 = /** @type {Array.<fooo.barr.baaaaaaz>} */ (fooobaarbazzItems || foo) ? foo : bar;
+const fooooba4 = /** @type {Array.<fooo.barr.baaaaaaz>} */
+  (fooobaarbazzItems || foo) ? foo : bar;
+
+=====================================output=====================================
+const fooooba1 = /** @type {Array.<fooo.barr.baaaaaaz>} */ (
+  fooobaarbazzItems || foo
+);
+const fooooba2 = /** @type {Array.<fooo.barr.baaaaaaz>} */ (
+  fooobaarbazzItems + foo
+);
+const fooooba3 = /** @type {Array.<fooo.barr.baaaaaaz>} */ (
+  fooobaarbazzItems || foo
+)
+  ? foo
+  : bar;
+const fooooba4 =
+  /** @type {Array.<fooo.barr.baaaaaaz>} */
+  (fooobaarbazzItems || foo) ? foo : bar;
+
+================================================================================
+`;
+
+exports[`member.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo = (/** @type {!Baz} */ (baz).bar);
+
+=====================================output=====================================
+foo = /** @type {!Baz} */ (baz).bar;
+
+================================================================================
+`;
+
+exports[`nested.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo = /** @type {!Foo} */ (/** @type {!Baz} */ (baz).bar );
+
+const BarImpl = /** @type {BarConstructor} */ (
+	/** @type {unknown} */
+	(function Bar() {
+		throw new Error("Internal error: Illegal constructor");
+	})
+);
+
+=====================================output=====================================
+foo = /** @type {!Foo} */ (/** @type {!Baz} */ (baz).bar);
+
+const BarImpl = /** @type {BarConstructor} */ (
+  /** @type {unknown} */
+  (
+    function Bar() {
+      throw new Error("Internal error: Illegal constructor");
+    }
+  )
+);
+
+================================================================================
+`;
+
+exports[`non-casts.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/* @type { } */
+z(x => {
+  (foo)((bar)(2+(3)))
+  return (1);
+})
+
+/** @type { } */
+z(x => {
+  (foo)((bar)(2+(3)))
+  return (1);
+})
+
+/** @type {number} */
+let q = z(x => {
+  return (1);
+})
+
+const w1 = /** @typefoo Foo */ (value);
+
+=====================================output=====================================
+/* @type { } */
+z((x) => {
+  foo(bar(2 + 3));
+  return 1;
+});
+
+/** @type { } */
+z((x) => {
+  foo(bar(2 + 3));
+  return 1;
+});
+
+/** @type {number} */
+let q = z((x) => {
+  return 1;
+});
+
+const w1 = /** @typefoo Foo */ value;
+
+================================================================================
+`;
+
+exports[`object-with-comment.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const objectWithComment = /** @type MyType */ (
+  /* comment */
+  {
+    foo: bar
+  }
+);
+
+const objectWithComment2 = /** @type MyType */ (  /* comment */  {
+    foo: bar
+  }
+);
+
+=====================================output=====================================
+const objectWithComment = /** @type MyType */ (
+  /* comment */
+  {
+    foo: bar,
+  }
+);
+
+const objectWithComment2 = /** @type MyType */ (
+  /* comment */ {
+    foo: bar,
+  }
+);
+
+================================================================================
+`;
+
+exports[`satisfies.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+module.exports = /** @satisfies {Record<string, string>} */ ({
+  hello: 1337,
+});
+
+=====================================output=====================================
+module.exports = /** @satisfies {Record<string, string>} */ ({
+  hello: 1337,
+});
+
+================================================================================
+`;
+
+exports[`styled-components.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const OverlapWrapper =
+  /** @type {import('styled-components').ThemedStyledFunction<'div',null,{overlap: boolean}>} */
+  (styled.div)\`
+position:relative;
+    > {
+  position: absolute;
+  bottom: \${p => p.overlap === 'previous' && 0};
+top: \${p => p.overlap === 'next' && 0};
+}
+\`
+
+=====================================output=====================================
+const OverlapWrapper =
+  /** @type {import('styled-components').ThemedStyledFunction<'div',null,{overlap: boolean}>} */
+  (styled.div)\`
+    position: relative;
+    > {
+      position: absolute;
+      bottom: \${(p) => p.overlap === "previous" && 0};
+      top: \${(p) => p.overlap === "next" && 0};
+    }
+  \`;
+
+================================================================================
+`;
+
+exports[`superclass.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Foo extends /** @type {string} */ (Bar) {}
+
+=====================================output=====================================
+class Foo extends /** @type {string} */ (Bar) {}
+
+================================================================================
+`;
+
+exports[`ways-to-specify-type.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const curlyBraces = /** @type {string} */ (foo);
+const curlyBraces2 = /**@type {string} */ (foo);
+const noWhitespace = /** @type{string} */ (foo);
+const noWhitespace2 = /**@type{string} */ (foo);
+const noBraces = /** @type string */ (foo);
+const parens = /** @type (string | number) */ (foo);
+
+// Prettier just searches for "@type" and doesn't check the syntax of types.
+const v1 = /** @type {} */ (value);
+const v2 = /** @type {}} */ (value);
+const v3 = /** @type } */ (value);
+const v4 = /** @type { */ (value);
+const v5 = /** @type {{} */ (value);
+
+=====================================output=====================================
+const curlyBraces = /** @type {string} */ (foo);
+const curlyBraces2 = /**@type {string} */ (foo);
+const noWhitespace = /** @type{string} */ (foo);
+const noWhitespace2 = /**@type{string} */ (foo);
+const noBraces = /** @type string */ (foo);
+const parens = /** @type (string | number) */ (foo);
+
+// Prettier just searches for "@type" and doesn't check the syntax of types.
+const v1 = /** @type {} */ (value);
+const v2 = /** @type {}} */ (value);
+const v3 = /** @type } */ (value);
+const v4 = /** @type { */ (value);
+const v5 = /** @type {{} */ (value);
+
+================================================================================
+`;

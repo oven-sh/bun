@@ -1,0 +1,49 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`custom-parser.css format 1`] = `
+====================================options=====================================
+parsers: ["css", "scss", "less"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---mycustomparser
+title: Title
+description: Description
+---
+/* comment */
+.something 
+{}
+
+=====================================output=====================================
+---mycustomparser
+title: Title
+description: Description
+---
+
+/* comment */
+.something {
+}
+
+================================================================================
+`;
+
+exports[`empty.css format 1`] = `
+====================================options=====================================
+parsers: ["css", "scss", "less"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---
+---
+/* comment */
+.something
+{}
+
+=====================================output=====================================
+---
+---
+
+/* comment */
+.something {
+}
+
+================================================================================
+`;

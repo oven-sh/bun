@@ -1,0 +1,543 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`block-comments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+bifornCringerMoshedPerplexSawder
+|> foo1
+|> foo2 /* comment1 */
+|> foo3 /* comment2 */
+|> kochabCooieGameOnOboleUnweave
+|> glimseGlyphsHazardNoopsTieTie;
+
+=====================================output=====================================
+bifornCringerMoshedPerplexSawder
+  |> foo1
+  |> foo2 /* comment1 */
+  |> foo3 /* comment2 */
+  |> kochabCooieGameOnOboleUnweave
+  |> glimseGlyphsHazardNoopsTieTie;
+
+================================================================================
+`;
+
+exports[`block-comments.js format[acorn] 1`] = `
+"Unexpected token (2:2)
+  1 | bifornCringerMoshedPerplexSawder
+> 2 | |> foo1
+    |  ^
+  3 | |> foo2 /* comment1 */
+  4 | |> foo3 /* comment2 */
+  5 | |> kochabCooieGameOnOboleUnweave
+Cause: Unexpected token (2:1)"
+`;
+
+exports[`block-comments.js format[espree] 1`] = `
+"Unexpected token > (2:2)
+  1 | bifornCringerMoshedPerplexSawder
+> 2 | |> foo1
+    |  ^
+  3 | |> foo2 /* comment1 */
+  4 | |> foo3 /* comment2 */
+  5 | |> kochabCooieGameOnOboleUnweave
+Cause: Unexpected token >"
+`;
+
+exports[`block-comments.js format[meriyah] 1`] = `
+"Unexpected token: '>' (2:2)
+  1 | bifornCringerMoshedPerplexSawder
+> 2 | |> foo1
+    |  ^
+  3 | |> foo2 /* comment1 */
+  4 | |> foo3 /* comment2 */
+  5 | |> kochabCooieGameOnOboleUnweave
+Cause: [2:1-2:2]: Unexpected token: '>'"
+`;
+
+exports[`block-comments.js format[oxc] 1`] = `
+"Unexpected token (2:2)
+  1 | bifornCringerMoshedPerplexSawder
+> 2 | |> foo1
+    |  ^
+  3 | |> foo2 /* comment1 */
+  4 | |> foo3 /* comment2 */
+  5 | |> kochabCooieGameOnOboleUnweave"
+`;
+
+exports[`block-comments.js format[yuku] 1`] = `
+"Unexpected token '>' (2:2)
+  1 | bifornCringerMoshedPerplexSawder
+> 2 | |> foo1
+    |  ^
+  3 | |> foo2 /* comment1 */
+  4 | |> foo3 /* comment2 */
+  5 | |> kochabCooieGameOnOboleUnweave"
+`;
+
+exports[`fsharp_style_pipeline_operator.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+promise
+  |> await
+  |> x => doubleSay(x, ', ')
+  |> capitalize
+  |> x => x + '!'
+  |> x => new User.Message(x)
+  |> x => stream.write(x)
+  |> await
+  |> console.log;
+
+const result = "hello"
+  |> doubleSay
+  |> capitalize
+  |> exclaim;
+
+const newScore = person.score
+  |> double
+  |> n => add(7, n)
+  |> n => boundScore(0, 100, n);
+
+const user = url
+  |> api.get
+  |> await
+  |> r => r.json()
+  |> await
+  |> j => j.data.user;
+
+const f = (x) => (x |> (y) => y + 1)
+  |> (z) => z * y
+
+const _f = (x) => x
+  |> (y) => y + 1
+  |> (z) => z * y
+
+const g = (x) => x
+  |> (y) => (y + 1 |> (z) => z * y)
+
+const _g = (x) => x
+  |> (y => (y + 1 |> (z) => z * y))
+
+const __g = (x) => x
+  |> (
+    y => {
+      return (y + 1 |> (z) => z * y);
+    }
+  )
+
+const f = x + ((f) => (f |> f));
+const f = x |> (f) => f |> f;
+
+=====================================output=====================================
+promise
+  |> await
+  |> (x) => doubleSay(x, ", ")
+  |> capitalize
+  |> (x) => x + "!"
+  |> (x) => new User.Message(x)
+  |> (x) => stream.write(x)
+  |> await
+  |> console.log;
+
+const result = "hello" |> doubleSay |> capitalize |> exclaim;
+
+const newScore =
+  person.score |> double |> (n) => add(7, n) |> (n) => boundScore(0, 100, n);
+
+const user =
+  url |> api.get |> await |> (r) => r.json() |> await |> (j) => j.data.user;
+
+const f = (x) => x |> (y) => y + 1 |> (z) => z * y;
+
+const _f = (x) => x |> (y) => y + 1 |> (z) => z * y;
+
+const g = (x) => x |> (y) => (y + 1 |> (z) => z * y);
+
+const _g = (x) => x |> ((y) => (y + 1 |> (z) => z * y));
+
+const __g = (x) =>
+  x
+  |> ((y) => {
+    return y + 1 |> (z) => z * y;
+  });
+
+const f = x + ((f) => f |> f);
+const f = x |> (f) => f |> f;
+
+================================================================================
+`;
+
+exports[`fsharp_style_pipeline_operator.js format[acorn] 1`] = `
+"Unexpected token (2:4)
+  1 | promise
+> 2 |   |> await
+    |    ^
+  3 |   |> x => doubleSay(x, ', ')
+  4 |   |> capitalize
+  5 |   |> x => x + '!'
+Cause: Unexpected token (2:3)"
+`;
+
+exports[`fsharp_style_pipeline_operator.js format[espree] 1`] = `
+"Unexpected token > (2:4)
+  1 | promise
+> 2 |   |> await
+    |    ^
+  3 |   |> x => doubleSay(x, ', ')
+  4 |   |> capitalize
+  5 |   |> x => x + '!'
+Cause: Unexpected token >"
+`;
+
+exports[`fsharp_style_pipeline_operator.js format[meriyah] 1`] = `
+"Unexpected token: '>' (2:4)
+  1 | promise
+> 2 |   |> await
+    |    ^
+  3 |   |> x => doubleSay(x, ', ')
+  4 |   |> capitalize
+  5 |   |> x => x + '!'
+Cause: [2:3-2:4]: Unexpected token: '>'"
+`;
+
+exports[`fsharp_style_pipeline_operator.js format[oxc] 1`] = `
+"Unexpected token (2:4)
+  1 | promise
+> 2 |   |> await
+    |    ^
+  3 |   |> x => doubleSay(x, ', ')
+  4 |   |> capitalize
+  5 |   |> x => x + '!'"
+`;
+
+exports[`fsharp_style_pipeline_operator.js format[yuku] 1`] = `
+"Unexpected token '>' (2:4)
+  1 | promise
+> 2 |   |> await
+    |    ^
+  3 |   |> x => doubleSay(x, ', ')
+  4 |   |> capitalize
+  5 |   |> x => x + '!'"
+`;
+
+exports[`hack_pipeline_operator.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a |> await % |> % * 3;
+
+foo
+  |> await %
+  |> % || throw new Error(\`foo \${bar1}\`)
+  |> bar2(%, ", ")
+  |> bar3(%)
+  |> % + "!"
+  |> new Bar.Foo(%)
+  |> await bar.bar(%)
+  |> console.log(%);
+
+const result = "hello"
+  |> doubleSay(%)
+  |> capitalize(%, "foo")
+  |> exclaim(%);
+
+function createPerson (attrs) {
+  attrs
+    |> foo(%)
+    |> foo(%)
+    |> Person.insertIntoDatabase(%);
+}
+
+const result = [1,2,3]
+ |> %.map(a => a * 2 )
+ |> %.filter(a => a > 5)
+ |> %.reduce((sum, a) => a+sum, 0)
+ |> increment(%)
+ |> add(%, 3)
+
+const searchResults$ = fromEvent(document.querySelector('input'), 'input')
+  |> map(%, event => event.target.value)
+  |> filter(%, searchText => searchText.length > 2)
+  |> debounce(%, 300)
+  |> distinctUntilChanged(%)
+  |> switchMap(%, searchText => queryApi(searchText) |> retry(%, 3))
+  |> share(%);
+
+v |> %.method() |> f(%);
+
+async function * f () {
+  return x
+    |> (yield %)
+    |> (await %)
+    |> y(%)
+    |> a.b(%)
+    |> (a.b(%))
+    |> a.b(%)
+    |> (a.b?.(%))
+    |> a.b?.(%);
+}
+
+=====================================output=====================================
+a |> (await %) |> % * 3;
+
+foo
+|> (await %)
+|> % || throw new Error(\`foo \${bar1}\`)
+|> bar2(%, ", ")
+|> bar3(%)
+|> % + "!"
+|> new Bar.Foo(%)
+|> (await bar.bar(%))
+|> console.log(%);
+
+const result = "hello" |> doubleSay(%) |> capitalize(%, "foo") |> exclaim(%);
+
+function createPerson(attrs) {
+  attrs |> foo(%) |> foo(%) |> Person.insertIntoDatabase(%);
+}
+
+const result =
+  [1, 2, 3]
+  |> %.map((a) => a * 2)
+  |> %.filter((a) => a > 5)
+  |> %.reduce((sum, a) => a + sum, 0)
+  |> increment(%)
+  |> add(%, 3);
+
+const searchResults$ =
+  fromEvent(document.querySelector("input"), "input")
+  |> map(%, (event) => event.target.value)
+  |> filter(%, (searchText) => searchText.length > 2)
+  |> debounce(%, 300)
+  |> distinctUntilChanged(%)
+  |> switchMap(%, (searchText) => queryApi(searchText) |> retry(%, 3))
+  |> share(%);
+
+v |> %.method() |> f(%);
+
+async function* f() {
+  return (
+    x
+    |> (yield %)
+    |> (await %)
+    |> y(%)
+    |> a.b(%)
+    |> a.b(%)
+    |> a.b(%)
+    |> a.b?.(%)
+    |> a.b?.(%)
+  );
+}
+
+================================================================================
+`;
+
+exports[`hack_pipeline_operator.js format[acorn] 1`] = `
+"Unexpected token (1:4)
+> 1 | a |> await % |> % * 3;
+    |    ^
+  2 |
+  3 | foo
+  4 |   |> await %
+Cause: Unexpected token (1:3)"
+`;
+
+exports[`hack_pipeline_operator.js format[espree] 1`] = `
+"Unexpected token > (1:4)
+> 1 | a |> await % |> % * 3;
+    |    ^
+  2 |
+  3 | foo
+  4 |   |> await %
+Cause: Unexpected token >"
+`;
+
+exports[`hack_pipeline_operator.js format[meriyah] 1`] = `
+"Unexpected token: '>' (1:4)
+> 1 | a |> await % |> % * 3;
+    |    ^
+  2 |
+  3 | foo
+  4 |   |> await %
+Cause: [1:3-1:4]: Unexpected token: '>'"
+`;
+
+exports[`hack_pipeline_operator.js format[oxc] 1`] = `
+"Unexpected token (1:4)
+> 1 | a |> await % |> % * 3;
+    |    ^
+  2 |
+  3 | foo
+  4 |   |> await %"
+`;
+
+exports[`hack_pipeline_operator.js format[yuku] 1`] = `
+"Unexpected token '>' (1:4)
+> 1 | a |> await % |> % * 3;
+    |    ^
+  2 |
+  3 | foo
+  4 |   |> await %"
+`;
+
+exports[`minimal_pipeline_operator.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a |> b |> c;
+
+a |> (b |> c);
+
+(a |> b) || c;
+a |> (b || c);
+
+let result = "hello"
+  |> doubleSay
+  |> capitalize
+  |> exclaim;
+
+let newScore = person.score
+  |> double
+  |> (_ => add(7, _))
+  |> (_ => subtract(2, _))
+  |> (_ => boundScore(0, 100, _));
+
+function createPerson (attrs) {
+  attrs
+    |> bounded('age', 1, 100)
+    |> format('name', /^[a-z]$/i)
+    |> Person.insertIntoDatabase;
+}
+
+foo |> (bar ?? baz);
+(foo |> bar) ?? baz;
+
+const result = [1,2,3]
+ |> map(a => a * 2)
+ |> filter(a => a > 5)
+ |> reduce((sum, a) => a+sum, 0)
+ |> increment
+ |> add(3)
+
+const searchResults$ = fromEvent(document.querySelector('input'), 'input')
+  |> map(event => event.target.value)
+  |> filter(searchText => searchText.length > 2)
+  |> debounce(300)
+  |> distinctUntilChanged()
+  |> switchMap(searchText => queryApi(searchText) |> retry(3))
+  |> share();
+
+const result = [5,10]
+  |> (_ => _.map(x => x * 2))
+  |> (_ => _.reduce( (a,b) => a + b ))
+  |> (sum => sum + 1)
+
+const result2 = [4, 9].map( x => x |> inc |> double )
+
+=====================================output=====================================
+a |> b |> c;
+
+a |> (b |> c);
+
+(a |> b) || c;
+a |> b || c;
+
+let result = "hello" |> doubleSay |> capitalize |> exclaim;
+
+let newScore =
+  person.score
+  |> double
+  |> ((_) => add(7, _))
+  |> ((_) => subtract(2, _))
+  |> ((_) => boundScore(0, 100, _));
+
+function createPerson(attrs) {
+  attrs
+    |> bounded("age", 1, 100)
+    |> format("name", /^[a-z]$/i)
+    |> Person.insertIntoDatabase;
+}
+
+foo |> bar ?? baz;
+(foo |> bar) ?? baz;
+
+const result =
+  [1, 2, 3]
+  |> map((a) => a * 2)
+  |> filter((a) => a > 5)
+  |> reduce((sum, a) => a + sum, 0)
+  |> increment
+  |> add(3);
+
+const searchResults$ =
+  fromEvent(document.querySelector("input"), "input")
+  |> map((event) => event.target.value)
+  |> filter((searchText) => searchText.length > 2)
+  |> debounce(300)
+  |> distinctUntilChanged()
+  |> switchMap((searchText) => queryApi(searchText) |> retry(3))
+  |> share();
+
+const result =
+  [5, 10]
+  |> ((_) => _.map((x) => x * 2))
+  |> ((_) => _.reduce((a, b) => a + b))
+  |> ((sum) => sum + 1);
+
+const result2 = [4, 9].map((x) => x |> inc |> double);
+
+================================================================================
+`;
+
+exports[`minimal_pipeline_operator.js format[acorn] 1`] = `
+"Unexpected token (1:4)
+> 1 | a |> b |> c;
+    |    ^
+  2 |
+  3 | a |> (b |> c);
+  4 |
+Cause: Unexpected token (1:3)"
+`;
+
+exports[`minimal_pipeline_operator.js format[espree] 1`] = `
+"Unexpected token > (1:4)
+> 1 | a |> b |> c;
+    |    ^
+  2 |
+  3 | a |> (b |> c);
+  4 |
+Cause: Unexpected token >"
+`;
+
+exports[`minimal_pipeline_operator.js format[meriyah] 1`] = `
+"Unexpected token: '>' (1:4)
+> 1 | a |> b |> c;
+    |    ^
+  2 |
+  3 | a |> (b |> c);
+  4 |
+Cause: [1:3-1:4]: Unexpected token: '>'"
+`;
+
+exports[`minimal_pipeline_operator.js format[oxc] 1`] = `
+"Unexpected token (1:4)
+> 1 | a |> b |> c;
+    |    ^
+  2 |
+  3 | a |> (b |> c);
+  4 |"
+`;
+
+exports[`minimal_pipeline_operator.js format[yuku] 1`] = `
+"Unexpected token '>' (1:4)
+> 1 | a |> b |> c;
+    |    ^
+  2 |
+  3 | a |> (b |> c);
+  4 |"
+`;

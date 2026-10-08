@@ -1,0 +1,155 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`empty-front-matter-with-pragma.md - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["markdown"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---
+---
+
+<!-- @prettier -->
+
+I     should      be      formatted       !!
+
+=====================================output=====================================
+---
+---
+
+<!-- @prettier -->
+
+I should be formatted !!
+
+================================================================================
+`;
+
+exports[`empty-front-matter-without-pragma.md - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["markdown"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---
+---
+
+I     should      stay      as-is   !!
+
+=====================================output=====================================
+---
+---
+
+I     should      stay      as-is   !!
+
+================================================================================
+`;
+
+exports[`front-matter-with-pragma.md - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["markdown"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---
+something
+---
+
+<!-- @prettier -->
+
+I     should      be      formatted       !!
+
+=====================================output=====================================
+---
+something
+---
+
+<!-- @prettier -->
+
+I should be formatted !!
+
+================================================================================
+`;
+
+exports[`front-matter-without-pragma.md - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["markdown"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---
+something
+---
+
+I     should      stay      as-is   !!
+
+=====================================output=====================================
+---
+something
+---
+
+I     should      stay      as-is   !!
+
+================================================================================
+`;
+
+exports[`with-pragma.md - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["markdown"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<!-- @prettier -->
+
+I     should      be      formatted       !!
+
+=====================================output=====================================
+<!-- @prettier -->
+
+I should be formatted !!
+
+================================================================================
+`;
+
+exports[`with-pragma-in-multiline.md - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["markdown"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<!--
+  MIT LICENSE 
+  
+  bla bla bla
+
+  @format
+-->
+
+I     should      be      formatted       !!
+
+=====================================output=====================================
+<!--
+  MIT LICENSE
+
+  bla bla bla
+
+  @format
+-->
+
+I should be formatted !!
+
+================================================================================
+`;
+
+exports[`without-pragma.md - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["markdown"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+I     should      stay      as-is   !!
+
+=====================================output=====================================
+I     should      stay      as-is   !!
+
+================================================================================
+`;

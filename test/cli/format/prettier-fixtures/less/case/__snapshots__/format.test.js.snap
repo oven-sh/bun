@@ -1,0 +1,512 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`15460.less format 1`] = `
+====================================options=====================================
+parsers: ["less"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.what {
+  .make-modifier(@name, @filename) {
+    &--@{name} {
+      --bg: url("@{filename}");
+    }
+  }
+
+  .make-modifier(1A, "1a.png");
+  .make-modifier(AA, "1a.png");
+
+  // Still wrongly lowercased, because \`x\` is an unit
+  .make-modifier(1X, "1x.png");
+}
+
+=====================================output=====================================
+.what {
+  .make-modifier(@name, @filename) {
+    &--@{name} {
+      --bg: url("@{filename}");
+    }
+  }
+
+  .make-modifier(1A, "1a.png");
+  .make-modifier(AA, "1a.png");
+
+  // Still wrongly lowercased, because \`x\` is an unit
+  .make-modifier(1x, "1x.png");
+}
+
+================================================================================
+`;
+
+exports[`case.less format 1`] = `
+====================================options=====================================
+parsers: ["less"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Convention in this test file:
+// - The case should be preserved for things prefixed with "Keep".
+// - The case should always be preserved for element names and attribute names
+//   in selectors, as well as function names and property keywords.
+// - Other things should mostly be lowercase.
+// - The \`/*:*/\` comments are just to bust the \`isLikelySCSS\` check.
+
+@IMPORT Keep;
+
+HTML#KeepId.KeepClass,
+a[HREF=KeepAttrValue]:HOVER::FIRST-letter,
+svg[viewBox] linearGradient,
+:Not(:NTH-child(2N+1)) {
+    COLOR: #AAbbCC;
+    BACKGROUND-image: URL("KeepString");
+    Margin: 5PX .2E10Em;
+    --Keep-custom-Prop: red;
+    background: Var(--Keep-custom-Prop);
+    animation-name: KeepAnimationName;
+    important: something !IMPORTANT;
+    font-family: INITIAL;
+    padding: UNSET;
+    border: INHERIT;
+    all: REVERT;
+    -WEBKIT-USER-SELECT: none;
+    -MOZ-USER-SELECT: none;
+    -MS-USER-SELECT: none;
+    USER-SELECT: none;
+}
+
+@keyframes KeepAnimationName {
+  FROM {
+    prop: val;
+  }
+
+  @{KeepInterpolationVar} {
+    prop: val;
+  }
+
+  TO {
+    prop: val;
+  }
+}
+
+@custom-media --KeepCustomMedia screen and (width >= 768px);
+@media (--KeepCustomMedia) {}
+
+@KeepDetachedRuleset: /*:*/ {
+  BACKGROUND: RED;
+}
+
+%KeepScssPlaceholderSelector {
+  prop: val;
+}
+
+@KeepTopLevelVar: val;
+$KeepScssVar: val;
+
+.Keep(@Keep: 12e03PX) when (@Keep=Case) /*:*/ {
+    @KeepVar: KeepName; /*:*/
+    @{KeepInterpolationVar}: val;
+    $KeepScssVar: val;
+    @extend %KeepScssPlaceholderSelector;
+
+    @{Keep}[@{Keep}][@{Keep}^=@{Keep-1A}]:@{Keep} {
+      prop: val;
+    }
+
+    &Keep & Element {
+      prop: val;
+    }
+
+    @KeepDetachedRuleset();
+
+    &:extend(.Keep ALL);
+    &:EXTEND(.Keep ALL);
+
+    .Keep;
+    .Keep();
+    .Keep(4PX)!IMPORTANT;
+    .Keep() when (@Keep=Keep);
+    .Keep() when (@Keep=12PX);
+    .Keep() when (@Keep="12px");
+    .Keep() when (@Keep="12PX");
+    .Keep() when (@Keep=Keep12PX);
+}
+
+.Keep (@Keep) when (lightness(@Keep) >= 12PX) and (@Keep > 0) {}
+.Keep (@Keep) when (lightness(@Keep) != '12PX') and (@Keep != "12PX") {}
+.Keep (@Keep) when (lightness(@Keep) >= Keep12PX) and (@Keep > @Keep12E5) {}
+
+.Keep(@Keep: 12PX; @Keep: @Keep12PX; ...) /*:*/ {}
+.Keep(@Keep: '12PX'; @Keep: "12PX"; ...) /*:*/ {}
+
+@MEDIA (MIN-WIDTH: 700PX) /*:*/ {}
+
+@MEDIA (@{Keep}: @{Keep}) {}
+
+@KEYFRAMES identifier {
+  FROM {
+    margin-top: 50px;
+  }
+  50%  {
+    margin-top: 150px;
+  }
+  TO {
+    margin-top: 100px;
+  }
+}
+
+@-WEBKIT-KEYFRAMES float-up {
+  FROM {
+    margin-top: 50px;
+  }
+  50%  {
+    margin-top: 150px;
+  }
+  TO {
+    margin-top: 100px;
+  }
+}
+
+.foo {
+  color: hsl(0.75TURN, 60%, 70%);
+}
+
+p:FIRST-CHILD {
+  color: lime;
+  background-color: black;
+  padding: 5px;
+}
+
+a::AFTER {
+  content: "→";
+}
+
+a:AFTER {
+  content: "→";
+}
+
+::-WEBKIT-PROGRESS-BAR {
+  background-color: orange;
+}
+
+TABLE {}
+
+.foo { &-KeepSelector {} &-KeepSelector & .KeepClassSelector {} &-100\\.200 {} }
+
+=====================================output=====================================
+// Convention in this test file:
+// - The case should be preserved for things prefixed with "Keep".
+// - The case should always be preserved for element names and attribute names
+//   in selectors, as well as function names and property keywords.
+// - Other things should mostly be lowercase.
+// - The \`/*:*/\` comments are just to bust the \`isLikelySCSS\` check.
+
+@import Keep;
+
+HTML#KeepId.KeepClass,
+a[HREF="KeepAttrValue"]:hover::first-letter,
+svg[viewBox] linearGradient,
+:not(:nth-child(2n + 1)) {
+  color: #aabbcc;
+  background-image: URL("KeepString");
+  margin: 5px 0.2e10em;
+  --Keep-custom-Prop: red;
+  background: Var(--Keep-custom-Prop);
+  animation-name: KeepAnimationName;
+  important: something !important;
+  font-family: initial;
+  padding: unset;
+  border: inherit;
+  all: revert;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+@keyframes KeepAnimationName {
+  from {
+    prop: val;
+  }
+
+  @{KeepInterpolationVar} {
+    prop: val;
+  }
+
+  to {
+    prop: val;
+  }
+}
+
+@custom-media --KeepCustomMedia screen and (width >= 768px);
+@media (--KeepCustomMedia) {
+}
+
+@KeepDetachedRuleset: /*:*/ {
+  BACKGROUND: RED;
+};
+
+%KeepScssPlaceholderSelector {
+  prop: val;
+}
+
+@KeepTopLevelVar: val;
+$KeepScssVar: val;
+
+.Keep(@Keep: 12e03PX) when (@Keep=Case) /*:*/ {
+  @KeepVar: KeepName; /*:*/
+  @{KeepInterpolationVar}: val;
+  $KeepScssVar: val;
+  @extend %KeepScssPlaceholderSelector;
+
+  @{Keep}[@{Keep}][@{Keep}^=@{Keep-1A}]:@{Keep} {
+    prop: val;
+  };
+
+  &Keep & Element {
+    prop: val;
+  }
+
+  @KeepDetachedRuleset();
+
+  &:extend(.Keep ALL);
+  &:EXTEND(.Keep ALL);
+
+  .Keep;
+  .Keep();
+  .Keep(4px) !important;
+  .Keep() when (@Keep=Keep);
+  .Keep() when (@Keep=12px);
+  .Keep() when (@Keep="12px");
+  .Keep() when (@Keep="12PX");
+  .Keep() when (@Keep=Keep12PX);
+}
+
+.Keep (@Keep) when (lightness(@Keep) >= 12px) and (@Keep > 0) {
+}
+.Keep (@Keep) when (lightness(@Keep) != "12PX") and (@Keep != "12PX") {
+}
+.Keep (@Keep) when (lightness(@Keep) >= Keep12PX) and (@Keep > @Keep12E5) {
+}
+
+.Keep(@Keep: 12PX; @Keep: @Keep12PX; ...) /*:*/ {
+}
+.Keep(@Keep: '12PX'; @Keep: "12PX"; ...) /*:*/ {
+}
+
+@media (min-width: 700px) /*:*/ {
+}
+
+@media (@{Keep}: @{Keep}) {
+}
+
+@keyframes identifier {
+  from {
+    margin-top: 50px;
+  }
+  50% {
+    margin-top: 150px;
+  }
+  to {
+    margin-top: 100px;
+  }
+}
+
+@-webkit-keyframes float-up {
+  from {
+    margin-top: 50px;
+  }
+  50% {
+    margin-top: 150px;
+  }
+  to {
+    margin-top: 100px;
+  }
+}
+
+.foo {
+  color: hsl(0.75turn, 60%, 70%);
+}
+
+p:first-child {
+  color: lime;
+  background-color: black;
+  padding: 5px;
+}
+
+a::after {
+  content: "→";
+}
+
+a:after {
+  content: "→";
+}
+
+::-webkit-progress-bar {
+  background-color: orange;
+}
+
+TABLE {
+}
+
+.foo {
+  &-KeepSelector {
+  }
+  &-KeepSelector & .KeepClassSelector {
+  }
+  &-100\\.200 {
+  }
+}
+
+================================================================================
+`;
+
+exports[`variable.less format 1`] = `
+====================================options=====================================
+parsers: ["less"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Do not change case of property name if inside a variable declaration
+
+@var: {
+  notVar: 0;
+  @notVarNested: {
+    notVar: 1;
+    notVar2: 2;
+  };
+};
+
+@var    :    {
+  preserveCase: 5;
+};
+
+@var:    {
+  preserveCase: 5;
+};
+
+@var    :{
+  preserveCase: 5;
+};
+
+@var /* comment */ : /* comment */ {
+  preserveCase: 5;
+};
+
+@var: /* comment */ {
+  preserveCase: 5;
+};
+
+@var /* comment */ :{
+  preserveCase: 5;
+};
+
+@var // comment
+: // comment
+{
+  /* FIXME: should not change case */
+  preserveCase: 5;
+};
+
+@var: // comment
+{
+  preserveCase: 5;
+};
+
+@var // comment
+:{
+  /* FIXME: should not change case */
+  preserveCase: 5;
+};
+
+// Known css properties
+@var: {
+  COLoR: RED;
+};
+
+@not-var {
+  canChangeCase: @var[@notVarNested][notVar];
+  canChangeCase: @var[    @notVarNested][notVar];
+  canChangeCase: @var[@notVarNested    ][notVar];
+  canChangeCase: @var[    @notVarNested    ][notVar];
+  canChangeCase: @var[@notVarNested][notVar];
+  canChangeCase: @var[@notVarNested][    notVar];
+  canChangeCase: @var[@notVarNested][notVar    ];
+  canChangeCase: @var[@notVarNested][    notVar    ];
+  canChangeCase: @var[notVar];
+  canChangeCase: @var[    notVar];
+  canChangeCase: @var[notVar    ];
+  canChangeCase: @var[    notVar    ];
+}
+
+=====================================output=====================================
+// Do not change case of property name if inside a variable declaration
+
+@var: {
+  notVar: 0;
+  @notVarNested: {
+    notVar: 1;
+    notVar2: 2;
+  };
+};
+
+@var: {
+  preserveCase: 5;
+};
+
+@var: {
+  preserveCase: 5;
+};
+
+@var: {
+  preserveCase: 5;
+};
+
+@var: /* comment */ {
+  preserveCase: 5;
+};
+
+@var: /* comment */ {
+  preserveCase: 5;
+};
+
+@var: {
+  preserveCase: 5;
+};
+
+@var // comment
+: // comment
+{
+  /* FIXME: should not change case */
+  preservecase: 5;
+}
+
+@var: // comment
+{
+  preserveCase: 5;
+};
+
+@var // comment
+: {
+  /* FIXME: should not change case */
+  preservecase: 5;
+}
+
+// Known css properties
+@var: {
+  COLoR: RED;
+};
+
+@not-var {
+  canchangecase: @var[@notVarNested][notVar];
+  canchangecase: @var[@notVarNested][notVar];
+  canchangecase: @var[@notVarNested][notVar];
+  canchangecase: @var[@notVarNested][notVar];
+  canchangecase: @var[@notVarNested][notVar];
+  canchangecase: @var[@notVarNested][notVar];
+  canchangecase: @var[@notVarNested][notVar];
+  canchangecase: @var[@notVarNested][notVar];
+  canchangecase: @var[notVar];
+  canchangecase: @var[notVar];
+  canchangecase: @var[notVar];
+  canchangecase: @var[notVar];
+}
+
+================================================================================
+`;

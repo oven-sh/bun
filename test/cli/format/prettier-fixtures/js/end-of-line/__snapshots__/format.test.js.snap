@@ -1,0 +1,55 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`example.js - {"endOfLine":"cr"} format 1`] = `
+====================================options=====================================
+endOfLine: "cr"
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function f() {<LF>
+  console.log("testing line endings");<LF>
+}<LF>
+
+=====================================output=====================================
+function f() {<CR>
+  console.log("testing line endings");<CR>
+}<CR>
+
+================================================================================
+`;
+
+exports[`example.js - {"endOfLine":"crlf"} format 1`] = `
+====================================options=====================================
+endOfLine: "crlf"
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function f() {<LF>
+  console.log("testing line endings");<LF>
+}<LF>
+
+=====================================output=====================================
+function f() {<CRLF>
+  console.log("testing line endings");<CRLF>
+}<CRLF>
+
+================================================================================
+`;
+
+exports[`example.js - {"endOfLine":"lf"} format 1`] = `
+====================================options=====================================
+endOfLine: "lf"
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function f() {<LF>
+  console.log("testing line endings");<LF>
+}<LF>
+
+=====================================output=====================================
+function f() {<LF>
+  console.log("testing line endings");<LF>
+}<LF>
+
+================================================================================
+`;

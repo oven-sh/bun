@@ -1,0 +1,105 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`catch.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+try {}
+catch(
+  // comment
+  foo
+) {}
+
+try {}
+catch(foo //comment
+) {}
+
+try {}
+catch(
+  /* comment */ foo
+) {}
+
+try {}
+catch(
+  foo /* comment */
+) {}
+
+try {}
+catch(
+  foo
+  /* comment */
+) {}
+
+=====================================output=====================================
+try {
+} catch (
+  // comment
+  foo
+) {}
+
+try {
+} catch (
+  foo //comment
+) {}
+
+try {
+} catch (/* comment */ foo) {}
+
+try {
+} catch (foo /* comment */) {}
+
+try {
+} catch (
+  foo
+  /* comment */
+) {}
+
+================================================================================
+`;
+
+exports[`empty.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+try {
+} catch (e) {
+}
+finally {
+}
+
+try {
+} catch (e) {
+}
+
+=====================================output=====================================
+try {
+} catch (e) {
+} finally {
+}
+
+try {
+} catch (e) {}
+
+================================================================================
+`;
+
+exports[`try.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+try
+/* missing comment */
+{;}
+finally {}
+
+=====================================output=====================================
+try {
+  /* missing comment */
+} finally {
+}
+
+================================================================================
+`;

@@ -1,0 +1,12 @@
+@font-face {
+    font-family: "coolremote";
+    src: url("/fonts/coolremote.eot");
+    src: url("/fonts/coolremote.eot?#iefix") format("embedded-opentype"),
+    url("/fonts/coolremote.woff") format("woff"),
+    url("/fonts/coolremote.ttf") format("truetype"),
+    url("/f/x.ttf") format("svg"),
+    url("/f/y.ttf") format("svg"),
+    url("/fonts/coolremote.svg#coolremote") format("svg");
+    font-weight: normal;
+    font-style: normal;
+}

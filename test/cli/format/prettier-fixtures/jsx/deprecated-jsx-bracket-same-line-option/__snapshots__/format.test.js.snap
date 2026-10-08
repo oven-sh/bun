@@ -1,0 +1,128 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`jsx.js - {"jsxBracketSameLine":false,"bracketSameLine":true} format 1`] = `
+====================================options=====================================
+bracketSameLine: true
+jsxBracketSameLine: false
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<SomeHighlyConfiguredComponent
+  onEnter={this.onEnter}
+  onLeave={this.onLeave}
+  onChange={this.onChange}
+  initialValue={this.state.initialValue}
+  ignoreStuff={true}
+>
+  <div>and the children go here</div>
+  <div>and here too</div>
+</SomeHighlyConfiguredComponent>
+
+=====================================output=====================================
+<SomeHighlyConfiguredComponent
+  onEnter={this.onEnter}
+  onLeave={this.onLeave}
+  onChange={this.onChange}
+  initialValue={this.state.initialValue}
+  ignoreStuff={true}>
+  <div>and the children go here</div>
+  <div>and here too</div>
+</SomeHighlyConfiguredComponent>;
+
+================================================================================
+`;
+
+exports[`jsx.js - {"jsxBracketSameLine":false} format 1`] = `
+====================================options=====================================
+jsxBracketSameLine: false
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<SomeHighlyConfiguredComponent
+  onEnter={this.onEnter}
+  onLeave={this.onLeave}
+  onChange={this.onChange}
+  initialValue={this.state.initialValue}
+  ignoreStuff={true}
+>
+  <div>and the children go here</div>
+  <div>and here too</div>
+</SomeHighlyConfiguredComponent>
+
+=====================================output=====================================
+<SomeHighlyConfiguredComponent
+  onEnter={this.onEnter}
+  onLeave={this.onLeave}
+  onChange={this.onChange}
+  initialValue={this.state.initialValue}
+  ignoreStuff={true}
+>
+  <div>and the children go here</div>
+  <div>and here too</div>
+</SomeHighlyConfiguredComponent>;
+
+================================================================================
+`;
+
+exports[`jsx.js - {"jsxBracketSameLine":true,"bracketSameLine":false} format 1`] = `
+====================================options=====================================
+bracketSameLine: false
+jsxBracketSameLine: true
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<SomeHighlyConfiguredComponent
+  onEnter={this.onEnter}
+  onLeave={this.onLeave}
+  onChange={this.onChange}
+  initialValue={this.state.initialValue}
+  ignoreStuff={true}
+>
+  <div>and the children go here</div>
+  <div>and here too</div>
+</SomeHighlyConfiguredComponent>
+
+=====================================output=====================================
+<SomeHighlyConfiguredComponent
+  onEnter={this.onEnter}
+  onLeave={this.onLeave}
+  onChange={this.onChange}
+  initialValue={this.state.initialValue}
+  ignoreStuff={true}>
+  <div>and the children go here</div>
+  <div>and here too</div>
+</SomeHighlyConfiguredComponent>;
+
+================================================================================
+`;
+
+exports[`jsx.js - {"jsxBracketSameLine":true} format 1`] = `
+====================================options=====================================
+jsxBracketSameLine: true
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<SomeHighlyConfiguredComponent
+  onEnter={this.onEnter}
+  onLeave={this.onLeave}
+  onChange={this.onChange}
+  initialValue={this.state.initialValue}
+  ignoreStuff={true}
+>
+  <div>and the children go here</div>
+  <div>and here too</div>
+</SomeHighlyConfiguredComponent>
+
+=====================================output=====================================
+<SomeHighlyConfiguredComponent
+  onEnter={this.onEnter}
+  onLeave={this.onLeave}
+  onChange={this.onChange}
+  initialValue={this.state.initialValue}
+  ignoreStuff={true}>
+  <div>and the children go here</div>
+  <div>and here too</div>
+</SomeHighlyConfiguredComponent>;
+
+================================================================================
+`;

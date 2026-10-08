@@ -1,0 +1,110 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`decorator.ts format[babel-ts] 1`] = `
+"Leading decorators must be attached to a class declaration. (4:1)
+  2 |
+  3 | @dec
+> 4 | enum E {}
+    | ^
+  5 |
+Cause: Leading decorators must be attached to a class declaration. (4:0)"
+`;
+
+exports[`decorator.ts format[typescript] 1`] = `
+"Decorators are not valid here. (3:1)
+  1 | declare function dec<T>(target: T): T;
+  2 |
+> 3 | @dec
+    | ^^^^
+  4 | enum E {}
+  5 |
+Cause: Decorators are not valid here."
+`;
+
+exports[`enums.ts format[babel-ts] 1`] = `
+"Leading decorators must be attached to a class declaration. (4:1)
+  2 |
+  3 | @decorator()
+> 4 | enum Direction {
+    | ^
+  5 |                Up = 1,
+  6 |   Down,
+  7 |   Left,
+Cause: Leading decorators must be attached to a class declaration. (4:0)"
+`;
+
+exports[`enums.ts format[typescript] 1`] = `
+"Decorators are not valid here. (3:1)
+  1 | // https://github.com/typescript-eslint/typescript-eslint/pull/2375
+  2 |
+> 3 | @decorator()
+    | ^^^^^^^^^^^^
+  4 | enum Direction {
+  5 |                Up = 1,
+  6 |   Down,
+Cause: Decorators are not valid here."
+`;
+
+exports[`function.ts format[babel-ts] 1`] = `
+"Leading decorators must be attached to a class declaration. (4:1)
+  2 |
+  3 | @decorator()
+> 4 | function foo(      ){}
+    | ^
+  5 |
+Cause: Leading decorators must be attached to a class declaration. (4:0)"
+`;
+
+exports[`function.ts format[typescript] 1`] = `
+"Decorators are not valid here. (3:1)
+  1 | // https://github.com/typescript-eslint/typescript-eslint/pull/2375
+  2 |
+> 3 | @decorator()
+    | ^^^^^^^^^^^^
+  4 | function foo(      ){}
+  5 |
+Cause: Decorators are not valid here."
+`;
+
+exports[`interface.ts format[babel-ts] 1`] = `
+"Leading decorators must be attached to a class declaration. (5:1)
+  3 |
+  4 | @hello()
+> 5 | interface MyInterface {id: string;
+    | ^
+  6 | }
+  7 |
+Cause: Leading decorators must be attached to a class declaration. (5:0)"
+`;
+
+exports[`interface.ts format[typescript] 1`] = `
+"Decorators are not valid here. (4:1)
+  2 | // #4632
+  3 |
+> 4 | @hello()
+    | ^^^^^^^^
+  5 | interface MyInterface {id: string;
+  6 | }
+  7 |
+Cause: Decorators are not valid here."
+`;
+
+exports[`issue-9102.ts format[babel-ts] 1`] = `
+"Leading decorators must be attached to a class declaration. (2:1)
+  1 | @Decorator()
+> 2 | type T = 1;
+    | ^
+  3 | class C {}
+  4 |
+Cause: Leading decorators must be attached to a class declaration. (2:0)"
+`;
+
+exports[`issue-9102.ts format[typescript] 1`] = `
+"Decorators are not valid here. (1:1)
+> 1 | @Decorator()
+    | ^^^^^^^^^^^^
+  2 | type T = 1;
+  3 | class C {}
+  4 |
+Cause: Decorators are not valid here."
+`;

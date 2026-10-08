@@ -1,0 +1,95 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`comments.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/prettier/prettier/issues/18834
+type A1 = /* 1 */ | T1;
+type A2 = /* 1 */ | (T2);
+type A3 = (/* 1 */ | T3);
+type A4 = /* 1 */ | /* 2 */ T4;
+type A5 = /* 1 */ | (/* 2 */ T5);
+type A6 = /* 0 */ /* 1 */ | /* 2 */ T6;
+type A7 = /* 0 */ | /* 1 */ T7;
+type A8 /* = */ /* 1:before */ = /* 2 */ | /* 3 */ T7;
+
+=====================================output=====================================
+// https://github.com/prettier/prettier/issues/18834
+type A1 = /* 1 */ T1;
+type A2 = /* 1 */ T2;
+type A3 = /* 1 */ T3;
+type A4 = /* 1 */ /* 2 */ T4;
+type A5 = /* 1 */ /* 2 */ T5;
+type A6 = /* 0 */ /* 1 */ /* 2 */ T6;
+type A7 = /* 0 */ /* 1 */ T7;
+type A8 /* = */ /* 1:before */ = /* 2 */ /* 3 */ T7;
+
+================================================================================
+`;
+
+exports[`single-type.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A1 =
+  /* 1 */ | /* 2 */ (
+    /* 3 */ | /* 4 */ {
+        key: string;
+      }
+  );
+
+=====================================output=====================================
+type A1 = /* 1 */ /* 2 */ /* 3 */ /* 4 */ {
+  key: string;
+};
+
+================================================================================
+`;
+
+exports[`single-type-2.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/oxc-project/oxc/pull/21915
+export type myType = | // Comment
+  "A";
+
+// Block comment same-line after pipe
+type BlockComment = | /* block */
+  "B";
+
+// Same-line comment then own-line comment
+type Mixed = | // first
+  // second
+  "C";
+
+// Long line comment that exceeds printWidth on the \`=\` line
+type LongType = | // This is a really long comment that might exceed the print width limit
+  "A";
+
+=====================================output=====================================
+// https://github.com/oxc-project/oxc/pull/21915
+export type myType =
+  // Comment
+  "A";
+
+// Block comment same-line after pipe
+type BlockComment = /* block */ "B";
+
+// Same-line comment then own-line comment
+type Mixed =
+  // first
+  // second
+  "C";
+
+// Long line comment that exceeds printWidth on the \`=\` line
+type LongType =
+  // This is a really long comment that might exceed the print width limit
+  "A";
+
+================================================================================
+`;

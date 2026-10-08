@@ -1,0 +1,13 @@
+.what {
+  .make-modifier(@name, @filename) {
+    &--@{name} {
+      --bg: url("@{filename}");
+    }
+  }
+
+  .make-modifier(1A, "1a.png");
+  .make-modifier(AA, "1a.png");
+
+  // Still wrongly lowercased, because `x` is an unit
+  .make-modifier(1X, "1x.png");
+}

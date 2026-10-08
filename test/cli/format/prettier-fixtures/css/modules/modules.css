@@ -1,0 +1,62 @@
+@value colors: './colors.css';
+@value first, second, third from colors;
+
+.title {
+  @nest :global(h1)& {
+    background: red;
+  }
+}
+
+.className {
+  color: green;
+  background: red;
+}
+
+.otherClassName {
+  composes: className;
+  color: yellow;
+}
+
+.otherClassName {
+  composes: className from "./style.css";
+}
+
+.otherClassName {
+  composes: globalClassName from global;
+}
+
+:global {
+  .global-class-name {
+    color: green;
+  }
+}
+
+.root :global .text {
+  color: brown;
+  font-size: 24px;
+  font-family: helvetica, arial, sans-serif;
+  font-weight: 600;
+}
+
+:import("path/to/dep.css") {
+  localAlias: keyFromDep;
+}
+:export {
+  exportedKey: exportedValue;
+}
+
+@keyframes :global(spin) {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+:export {
+  nest: {
+    myColor: blue;
+  }
+  myColor: red;
+}

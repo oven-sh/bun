@@ -1,0 +1,40 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`prettier-ignore-parenthesized-type.ts - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type Foo =
+  // prettier-ignore
+  (
+    aa
+  );
+
+=====================================output=====================================
+type Foo =
+  // prettier-ignore
+  aa
+
+================================================================================
+`;
+
+exports[`prettier-ignore-parenthesized-type.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type Foo =
+  // prettier-ignore
+  (
+    aa
+  );
+
+=====================================output=====================================
+type Foo =
+  // prettier-ignore
+  aa;
+
+================================================================================
+`;

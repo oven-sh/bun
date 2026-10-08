@@ -1,0 +1,23 @@
+:where(input:not([type="button"], [type="reset"], [type="submit"]), textarea, select) {
+    /* CSS here */
+}
+
+.foooooooooooooooooooo :where(input:not([type="button"], [type="reset"], [type="submit"]), textarea, select) {
+    /* CSS here */
+}
+
+:is(input:not([type="button"], [type="reset"], [type="submit"]), textarea, select) {
+    /* CSS here */
+}
+
+.foooooooooooooooooooo :is(input:not([type="button"], [type="reset"], [type="submit"]), textarea, select) {
+    /* CSS here */
+}
+
+:not(input:not([type="button"], [type="reset"], [type="submit"]), textarea, select) {
+    /* CSS here */
+}
+
+.foooooooooooooooooooo :not(input:not([type="button"], [type="reset"], [type="submit"]), textarea, select) {
+    /* CSS here */
+}

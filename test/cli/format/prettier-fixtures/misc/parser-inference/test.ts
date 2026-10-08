@@ -1,0 +1,2 @@
+type foo =
+                 'bar'

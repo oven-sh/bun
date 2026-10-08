@@ -1,0 +1,1 @@
+for({ p: void } of []);

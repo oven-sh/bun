@@ -1,0 +1,31 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format[babel] 1`] = `
+"Sequence expressions cannot be directly nested inside JSX. Did you mean to wrap it in parentheses (...)? (1:18)
+> 1 | let x1 = <div>{a,b}</div>
+    |                  ^
+Cause: Sequence expressions cannot be directly nested inside JSX. Did you mean to wrap it in parentheses (...)? (1:17)"
+`;
+
+exports[`snippet: #0 format[babel-ts] 1`] = `
+"Sequence expressions cannot be directly nested inside JSX. Did you mean to wrap it in parentheses (...)? (1:18)
+> 1 | let x1 = <div>{a,b}</div>
+    |                  ^
+Cause: Sequence expressions cannot be directly nested inside JSX. Did you mean to wrap it in parentheses (...)? (1:17)"
+`;
+
+exports[`snippet: #0 format[hermes] 1`] = `
+"'}' expected in JSX child expression (1:17)
+> 1 | let x1 = <div>{a,b}</div>
+    |                 ^
+Cause: '}' expected in JSX child expression (1:16)
+let x1 = <div>{a,b}</div>
+              ~~^"
+`;
+
+exports[`snippet: #0 format[meriyah] 1`] = `
+"Expected '}' (1:17)
+> 1 | let x1 = <div>{a,b}</div>
+    |                 ^
+Cause: [1:16-1:17]: Expected '}'"
+`;

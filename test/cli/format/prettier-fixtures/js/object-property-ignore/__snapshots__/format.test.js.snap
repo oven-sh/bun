@@ -1,0 +1,661 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`ignore.js - {"trailingComma":"all"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "all"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo = {
+  // prettier-ignore
+  bar:            1,
+}
+
+foo = {
+  _: '',
+  // prettier-ignore
+  bar:            1,
+}
+
+/* comments */
+foo = {
+  _: '',
+  // prettier-ignore
+  bar:            1,         // comment
+}
+
+foo = {
+  _: '',
+  // prettier-ignore
+  bar:            1,         /* comment */
+}
+
+foo = {
+  _: '',
+  // prettier-ignore
+  bar:            /* comment */          1,
+}
+
+/* SpreadElement */
+foo = {
+  _: '',
+  // prettier-ignore
+  ...bar,
+}
+
+// Nested
+foo = {
+  baz: {
+  // prettier-ignore
+  foo: [1, 2,    3]
+},
+  // prettier-ignore
+  bar:            1,
+}
+
+=====================================output=====================================
+foo = {
+  // prettier-ignore
+  bar:            1,
+};
+
+foo = {
+  _: "",
+  // prettier-ignore
+  bar:            1,
+};
+
+/* comments */
+foo = {
+  _: "",
+  // prettier-ignore
+  bar:            1, // comment
+};
+
+foo = {
+  _: "",
+  // prettier-ignore
+  bar:            1 /* comment */,
+};
+
+foo = {
+  _: "",
+  // prettier-ignore
+  bar:            /* comment */          1,
+};
+
+/* SpreadElement */
+foo = {
+  _: "",
+  // prettier-ignore
+  ...bar,
+};
+
+// Nested
+foo = {
+  baz: {
+    // prettier-ignore
+    foo: [1, 2,    3],
+  },
+  // prettier-ignore
+  bar:            1,
+};
+
+================================================================================
+`;
+
+exports[`ignore.js - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo = {
+  // prettier-ignore
+  bar:            1,
+}
+
+foo = {
+  _: '',
+  // prettier-ignore
+  bar:            1,
+}
+
+/* comments */
+foo = {
+  _: '',
+  // prettier-ignore
+  bar:            1,         // comment
+}
+
+foo = {
+  _: '',
+  // prettier-ignore
+  bar:            1,         /* comment */
+}
+
+foo = {
+  _: '',
+  // prettier-ignore
+  bar:            /* comment */          1,
+}
+
+/* SpreadElement */
+foo = {
+  _: '',
+  // prettier-ignore
+  ...bar,
+}
+
+// Nested
+foo = {
+  baz: {
+  // prettier-ignore
+  foo: [1, 2,    3]
+},
+  // prettier-ignore
+  bar:            1,
+}
+
+=====================================output=====================================
+foo = {
+  // prettier-ignore
+  bar:            1,
+};
+
+foo = {
+  _: "",
+  // prettier-ignore
+  bar:            1,
+};
+
+/* comments */
+foo = {
+  _: "",
+  // prettier-ignore
+  bar:            1, // comment
+};
+
+foo = {
+  _: "",
+  // prettier-ignore
+  bar:            1 /* comment */,
+};
+
+foo = {
+  _: "",
+  // prettier-ignore
+  bar:            /* comment */          1,
+};
+
+/* SpreadElement */
+foo = {
+  _: "",
+  // prettier-ignore
+  ...bar,
+};
+
+// Nested
+foo = {
+  baz: {
+    // prettier-ignore
+    foo: [1, 2,    3],
+  },
+  // prettier-ignore
+  bar:            1,
+};
+
+================================================================================
+`;
+
+exports[`ignore.js - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo = {
+  // prettier-ignore
+  bar:            1,
+}
+
+foo = {
+  _: '',
+  // prettier-ignore
+  bar:            1,
+}
+
+/* comments */
+foo = {
+  _: '',
+  // prettier-ignore
+  bar:            1,         // comment
+}
+
+foo = {
+  _: '',
+  // prettier-ignore
+  bar:            1,         /* comment */
+}
+
+foo = {
+  _: '',
+  // prettier-ignore
+  bar:            /* comment */          1,
+}
+
+/* SpreadElement */
+foo = {
+  _: '',
+  // prettier-ignore
+  ...bar,
+}
+
+// Nested
+foo = {
+  baz: {
+  // prettier-ignore
+  foo: [1, 2,    3]
+},
+  // prettier-ignore
+  bar:            1,
+}
+
+=====================================output=====================================
+foo = {
+  // prettier-ignore
+  bar:            1
+};
+
+foo = {
+  _: "",
+  // prettier-ignore
+  bar:            1
+};
+
+/* comments */
+foo = {
+  _: "",
+  // prettier-ignore
+  bar:            1 // comment
+};
+
+foo = {
+  _: "",
+  // prettier-ignore
+  bar:            1 /* comment */
+};
+
+foo = {
+  _: "",
+  // prettier-ignore
+  bar:            /* comment */          1
+};
+
+/* SpreadElement */
+foo = {
+  _: "",
+  // prettier-ignore
+  ...bar
+};
+
+// Nested
+foo = {
+  baz: {
+    // prettier-ignore
+    foo: [1, 2,    3]
+  },
+  // prettier-ignore
+  bar:            1
+};
+
+================================================================================
+`;
+
+exports[`issue-5678.js - {"trailingComma":"all"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "all"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// #5678
+const refreshTokenPayload = {
+    type: 'refreshToken',
+    sub: this._id,
+    role: this.role,
+  	// prettier-ignore
+    exp: now + (60 * 60 * 24 * 90), // (90 days)
+  };
+
+export default {
+  // prettier-ignore
+  protagonist: "  0\\r\\n" +
+               "0 00\\r\\n" +
+               "00000\\r\\n" +
+               "0 0\\r\\n" +
+               "0 0",
+
+  // prettier-ignore
+  wall: "00000\\r\\n" +
+        "00000\\r\\n" +
+        "00000\\r\\n" +
+        "00000\\r\\n" +
+        "00000",
+
+  // prettier-ignore
+  cheese: "0\\r\\n" +
+          " 0\\r\\n" +
+          "000\\r\\n" +
+          "00 0\\r\\n" +
+          "00000",
+
+  // prettier-ignore
+  enemy: "0   0\\r\\n" +
+         "00 00\\r\\n" +
+         "00000\\r\\n" +
+         "0 0 0\\r\\n" +
+         "00000",
+
+  // prettier-ignore
+  home: "00000\\r\\n" +
+        "0   0\\r\\n" +
+        "0   0\\r\\n" +
+        "0   0\\r\\n" +
+        "00000",
+
+  // prettier-ignore
+  dog: "00 00\\r\\n" +
+       "00000\\r\\n" +
+       "0   0\\r\\n" +
+       "0 0 0\\r\\n" +
+       " 000 "
+}
+
+=====================================output=====================================
+// #5678
+const refreshTokenPayload = {
+  type: "refreshToken",
+  sub: this._id,
+  role: this.role,
+  // prettier-ignore
+  exp: now + (60 * 60 * 24 * 90), // (90 days)
+};
+
+export default {
+  // prettier-ignore
+  protagonist: "  0\\r\\n" +
+               "0 00\\r\\n" +
+               "00000\\r\\n" +
+               "0 0\\r\\n" +
+               "0 0",
+
+  // prettier-ignore
+  wall: "00000\\r\\n" +
+        "00000\\r\\n" +
+        "00000\\r\\n" +
+        "00000\\r\\n" +
+        "00000",
+
+  // prettier-ignore
+  cheese: "0\\r\\n" +
+          " 0\\r\\n" +
+          "000\\r\\n" +
+          "00 0\\r\\n" +
+          "00000",
+
+  // prettier-ignore
+  enemy: "0   0\\r\\n" +
+         "00 00\\r\\n" +
+         "00000\\r\\n" +
+         "0 0 0\\r\\n" +
+         "00000",
+
+  // prettier-ignore
+  home: "00000\\r\\n" +
+        "0   0\\r\\n" +
+        "0   0\\r\\n" +
+        "0   0\\r\\n" +
+        "00000",
+
+  // prettier-ignore
+  dog: "00 00\\r\\n" +
+       "00000\\r\\n" +
+       "0   0\\r\\n" +
+       "0 0 0\\r\\n" +
+       " 000 ",
+};
+
+================================================================================
+`;
+
+exports[`issue-5678.js - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// #5678
+const refreshTokenPayload = {
+    type: 'refreshToken',
+    sub: this._id,
+    role: this.role,
+  	// prettier-ignore
+    exp: now + (60 * 60 * 24 * 90), // (90 days)
+  };
+
+export default {
+  // prettier-ignore
+  protagonist: "  0\\r\\n" +
+               "0 00\\r\\n" +
+               "00000\\r\\n" +
+               "0 0\\r\\n" +
+               "0 0",
+
+  // prettier-ignore
+  wall: "00000\\r\\n" +
+        "00000\\r\\n" +
+        "00000\\r\\n" +
+        "00000\\r\\n" +
+        "00000",
+
+  // prettier-ignore
+  cheese: "0\\r\\n" +
+          " 0\\r\\n" +
+          "000\\r\\n" +
+          "00 0\\r\\n" +
+          "00000",
+
+  // prettier-ignore
+  enemy: "0   0\\r\\n" +
+         "00 00\\r\\n" +
+         "00000\\r\\n" +
+         "0 0 0\\r\\n" +
+         "00000",
+
+  // prettier-ignore
+  home: "00000\\r\\n" +
+        "0   0\\r\\n" +
+        "0   0\\r\\n" +
+        "0   0\\r\\n" +
+        "00000",
+
+  // prettier-ignore
+  dog: "00 00\\r\\n" +
+       "00000\\r\\n" +
+       "0   0\\r\\n" +
+       "0 0 0\\r\\n" +
+       " 000 "
+}
+
+=====================================output=====================================
+// #5678
+const refreshTokenPayload = {
+  type: "refreshToken",
+  sub: this._id,
+  role: this.role,
+  // prettier-ignore
+  exp: now + (60 * 60 * 24 * 90), // (90 days)
+};
+
+export default {
+  // prettier-ignore
+  protagonist: "  0\\r\\n" +
+               "0 00\\r\\n" +
+               "00000\\r\\n" +
+               "0 0\\r\\n" +
+               "0 0",
+
+  // prettier-ignore
+  wall: "00000\\r\\n" +
+        "00000\\r\\n" +
+        "00000\\r\\n" +
+        "00000\\r\\n" +
+        "00000",
+
+  // prettier-ignore
+  cheese: "0\\r\\n" +
+          " 0\\r\\n" +
+          "000\\r\\n" +
+          "00 0\\r\\n" +
+          "00000",
+
+  // prettier-ignore
+  enemy: "0   0\\r\\n" +
+         "00 00\\r\\n" +
+         "00000\\r\\n" +
+         "0 0 0\\r\\n" +
+         "00000",
+
+  // prettier-ignore
+  home: "00000\\r\\n" +
+        "0   0\\r\\n" +
+        "0   0\\r\\n" +
+        "0   0\\r\\n" +
+        "00000",
+
+  // prettier-ignore
+  dog: "00 00\\r\\n" +
+       "00000\\r\\n" +
+       "0   0\\r\\n" +
+       "0 0 0\\r\\n" +
+       " 000 ",
+};
+
+================================================================================
+`;
+
+exports[`issue-5678.js - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// #5678
+const refreshTokenPayload = {
+    type: 'refreshToken',
+    sub: this._id,
+    role: this.role,
+  	// prettier-ignore
+    exp: now + (60 * 60 * 24 * 90), // (90 days)
+  };
+
+export default {
+  // prettier-ignore
+  protagonist: "  0\\r\\n" +
+               "0 00\\r\\n" +
+               "00000\\r\\n" +
+               "0 0\\r\\n" +
+               "0 0",
+
+  // prettier-ignore
+  wall: "00000\\r\\n" +
+        "00000\\r\\n" +
+        "00000\\r\\n" +
+        "00000\\r\\n" +
+        "00000",
+
+  // prettier-ignore
+  cheese: "0\\r\\n" +
+          " 0\\r\\n" +
+          "000\\r\\n" +
+          "00 0\\r\\n" +
+          "00000",
+
+  // prettier-ignore
+  enemy: "0   0\\r\\n" +
+         "00 00\\r\\n" +
+         "00000\\r\\n" +
+         "0 0 0\\r\\n" +
+         "00000",
+
+  // prettier-ignore
+  home: "00000\\r\\n" +
+        "0   0\\r\\n" +
+        "0   0\\r\\n" +
+        "0   0\\r\\n" +
+        "00000",
+
+  // prettier-ignore
+  dog: "00 00\\r\\n" +
+       "00000\\r\\n" +
+       "0   0\\r\\n" +
+       "0 0 0\\r\\n" +
+       " 000 "
+}
+
+=====================================output=====================================
+// #5678
+const refreshTokenPayload = {
+  type: "refreshToken",
+  sub: this._id,
+  role: this.role,
+  // prettier-ignore
+  exp: now + (60 * 60 * 24 * 90) // (90 days)
+};
+
+export default {
+  // prettier-ignore
+  protagonist: "  0\\r\\n" +
+               "0 00\\r\\n" +
+               "00000\\r\\n" +
+               "0 0\\r\\n" +
+               "0 0",
+
+  // prettier-ignore
+  wall: "00000\\r\\n" +
+        "00000\\r\\n" +
+        "00000\\r\\n" +
+        "00000\\r\\n" +
+        "00000",
+
+  // prettier-ignore
+  cheese: "0\\r\\n" +
+          " 0\\r\\n" +
+          "000\\r\\n" +
+          "00 0\\r\\n" +
+          "00000",
+
+  // prettier-ignore
+  enemy: "0   0\\r\\n" +
+         "00 00\\r\\n" +
+         "00000\\r\\n" +
+         "0 0 0\\r\\n" +
+         "00000",
+
+  // prettier-ignore
+  home: "00000\\r\\n" +
+        "0   0\\r\\n" +
+        "0   0\\r\\n" +
+        "0   0\\r\\n" +
+        "00000",
+
+  // prettier-ignore
+  dog: "00 00\\r\\n" +
+       "00000\\r\\n" +
+       "0   0\\r\\n" +
+       "0 0 0\\r\\n" +
+       " 000 "
+};
+
+================================================================================
+`;

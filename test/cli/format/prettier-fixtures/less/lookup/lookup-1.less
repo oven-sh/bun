@@ -1,0 +1,18 @@
+/* https://lesscss.org/features/#detached-rulesets-feature-property-variable-accessors */
+
+@config: {
+  option1: true;
+  option2: false;
+}
+
+/*
+TODO[prettier]:
+The `@config   [   option1]` part should format as `@config[option1]`
+**/
+.mixin() when (@config   [   option1] = true) {
+  selected: value;
+}
+
+.box {
+  .mixin();
+}

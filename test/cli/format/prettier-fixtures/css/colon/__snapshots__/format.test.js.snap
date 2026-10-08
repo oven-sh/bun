@@ -1,0 +1,18 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`colon.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+div {
+  filter: progid:DXImageTransform.Microsoft.BasicImage(rotation=3);
+}
+
+=====================================output=====================================
+div {
+  filter: progid:DXImageTransform.Microsoft.BasicImage(rotation=3);
+}
+
+================================================================================
+`;

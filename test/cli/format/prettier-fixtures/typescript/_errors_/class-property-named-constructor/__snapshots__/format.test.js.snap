@@ -1,0 +1,157 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format[babel-ts] 1`] = `
+"Classes may not have a field named 'constructor'. (2:3)
+  1 | abstract class Foo {
+> 2 |   constructor
+    |   ^
+  3 | }
+Cause: Classes may not have a field named 'constructor'. (2:2)"
+`;
+
+exports[`snippet: #0 format[oxc-ts] 1`] = `
+"Expected \`(\` but found \`}\` (3:1)
+  1 | abstract class Foo {
+  2 |   constructor
+> 3 | }
+    | ^"
+`;
+
+exports[`snippet: #0 format[typescript] 1`] = `
+"'(' expected. (3:1)
+  1 | abstract class Foo {
+  2 |   constructor
+> 3 | }
+    | ^
+Cause: '(' expected."
+`;
+
+exports[`snippet: #1 format[babel-ts] 1`] = `
+"Classes may not have a field named 'constructor'. (2:3)
+  1 | abstract class Foo {
+> 2 |   'constructor'
+    |   ^
+  3 | }
+Cause: Classes may not have a field named 'constructor'. (2:2)"
+`;
+
+exports[`snippet: #1 format[oxc-ts] 1`] = `
+"Classes can't have a field named 'constructor' (2:3)
+  1 | abstract class Foo {
+> 2 |   'constructor'
+    |   ^^^^^^^^^^^^^
+  3 | }"
+`;
+
+exports[`snippet: #1 format[typescript] 1`] = `
+"Classes may not have a field named 'constructor'. (2:3)
+  1 | abstract class Foo {
+> 2 |   'constructor'
+    |   ^^^^^^^^^^^^^
+  3 | }
+Cause: Classes may not have a field named 'constructor'."
+`;
+
+exports[`snippet: #2 format[babel-ts] 1`] = `
+"Classes may not have a field named 'constructor'. (2:3)
+  1 | abstract class Foo {
+> 2 |   'constructor'
+    |   ^
+  3 | }
+Cause: Classes may not have a field named 'constructor'. (2:2)"
+`;
+
+exports[`snippet: #2 format[oxc-ts] 1`] = `
+"Classes can't have a field named 'constructor' (2:3)
+  1 | abstract class Foo {
+> 2 |   'constructor'
+    |   ^^^^^^^^^^^^^
+  3 | }"
+`;
+
+exports[`snippet: #2 format[typescript] 1`] = `
+"Classes may not have a field named 'constructor'. (2:3)
+  1 | abstract class Foo {
+> 2 |   'constructor'
+    |   ^^^^^^^^^^^^^
+  3 | }
+Cause: Classes may not have a field named 'constructor'."
+`;
+
+exports[`snippet: #3 format[babel-ts] 1`] = `
+"Classes may not have a field named 'constructor'. (2:12)
+  1 | abstract class Foo {
+> 2 |   accessor 'constructor'
+    |            ^
+  3 | }
+Cause: Classes may not have a field named 'constructor'. (2:11)"
+`;
+
+exports[`snippet: #3 format[oxc-ts] 1`] = `
+"Classes may not have a field named 'constructor' (2:12)
+  1 | abstract class Foo {
+> 2 |   accessor 'constructor'
+    |            ^^^^^^^^^^^^^
+  3 | }"
+`;
+
+exports[`snippet: #3 format[typescript] 1`] = `
+"Classes may not have a field named 'constructor'. (2:12)
+  1 | abstract class Foo {
+> 2 |   accessor 'constructor'
+    |            ^^^^^^^^^^^^^
+  3 | }
+Cause: Classes may not have a field named 'constructor'."
+`;
+
+exports[`snippet: #4 format[babel-ts] 1`] = `
+"Classes may not have a field named 'constructor'. (2:12)
+  1 | abstract class Foo {
+> 2 |   accessor 'constructor'
+    |            ^
+  3 | }
+Cause: Classes may not have a field named 'constructor'. (2:11)"
+`;
+
+exports[`snippet: #4 format[oxc-ts] 1`] = `
+"Classes may not have a field named 'constructor' (2:12)
+  1 | abstract class Foo {
+> 2 |   accessor 'constructor'
+    |            ^^^^^^^^^^^^^
+  3 | }"
+`;
+
+exports[`snippet: #4 format[typescript] 1`] = `
+"Classes may not have a field named 'constructor'. (2:12)
+  1 | abstract class Foo {
+> 2 |   accessor 'constructor'
+    |            ^^^^^^^^^^^^^
+  3 | }
+Cause: Classes may not have a field named 'constructor'."
+`;
+
+exports[`snippet: #5 format[babel-ts] 1`] = `
+"Classes may not have a field named 'constructor'. (2:12)
+  1 | abstract class Foo {
+> 2 |   accessor constructor
+    |            ^
+  3 | }
+Cause: Classes may not have a field named 'constructor'. (2:11)"
+`;
+
+exports[`snippet: #5 format[oxc-ts] 1`] = `
+"Expected \`(\` but found \`}\` (3:1)
+  1 | abstract class Foo {
+  2 |   accessor constructor
+> 3 | }
+    | ^"
+`;
+
+exports[`snippet: #5 format[typescript] 1`] = `
+"'(' expected. (3:1)
+  1 | abstract class Foo {
+  2 |   accessor constructor
+> 3 | }
+    | ^
+Cause: '(' expected."
+`;

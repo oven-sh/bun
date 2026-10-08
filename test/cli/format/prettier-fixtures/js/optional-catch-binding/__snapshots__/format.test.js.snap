@@ -1,0 +1,25 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`optional_catch_binding.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+try {
+
+}
+catch {
+
+}
+finally {
+
+}
+
+=====================================output=====================================
+try {
+} catch {
+} finally {
+}
+
+================================================================================
+`;

@@ -1,0 +1,6 @@
+@import "foo";@import "bar";
+.wrapper {
+@media (min-width: 1025px) {
+max-width: 600px;
+}
+}

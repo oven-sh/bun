@@ -1,0 +1,117 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`call.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+new (factory())()
+new factory()()
+
+new (factory())(factory())
+
+=====================================output=====================================
+new (factory())();
+new factory()();
+
+new (factory())(factory());
+
+================================================================================
+`;
+
+exports[`new-expression.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+new (memoize.Cache || MapCache)
+new (typeof this == "function" ? this : Dict())
+new (createObj()).prop(a());
+new (x()\`\`.y)();
+new e[f().x].y();
+new e[f()].y();
+new (a().b)();
+new (a().b().c)();
+new (a\`\`());
+
+=====================================output=====================================
+new (memoize.Cache || MapCache)();
+new (typeof this == "function" ? this : Dict())();
+new (createObj().prop)(a());
+new (x()\`\`.y)();
+new e[f().x].y();
+new e[f()].y();
+new (a().b)();
+new (a().b().c)();
+new (a\`\`())();
+
+================================================================================
+`;
+
+exports[`parentheses.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+new (import("foo"))();
+new (import("foo").bar)();
+new (import("foo")\`bar\`)();
+
+=====================================output=====================================
+new (import("foo"))();
+new (import("foo").bar)();
+new (import("foo")\`bar\`)();
+
+================================================================================
+`;
+
+exports[`with-member-expression.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function functionName() {
+  // indent to make the line break
+  if (true) {
+    this._aVeryLongVariableNameToForceLineBreak = new this.Promise(
+      (resolve, reject) => {
+        // do something
+      }
+    );
+  }
+}
+
+foo = new long_long_member.long_long_member.long_long_member.long_long_member.long_long_member();
+new long_long_member.long_long_member.long_long_member.long_long_member.long_long_member();
+new long_long_member.long_long_member.long_long_member.long_long_member.long_long_member(x);
+foo = long_long_member.long_long_member.long_long_member.long_long_member.long_long_member();
+long_long_member.long_long_member.long_long_member.long_long_member.long_long_member();
+long_long_member.long_long_member.long_long_member.long_long_member.long_long_member(x);
+
+=====================================output=====================================
+function functionName() {
+  // indent to make the line break
+  if (true) {
+    this._aVeryLongVariableNameToForceLineBreak = new this.Promise(
+      (resolve, reject) => {
+        // do something
+      },
+    );
+  }
+}
+
+foo =
+  new long_long_member.long_long_member.long_long_member.long_long_member.long_long_member();
+new long_long_member.long_long_member.long_long_member.long_long_member.long_long_member();
+new long_long_member.long_long_member.long_long_member.long_long_member.long_long_member(
+  x,
+);
+foo =
+  long_long_member.long_long_member.long_long_member.long_long_member.long_long_member();
+long_long_member.long_long_member.long_long_member.long_long_member.long_long_member();
+long_long_member.long_long_member.long_long_member.long_long_member.long_long_member(
+  x,
+);
+
+================================================================================
+`;

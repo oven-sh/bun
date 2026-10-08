@@ -1,0 +1,17 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`shorthand-with-sass-variables.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.class{border:1px  solid       $color;
+}
+
+=====================================output=====================================
+.class {
+  border: 1px solid $color;
+}
+
+================================================================================
+`;

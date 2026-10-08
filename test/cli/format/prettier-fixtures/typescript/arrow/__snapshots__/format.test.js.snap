@@ -1,0 +1,468 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`16067.ts - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const foo1 = 
+  // comment
+  <T>() => () => 1;
+
+const foo2 = 
+  // comment
+  () => () => 1;
+
+const foo3 = 
+  // comment
+  <T>() => 1;
+
+foo(
+  // comment
+  <T>() => () => 1,
+);
+
+a ||
+  // comment
+  (<T>() => () => 1);
+
+void
+  // comment
+  (<T>() => () => 1);
+
+cond ?
+  // comment
+  <T>() => () => 1
+  :
+  // comment
+  <T>() => () => 1;
+
+foo4 = 
+  // comment
+  <T>() => () => 1;
+
+=====================================output=====================================
+const foo1 =
+  // comment
+  <T>() =>
+    () =>
+      1
+
+const foo2 =
+  // comment
+  () => () => 1
+
+const foo3 =
+  // comment
+  <T>() => 1
+
+foo(
+  // comment
+  <T>() =>
+    () =>
+      1,
+)
+
+a ||
+  // comment
+  (<T>() =>
+    () =>
+      1)
+
+void (
+  // comment
+  (<T>() =>
+    () =>
+      1)
+)
+
+cond
+  ? // comment
+    <T>() =>
+      () =>
+        1
+  : // comment
+    <T>() =>
+      () =>
+        1
+
+foo4 =
+  // comment
+  <T>() =>
+    () =>
+      1
+
+================================================================================
+`;
+
+exports[`16067.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const foo1 = 
+  // comment
+  <T>() => () => 1;
+
+const foo2 = 
+  // comment
+  () => () => 1;
+
+const foo3 = 
+  // comment
+  <T>() => 1;
+
+foo(
+  // comment
+  <T>() => () => 1,
+);
+
+a ||
+  // comment
+  (<T>() => () => 1);
+
+void
+  // comment
+  (<T>() => () => 1);
+
+cond ?
+  // comment
+  <T>() => () => 1
+  :
+  // comment
+  <T>() => () => 1;
+
+foo4 = 
+  // comment
+  <T>() => () => 1;
+
+=====================================output=====================================
+const foo1 =
+  // comment
+  <T>() =>
+    () =>
+      1;
+
+const foo2 =
+  // comment
+  () => () => 1;
+
+const foo3 =
+  // comment
+  <T>() => 1;
+
+foo(
+  // comment
+  <T>() =>
+    () =>
+      1,
+);
+
+a ||
+  // comment
+  (<T>() =>
+    () =>
+      1);
+
+void (
+  // comment
+  (<T>() =>
+    () =>
+      1)
+);
+
+cond
+  ? // comment
+    <T>() =>
+      () =>
+        1
+  : // comment
+    <T>() =>
+      () =>
+        1;
+
+foo4 =
+  // comment
+  <T>() =>
+    () =>
+      1;
+
+================================================================================
+`;
+
+exports[`arrow_regression.ts - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const bar = (...varargs:any[]) => {
+  console.log(varargs);
+};
+
+const foo = (x:string):void => (
+  bar(
+    x,
+    () => {},
+    () => {}
+  )
+);
+
+app.get("/", (req, res): void => {
+  res.send("Hello world");
+});
+
+=====================================output=====================================
+const bar = (...varargs: any[]) => {
+  console.log(varargs)
+}
+
+const foo = (x: string): void =>
+  bar(
+    x,
+    () => {},
+    () => {},
+  )
+
+app.get("/", (req, res): void => {
+  res.send("Hello world")
+})
+
+================================================================================
+`;
+
+exports[`arrow_regression.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const bar = (...varargs:any[]) => {
+  console.log(varargs);
+};
+
+const foo = (x:string):void => (
+  bar(
+    x,
+    () => {},
+    () => {}
+  )
+);
+
+app.get("/", (req, res): void => {
+  res.send("Hello world");
+});
+
+=====================================output=====================================
+const bar = (...varargs: any[]) => {
+  console.log(varargs);
+};
+
+const foo = (x: string): void =>
+  bar(
+    x,
+    () => {},
+    () => {},
+  );
+
+app.get("/", (req, res): void => {
+  res.send("Hello world");
+});
+
+================================================================================
+`;
+
+exports[`comments.ts - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const fn1 = () => {
+  return;
+} /* foo */;
+
+const fn2 = () => {
+  return;
+}
+
+// foo
+;
+
+=====================================output=====================================
+const fn1 = () => {
+  return
+} /* foo */
+
+const fn2 = () => {
+  return
+}
+
+// foo
+
+================================================================================
+`;
+
+exports[`comments.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const fn1 = () => {
+  return;
+} /* foo */;
+
+const fn2 = () => {
+  return;
+}
+
+// foo
+;
+
+=====================================output=====================================
+const fn1 = () => {
+  return;
+}; /* foo */
+
+const fn2 = () => {
+  return;
+};
+
+// foo
+
+================================================================================
+`;
+
+exports[`issue-6107-curry.ts - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const getIconEngagementTypeFrom = (engagementTypes: Array<EngagementType>) =>
+  iconEngagementType => engagementTypes.includes(iconEngagementType);
+
+const getIconEngagementTypeFrom2 =
+  (
+    engagementTypes: Array<EngagementType>,
+    secondArg: Something
+  ) =>
+  iconEngagementType =>
+  engagementTypes.includes(iconEngagementType);
+
+const getIconEngagementTypeFrom2 =
+  (
+    engagementTypes: Array<EngagementType>,
+    secondArg: Something,
+    thirArg: SomethingElse
+  ) =>
+  iconEngagementType =>
+  engagementTypes.includes(iconEngagementType);
+
+=====================================output=====================================
+const getIconEngagementTypeFrom =
+  (engagementTypes: Array<EngagementType>) => (iconEngagementType) =>
+    engagementTypes.includes(iconEngagementType)
+
+const getIconEngagementTypeFrom2 =
+  (engagementTypes: Array<EngagementType>, secondArg: Something) =>
+  (iconEngagementType) =>
+    engagementTypes.includes(iconEngagementType)
+
+const getIconEngagementTypeFrom2 =
+  (
+    engagementTypes: Array<EngagementType>,
+    secondArg: Something,
+    thirArg: SomethingElse,
+  ) =>
+  (iconEngagementType) =>
+    engagementTypes.includes(iconEngagementType)
+
+================================================================================
+`;
+
+exports[`issue-6107-curry.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const getIconEngagementTypeFrom = (engagementTypes: Array<EngagementType>) =>
+  iconEngagementType => engagementTypes.includes(iconEngagementType);
+
+const getIconEngagementTypeFrom2 =
+  (
+    engagementTypes: Array<EngagementType>,
+    secondArg: Something
+  ) =>
+  iconEngagementType =>
+  engagementTypes.includes(iconEngagementType);
+
+const getIconEngagementTypeFrom2 =
+  (
+    engagementTypes: Array<EngagementType>,
+    secondArg: Something,
+    thirArg: SomethingElse
+  ) =>
+  iconEngagementType =>
+  engagementTypes.includes(iconEngagementType);
+
+=====================================output=====================================
+const getIconEngagementTypeFrom =
+  (engagementTypes: Array<EngagementType>) => (iconEngagementType) =>
+    engagementTypes.includes(iconEngagementType);
+
+const getIconEngagementTypeFrom2 =
+  (engagementTypes: Array<EngagementType>, secondArg: Something) =>
+  (iconEngagementType) =>
+    engagementTypes.includes(iconEngagementType);
+
+const getIconEngagementTypeFrom2 =
+  (
+    engagementTypes: Array<EngagementType>,
+    secondArg: Something,
+    thirArg: SomethingElse,
+  ) =>
+  (iconEngagementType) =>
+    engagementTypes.includes(iconEngagementType);
+
+================================================================================
+`;
+
+exports[`issue-14563.ts - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const myFunc =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  <T extends any>(a: T) =>
+    (b: string) => {};
+
+=====================================output=====================================
+const myFunc =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  <T extends any>(a: T) =>
+    (b: string) => {}
+
+================================================================================
+`;
+
+exports[`issue-14563.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const myFunc =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  <T extends any>(a: T) =>
+    (b: string) => {};
+
+=====================================output=====================================
+const myFunc =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  <T extends any>(a: T) =>
+    (b: string) => {};
+
+================================================================================
+`;

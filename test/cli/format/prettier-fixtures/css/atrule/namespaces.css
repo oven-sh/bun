@@ -1,0 +1,42 @@
+@namespace toto "http://toto.example.org";
+@namespace toto url("http://toto.example.org");
+@namespace toto "http://toto.example.org" ;
+@namespace  toto  "http://toto.example.org"  ;
+@namespace
+toto
+"http://toto.example.org"
+;
+@namespace
+
+toto
+
+"http://toto.example.org"
+
+;
+@namespace very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-namespace "http://toto.example.org";
+@namespace
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-namespace
+"http://toto.example.org"
+;
+@namespace
+
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-namespace
+
+"http://toto.example.org"
+
+;
+@namespace "http://example.com/foo";
+@namespace url("http://example.com/foo");
+@namespace url("http://example.com/foo") ;
+@namespace  url("http://example.com/foo")  ;
+@namespace
+url("http://example.com/foo");
+@namespace
+
+url("http://example.com/foo");
+@namespace url("http://example.com/foo/very/very/very/very/very/very/very/very/very/very/very/very/very/very");
+@namespace
+url("http://example.com/foo/very/very/very/very/very/very/very/very/very/very/very/very/very/very/very");
+@namespace
+
+url("http://example.com/foo/very/very/very/very/very/very/very/very/very/very/very/very/very/very/very");

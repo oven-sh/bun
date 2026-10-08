@@ -1,0 +1,71 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`issue-18776.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+fn = () => (a, b, c /* abc */);
+fn = () => (a, b, c) /* abc */;
+
+multilineCase = (someParameter) => (
+  someVeryLongExpressionName,
+  anotherVeryLongExpressionName,
+  yetAnotherVeryLongExpressionName /* abc */
+);
+
+multilineCase = (someParameter) => (
+  someVeryLongExpressionName,
+  anotherVeryLongExpressionName,
+  yetAnotherVeryLongExpressionName
+)/* abc */;
+
+=====================================output=====================================
+fn = () => (a, b, c /* abc */);
+fn = () => (a, b, c); /* abc */
+
+multilineCase = (someParameter) => (
+  someVeryLongExpressionName,
+  anotherVeryLongExpressionName,
+  yetAnotherVeryLongExpressionName /* abc */
+);
+
+multilineCase = (someParameter) => (
+  someVeryLongExpressionName,
+  anotherVeryLongExpressionName,
+  yetAnotherVeryLongExpressionName
+); /* abc */
+
+================================================================================
+`;
+
+exports[`issue-19261.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+fn = () => (a = b /* abc */);
+fn = () => a = b /* abc */;
+fn = () => a = b; /* abc */
+
+multilineCase = (someParameter) => (
+  someVeryLongIdentifierName = someVeryLongValueExpressionName /* abc */
+);
+
+multilineCase = (someParameter) =>
+  someVeryLongIdentifierName = someVeryLongValueExpressionName /* abc */
+;
+
+=====================================output=====================================
+fn = () => (a = b /* abc */);
+fn = () => (a = b); /* abc */
+fn = () => (a = b); /* abc */
+
+multilineCase = (someParameter) =>
+  (someVeryLongIdentifierName = someVeryLongValueExpressionName /* abc */);
+
+multilineCase = (someParameter) =>
+  (someVeryLongIdentifierName = someVeryLongValueExpressionName); /* abc */
+
+================================================================================
+`;

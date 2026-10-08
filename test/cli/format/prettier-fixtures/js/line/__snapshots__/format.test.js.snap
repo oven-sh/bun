@@ -1,0 +1,22 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`windows.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const vscode = require("vscode");
+const {getDir, getActiveFile, uint8arrayToString} = require("./utils");
+
+let outChannel;
+let _commands;
+
+=====================================output=====================================
+const vscode = require("vscode");
+const { getDir, getActiveFile, uint8arrayToString } = require("./utils");
+
+let outChannel;
+let _commands;
+
+================================================================================
+`;

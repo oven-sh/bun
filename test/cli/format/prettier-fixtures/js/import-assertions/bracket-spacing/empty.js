@@ -1,0 +1,1 @@
+export * as bar from "bar.json" assert { }

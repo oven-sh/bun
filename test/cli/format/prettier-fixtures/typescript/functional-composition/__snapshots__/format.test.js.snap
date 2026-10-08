@@ -1,0 +1,156 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`pipe-function-calls.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(() => {
+
+  pipe(
+    serviceEventFromMessage(msg),
+    TE.chain(
+      flow(
+        publishServiceEvent(analytics),
+        TE.mapLeft(nackFromError)
+      )
+    )
+  )()
+    .then(messageResponse(logger, msg))
+    .catch((err: Error) => {
+      logger.error(
+        pipe(
+          O.fromNullable(err.stack),
+          O.getOrElse(constant(err.message))
+        )
+      );
+      process.exit(1);
+    });
+})();
+
+=====================================output=====================================
+(() => {
+  pipe(
+    serviceEventFromMessage(msg),
+    TE.chain(flow(publishServiceEvent(analytics), TE.mapLeft(nackFromError))),
+  )()
+    .then(messageResponse(logger, msg))
+    .catch((err: Error) => {
+      logger.error(
+        pipe(O.fromNullable(err.stack), O.getOrElse(constant(err.message))),
+      );
+      process.exit(1);
+    });
+})();
+
+================================================================================
+`;
+
+exports[`pipe-function-calls-with-comments.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// input with some comments added to avoid reformatting
+
+(() => {
+  pipe(
+    // add a descriptive comment here
+    timelines,
+    everyCommitTimestamps,
+    A.sort(ordDate),
+    A.head
+  );
+
+  pipe(
+    // add a descriptive comment here
+    serviceEventFromMessage(msg),
+    TE.chain(
+      flow(
+        // add a descriptive comment here
+        publishServiceEvent(analytics),
+        TE.mapLeft(nackFromError)
+      )
+    )
+  )()
+    .then(messageResponse(logger, msg))
+    .catch((err: Error) => {
+      logger.error(
+        pipe(
+          // add a descriptive comment here
+          O.fromNullable(err.stack),
+          O.getOrElse(constant(err.message))
+        )
+      );
+      process.exit(1);
+    });
+
+  pipe(
+    // add a descriptive comment here
+    Changelog.timestampOfFirstCommit([[commit]]),
+    O.toUndefined
+  );
+
+  chain(
+    flow(
+      // add a descriptive comment here
+      getUploadUrl,
+      E.mapLeft(Errors.unknownError),
+      TE.fromEither
+    )
+  );
+})();
+
+=====================================output=====================================
+// input with some comments added to avoid reformatting
+
+(() => {
+  pipe(
+    // add a descriptive comment here
+    timelines,
+    everyCommitTimestamps,
+    A.sort(ordDate),
+    A.head,
+  );
+
+  pipe(
+    // add a descriptive comment here
+    serviceEventFromMessage(msg),
+    TE.chain(
+      flow(
+        // add a descriptive comment here
+        publishServiceEvent(analytics),
+        TE.mapLeft(nackFromError),
+      ),
+    ),
+  )()
+    .then(messageResponse(logger, msg))
+    .catch((err: Error) => {
+      logger.error(
+        pipe(
+          // add a descriptive comment here
+          O.fromNullable(err.stack),
+          O.getOrElse(constant(err.message)),
+        ),
+      );
+      process.exit(1);
+    });
+
+  pipe(
+    // add a descriptive comment here
+    Changelog.timestampOfFirstCommit([[commit]]),
+    O.toUndefined,
+  );
+
+  chain(
+    flow(
+      // add a descriptive comment here
+      getUploadUrl,
+      E.mapLeft(Errors.unknownError),
+      TE.fromEither,
+    ),
+  );
+})();
+
+================================================================================
+`;

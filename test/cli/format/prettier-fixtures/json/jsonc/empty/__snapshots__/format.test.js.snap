@@ -1,0 +1,46 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format 1`] = `
+====================================options=====================================
+parsers: ["jsonc", "json", "json5", "json-stringify"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Line comment 1
+    /** Block comment 1 */
+    // Line comment 2
+      /** Block comment 3 */
+=====================================output=====================================
+// Line comment 1
+/** Block comment 1 */
+// Line comment 2
+/** Block comment 3 */
+
+================================================================================
+`;
+
+exports[`snippet: #0 format[json] 1`] = `
+"The input is empty or contains only comments. (4:29)
+  2 |     /** Block comment 1 */
+  3 |     // Line comment 2
+> 4 |       /** Block comment 3 */
+    |                             ^
+Cause: Unexpected parseExpression() input: The input is empty or contains only comments. (4:28)"
+`;
+
+exports[`snippet: #0 format[json-stringify] 1`] = `
+"The input is empty or contains only comments. (4:29)
+  2 |     /** Block comment 1 */
+  3 |     // Line comment 2
+> 4 |       /** Block comment 3 */
+    |                             ^
+Cause: Unexpected parseExpression() input: The input is empty or contains only comments. (4:28)"
+`;
+
+exports[`snippet: #0 format[json5] 1`] = `
+"The input is empty or contains only comments. (4:29)
+  2 |     /** Block comment 1 */
+  3 |     // Line comment 2
+> 4 |       /** Block comment 3 */
+    |                             ^
+Cause: Unexpected parseExpression() input: The input is empty or contains only comments. (4:28)"
+`;

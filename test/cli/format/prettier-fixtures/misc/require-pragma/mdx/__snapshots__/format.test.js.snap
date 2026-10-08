@@ -1,0 +1,33 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`with-pragma.md - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["mdx"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+{/* @prettier */}
+
+I     should      be      formatted       !!
+
+=====================================output=====================================
+{/* @prettier */}
+
+I should be formatted !!
+
+================================================================================
+`;
+
+exports[`without-pragma.md - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["mdx"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+I     should      stay      as-is   !!
+
+=====================================output=====================================
+I     should      stay      as-is   !!
+
+================================================================================
+`;

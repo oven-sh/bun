@@ -1,0 +1,118 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`anonymous.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const f1 = function* () {
+  yield 0;
+};
+  
+const f2 = function * () {
+  yield 0;
+};
+
+const f3 = function* () {
+};
+  
+(function* () {
+  yield 0;
+});
+  
+(function * () {
+  yield 0;
+});
+
+(function* () {
+});
+  
+=====================================output=====================================
+const f1 = function* () {
+  yield 0;
+};
+
+const f2 = function* () {
+  yield 0;
+};
+
+const f3 = function* () {};
+
+(function* () {
+  yield 0;
+});
+
+(function* () {
+  yield 0;
+});
+
+(function* () {});
+
+================================================================================
+`;
+
+exports[`async.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/meriyah/meriyah/commit/f21882c312284572ac6d7e7630c4a677d6caed92
+
+const f = async function * (source, block, opts) {
+  for await (const entry of source) {
+    yield async function () {
+      const cid = await persist(entry.content.serialize(), block, opts)
+      return {
+        cid,
+        path: entry.path,
+        unixfs: UnixFS.unmarshal(entry.content.Data),
+        node: entry.content
+      }
+    }
+  }
+}
+
+=====================================output=====================================
+// https://github.com/meriyah/meriyah/commit/f21882c312284572ac6d7e7630c4a677d6caed92
+
+const f = async function* (source, block, opts) {
+  for await (const entry of source) {
+    yield async function () {
+      const cid = await persist(entry.content.serialize(), block, opts);
+      return {
+        cid,
+        path: entry.path,
+        unixfs: UnixFS.unmarshal(entry.content.Data),
+        node: entry.content,
+      };
+    };
+  }
+};
+
+================================================================================
+`;
+
+exports[`function-name-starts-with-get.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/meriyah/meriyah/issues/164
+
+function get() {}
+
+function* getData() {
+    return yield get();
+}
+
+=====================================output=====================================
+// https://github.com/meriyah/meriyah/issues/164
+
+function get() {}
+
+function* getData() {
+  return yield get();
+}
+
+================================================================================
+`;

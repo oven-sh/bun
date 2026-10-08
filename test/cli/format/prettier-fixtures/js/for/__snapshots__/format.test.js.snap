@@ -1,0 +1,1148 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`9812.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for (const p of ['fullName', 'organ', 'position', 'rank'])
+  // comment
+  form.setValue(\`\${prefix}.data.\${p}\`, response[p])
+
+for(x of y)
+  // comment
+  bar();
+
+for(x in y)
+  // comment
+  bar();
+
+for(;;)
+  // comment
+  bar();
+
+for(x of y)
+  // comment1
+  // comment2
+  bar();
+
+for(x in y)
+  // comment1
+  // comment2
+  bar();
+
+for(;;)
+  // comment1
+  // comment2
+  bar();
+
+for(x of y)
+  /* comment */
+  bar();
+
+for(x in y)
+  /* comment */
+  bar();
+
+for(;;)
+  /* comment */
+  bar();
+
+for (
+  a = 1;
+  // this condition is tricky:
+  a === b || a === c;
+  a++
+) {
+  console.log()
+}
+
+=====================================output=====================================
+for (const p of ["fullName", "organ", "position", "rank"])
+  // comment
+  form.setValue(\`\${prefix}.data.\${p}\`, response[p]);
+
+for (x of y)
+  // comment
+  bar();
+
+for (x in y)
+  // comment
+  bar();
+
+for (;;)
+  // comment
+  bar();
+
+for (x of y)
+  // comment1
+  // comment2
+  bar();
+
+for (x in y)
+  // comment1
+  // comment2
+  bar();
+
+for (;;)
+  // comment1
+  // comment2
+  bar();
+
+for (x of y)
+  /* comment */
+  bar();
+
+for (x in y)
+  /* comment */
+  bar();
+
+for (;;)
+  /* comment */
+  bar();
+
+for (
+  a = 1;
+  // this condition is tricky:
+  a === b || a === c;
+  a++
+) {
+  console.log();
+}
+
+================================================================================
+`;
+
+exports[`9812-2.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for(x of y)
+// 11
+{bar();}
+
+for(x of y)
+// 21
+{}
+
+for(x of y)
+// 31
+;
+
+=====================================output=====================================
+for (x of y)
+// 11
+{
+  bar();
+}
+
+for (x of y)
+// 21
+{
+}
+
+for (x of y) // 31
+;
+
+================================================================================
+`;
+
+exports[`continue-and-break-comment-1.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for(;;) {
+    continue // comment
+    ;
+}
+
+for (;;) {
+    break // comment
+    ;
+}
+
+for (const f of []) {
+    continue // comment
+    ;
+}
+
+for (const f of []) {
+    break // comment
+    ;
+}
+
+for (const f in {}) {
+    continue // comment
+    ;
+}
+
+for (const f in {}) {
+    break // comment
+    ;
+}
+
+while(true) {
+    continue // comment
+    ;
+}
+
+while (true) {
+    break // comment
+    ;
+}
+
+do {
+    continue // comment
+    ;
+} while(true);
+
+
+do {
+    break // comment
+    ;
+} while(true);
+
+label1: for (;;) {
+    continue label1 // comment
+    ;
+}
+
+label2: {
+    break label2 // comment
+    ;
+};
+
+for(;;) {
+    continue /* comment */
+    ;
+}
+
+for (;;) {
+    break /* comment */
+    ;
+}
+
+for (const f of []) {
+    continue /* comment */
+    ;
+}
+
+for (const f of []) {
+    break /* comment */
+    ;
+}
+
+for (const f in {}) {
+    continue /* comment */
+    ;
+}
+
+for (const f in {}) {
+    break /* comment */
+    ;
+}
+
+while(true) {
+    continue /* comment */
+    ;
+}
+
+while (true) {
+    break /* comment */
+    ;
+}
+
+do {
+    continue /* comment */
+    ;
+} while(true);
+
+
+do {
+    break /* comment */
+    ;
+} while(true);
+
+label1: for (;;) {
+    continue label1 /* comment */
+    ;
+}
+
+label2: {
+    break label2 /* comment */
+    ;
+};
+
+=====================================output=====================================
+for (;;) {
+  continue; // comment
+}
+
+for (;;) {
+  break; // comment
+}
+
+for (const f of []) {
+  continue; // comment
+}
+
+for (const f of []) {
+  break; // comment
+}
+
+for (const f in {}) {
+  continue; // comment
+}
+
+for (const f in {}) {
+  break; // comment
+}
+
+while (true) {
+  continue; // comment
+}
+
+while (true) {
+  break; // comment
+}
+
+do {
+  continue; // comment
+} while (true);
+
+do {
+  break; // comment
+} while (true);
+
+label1: for (;;) {
+  continue label1; // comment
+}
+
+label2: {
+  break label2; // comment
+}
+
+for (;;) {
+  continue; /* comment */
+}
+
+for (;;) {
+  break; /* comment */
+}
+
+for (const f of []) {
+  continue; /* comment */
+}
+
+for (const f of []) {
+  break; /* comment */
+}
+
+for (const f in {}) {
+  continue; /* comment */
+}
+
+for (const f in {}) {
+  break; /* comment */
+}
+
+while (true) {
+  continue; /* comment */
+}
+
+while (true) {
+  break; /* comment */
+}
+
+do {
+  continue; /* comment */
+} while (true);
+
+do {
+  break; /* comment */
+} while (true);
+
+label1: for (;;) {
+  continue label1; /* comment */
+}
+
+label2: {
+  break label2; /* comment */
+}
+
+================================================================================
+`;
+
+exports[`continue-and-break-comment-2.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for(;;) {
+    continue
+    // comment
+    ;
+}
+
+for (;;) {
+    break
+    // comment
+    ;
+}
+
+for (const f of []) {
+    continue
+    // comment
+    ;
+}
+
+for (const f of []) {
+    break
+    // comment
+    ;
+}
+
+for (const f in {}) {
+    continue
+    // comment
+    ;
+}
+
+for (const f in {}) {
+    break
+    // comment
+    ;
+}
+
+while(true) {
+    continue
+    // comment
+    ;
+}
+
+while (true) {
+    break
+    // comment
+    ;
+}
+
+do {
+    continue
+    // comment
+    ;
+} while(true);
+
+
+do {
+    break
+    // comment
+    ;
+} while(true);
+
+label1: for (;;) {
+    continue label1
+    // comment
+    ;
+}
+
+label2: {
+    break label2
+    // comment
+    ;
+};
+
+for(;;) {
+    continue
+    /* comment */
+    ;
+}
+
+for (;;) {
+    break
+    /* comment */
+    ;
+}
+
+for (const f of []) {
+    continue
+    /* comment */
+    ;
+}
+
+for (const f of []) {
+    break
+    /* comment */
+    ;
+}
+
+for (const f in {}) {
+    continue
+    /* comment */
+    ;
+}
+
+for (const f in {}) {
+    break
+    /* comment */
+    ;
+}
+
+while(true) {
+    continue
+    /* comment */
+    ;
+}
+
+while (true) {
+    break
+    /* comment */
+    ;
+}
+
+do {
+    continue
+    /* comment */
+    ;
+} while(true);
+
+
+do {
+    break
+    /* comment */
+    ;
+} while(true);
+
+label1: for (;;) {
+    continue label1
+    /* comment */
+    ;
+}
+
+label2: {
+    break label2
+    /* comment */
+    ;
+};
+
+=====================================output=====================================
+for (;;) {
+  continue;
+  // comment
+}
+
+for (;;) {
+  break;
+  // comment
+}
+
+for (const f of []) {
+  continue;
+  // comment
+}
+
+for (const f of []) {
+  break;
+  // comment
+}
+
+for (const f in {}) {
+  continue;
+  // comment
+}
+
+for (const f in {}) {
+  break;
+  // comment
+}
+
+while (true) {
+  continue;
+  // comment
+}
+
+while (true) {
+  break;
+  // comment
+}
+
+do {
+  continue;
+  // comment
+} while (true);
+
+do {
+  break;
+  // comment
+} while (true);
+
+label1: for (;;) {
+  continue label1;
+  // comment
+}
+
+label2: {
+  break label2;
+  // comment
+}
+
+for (;;) {
+  continue;
+  /* comment */
+}
+
+for (;;) {
+  break;
+  /* comment */
+}
+
+for (const f of []) {
+  continue;
+  /* comment */
+}
+
+for (const f of []) {
+  break;
+  /* comment */
+}
+
+for (const f in {}) {
+  continue;
+  /* comment */
+}
+
+for (const f in {}) {
+  break;
+  /* comment */
+}
+
+while (true) {
+  continue;
+  /* comment */
+}
+
+while (true) {
+  break;
+  /* comment */
+}
+
+do {
+  continue;
+  /* comment */
+} while (true);
+
+do {
+  break;
+  /* comment */
+} while (true);
+
+label1: for (;;) {
+  continue label1;
+  /* comment */
+}
+
+label2: {
+  break label2;
+  /* comment */
+}
+
+================================================================================
+`;
+
+exports[`continue-and-break-comment-without-blocks.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for(;;) continue
+// comment
+;
+
+for (;;) break
+// comment
+;
+
+for (const f of []) continue
+// comment3
+;
+
+for (const f of []) break
+// comment4
+;
+
+for (const f in {}) continue
+// comment5
+;
+
+for (const f in {}) break
+// comment6
+;
+
+for(;;) continue // comment
+;
+
+for (;;) break // comment
+;
+
+for (const f of []) continue // comment
+;
+
+for (const f of []) break // comment
+;
+
+for (const f in {}) continue // comment
+;
+
+for (const f in {}) break // comment
+;
+
+for(;;) continue /* comment */
+;
+
+for (;;) break /* comment */
+;
+
+for (const f of []) continue /* comment */
+;
+
+for (const f of []) break /* comment */
+;
+
+for (const f in {}) continue /* comment */
+;
+
+for (const f in {}) break /* comment */
+;
+
+for(;;) continue
+/* comment */
+;
+
+for (;;) break
+/* comment */
+;
+
+for (const f of []) continue
+/* comment 33 */
+;
+
+for (const f of []) break
+/* comment 34 */
+;
+
+for (const f in {}) continue
+/* comment 35 */
+;
+
+for (const f in {}) break
+/* comment 36 */
+;
+
+label1: for (;;) continue label1 /* comment */
+;
+
+label1: for (;;) continue label1
+/* comment */
+;
+
+label1: for (;;) continue label1 // comment
+;
+
+label1: for (;;) continue label1
+// comment
+;
+
+=====================================output=====================================
+for (;;) continue;
+
+// comment
+for (;;) break;
+
+// comment
+for (const f of []) continue;
+
+// comment3
+for (const f of []) break;
+
+// comment4
+for (const f in {}) continue;
+
+// comment5
+for (const f in {}) break;
+
+// comment6
+for (;;) continue; // comment
+
+for (;;) break; // comment
+
+for (const f of []) continue; // comment
+
+for (const f of []) break; // comment
+
+for (const f in {}) continue; // comment
+
+for (const f in {}) break; // comment
+
+for (;;) continue; /* comment */
+
+for (;;) break; /* comment */
+
+for (const f of []) continue; /* comment */
+
+for (const f of []) break; /* comment */
+
+for (const f in {}) continue; /* comment */
+
+for (const f in {}) break; /* comment */
+
+for (;;) continue;
+
+/* comment */
+for (;;) break;
+
+/* comment */
+for (const f of []) continue;
+
+/* comment 33 */
+for (const f of []) break;
+
+/* comment 34 */
+for (const f in {}) continue;
+
+/* comment 35 */
+for (const f in {}) break;
+
+/* comment 36 */
+label1: for (;;) continue label1; /* comment */
+
+label1: for (;;) continue label1;
+
+/* comment */
+label1: for (;;) continue label1; // comment
+
+label1: for (;;) continue label1;
+// comment
+
+================================================================================
+`;
+
+exports[`for.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for (;;) {}
+for (initialize;;) {}
+for (; condition;) {}
+for (var i = 0; i < 10; ++i) {}
+
+for (;;) 0;
+for (var i = 0; i < 10; ++i) 0;
+
+=====================================output=====================================
+for (;;) {}
+for (initialize; ;) {}
+for (; condition;) {}
+for (var i = 0; i < 10; ++i) {}
+
+for (;;) 0;
+for (var i = 0; i < 10; ++i) 0;
+
+================================================================================
+`;
+
+exports[`for-in-with-initializer.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/babel/babel/blob/HEAD/packages/babel-generator/test/fixtures/parentheses/in-inside-for/input.js
+
+for (var a = (b in c) in {});
+for (var a = 1 || (b in c) in {});
+for (var a = 1 + (2 || (b in c)) in {});
+for (var a = (() => b in c) in {});
+for (var a = 1 || (() => b in c) in {});
+for (var a = (() => { b in c; }) in {});
+for (var a = [b in c] in {});
+for (var a = {b: b in c} in {});
+// Meriyah can't parse
+// for (var a = (x = b in c) => {} in {});
+for (var a = class extends (b in c) {} in {});
+for (var a = function (x = b in c) {} in {});
+
+=====================================output=====================================
+// https://github.com/babel/babel/blob/HEAD/packages/babel-generator/test/fixtures/parentheses/in-inside-for/input.js
+
+for (var a = (b in c) in {});
+for (var a = (1 || b in c) in {});
+for (var a = (1 + (2 || b in c)) in {});
+for (var a = (() => b in c) in {});
+for (var a = (1 || (() => b in c)) in {});
+for (var a = (() => {
+  b in c;
+}) in {});
+for (var a = ([b in c]) in {});
+for (var a = ({ b: b in c }) in {});
+// Meriyah can't parse
+// for (var a = (x = b in c) => {} in {});
+for (var a = (class extends (b in c) {}) in {});
+for (var a = (function (x = b in c) {}) in {});
+
+================================================================================
+`;
+
+exports[`for-in-with-initializer.js format[flow] 1`] = `
+"Invalid left-hand side in for-in (3:6)
+  1 | // https://github.com/babel/babel/blob/HEAD/packages/babel-generator/test/fixtures/parentheses/in-inside-for/input.js
+  2 |
+> 3 | for (var a = (b in c) in {});
+    |      ^
+  4 | for (var a = 1 || (b in c) in {});
+  5 | for (var a = 1 + (2 || (b in c)) in {});
+  6 | for (var a = (() => b in c) in {});
+Cause: Invalid left-hand side in for-in (3:5)"
+`;
+
+exports[`for-in-with-initializer.js format[typescript] 1`] = `
+"',' expected. (9:17)
+   7 | for (var a = 1 || (() => b in c) in {});
+   8 | for (var a = (() => { b in c; }) in {});
+>  9 | for (var a = [b in c] in {});
+     |                 ^
+  10 | for (var a = {b: b in c} in {});
+  11 | // Meriyah can't parse
+  12 | // for (var a = (x = b in c) => {} in {});
+Cause: ',' expected."
+`;
+
+exports[`for-in-with-initializer.js format[yuku] 1`] = `
+"Expected ';' after for-loop init, but found ')' (4:33)
+  2 |
+  3 | for (var a = (b in c) in {});
+> 4 | for (var a = 1 || (b in c) in {});
+    |                                 ^
+  5 | for (var a = 1 + (2 || (b in c)) in {});
+  6 | for (var a = (() => b in c) in {});
+  7 | for (var a = 1 || (() => b in c) in {});"
+`;
+
+exports[`for-in-with-initializer.js format[yuku-ts] 1`] = `
+"Expected ';' after for-loop init, but found ')' (4:33)
+  2 |
+  3 | for (var a = (b in c) in {});
+> 4 | for (var a = 1 || (b in c) in {});
+    |                                 ^
+  5 | for (var a = 1 + (2 || (b in c)) in {});
+  6 | for (var a = (() => b in c) in {});
+  7 | for (var a = 1 || (() => b in c) in {});"
+`;
+
+exports[`in.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for ((x in a);;) {}
+for (a=(a in b);;) {}
+for (let a = (b in c); ; );
+for (a && (b in c); ; );
+for (a => (b in c); ; );
+function* g() {
+  for (yield (a in b); ; );
+}
+async function f() {
+  for (await (a in b); ; );
+}
+for (a in b) 0;
+
+=====================================output=====================================
+for ((x in a); ;) {}
+for (a = (a in b); ;) {}
+for (let a = (b in c); ;);
+for (a && (b in c); ;);
+for ((a) => (b in c); ;);
+function* g() {
+  for (yield (a in b); ;);
+}
+async function f() {
+  for (await (a in b); ;);
+}
+for (a in b) 0;
+
+================================================================================
+`;
+
+exports[`no-update.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for ( let i = 0, j = 0, len = allMatches.length, lenJ = selections.length;i < len;) {}
+
+=====================================output=====================================
+for (
+  let i = 0, j = 0, len = allMatches.length, lenJ = selections.length;
+  i < len;
+) {}
+
+================================================================================
+`;
+
+exports[`parentheses.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/babel/babel/blob/HEAD/packages/babel-generator/test/fixtures/parentheses/in-inside-for/input.js
+
+for (var a = (b in c);;);
+for (var a = 1 || (b in c);;);
+for (var a = 1 + (2 || (b in c));;);
+for (var a = (() => b in c);;);
+for (var a = 1 || (() => b in c);;);
+for (var a = (() => { b in c; });;);
+for (var a = [b in c];;);
+for (var a = {b: b in c};;);
+for (var a = (x = b in c) => {};;);
+for (var a = class extends (b in c) {};;);
+for (var a = function (x = b in c) {};;);
+
+for (var a in (b in c));
+for (var a in 1 || (b in c));
+for (var a in 1 + (2 || (b in c)));
+for (var a in (() => b in c));
+for (var a in 1 || (() => b in c));
+for (var a in (() => { b in c; }));
+for (var a in [b in c]);
+for (var a in {b: b in c});
+for (var a in (x = b in c) => {});
+for (var a in class extends (b in c) {});
+for (var a in function (x = b in c) {});
+
+for (;a = (b in c););
+for (;a = 1 || (b in c););
+for (;a = 1 + (2 || (b in c)););
+for (;a = (() => b in c););
+for (;a = 1 || (() => b in c););
+for (;a = (() => { b in c; }););
+for (;a = [b in c];);
+for (;a = {b: b in c};);
+for (;a = (x = b in c) => {};);
+for (;a = class extends (b in c) {};);
+for (;a = function (x = b in c) {};);
+
+=====================================output=====================================
+// https://github.com/babel/babel/blob/HEAD/packages/babel-generator/test/fixtures/parentheses/in-inside-for/input.js
+
+for (var a = (b in c); ;);
+for (var a = 1 || (b in c); ;);
+for (var a = 1 + (2 || (b in c)); ;);
+for (var a = () => (b in c); ;);
+for (var a = 1 || (() => (b in c)); ;);
+for (
+  var a = () => {
+    (b in c);
+  };
+  ;
+);
+for (var a = [(b in c)]; ;);
+for (var a = { b: (b in c) }; ;);
+for (var a = (x = (b in c)) => {}; ;);
+for (var a = class extends (b in c) {}; ;);
+for (var a = function (x = (b in c)) {}; ;);
+
+for (var a in b in c);
+for (var a in 1 || b in c);
+for (var a in 1 + (2 || b in c));
+for (var a in () => b in c);
+for (var a in 1 || (() => b in c));
+for (var a in () => {
+  b in c;
+});
+for (var a in [b in c]);
+for (var a in { b: b in c });
+for (var a in (x = b in c) => {});
+for (var a in class extends (b in c) {});
+for (var a in function (x = b in c) {});
+
+for (; (a = b in c););
+for (; (a = 1 || b in c););
+for (; (a = 1 + (2 || b in c)););
+for (; (a = () => b in c););
+for (; (a = 1 || (() => b in c)););
+for (
+  ;
+  (a = () => {
+    b in c;
+  });
+);
+for (; (a = [b in c]););
+for (; (a = { b: b in c }););
+for (; (a = (x = b in c) => {}););
+for (; (a = class extends (b in c) {}););
+for (; (a = function (x = b in c) {}););
+
+================================================================================
+`;
+
+exports[`parentheses.js format[flow] 1`] = `
+"Unexpected token \`=>\`, expected the token \`;\` (11:27)
+   9 | for (var a = [b in c];;);
+  10 | for (var a = {b: b in c};;);
+> 11 | for (var a = (x = b in c) => {};;);
+     |                           ^
+  12 | for (var a = class extends (b in c) {};;);
+  13 | for (var a = function (x = b in c) {};;);
+  14 |
+Cause: Unexpected token \`=>\`, expected the token \`;\` (11:26)"
+`;
+
+exports[`parentheses.js format[typescript] 1`] = `
+"',' expected. (9:17)
+   7 | for (var a = 1 || (() => b in c);;);
+   8 | for (var a = (() => { b in c; });;);
+>  9 | for (var a = [b in c];;);
+     |                 ^
+  10 | for (var a = {b: b in c};;);
+  11 | for (var a = (x = b in c) => {};;);
+  12 | for (var a = class extends (b in c) {};;);
+Cause: ',' expected."
+`;
+
+exports[`parentheses.js format[yuku] 1`] = `
+"Expected ',' or ')' in parenthesized expression, but found 'in' (6:23)
+  4 | for (var a = 1 || (b in c);;);
+  5 | for (var a = 1 + (2 || (b in c));;);
+> 6 | for (var a = (() => b in c);;);
+    |                       ^^
+  7 | for (var a = 1 || (() => b in c);;);
+  8 | for (var a = (() => { b in c; });;);
+  9 | for (var a = [b in c];;);"
+`;
+
+exports[`parentheses.js format[yuku-ts] 1`] = `
+"Expected ',' or ')' in parenthesized expression, but found 'in' (6:23)
+  4 | for (var a = 1 || (b in c);;);
+  5 | for (var a = 1 + (2 || (b in c));;);
+> 6 | for (var a = (() => b in c);;);
+    |                       ^^
+  7 | for (var a = 1 || (() => b in c);;);
+  8 | for (var a = (() => { b in c; });;);
+  9 | for (var a = [b in c];;);"
+`;
+
+exports[`var.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for (a in b) var c = {}; [];
+
+=====================================output=====================================
+for (a in b) var c = {};
+[];
+
+================================================================================
+`;

@@ -1,0 +1,151 @@
+.master {
+    color:  black;
+    font-size: 12px;
+}
+.emphasis {
+    @extend .master;
+    font-weight: bold;
+}
+.emphasis {
+@extend .master;
+font-weight: bold;
+}
+.emphasis {
+    @extend  .master ;
+    font-weight: bold;
+}
+.emphasis {
+    @extend   .master  ;
+    font-weight: bold;
+}
+.emphasis
+{
+@extend
+.master
+;
+font-weight
+:
+bold
+;
+}
+.emphasis
+
+{
+
+@extend
+
+.master
+
+;
+
+font-weight
+
+:
+
+bold
+
+;
+
+}
+%message-shared {
+    border: 1px solid #ccc;
+    padding: 10px;
+    color: #333;
+}
+.message {
+    @extend %message-shared;
+}
+.message {
+@extend %message-shared;
+}
+.message {
+    @extend  %message-shared ;
+}
+.message {
+    @extend   %message-shared  ;
+}
+.message {
+@extend
+%message-shared;
+}
+.message {
+
+@extend
+
+%message-shared;
+
+}
+a.important {
+    @extend .notice !optional;
+}
+a.important {
+@extend .notice !optional;
+}
+a.important {
+    @extend  .notice !optional ;
+}
+a.important {
+    @extend  .notice  !optional  ;
+}
+a.important
+{
+@extend
+.notice
+!optional
+;
+}
+a.important
+
+{
+
+@extend
+
+.notice
+
+!optional
+
+;
+
+}
+.message-error {
+    @extend .message, .important;
+}
+.message-error {
+    @extend .message , .important ;
+}
+.message-error {
+    @extend   .message  ,  .important  ;
+}
+.message-error {
+    @extend .message,
+        .important;
+}
+.message-error {
+    @extend
+        .message,
+        .important;
+}
+.message-error
+{
+@extend
+.message
+,
+.important
+;
+}
+.message-error
+
+{
+
+@extend
+
+.message
+
+,
+
+.important;
+
+}
+.message-error {
+    @extend .very-very-very-very-very-very-very-very-very-very-very-very-very-long-selector, .very-very-very-very-very-very-very-very-very-very-very-very-very-long-selector;
+}

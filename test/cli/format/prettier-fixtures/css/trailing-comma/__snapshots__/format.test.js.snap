@@ -1,0 +1,26 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`var-func.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.foo {
+	--bar: var(--baz,);
+  --bar: var(--baz     ,);
+  --bar: var(--baz     ,    );
+  --bar: var(--baz,);
+	--bar: var(   --baz1, --baz2    , );
+}
+
+=====================================output=====================================
+.foo {
+  --bar: var(--baz,);
+  --bar: var(--baz,);
+  --bar: var(--baz,);
+  --bar: var(--baz,);
+  --bar: var(--baz1, --baz2,);
+}
+
+================================================================================
+`;

@@ -1,0 +1,406 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`color-adjuster.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.foo {
+    color: color(red l(+ 20%));
+    color: color(red w(+ 20%) s(+ 20%));
+    color: color(swopc, 0 206 190 77);
+    color: color(indigo, 24 160 86 42 0 18 31);
+    color: color(prophoto, 233 150 122);
+    color: color(P3, 97 253 36);
+    color: color(#eb8fa9 alpha(75%) blackness(20%));
+    color: color(red blue(20));
+    color: color(red blue(20%));
+    color: color(red green(+ 20));
+    color: color(red green(+ 20%));
+    color: color(red red(- 20));
+    color: color(red red(- 20%));
+    color: color(red red(- 128));
+    color: color(red alpha(- 50%));
+    color: color(red alpha(- .75));
+    color: color(red rgb(+ 0 255 0));
+    color: color(red rgb(+ #0f0));
+    color: color(red rgb(- 60% 0 0));
+    color: color(red rgb(- #900));
+    color: color(rebeccapurple rgb(* 1%));
+    color: color(red hue(20));
+    color: color(red hue(20deg));
+    color: color(red hue(+ 20));
+    color: color(red hue(+ 20deg));
+    color: color(red hue(- 20));
+    color: color(red hue(- 20deg));
+    color: color(red hue(* 20));
+    color: color(red hue(* 20deg));
+    color: color(red lightness(50%));
+    color: color(red lightness(20%));
+    color: color(red lightness(+ 20%));
+    color: color(red lightness(- 20%));
+    color: color(red lightness(* 1.5%));
+    color: color(beige saturation(20%));
+    color: color(beige saturation(+ 20%));
+    color: color(beige saturation(- 20%));
+    color: color(beige saturation(* 1.5%));
+    color: color(beige blackness(20%));
+    color: color(beige blackness(+ 20%));
+    color: color(beige blackness(- 1%));
+    color: color(beige blackness(* 20%));
+    color: color(beige whiteness(20%));
+    color: color(beige whiteness(+ 1%));
+    color: color(beige whiteness(- 20%));
+    color: color(beige whiteness(* .5%));
+    color: color(red);
+    color: color(red tint(0%));
+    color: color(red shade(0%));
+    color: color(red tint(100%));
+    color: color(red shade(100%));
+    color: color(red tint(20%));
+    color: color(red shade(20%));
+    color: color(yellow blend(red 50%));
+    color: color(yellow blend(red 50% rgb));
+    color: color(yellow blend(red 50% hsl));
+    color: color(yellow blend(red 50% hwb));
+    color: color(#937b19 contrast(25%));
+    color: color(hotpink blend(yellow 59%));
+    color: color(red);
+    color: color(color-mod(red));
+    color: color(color-mod(color-mod(red)));
+    color: color(#f00);
+    color: color(#f00f);
+    color: color(#ff0000);
+    color: color(#ff0000ff);
+    color: color(rgb(100% 0% 0%));
+    color: color(rgb(100% 0% 0% / 100%));
+    color: color(rgb(255, 0, 0));
+    color: color(rgb(255, 0, 0, 1));
+    color: color(rgba(255, 0, 0, 1));
+    color: color(hsl(0 100% 50%));
+    color: color(hsl(0 100% 50% / 100%));
+    color: color(hsl(0, 100%, 50%));
+    color: color(hsl(0, 100%, 50%, 1));
+    color: color(hsla(0, 100%, 50%, 1));
+    color: color(hwb(0 0 0));
+    color: color(hwb(0 0% 0%));
+    color: color(hwb(0 0% 0% / 100%));
+    color: color(0);
+    color: color(0deg);
+    color: color(0grad);
+    color: color(0rad);
+    color: color(beige);
+    color: color(beige hue(+ 0deg));
+    color: color(beige saturation(+ 0%));
+    color: color(beige lightness(+ 0%));
+    color: color(beige alpha(1));
+    color: color(beige alpha(+ 0));
+    color: color(beige alpha(+ 0%));
+    color: color(beige blend(beige 0% hsl));
+    color: color(red);
+    color: color(red tint(0%));
+    color: color(red shade(0%));
+    color: color(red tint(100%));
+    color: color(red shade(100%));
+    color: color(red tint(20%));
+    color: color(red shade(20%));
+    color: color(yellow blend(red 50%));
+    color: color(yellow blend(red 50% rgb));
+    color: color(yellow blend(red 50% hsl));
+    color: color(yellow blend(red 50% hwb));
+    color: color(yellow contrast(0%));
+    color: color(yellow contrast(25%));
+    color: color(yellow contrast(50%));
+    color: color(yellow contrast(75%));
+    color: color(yellow contrast(100%));
+    color: color(color-mod(0deg blue(10%)) rgb(+ 0 10 0) hue(+ 10deg) tint(10%) lightness(+ 10%) saturation(+ 10%) blend(rebeccapurple 50%));
+    color: color(var(--color));
+    color: color(var(--color) l(+ 20%));
+    color: color(red l(+20%)); /* interpreted as part of the number */
+    color: color(red l(-20%)); /* interpreted as part of the number */
+    color: color(red hue(+20));
+    color: color(red hue(+20deg));
+    color: color(red hue(-20));
+    color: color(red hue(-20deg));
+    color: color(red hue(*20));
+    color: color(red hue(*20deg));
+    color: color(var(--highlightColor) blackness(+ 20%));
+}
+
+=====================================output=====================================
+.foo {
+  color: color(red l(+ 20%));
+  color: color(red w(+ 20%) s(+ 20%));
+  color: color(swopc, 0 206 190 77);
+  color: color(indigo, 24 160 86 42 0 18 31);
+  color: color(prophoto, 233 150 122);
+  color: color(P3, 97 253 36);
+  color: color(#eb8fa9 alpha(75%) blackness(20%));
+  color: color(red blue(20));
+  color: color(red blue(20%));
+  color: color(red green(+ 20));
+  color: color(red green(+ 20%));
+  color: color(red red(- 20));
+  color: color(red red(- 20%));
+  color: color(red red(- 128));
+  color: color(red alpha(- 50%));
+  color: color(red alpha(- 0.75));
+  color: color(red rgb(+ 0 255 0));
+  color: color(red rgb(+ #0f0));
+  color: color(red rgb(- 60% 0 0));
+  color: color(red rgb(- #900));
+  color: color(rebeccapurple rgb(* 1%));
+  color: color(red hue(20));
+  color: color(red hue(20deg));
+  color: color(red hue(+ 20));
+  color: color(red hue(+ 20deg));
+  color: color(red hue(- 20));
+  color: color(red hue(- 20deg));
+  color: color(red hue(* 20));
+  color: color(red hue(* 20deg));
+  color: color(red lightness(50%));
+  color: color(red lightness(20%));
+  color: color(red lightness(+ 20%));
+  color: color(red lightness(- 20%));
+  color: color(red lightness(* 1.5%));
+  color: color(beige saturation(20%));
+  color: color(beige saturation(+ 20%));
+  color: color(beige saturation(- 20%));
+  color: color(beige saturation(* 1.5%));
+  color: color(beige blackness(20%));
+  color: color(beige blackness(+ 20%));
+  color: color(beige blackness(- 1%));
+  color: color(beige blackness(* 20%));
+  color: color(beige whiteness(20%));
+  color: color(beige whiteness(+ 1%));
+  color: color(beige whiteness(- 20%));
+  color: color(beige whiteness(* 0.5%));
+  color: color(red);
+  color: color(red tint(0%));
+  color: color(red shade(0%));
+  color: color(red tint(100%));
+  color: color(red shade(100%));
+  color: color(red tint(20%));
+  color: color(red shade(20%));
+  color: color(yellow blend(red 50%));
+  color: color(yellow blend(red 50% rgb));
+  color: color(yellow blend(red 50% hsl));
+  color: color(yellow blend(red 50% hwb));
+  color: color(#937b19 contrast(25%));
+  color: color(hotpink blend(yellow 59%));
+  color: color(red);
+  color: color(color-mod(red));
+  color: color(color-mod(color-mod(red)));
+  color: color(#f00);
+  color: color(#f00f);
+  color: color(#ff0000);
+  color: color(#ff0000ff);
+  color: color(rgb(100% 0% 0%));
+  color: color(rgb(100% 0% 0% / 100%));
+  color: color(rgb(255, 0, 0));
+  color: color(rgb(255, 0, 0, 1));
+  color: color(rgba(255, 0, 0, 1));
+  color: color(hsl(0 100% 50%));
+  color: color(hsl(0 100% 50% / 100%));
+  color: color(hsl(0, 100%, 50%));
+  color: color(hsl(0, 100%, 50%, 1));
+  color: color(hsla(0, 100%, 50%, 1));
+  color: color(hwb(0 0 0));
+  color: color(hwb(0 0% 0%));
+  color: color(hwb(0 0% 0% / 100%));
+  color: color(0);
+  color: color(0deg);
+  color: color(0grad);
+  color: color(0rad);
+  color: color(beige);
+  color: color(beige hue(+ 0deg));
+  color: color(beige saturation(+ 0%));
+  color: color(beige lightness(+ 0%));
+  color: color(beige alpha(1));
+  color: color(beige alpha(+ 0));
+  color: color(beige alpha(+ 0%));
+  color: color(beige blend(beige 0% hsl));
+  color: color(red);
+  color: color(red tint(0%));
+  color: color(red shade(0%));
+  color: color(red tint(100%));
+  color: color(red shade(100%));
+  color: color(red tint(20%));
+  color: color(red shade(20%));
+  color: color(yellow blend(red 50%));
+  color: color(yellow blend(red 50% rgb));
+  color: color(yellow blend(red 50% hsl));
+  color: color(yellow blend(red 50% hwb));
+  color: color(yellow contrast(0%));
+  color: color(yellow contrast(25%));
+  color: color(yellow contrast(50%));
+  color: color(yellow contrast(75%));
+  color: color(yellow contrast(100%));
+  color: color(
+    color-mod(0deg blue(10%)) rgb(+ 0 10 0) hue(+ 10deg) tint(10%)
+      lightness(+ 10%) saturation(+ 10%) blend(rebeccapurple 50%)
+  );
+  color: color(var(--color));
+  color: color(var(--color) l(+ 20%));
+  color: color(red l(+20%)); /* interpreted as part of the number */
+  color: color(red l(-20%)); /* interpreted as part of the number */
+  color: color(red hue(+20));
+  color: color(red hue(+20deg));
+  color: color(red hue(-20));
+  color: color(red hue(-20deg));
+  color: color(red hue(* 20));
+  color: color(red hue(* 20deg));
+  color: color(var(--highlightColor) blackness(+ 20%));
+}
+
+================================================================================
+`;
+
+exports[`color-level-4.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/* https://www.w3.org/TR/css-color-4 */
+foo {
+  color: rgb(0, 128, 255);
+  color: rgba(0, 128, 255, 0.5);
+  color: hsl(198, 28%, 50%);
+  color: hsla(198, 28%, 50%, 0.5);
+  color: lab(56.29% 019.93 16.58 / 50%);
+  color: lch(56.29% 19.86 236.62 / 50%);
+  /* color(sRGB 0 0.50 1 / 50%); */
+}
+
+bar {
+  color: rgb(0 128 255);
+  color: rgb(0 128 255 / 50%);
+  color: hsl(198deg 28% 50%);
+  color: hsl(198deg 28% 50% / 50%);
+  color: lab(56.29% 019.93 16.58 / 50%);
+  color: lch(56.29% 19.86 236.62deg / 50%);
+}
+
+=====================================output=====================================
+/* https://www.w3.org/TR/css-color-4 */
+foo {
+  color: rgb(0, 128, 255);
+  color: rgba(0, 128, 255, 0.5);
+  color: hsl(198, 28%, 50%);
+  color: hsla(198, 28%, 50%, 0.5);
+  color: lab(56.29% 019.93 16.58 / 50%);
+  color: lch(56.29% 19.86 236.62 / 50%);
+  /* color(sRGB 0 0.50 1 / 50%); */
+}
+
+bar {
+  color: rgb(0 128 255);
+  color: rgb(0 128 255 / 50%);
+  color: hsl(198deg 28% 50%);
+  color: hsl(198deg 28% 50% / 50%);
+  color: lab(56.29% 019.93 16.58 / 50%);
+  color: lch(56.29% 19.86 236.62deg / 50%);
+}
+
+================================================================================
+`;
+
+exports[`current-color.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.foo {
+    border: 1px dashed currentColor;
+    border: 1px dashed currentcolor;
+}
+
+=====================================output=====================================
+.foo {
+  border: 1px dashed currentColor;
+  border: 1px dashed currentcolor;
+}
+
+================================================================================
+`;
+
+exports[`functional-syntax.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.foo {
+    color: rgb(255, 0, 153);
+    color: rgb(100%, 0%, 60%);
+    color: rgba(51, 170, 51, 0.1);
+    color: hsl(.75turn, 60%, 70%);
+    color: hsl(270 60% 50% / .15);
+    color: hsla(240, 100%, 50%, .05)
+}
+
+=====================================output=====================================
+.foo {
+  color: rgb(255, 0, 153);
+  color: rgb(100%, 0%, 60%);
+  color: rgba(51, 170, 51, 0.1);
+  color: hsl(0.75turn, 60%, 70%);
+  color: hsl(270 60% 50% / 0.15);
+  color: hsla(240, 100%, 50%, 0.05);
+}
+
+================================================================================
+`;
+
+exports[`hexcolor.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.foo {
+    color: #AAA;
+    -o-color: #fabcd3;
+    -webkit-color: #873;
+    -moz-color: #6bcdef;
+    -ms-color: #AAbbCC;
+    color: #F09F;
+    color: #FF0099FF;
+}
+
+=====================================output=====================================
+.foo {
+  color: #aaa;
+  -o-color: #fabcd3;
+  -webkit-color: #873;
+  -moz-color: #6bcdef;
+  -ms-color: #aabbcc;
+  color: #f09f;
+  color: #ff0099ff;
+}
+
+================================================================================
+`;
+
+exports[`whitespace-syntax.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.foo {
+    color: rgba(51 170 51 / 0.4);
+    color: rgba(51 170 51 / 40%);
+    color: hsl(270 60% 50% / .15);
+    color: hsla(240 100% 50% / .05);
+    color: hsla(240 100% 50% / 5%);
+}
+
+=====================================output=====================================
+.foo {
+  color: rgba(51 170 51 / 0.4);
+  color: rgba(51 170 51 / 40%);
+  color: hsl(270 60% 50% / 0.15);
+  color: hsla(240 100% 50% / 0.05);
+  color: hsla(240 100% 50% / 5%);
+}
+
+================================================================================
+`;

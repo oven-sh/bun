@@ -1,0 +1,26 @@
+// mixin for clearfix
+        @mixin      clearfix    ()      { &:before,
+  &:after {
+                content:" ";
+    display              : table;  }
+
+  &:after        {clear: both;}
+   }.class
+{
+       padding:10px;@include        clearfix();}
+     .base {  color: red;  } // placeholder
+
+%base
+{
+
+
+padding: 12px
+}
+
+.foo{
+@extend      .base;}
+
+.bar
+      {     @extend            %base;
+
+}

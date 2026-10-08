@@ -1,0 +1,18 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`typeParameter.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+interface IObservable<T> {
+  n: IObservable<T[]> // fails because of comment
+}
+
+=====================================output=====================================
+interface IObservable<T> {
+  n: IObservable<T[]>; // fails because of comment
+}
+
+================================================================================
+`;

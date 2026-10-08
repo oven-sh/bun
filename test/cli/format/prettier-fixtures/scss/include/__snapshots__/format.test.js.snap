@@ -1,0 +1,22 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`include.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+h1 {
+  @include foo   ('A');
+  @include bar('A (B)');
+  @include baz   ('A (B)');
+}
+
+=====================================output=====================================
+h1 {
+  @include foo("A");
+  @include bar("A (B)");
+  @include baz("A (B)");
+}
+
+================================================================================
+`;

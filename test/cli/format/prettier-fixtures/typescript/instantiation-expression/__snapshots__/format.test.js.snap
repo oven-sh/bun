@@ -1,0 +1,164 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`17714.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+void (<_T extends never>() => {})<never>;
+
+=====================================output=====================================
+void (<_T extends never>() => {})<never>;
+
+================================================================================
+`;
+
+exports[`basic.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// basic
+const foo = bar<T>;
+
+=====================================output=====================================
+// basic
+const foo = bar<T>;
+
+================================================================================
+`;
+
+exports[`binary-expr.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+new A < B >
+C
+
+=====================================output=====================================
+new A<B>();
+C;
+
+================================================================================
+`;
+
+exports[`inferface-asi.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+interface Example {
+  (a: number): typeof a
+      
+  <T>(): void
+};
+
+=====================================output=====================================
+interface Example {
+  (a: number): typeof a;
+
+  <T>(): void;
+}
+
+================================================================================
+`;
+
+exports[`logical-expr.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export class Foo<T> {
+  message: string;
+}
+
+function sample(error: unknown) {
+  if (!(error instanceof Foo<'some-type'> || error instanceof Error) || !error.message) {
+    return 'something';
+  }
+}
+
+=====================================output=====================================
+export class Foo<T> {
+  message: string;
+}
+
+function sample(error: unknown) {
+  if (
+    !(error instanceof Foo<"some-type"> || error instanceof Error) ||
+    !error.message
+  ) {
+    return "something";
+  }
+}
+
+================================================================================
+`;
+
+exports[`new.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// new
+new A<T>;
+
+=====================================output=====================================
+// new
+new A<T>();
+
+================================================================================
+`;
+
+exports[`property-access.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(Array<string>).name;
+(fn1<string>).bind(obj);
+(fn2<string, number>).bind(obj);
+a[(Array<string>)];
+a[(Array<string>).name];
+(Array<string>).a;
+(Array<string>)?.a;
+(Array<string>)[a];
+(Array<string>)?.[a];
+(Array<string>)["a"];
+(Array<string>)?.["a"];
+(Array<string>)[\`a\`];
+(Array<string>)?.[\`a\`];
+(Array<string>)[(Array<string>)];
+
+=====================================output=====================================
+(Array<string>).name;
+(fn1<string>).bind(obj);
+(fn2<string, number>).bind(obj);
+a[Array<string>];
+a[(Array<string>).name];
+(Array<string>).a;
+(Array<string>)?.a;
+(Array<string>)[a];
+(Array<string>)?.[a];
+(Array<string>)["a"];
+(Array<string>)?.["a"];
+(Array<string>)[\`a\`];
+(Array<string>)?.[\`a\`];
+(Array<string>)[Array<string>];
+
+================================================================================
+`;
+
+exports[`typeof.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let x: typeof y.z<w>;
+
+=====================================output=====================================
+let x: typeof y.z<w>;
+
+================================================================================
+`;

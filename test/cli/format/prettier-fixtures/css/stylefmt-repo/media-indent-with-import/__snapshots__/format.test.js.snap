@@ -1,0 +1,25 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`media-indent-with-import.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@import "foo";@import "bar";
+.wrapper {
+@media (min-width: 1025px) {
+max-width: 600px;
+}
+}
+
+=====================================output=====================================
+@import "foo";
+@import "bar";
+.wrapper {
+  @media (min-width: 1025px) {
+    max-width: 600px;
+  }
+}
+
+================================================================================
+`;

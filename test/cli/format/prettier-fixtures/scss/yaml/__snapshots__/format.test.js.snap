@@ -1,0 +1,28 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`yaml.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---
+title: Title
+description: Description
+---
+
+a {
+  color: red;
+}
+
+=====================================output=====================================
+---
+title: Title
+description: Description
+---
+
+a {
+  color: red;
+}
+
+================================================================================
+`;

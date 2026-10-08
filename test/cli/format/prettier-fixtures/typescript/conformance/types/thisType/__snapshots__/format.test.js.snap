@@ -1,0 +1,18 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`thisType.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare class MyArray<T> extends Array<T> {
+    sort(compareFn?: (a: T, b: T) => number): this;
+}
+
+=====================================output=====================================
+declare class MyArray<T> extends Array<T> {
+  sort(compareFn?: (a: T, b: T) => number): this;
+}
+
+================================================================================
+`;

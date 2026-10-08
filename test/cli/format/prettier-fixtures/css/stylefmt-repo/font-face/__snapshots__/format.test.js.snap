@@ -1,0 +1,24 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`font-face.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+ @font-face          {font-family:'HelveticaNeueW02-45Ligh';src:url("/fonts/pictos-web.eot");src:local("☺"),url("/fonts/pictos-web.woff") format("woff"),url("/fonts/pictos-web.ttf") format("truetype"),url("/fonts/pictos-web.svg#webfontIyfZbseF") format("svg");font-weight:normal;font-style:normal;}
+
+=====================================output=====================================
+@font-face {
+  font-family: "HelveticaNeueW02-45Ligh";
+  src: url("/fonts/pictos-web.eot");
+  src:
+    local("☺"),
+    url("/fonts/pictos-web.woff") format("woff"),
+    url("/fonts/pictos-web.ttf") format("truetype"),
+    url("/fonts/pictos-web.svg#webfontIyfZbseF") format("svg");
+  font-weight: normal;
+  font-style: normal;
+}
+
+================================================================================
+`;

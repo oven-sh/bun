@@ -1,0 +1,169 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`classAppearsToHaveMembersOfObject.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class C { foo: string; }
+
+var c: C;
+var r = c.toString();
+var r2 = c.hasOwnProperty('');
+var o: Object = c;
+var o2: {} = c;
+
+=====================================output=====================================
+class C {
+  foo: string;
+}
+
+var c: C;
+var r = c.toString();
+var r2 = c.hasOwnProperty("");
+var o: Object = c;
+var o2: {} = c;
+
+================================================================================
+`;
+
+exports[`classExtendingClass.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class C {
+    foo: string;
+    thing() { }
+    static other() { }
+}
+
+class D extends C {
+    bar: string;
+}
+
+var d: D;
+var r = d.foo;
+var r2 = d.bar;
+var r3 = d.thing();
+var r4 = D.other();
+
+class C2<T> {
+    foo: T;
+    thing(x: T) { }
+    static other<T>(x: T) { }
+}
+
+class D2<T> extends C2<T> {
+    bar: string;
+}
+
+var d2: D2<string>;
+var r5 = d2.foo;
+var r6 = d2.bar;
+var r7 = d2.thing('');
+var r8 = D2.other(1);
+=====================================output=====================================
+class C {
+  foo: string;
+  thing() {}
+  static other() {}
+}
+
+class D extends C {
+  bar: string;
+}
+
+var d: D;
+var r = d.foo;
+var r2 = d.bar;
+var r3 = d.thing();
+var r4 = D.other();
+
+class C2<T> {
+  foo: T;
+  thing(x: T) {}
+  static other<T>(x: T) {}
+}
+
+class D2<T> extends C2<T> {
+  bar: string;
+}
+
+var d2: D2<string>;
+var r5 = d2.foo;
+var r6 = d2.bar;
+var r7 = d2.thing("");
+var r8 = D2.other(1);
+
+================================================================================
+`;
+
+exports[`classExtendsItselfIndirectly.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class C extends E { foo: string; } // error
+
+class D extends C { bar: string; }
+
+class E extends D { baz: number; }
+
+class C2<T> extends E2<T> { foo: T; } // error
+
+class D2<T> extends C2<T> { bar: T; }
+
+class E2<T> extends D2<T> { baz: T; }
+=====================================output=====================================
+class C extends E {
+  foo: string;
+} // error
+
+class D extends C {
+  bar: string;
+}
+
+class E extends D {
+  baz: number;
+}
+
+class C2<T> extends E2<T> {
+  foo: T;
+} // error
+
+class D2<T> extends C2<T> {
+  bar: T;
+}
+
+class E2<T> extends D2<T> {
+  baz: T;
+}
+
+================================================================================
+`;
+
+exports[`classIsSubtypeOfBaseType.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Base<T> {
+    foo: T;
+}
+
+class Derived extends Base<string> {
+    foo: any;
+}
+
+=====================================output=====================================
+class Base<T> {
+  foo: T;
+}
+
+class Derived extends Base<string> {
+  foo: any;
+}
+
+================================================================================
+`;

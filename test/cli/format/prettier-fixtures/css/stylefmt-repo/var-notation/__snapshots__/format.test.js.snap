@@ -1,0 +1,17 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`var-notation.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.foo {margin:var(     --n-gutterSize) 0 var(   --gutterSize ) var( --n-gutterSize );
+}
+
+=====================================output=====================================
+.foo {
+  margin: var(--n-gutterSize) 0 var(--gutterSize) var(--n-gutterSize);
+}
+
+================================================================================
+`;

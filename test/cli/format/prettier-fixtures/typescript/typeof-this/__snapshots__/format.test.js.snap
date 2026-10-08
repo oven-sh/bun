@@ -1,0 +1,41 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`decorators.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/typescript-eslint/typescript-eslint/pull/4382
+function decorator() {}
+@decorator
+class Foo {
+  bar(baz: typeof this) {}
+}
+
+=====================================output=====================================
+// https://github.com/typescript-eslint/typescript-eslint/pull/4382
+function decorator() {}
+@decorator
+class Foo {
+  bar(baz: typeof this) {}
+}
+
+================================================================================
+`;
+
+exports[`typeof-this.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/typescript-eslint/typescript-eslint/pull/4382
+let self: typeof this;
+let foo: typeof this.foo;
+
+=====================================output=====================================
+// https://github.com/typescript-eslint/typescript-eslint/pull/4382
+let self: typeof this;
+let foo: typeof this.foo;
+
+================================================================================
+`;

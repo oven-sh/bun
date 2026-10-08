@@ -1,0 +1,12 @@
+[type=a s],
+[type=as],
+[type="a" s] ,
+[type="a s"],
+[type=a   s],
+[type="a"   s]{}
+
+[type=a   S] {}
+[type="a"   S] {}
+
+[type=a   x] {}
+[type='a'   x] {}

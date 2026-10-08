@@ -1,0 +1,171 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`attribute-blank-lines.js - {"singleAttributePerLine":true} format 1`] = `
+====================================options=====================================
+parsers: ["flow", "babel", "typescript"]
+singleAttributePerLine: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const basic = (
+  <Component
+    first={1}
+
+    second={2}
+    third={3}
+  />
+);
+
+const multipleBlankLines = (
+  <Component
+    first={1}
+
+
+
+    second={2}
+  />
+);
+
+const spreadAttributes = (
+  <Component
+    first={1}
+
+    {...props}
+
+    second={2}
+  />
+);
+
+const noBlankLines = (
+  <Component
+    first={1}
+    second={2}
+    third={3}
+  />
+);
+
+const inlineAttributes = <Component first={1} second={2} />;
+
+=====================================output=====================================
+const basic = (
+  <Component
+    first={1}
+
+    second={2}
+    third={3}
+  />
+);
+
+const multipleBlankLines = (
+  <Component
+    first={1}
+
+    second={2}
+  />
+);
+
+const spreadAttributes = (
+  <Component
+    first={1}
+
+    {...props}
+
+    second={2}
+  />
+);
+
+const noBlankLines = (
+  <Component
+    first={1}
+    second={2}
+    third={3}
+  />
+);
+
+const inlineAttributes = (
+  <Component
+    first={1}
+    second={2}
+  />
+);
+
+================================================================================
+`;
+
+exports[`attribute-blank-lines.js format 1`] = `
+====================================options=====================================
+parsers: ["flow", "babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const basic = (
+  <Component
+    first={1}
+
+    second={2}
+    third={3}
+  />
+);
+
+const multipleBlankLines = (
+  <Component
+    first={1}
+
+
+
+    second={2}
+  />
+);
+
+const spreadAttributes = (
+  <Component
+    first={1}
+
+    {...props}
+
+    second={2}
+  />
+);
+
+const noBlankLines = (
+  <Component
+    first={1}
+    second={2}
+    third={3}
+  />
+);
+
+const inlineAttributes = <Component first={1} second={2} />;
+
+=====================================output=====================================
+const basic = (
+  <Component
+    first={1}
+
+    second={2}
+    third={3}
+  />
+);
+
+const multipleBlankLines = (
+  <Component
+    first={1}
+
+    second={2}
+  />
+);
+
+const spreadAttributes = (
+  <Component
+    first={1}
+
+    {...props}
+
+    second={2}
+  />
+);
+
+const noBlankLines = <Component first={1} second={2} third={3} />;
+
+const inlineAttributes = <Component first={1} second={2} />;
+
+================================================================================
+`;

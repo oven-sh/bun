@@ -1,0 +1,708 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`functional_compose.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+compose(
+  sortBy(x => x),
+  flatten,
+  map(x => [x, x*2])
+);
+
+somelib.compose(
+  sortBy(x => x),
+  flatten,
+  map(x => [x, x*2])
+);
+
+composeFlipped(
+  sortBy(x => x),
+  flatten,
+  map(x => [x, x*2])
+);
+
+somelib.composeFlipped(
+  sortBy(x => x),
+  flatten,
+  map(x => [x, x*2])
+);
+
+// no regression (#4602)
+const hasValue = hasOwnProperty(a, b);
+
+this.compose(sortBy(x => x), flatten);
+this.a.b.c.compose(sortBy(x => x), flatten);
+someObj.someMethod(this.field.compose(a, b));
+
+class A extends B {
+  compose() {
+    super.compose(sortBy(x => x), flatten);
+  }
+}
+
+this.subscriptions.add(
+            this.componentUpdates
+                .pipe(startWith(this.props), distinctUntilChanged(isEqual))
+                .subscribe(props => {
+
+                })
+        )
+
+=====================================output=====================================
+compose(
+  sortBy((x) => x),
+  flatten,
+  map((x) => [x, x * 2]),
+);
+
+somelib.compose(
+  sortBy((x) => x),
+  flatten,
+  map((x) => [x, x * 2]),
+);
+
+composeFlipped(
+  sortBy((x) => x),
+  flatten,
+  map((x) => [x, x * 2]),
+);
+
+somelib.composeFlipped(
+  sortBy((x) => x),
+  flatten,
+  map((x) => [x, x * 2]),
+);
+
+// no regression (#4602)
+const hasValue = hasOwnProperty(a, b);
+
+this.compose(
+  sortBy((x) => x),
+  flatten,
+);
+this.a.b.c.compose(
+  sortBy((x) => x),
+  flatten,
+);
+someObj.someMethod(this.field.compose(a, b));
+
+class A extends B {
+  compose() {
+    super.compose(
+      sortBy((x) => x),
+      flatten,
+    );
+  }
+}
+
+this.subscriptions.add(
+  this.componentUpdates
+    .pipe(startWith(this.props), distinctUntilChanged(isEqual))
+    .subscribe((props) => {}),
+);
+
+================================================================================
+`;
+
+exports[`gobject_connect.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+button.connect(
+  "clicked",
+  () => doSomething()
+);
+app.connect(
+  "activate",
+  async () => {
+    await data.load();
+    win.show_all();
+  }
+);
+
+=====================================output=====================================
+button.connect("clicked", () => doSomething());
+app.connect("activate", async () => {
+  await data.load();
+  win.show_all();
+});
+
+================================================================================
+`;
+
+exports[`lodash_flow.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import { flow } from "lodash";
+
+const foo = flow(
+  x => x + 1,
+  x => x * 3,
+  x => x - 6,
+);
+
+foo(6);
+
+import * as _ from "lodash";
+
+const bar = _.flow(
+  x => x + 1,
+  x => x * 3,
+  x => x - 6,
+);
+
+bar(6);
+
+=====================================output=====================================
+import { flow } from "lodash";
+
+const foo = flow(
+  (x) => x + 1,
+  (x) => x * 3,
+  (x) => x - 6,
+);
+
+foo(6);
+
+import * as _ from "lodash";
+
+const bar = _.flow(
+  (x) => x + 1,
+  (x) => x * 3,
+  (x) => x - 6,
+);
+
+bar(6);
+
+================================================================================
+`;
+
+exports[`lodash_flow_right.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import { flowRight } from "lodash";
+
+const foo = flowRight(
+  x => x + 1,
+  x => x * 3,
+  x => x - 6,
+);
+
+foo(6);
+
+import * as _ from "lodash";
+
+const bar = _.flowRight(
+  x => x + 1,
+  x => x * 3,
+  x => x - 6,
+);
+
+bar(6);
+
+=====================================output=====================================
+import { flowRight } from "lodash";
+
+const foo = flowRight(
+  (x) => x + 1,
+  (x) => x * 3,
+  (x) => x - 6,
+);
+
+foo(6);
+
+import * as _ from "lodash";
+
+const bar = _.flowRight(
+  (x) => x + 1,
+  (x) => x * 3,
+  (x) => x - 6,
+);
+
+bar(6);
+
+================================================================================
+`;
+
+exports[`mongo_connect.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+MongoClient.connect(
+  "mongodb://localhost:27017/posts",
+  (err, db) => {
+    assert.equal(null, err);
+    db.close();
+  }
+);
+
+=====================================output=====================================
+MongoClient.connect("mongodb://localhost:27017/posts", (err, db) => {
+  assert.equal(null, err);
+  db.close();
+});
+
+================================================================================
+`;
+
+exports[`pipe-function-calls.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(() => {
+  pipe(
+    timelines,
+    everyCommitTimestamps,
+    A.sort(ordDate),
+    A.head
+  );
+
+  pipe(
+    serviceEventFromMessage(msg),
+    TE.chain(
+      flow(
+        publishServiceEvent(analytics),
+        TE.mapLeft(nackFromError)
+      )
+    )
+  )()
+    .then(messageResponse(logger, msg))
+    .catch((err) => {
+      logger.error(
+        pipe(
+          O.fromNullable(err.stack),
+          O.getOrElse(constant(err.message))
+        )
+      );
+      process.exit(1);
+    });
+
+  pipe(
+    Changelog.timestampOfFirstCommit([[commit]]),
+    O.toUndefined
+  );
+
+  chain(
+    flow(
+      getUploadUrl,
+      E.mapLeft(Errors.unknownError),
+      TE.fromEither
+    )
+  );
+})();
+
+=====================================output=====================================
+(() => {
+  pipe(timelines, everyCommitTimestamps, A.sort(ordDate), A.head);
+
+  pipe(
+    serviceEventFromMessage(msg),
+    TE.chain(flow(publishServiceEvent(analytics), TE.mapLeft(nackFromError))),
+  )()
+    .then(messageResponse(logger, msg))
+    .catch((err) => {
+      logger.error(
+        pipe(O.fromNullable(err.stack), O.getOrElse(constant(err.message))),
+      );
+      process.exit(1);
+    });
+
+  pipe(Changelog.timestampOfFirstCommit([[commit]]), O.toUndefined);
+
+  chain(flow(getUploadUrl, E.mapLeft(Errors.unknownError), TE.fromEither));
+})();
+
+================================================================================
+`;
+
+exports[`pipe-function-calls-with-comments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// input with some comments added to avoid reformatting
+
+(() => {
+  pipe(
+    // add a descriptive comment here
+    timelines,
+    everyCommitTimestamps,
+    A.sort(ordDate),
+    A.head
+  );
+
+  pipe(
+    // add a descriptive comment here
+    serviceEventFromMessage(msg),
+    TE.chain(
+      flow(
+        // add a descriptive comment here
+        publishServiceEvent(analytics),
+        TE.mapLeft(nackFromError)
+      )
+    )
+  )()
+    .then(messageResponse(logger, msg))
+    .catch((err) => {
+      logger.error(
+        pipe(
+          // add a descriptive comment here
+          O.fromNullable(err.stack),
+          O.getOrElse(constant(err.message))
+        )
+      );
+      process.exit(1);
+    });
+
+  pipe(
+    // add a descriptive comment here
+    Changelog.timestampOfFirstCommit([[commit]]),
+    O.toUndefined
+  );
+
+  chain(
+    flow(
+      // add a descriptive comment here
+      getUploadUrl,
+      E.mapLeft(Errors.unknownError),
+      TE.fromEither
+    )
+  );
+})();
+
+=====================================output=====================================
+// input with some comments added to avoid reformatting
+
+(() => {
+  pipe(
+    // add a descriptive comment here
+    timelines,
+    everyCommitTimestamps,
+    A.sort(ordDate),
+    A.head,
+  );
+
+  pipe(
+    // add a descriptive comment here
+    serviceEventFromMessage(msg),
+    TE.chain(
+      flow(
+        // add a descriptive comment here
+        publishServiceEvent(analytics),
+        TE.mapLeft(nackFromError),
+      ),
+    ),
+  )()
+    .then(messageResponse(logger, msg))
+    .catch((err) => {
+      logger.error(
+        pipe(
+          // add a descriptive comment here
+          O.fromNullable(err.stack),
+          O.getOrElse(constant(err.message)),
+        ),
+      );
+      process.exit(1);
+    });
+
+  pipe(
+    // add a descriptive comment here
+    Changelog.timestampOfFirstCommit([[commit]]),
+    O.toUndefined,
+  );
+
+  chain(
+    flow(
+      // add a descriptive comment here
+      getUploadUrl,
+      E.mapLeft(Errors.unknownError),
+      TE.fromEither,
+    ),
+  );
+})();
+
+================================================================================
+`;
+
+exports[`ramda_compose.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var classyGreeting = (firstName, lastName) =>
+  "The name's " + lastName + ", " + firstName + " " + lastName;
+var yellGreeting = R.compose(R.toUpper, classyGreeting);
+yellGreeting("James", "Bond"); //=> "THE NAME'S BOND, JAMES BOND"
+
+R.compose(Math.abs, R.add(1), R.multiply(2))(-4); //=> 7
+
+//  get :: String -> Object -> Maybe *
+var get = R.curry((propName, obj) => Maybe(obj[propName]));
+
+//  getStateCode :: Maybe String -> Maybe String
+var getStateCode = R.composeK(
+  R.compose(Maybe.of, R.toUpper),
+  get("state"),
+  get("address"),
+  get("user")
+);
+getStateCode({ user: { address: { state: "ny" } } }); //=> Maybe.Just("NY")
+getStateCode({}); //=> Maybe.Nothing()
+
+var db = {
+  users: {
+    JOE: {
+      name: "Joe",
+      followers: ["STEVE", "SUZY"]
+    }
+  }
+};
+
+// We'll pretend to do a db lookup which returns a promise
+var lookupUser = userId => Promise.resolve(db.users[userId]);
+var lookupFollowers = user => Promise.resolve(user.followers);
+lookupUser("JOE").then(lookupFollowers);
+
+//  followersForUser :: String -> Promise [UserId]
+var followersForUser = R.composeP(lookupFollowers, lookupUser);
+followersForUser("JOE").then(followers => console.log("Followers:", followers));
+// Followers: ["STEVE","SUZY"]
+
+const mapStateToProps = state => ({
+  users: R.compose( R.filter(R.propEq('status', 'active')),
+    R.values)(state.users)
+});
+
+=====================================output=====================================
+var classyGreeting = (firstName, lastName) =>
+  "The name's " + lastName + ", " + firstName + " " + lastName;
+var yellGreeting = R.compose(R.toUpper, classyGreeting);
+yellGreeting("James", "Bond"); //=> "THE NAME'S BOND, JAMES BOND"
+
+R.compose(Math.abs, R.add(1), R.multiply(2))(-4); //=> 7
+
+//  get :: String -> Object -> Maybe *
+var get = R.curry((propName, obj) => Maybe(obj[propName]));
+
+//  getStateCode :: Maybe String -> Maybe String
+var getStateCode = R.composeK(
+  R.compose(Maybe.of, R.toUpper),
+  get("state"),
+  get("address"),
+  get("user"),
+);
+getStateCode({ user: { address: { state: "ny" } } }); //=> Maybe.Just("NY")
+getStateCode({}); //=> Maybe.Nothing()
+
+var db = {
+  users: {
+    JOE: {
+      name: "Joe",
+      followers: ["STEVE", "SUZY"],
+    },
+  },
+};
+
+// We'll pretend to do a db lookup which returns a promise
+var lookupUser = (userId) => Promise.resolve(db.users[userId]);
+var lookupFollowers = (user) => Promise.resolve(user.followers);
+lookupUser("JOE").then(lookupFollowers);
+
+//  followersForUser :: String -> Promise [UserId]
+var followersForUser = R.composeP(lookupFollowers, lookupUser);
+followersForUser("JOE").then((followers) =>
+  console.log("Followers:", followers),
+);
+// Followers: ["STEVE","SUZY"]
+
+const mapStateToProps = (state) => ({
+  users: R.compose(
+    R.filter(R.propEq("status", "active")),
+    R.values,
+  )(state.users),
+});
+
+================================================================================
+`;
+
+exports[`ramda_pipe.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var f = R.pipe(Math.pow, R.negate, R.inc);
+
+f(3, 4); // -(3^4) + 1
+
+//  parseJson :: String -> Maybe *
+//  get :: String -> Object -> Maybe *
+
+//  getStateCode :: Maybe String -> Maybe String
+var getStateCode = R.pipeK(
+  parseJson,
+  get("user"),
+  get("address"),
+  get("state"),
+  R.compose(Maybe.of, R.toUpper)
+);
+
+getStateCode('{"user":{"address":{"state":"ny"}}}');
+//=> Just('NY')
+getStateCode("[Invalid JSON]");
+//=> Nothing()
+
+//  followersForUser :: String -> Promise [User]
+var followersForUser = R.pipeP(db.getUserById, db.getFollowers);
+
+=====================================output=====================================
+var f = R.pipe(Math.pow, R.negate, R.inc);
+
+f(3, 4); // -(3^4) + 1
+
+//  parseJson :: String -> Maybe *
+//  get :: String -> Object -> Maybe *
+
+//  getStateCode :: Maybe String -> Maybe String
+var getStateCode = R.pipeK(
+  parseJson,
+  get("user"),
+  get("address"),
+  get("state"),
+  R.compose(Maybe.of, R.toUpper),
+);
+
+getStateCode('{"user":{"address":{"state":"ny"}}}');
+//=> Just('NY')
+getStateCode("[Invalid JSON]");
+//=> Nothing()
+
+//  followersForUser :: String -> Promise [User]
+var followersForUser = R.pipeP(db.getUserById, db.getFollowers);
+
+================================================================================
+`;
+
+exports[`redux_compose.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import { createStore, applyMiddleware, compose } from 'redux';
+import thunk from 'redux-thunk';
+import DevTools from './containers/DevTools';
+import reducer from '../reducers';
+
+const store = createStore(
+  reducer,
+  compose(
+    applyMiddleware(thunk),
+    DevTools.instrument()
+  )
+)
+
+
+=====================================output=====================================
+import { createStore, applyMiddleware, compose } from "redux";
+import thunk from "redux-thunk";
+import DevTools from "./containers/DevTools";
+import reducer from "../reducers";
+
+const store = createStore(
+  reducer,
+  compose(applyMiddleware(thunk), DevTools.instrument()),
+);
+
+================================================================================
+`;
+
+exports[`redux_connect.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const ArtistInput = connect(mapStateToProps, mapDispatchToProps, mergeProps)(Component);
+
+=====================================output=====================================
+const ArtistInput = connect(
+  mapStateToProps,
+  mapDispatchToProps,
+  mergeProps,
+)(Component);
+
+================================================================================
+`;
+
+exports[`reselect_createselector.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import { createSelector } from 'reselect';
+
+const foo = createSelector(
+  getIds,
+  getObjects,
+  (ids, objects) => ids.map(id => objects[id])
+);
+
+const bar = createSelector(
+  [getIds, getObjects],
+  (ids, objects) => ids.map(id => objects[id])
+);
+
+=====================================output=====================================
+import { createSelector } from "reselect";
+
+const foo = createSelector(getIds, getObjects, (ids, objects) =>
+  ids.map((id) => objects[id]),
+);
+
+const bar = createSelector([getIds, getObjects], (ids, objects) =>
+  ids.map((id) => objects[id]),
+);
+
+================================================================================
+`;
+
+exports[`rxjs_pipe.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import { range } from 'rxjs/observable/range';
+import { map, filter, scan } from 'rxjs/operators';
+
+const source$ = range(0, 10);
+
+source$.pipe(
+  filter(x => x % 2 === 0),
+  map(x => x + x),
+  scan((acc, x) => acc + x, 0)
+)
+.subscribe(x => console.log(x))
+
+=====================================output=====================================
+import { range } from "rxjs/observable/range";
+import { map, filter, scan } from "rxjs/operators";
+
+const source$ = range(0, 10);
+
+source$
+  .pipe(
+    filter((x) => x % 2 === 0),
+    map((x) => x + x),
+    scan((acc, x) => acc + x, 0),
+  )
+  .subscribe((x) => console.log(x));
+
+================================================================================
+`;

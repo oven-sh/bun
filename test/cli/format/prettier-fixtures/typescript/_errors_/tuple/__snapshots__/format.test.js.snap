@@ -1,0 +1,74 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format 1`] = `
+"Type parameters cannot appear on a constructor declaration. (1:24)
+> 1 | class A { 'constructor'<a>() {} }
+    |                        ^
+Cause: Type parameters cannot appear on a constructor declaration. (1:23)"
+`;
+
+exports[`snippet: #0 format[babel-ts] 1`] = `
+"Tuple members must be labeled with a simple identifier. (1:11)
+> 1 | type T = [x.y: A];
+    |           ^
+Cause: Tuple members must be labeled with a simple identifier. (1:10)"
+`;
+
+exports[`snippet: #0 format[babel-ts] 2`] = `
+"A required element cannot follow an optional element. (1:18)
+> 1 | type T = [x?: A, y: B];
+    |                  ^
+Cause: A required element cannot follow an optional element. (1:17)"
+`;
+
+exports[`snippet: #0 format[oxc-ts] 1`] = `
+"Expected \`,\` or \`]\` but found \`:\` (1:14)
+> 1 | type T = [x.y: A];
+    |              ^"
+`;
+
+exports[`snippet: #0 format[oxc-ts] 2`] = `
+"A required element cannot follow an optional element. (1:18)
+> 1 | type T = [x?: A, y: B];
+    |                  ^^^^"
+`;
+
+exports[`snippet: #0 format[typescript] 1`] = `
+"',' expected. (1:14)
+> 1 | type T = [x.y: A];
+    |              ^
+Cause: ',' expected."
+`;
+
+exports[`snippet: #1 format[babel-ts] 1`] = `
+"Tuple members must be labeled with a simple identifier. (1:11)
+> 1 | type T = [x<y>: A];
+    |           ^
+Cause: Tuple members must be labeled with a simple identifier. (1:10)"
+`;
+
+exports[`snippet: #1 format[babel-ts] 2`] = `
+"Type parameters cannot appear on a constructor declaration. (1:22)
+> 1 | class A { constructor<a>() {} }
+    |                      ^
+Cause: Type parameters cannot appear on a constructor declaration. (1:21)"
+`;
+
+exports[`snippet: #1 format[oxc-ts] 1`] = `
+"Expected \`,\` or \`]\` but found \`:\` (1:15)
+> 1 | type T = [x<y>: A];
+    |               ^"
+`;
+
+exports[`snippet: #1 format[oxc-ts] 2`] = `
+"Type parameters cannot appear on a constructor declaration (1:22)
+> 1 | class A { constructor<a>() {} }
+    |                      ^^^"
+`;
+
+exports[`snippet: #1 format[typescript] 1`] = `
+"',' expected. (1:15)
+> 1 | type T = [x<y>: A];
+    |               ^
+Cause: ',' expected."
+`;

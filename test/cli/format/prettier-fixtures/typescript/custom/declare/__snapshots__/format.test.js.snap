@@ -1,0 +1,31 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`declareModifier.d.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+declare function a();
+
+declare const b: string;
+
+declare var c: number;
+
+declare let d: any;
+
+declare class e {}
+
+=====================================output=====================================
+declare function a();
+
+declare const b: string;
+
+declare var c: number;
+
+declare let d: any;
+
+declare class e {}
+
+================================================================================
+`;

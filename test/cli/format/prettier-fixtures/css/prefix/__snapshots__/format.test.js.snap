@@ -1,0 +1,20 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`prefix.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+div {
+  margin-left: -@leftMargin;
+  transform: translateY(-@offset);
+}
+
+=====================================output=====================================
+div {
+  margin-left: -@leftMargin;
+  transform: translateY(-@offset);
+}
+
+================================================================================
+`;

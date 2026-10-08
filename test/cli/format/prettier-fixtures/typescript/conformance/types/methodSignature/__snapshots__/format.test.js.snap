@@ -1,0 +1,20 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`methodSignature.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var logger: {
+    log(val: any, val2: any),
+    error(val: any)
+};
+
+=====================================output=====================================
+var logger: {
+  log(val: any, val2: any);
+  error(val: any);
+};
+
+================================================================================
+`;

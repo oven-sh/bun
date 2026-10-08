@@ -1,0 +1,49 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`test.jsonc - {"singleQuote":false} format 1`] = `
+====================================options=====================================
+parsers: ["jsonc"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+[
+  "Should always use double quote",
+  'Even it is single quoted originally',
+  'Or contains double quotes """""""""""',
+  {"object-key-should-also-double-quoted":""},
+]
+
+=====================================output=====================================
+[
+  "Should always use double quote",
+  "Even it is single quoted originally",
+  "Or contains double quotes \\"\\"\\"\\"\\"\\"\\"\\"\\"\\"\\"",
+  { "object-key-should-also-double-quoted": "" },
+]
+
+================================================================================
+`;
+
+exports[`test.jsonc - {"singleQuote":true} format 1`] = `
+====================================options=====================================
+parsers: ["jsonc"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+[
+  "Should always use double quote",
+  'Even it is single quoted originally',
+  'Or contains double quotes """""""""""',
+  {"object-key-should-also-double-quoted":""},
+]
+
+=====================================output=====================================
+[
+  "Should always use double quote",
+  "Even it is single quoted originally",
+  "Or contains double quotes \\"\\"\\"\\"\\"\\"\\"\\"\\"\\"\\"",
+  { "object-key-should-also-double-quoted": "" },
+]
+
+================================================================================
+`;

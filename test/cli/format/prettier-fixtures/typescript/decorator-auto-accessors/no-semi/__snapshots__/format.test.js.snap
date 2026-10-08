@@ -1,0 +1,21 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`decorator-auto-accessor-like-property-name.ts - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class C {
+  accessor;
+  bar;
+}
+
+=====================================output=====================================
+class C {
+  accessor
+  bar
+}
+
+================================================================================
+`;

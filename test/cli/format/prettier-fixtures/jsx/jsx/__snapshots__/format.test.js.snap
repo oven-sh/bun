@@ -1,0 +1,6261 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`array-iter.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const UsersList = ({ users }) => (
+  <section>
+    <h2>Users list</h2>
+    <ul>
+      {users.map(user => (
+        <li key={user.id}>{user.name}</li>
+      ))}
+    </ul>
+  </section>
+)
+
+const TodoList = ({ todos }) => (
+  <div className="TodoList">
+    <ul>{_.map(todos, (todo, i) => <TodoItem key={i} {...todo} />)}</ul>
+  </div>
+);
+
+<div className="search-filter-chips">
+    {scopes
+        .filter(scope => scope.value !== '')
+        .map((scope, i) => (
+            <FilterChip
+                query={this.props.query}
+                onFilterChosen={this.onSearchScopeClicked}
+                key={i}
+                value={scope.value}
+                name={scope.name}
+            />
+        ))}
+</div>
+
+=====================================output=====================================
+const UsersList = ({ users }) => (
+  <section>
+    <h2>Users list</h2>
+    <ul>
+      {users.map((user) => (
+        <li key={user.id}>{user.name}</li>
+      ))}
+    </ul>
+  </section>
+);
+
+const TodoList = ({ todos }) => (
+  <div className="TodoList">
+    <ul>
+      {_.map(todos, (todo, i) => (
+        <TodoItem key={i} {...todo} />
+      ))}
+    </ul>
+  </div>
+);
+
+<div className="search-filter-chips">
+  {scopes
+    .filter((scope) => scope.value !== "")
+    .map((scope, i) => (
+      <FilterChip
+        query={this.props.query}
+        onFilterChosen={this.onSearchScopeClicked}
+        key={i}
+        value={scope.value}
+        name={scope.name}
+      />
+    ))}
+</div>;
+
+================================================================================
+`;
+
+exports[`array-iter.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const UsersList = ({ users }) => (
+  <section>
+    <h2>Users list</h2>
+    <ul>
+      {users.map(user => (
+        <li key={user.id}>{user.name}</li>
+      ))}
+    </ul>
+  </section>
+)
+
+const TodoList = ({ todos }) => (
+  <div className="TodoList">
+    <ul>{_.map(todos, (todo, i) => <TodoItem key={i} {...todo} />)}</ul>
+  </div>
+);
+
+<div className="search-filter-chips">
+    {scopes
+        .filter(scope => scope.value !== '')
+        .map((scope, i) => (
+            <FilterChip
+                query={this.props.query}
+                onFilterChosen={this.onSearchScopeClicked}
+                key={i}
+                value={scope.value}
+                name={scope.name}
+            />
+        ))}
+</div>
+
+=====================================output=====================================
+const UsersList = ({ users }) => (
+  <section>
+    <h2>Users list</h2>
+    <ul>
+      {users.map((user) => (
+        <li key={user.id}>{user.name}</li>
+      ))}
+    </ul>
+  </section>
+);
+
+const TodoList = ({ todos }) => (
+  <div className='TodoList'>
+    <ul>
+      {_.map(todos, (todo, i) => (
+        <TodoItem key={i} {...todo} />
+      ))}
+    </ul>
+  </div>
+);
+
+<div className='search-filter-chips'>
+  {scopes
+    .filter((scope) => scope.value !== "")
+    .map((scope, i) => (
+      <FilterChip
+        query={this.props.query}
+        onFilterChosen={this.onSearchScopeClicked}
+        key={i}
+        value={scope.value}
+        name={scope.name}
+      />
+    ))}
+</div>;
+
+================================================================================
+`;
+
+exports[`array-iter.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const UsersList = ({ users }) => (
+  <section>
+    <h2>Users list</h2>
+    <ul>
+      {users.map(user => (
+        <li key={user.id}>{user.name}</li>
+      ))}
+    </ul>
+  </section>
+)
+
+const TodoList = ({ todos }) => (
+  <div className="TodoList">
+    <ul>{_.map(todos, (todo, i) => <TodoItem key={i} {...todo} />)}</ul>
+  </div>
+);
+
+<div className="search-filter-chips">
+    {scopes
+        .filter(scope => scope.value !== '')
+        .map((scope, i) => (
+            <FilterChip
+                query={this.props.query}
+                onFilterChosen={this.onSearchScopeClicked}
+                key={i}
+                value={scope.value}
+                name={scope.name}
+            />
+        ))}
+</div>
+
+=====================================output=====================================
+const UsersList = ({ users }) => (
+  <section>
+    <h2>Users list</h2>
+    <ul>
+      {users.map((user) => (
+        <li key={user.id}>{user.name}</li>
+      ))}
+    </ul>
+  </section>
+);
+
+const TodoList = ({ todos }) => (
+  <div className="TodoList">
+    <ul>
+      {_.map(todos, (todo, i) => (
+        <TodoItem key={i} {...todo} />
+      ))}
+    </ul>
+  </div>
+);
+
+<div className="search-filter-chips">
+  {scopes
+    .filter((scope) => scope.value !== '')
+    .map((scope, i) => (
+      <FilterChip
+        query={this.props.query}
+        onFilterChosen={this.onSearchScopeClicked}
+        key={i}
+        value={scope.value}
+        name={scope.name}
+      />
+    ))}
+</div>;
+
+================================================================================
+`;
+
+exports[`array-iter.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const UsersList = ({ users }) => (
+  <section>
+    <h2>Users list</h2>
+    <ul>
+      {users.map(user => (
+        <li key={user.id}>{user.name}</li>
+      ))}
+    </ul>
+  </section>
+)
+
+const TodoList = ({ todos }) => (
+  <div className="TodoList">
+    <ul>{_.map(todos, (todo, i) => <TodoItem key={i} {...todo} />)}</ul>
+  </div>
+);
+
+<div className="search-filter-chips">
+    {scopes
+        .filter(scope => scope.value !== '')
+        .map((scope, i) => (
+            <FilterChip
+                query={this.props.query}
+                onFilterChosen={this.onSearchScopeClicked}
+                key={i}
+                value={scope.value}
+                name={scope.name}
+            />
+        ))}
+</div>
+
+=====================================output=====================================
+const UsersList = ({ users }) => (
+  <section>
+    <h2>Users list</h2>
+    <ul>
+      {users.map((user) => (
+        <li key={user.id}>{user.name}</li>
+      ))}
+    </ul>
+  </section>
+);
+
+const TodoList = ({ todos }) => (
+  <div className='TodoList'>
+    <ul>
+      {_.map(todos, (todo, i) => (
+        <TodoItem key={i} {...todo} />
+      ))}
+    </ul>
+  </div>
+);
+
+<div className='search-filter-chips'>
+  {scopes
+    .filter((scope) => scope.value !== '')
+    .map((scope, i) => (
+      <FilterChip
+        query={this.props.query}
+        onFilterChosen={this.onSearchScopeClicked}
+        key={i}
+        value={scope.value}
+        name={scope.name}
+      />
+    ))}
+</div>;
+
+================================================================================
+`;
+
+exports[`arrow.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+() => <Component><Children/></Component>;
+() => () => <Component><Children/></Component>;
+() => () => () => <Component><Children/></Component>;
+
+() => <div>Some text here</div>;
+() => () => <div>Some text here</div>;
+() => () => () => <div>Some text here</div>;
+
+() => <div>Long long long long long, very very long text. And more text. Another text.</div>;
+() => () => <div>Long long long long long, very very long text. And more text. Another text.</div>;
+() => () => () => <div>Long long long long long, very very long text. And more text. Another text.</div>;
+
+<Prettier>
+  {We => 'The purple monkey danced with a tambourine made of cheese.' + 'The robot chef cooked a cake that tasted like rainbows.' + 'The talking pineapple sang a lullaby to the sleepy giraffe.'}
+</Prettier>;
+<Prettier>
+  {We => love => 'The purple monkey danced with a tambourine made of cheese.' + 'The robot chef cooked a cake that tasted like rainbows.' + 'The talking pineapple sang a lullaby to the sleepy giraffe.'}
+</Prettier>;
+<Prettier>
+  {We => love => currying => 'The purple monkey danced with a tambourine made of cheese.' + 'The robot chef cooked a cake that tasted like rainbows.' + 'The talking pineapple sang a lullaby to the sleepy giraffe.'}
+</Prettier>;
+
+=====================================output=====================================
+() => (
+  <Component>
+    <Children />
+  </Component>
+);
+() => () => (
+  <Component>
+    <Children />
+  </Component>
+);
+() => () => () => (
+  <Component>
+    <Children />
+  </Component>
+);
+
+() => <div>Some text here</div>;
+() => () => <div>Some text here</div>;
+() => () => () => <div>Some text here</div>;
+
+() => (
+  <div>
+    Long long long long long, very very long text. And more text. Another text.
+  </div>
+);
+() => () => (
+  <div>
+    Long long long long long, very very long text. And more text. Another text.
+  </div>
+);
+() => () => () => (
+  <div>
+    Long long long long long, very very long text. And more text. Another text.
+  </div>
+);
+
+<Prettier>
+  {(We) =>
+    "The purple monkey danced with a tambourine made of cheese." +
+    "The robot chef cooked a cake that tasted like rainbows." +
+    "The talking pineapple sang a lullaby to the sleepy giraffe."
+  }
+</Prettier>;
+<Prettier>
+  {(We) => (love) =>
+    "The purple monkey danced with a tambourine made of cheese." +
+    "The robot chef cooked a cake that tasted like rainbows." +
+    "The talking pineapple sang a lullaby to the sleepy giraffe."
+  }
+</Prettier>;
+<Prettier>
+  {(We) => (love) => (currying) =>
+    "The purple monkey danced with a tambourine made of cheese." +
+    "The robot chef cooked a cake that tasted like rainbows." +
+    "The talking pineapple sang a lullaby to the sleepy giraffe."
+  }
+</Prettier>;
+
+================================================================================
+`;
+
+exports[`arrow.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+() => <Component><Children/></Component>;
+() => () => <Component><Children/></Component>;
+() => () => () => <Component><Children/></Component>;
+
+() => <div>Some text here</div>;
+() => () => <div>Some text here</div>;
+() => () => () => <div>Some text here</div>;
+
+() => <div>Long long long long long, very very long text. And more text. Another text.</div>;
+() => () => <div>Long long long long long, very very long text. And more text. Another text.</div>;
+() => () => () => <div>Long long long long long, very very long text. And more text. Another text.</div>;
+
+<Prettier>
+  {We => 'The purple monkey danced with a tambourine made of cheese.' + 'The robot chef cooked a cake that tasted like rainbows.' + 'The talking pineapple sang a lullaby to the sleepy giraffe.'}
+</Prettier>;
+<Prettier>
+  {We => love => 'The purple monkey danced with a tambourine made of cheese.' + 'The robot chef cooked a cake that tasted like rainbows.' + 'The talking pineapple sang a lullaby to the sleepy giraffe.'}
+</Prettier>;
+<Prettier>
+  {We => love => currying => 'The purple monkey danced with a tambourine made of cheese.' + 'The robot chef cooked a cake that tasted like rainbows.' + 'The talking pineapple sang a lullaby to the sleepy giraffe.'}
+</Prettier>;
+
+=====================================output=====================================
+() => (
+  <Component>
+    <Children />
+  </Component>
+);
+() => () => (
+  <Component>
+    <Children />
+  </Component>
+);
+() => () => () => (
+  <Component>
+    <Children />
+  </Component>
+);
+
+() => <div>Some text here</div>;
+() => () => <div>Some text here</div>;
+() => () => () => <div>Some text here</div>;
+
+() => (
+  <div>
+    Long long long long long, very very long text. And more text. Another text.
+  </div>
+);
+() => () => (
+  <div>
+    Long long long long long, very very long text. And more text. Another text.
+  </div>
+);
+() => () => () => (
+  <div>
+    Long long long long long, very very long text. And more text. Another text.
+  </div>
+);
+
+<Prettier>
+  {(We) =>
+    "The purple monkey danced with a tambourine made of cheese." +
+    "The robot chef cooked a cake that tasted like rainbows." +
+    "The talking pineapple sang a lullaby to the sleepy giraffe."
+  }
+</Prettier>;
+<Prettier>
+  {(We) => (love) =>
+    "The purple monkey danced with a tambourine made of cheese." +
+    "The robot chef cooked a cake that tasted like rainbows." +
+    "The talking pineapple sang a lullaby to the sleepy giraffe."
+  }
+</Prettier>;
+<Prettier>
+  {(We) => (love) => (currying) =>
+    "The purple monkey danced with a tambourine made of cheese." +
+    "The robot chef cooked a cake that tasted like rainbows." +
+    "The talking pineapple sang a lullaby to the sleepy giraffe."
+  }
+</Prettier>;
+
+================================================================================
+`;
+
+exports[`arrow.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+() => <Component><Children/></Component>;
+() => () => <Component><Children/></Component>;
+() => () => () => <Component><Children/></Component>;
+
+() => <div>Some text here</div>;
+() => () => <div>Some text here</div>;
+() => () => () => <div>Some text here</div>;
+
+() => <div>Long long long long long, very very long text. And more text. Another text.</div>;
+() => () => <div>Long long long long long, very very long text. And more text. Another text.</div>;
+() => () => () => <div>Long long long long long, very very long text. And more text. Another text.</div>;
+
+<Prettier>
+  {We => 'The purple monkey danced with a tambourine made of cheese.' + 'The robot chef cooked a cake that tasted like rainbows.' + 'The talking pineapple sang a lullaby to the sleepy giraffe.'}
+</Prettier>;
+<Prettier>
+  {We => love => 'The purple monkey danced with a tambourine made of cheese.' + 'The robot chef cooked a cake that tasted like rainbows.' + 'The talking pineapple sang a lullaby to the sleepy giraffe.'}
+</Prettier>;
+<Prettier>
+  {We => love => currying => 'The purple monkey danced with a tambourine made of cheese.' + 'The robot chef cooked a cake that tasted like rainbows.' + 'The talking pineapple sang a lullaby to the sleepy giraffe.'}
+</Prettier>;
+
+=====================================output=====================================
+() => (
+  <Component>
+    <Children />
+  </Component>
+);
+() => () => (
+  <Component>
+    <Children />
+  </Component>
+);
+() => () => () => (
+  <Component>
+    <Children />
+  </Component>
+);
+
+() => <div>Some text here</div>;
+() => () => <div>Some text here</div>;
+() => () => () => <div>Some text here</div>;
+
+() => (
+  <div>
+    Long long long long long, very very long text. And more text. Another text.
+  </div>
+);
+() => () => (
+  <div>
+    Long long long long long, very very long text. And more text. Another text.
+  </div>
+);
+() => () => () => (
+  <div>
+    Long long long long long, very very long text. And more text. Another text.
+  </div>
+);
+
+<Prettier>
+  {(We) =>
+    'The purple monkey danced with a tambourine made of cheese.' +
+    'The robot chef cooked a cake that tasted like rainbows.' +
+    'The talking pineapple sang a lullaby to the sleepy giraffe.'
+  }
+</Prettier>;
+<Prettier>
+  {(We) => (love) =>
+    'The purple monkey danced with a tambourine made of cheese.' +
+    'The robot chef cooked a cake that tasted like rainbows.' +
+    'The talking pineapple sang a lullaby to the sleepy giraffe.'
+  }
+</Prettier>;
+<Prettier>
+  {(We) => (love) => (currying) =>
+    'The purple monkey danced with a tambourine made of cheese.' +
+    'The robot chef cooked a cake that tasted like rainbows.' +
+    'The talking pineapple sang a lullaby to the sleepy giraffe.'
+  }
+</Prettier>;
+
+================================================================================
+`;
+
+exports[`arrow.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+() => <Component><Children/></Component>;
+() => () => <Component><Children/></Component>;
+() => () => () => <Component><Children/></Component>;
+
+() => <div>Some text here</div>;
+() => () => <div>Some text here</div>;
+() => () => () => <div>Some text here</div>;
+
+() => <div>Long long long long long, very very long text. And more text. Another text.</div>;
+() => () => <div>Long long long long long, very very long text. And more text. Another text.</div>;
+() => () => () => <div>Long long long long long, very very long text. And more text. Another text.</div>;
+
+<Prettier>
+  {We => 'The purple monkey danced with a tambourine made of cheese.' + 'The robot chef cooked a cake that tasted like rainbows.' + 'The talking pineapple sang a lullaby to the sleepy giraffe.'}
+</Prettier>;
+<Prettier>
+  {We => love => 'The purple monkey danced with a tambourine made of cheese.' + 'The robot chef cooked a cake that tasted like rainbows.' + 'The talking pineapple sang a lullaby to the sleepy giraffe.'}
+</Prettier>;
+<Prettier>
+  {We => love => currying => 'The purple monkey danced with a tambourine made of cheese.' + 'The robot chef cooked a cake that tasted like rainbows.' + 'The talking pineapple sang a lullaby to the sleepy giraffe.'}
+</Prettier>;
+
+=====================================output=====================================
+() => (
+  <Component>
+    <Children />
+  </Component>
+);
+() => () => (
+  <Component>
+    <Children />
+  </Component>
+);
+() => () => () => (
+  <Component>
+    <Children />
+  </Component>
+);
+
+() => <div>Some text here</div>;
+() => () => <div>Some text here</div>;
+() => () => () => <div>Some text here</div>;
+
+() => (
+  <div>
+    Long long long long long, very very long text. And more text. Another text.
+  </div>
+);
+() => () => (
+  <div>
+    Long long long long long, very very long text. And more text. Another text.
+  </div>
+);
+() => () => () => (
+  <div>
+    Long long long long long, very very long text. And more text. Another text.
+  </div>
+);
+
+<Prettier>
+  {(We) =>
+    'The purple monkey danced with a tambourine made of cheese.' +
+    'The robot chef cooked a cake that tasted like rainbows.' +
+    'The talking pineapple sang a lullaby to the sleepy giraffe.'
+  }
+</Prettier>;
+<Prettier>
+  {(We) => (love) =>
+    'The purple monkey danced with a tambourine made of cheese.' +
+    'The robot chef cooked a cake that tasted like rainbows.' +
+    'The talking pineapple sang a lullaby to the sleepy giraffe.'
+  }
+</Prettier>;
+<Prettier>
+  {(We) => (love) => (currying) =>
+    'The purple monkey danced with a tambourine made of cheese.' +
+    'The robot chef cooked a cake that tasted like rainbows.' +
+    'The talking pineapple sang a lullaby to the sleepy giraffe.'
+  }
+</Prettier>;
+
+================================================================================
+`;
+
+exports[`attr-comments.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<Component
+  propFn={
+    // comment
+    function(arg) {
+      fn(arg);
+    }
+  }
+  propArrowFn={
+    // comment
+    arg => fn(arg)
+  }
+  propArrowWithBreak={
+    // comment
+    arg =>
+      fn({
+        makeItBreak
+      })
+  }
+  propArray={
+    // comment
+    [el1, el2]
+  }
+  propObj={
+    // comment
+    { key: val }
+  }
+  propTemplate={
+    // comment
+    \`text\`
+  }
+/>;
+
+=====================================output=====================================
+<Component
+  propFn={
+    // comment
+    function (arg) {
+      fn(arg);
+    }
+  }
+  propArrowFn={
+    // comment
+    (arg) => fn(arg)
+  }
+  propArrowWithBreak={
+    // comment
+    (arg) =>
+      fn({
+        makeItBreak,
+      })
+  }
+  propArray={
+    // comment
+    [el1, el2]
+  }
+  propObj={
+    // comment
+    { key: val }
+  }
+  propTemplate={
+    // comment
+    \`text\`
+  }
+/>;
+
+================================================================================
+`;
+
+exports[`attr-comments.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<Component
+  propFn={
+    // comment
+    function(arg) {
+      fn(arg);
+    }
+  }
+  propArrowFn={
+    // comment
+    arg => fn(arg)
+  }
+  propArrowWithBreak={
+    // comment
+    arg =>
+      fn({
+        makeItBreak
+      })
+  }
+  propArray={
+    // comment
+    [el1, el2]
+  }
+  propObj={
+    // comment
+    { key: val }
+  }
+  propTemplate={
+    // comment
+    \`text\`
+  }
+/>;
+
+=====================================output=====================================
+<Component
+  propFn={
+    // comment
+    function (arg) {
+      fn(arg);
+    }
+  }
+  propArrowFn={
+    // comment
+    (arg) => fn(arg)
+  }
+  propArrowWithBreak={
+    // comment
+    (arg) =>
+      fn({
+        makeItBreak,
+      })
+  }
+  propArray={
+    // comment
+    [el1, el2]
+  }
+  propObj={
+    // comment
+    { key: val }
+  }
+  propTemplate={
+    // comment
+    \`text\`
+  }
+/>;
+
+================================================================================
+`;
+
+exports[`attr-comments.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<Component
+  propFn={
+    // comment
+    function(arg) {
+      fn(arg);
+    }
+  }
+  propArrowFn={
+    // comment
+    arg => fn(arg)
+  }
+  propArrowWithBreak={
+    // comment
+    arg =>
+      fn({
+        makeItBreak
+      })
+  }
+  propArray={
+    // comment
+    [el1, el2]
+  }
+  propObj={
+    // comment
+    { key: val }
+  }
+  propTemplate={
+    // comment
+    \`text\`
+  }
+/>;
+
+=====================================output=====================================
+<Component
+  propFn={
+    // comment
+    function (arg) {
+      fn(arg);
+    }
+  }
+  propArrowFn={
+    // comment
+    (arg) => fn(arg)
+  }
+  propArrowWithBreak={
+    // comment
+    (arg) =>
+      fn({
+        makeItBreak,
+      })
+  }
+  propArray={
+    // comment
+    [el1, el2]
+  }
+  propObj={
+    // comment
+    { key: val }
+  }
+  propTemplate={
+    // comment
+    \`text\`
+  }
+/>;
+
+================================================================================
+`;
+
+exports[`attr-comments.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<Component
+  propFn={
+    // comment
+    function(arg) {
+      fn(arg);
+    }
+  }
+  propArrowFn={
+    // comment
+    arg => fn(arg)
+  }
+  propArrowWithBreak={
+    // comment
+    arg =>
+      fn({
+        makeItBreak
+      })
+  }
+  propArray={
+    // comment
+    [el1, el2]
+  }
+  propObj={
+    // comment
+    { key: val }
+  }
+  propTemplate={
+    // comment
+    \`text\`
+  }
+/>;
+
+=====================================output=====================================
+<Component
+  propFn={
+    // comment
+    function (arg) {
+      fn(arg);
+    }
+  }
+  propArrowFn={
+    // comment
+    (arg) => fn(arg)
+  }
+  propArrowWithBreak={
+    // comment
+    (arg) =>
+      fn({
+        makeItBreak,
+      })
+  }
+  propArray={
+    // comment
+    [el1, el2]
+  }
+  propObj={
+    // comment
+    { key: val }
+  }
+  propTemplate={
+    // comment
+    \`text\`
+  }
+/>;
+
+================================================================================
+`;
+
+exports[`await.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function testFunction() {
+  const short = <>
+    {await Promise.all(
+      hierarchyCriticism
+    )}
+    {await hierarchyCriticism.ic.me.oa.p}
+    {await hierarchyCriticism}
+
+    {Promise.all(
+      hierarchyCriticism
+    )}
+    {hierarchyCriticism.ic.me.oa.p}
+    {hierarchyCriticism}
+  </>
+
+  const long = <>
+    {await Promise.all(
+      hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter
+    )}
+    {await hierarchyCriticism.IncongruousCooperate.MaterialEducation.OriginalArticulate.Parameter}
+    {await hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter}
+
+    {Promise.all(
+      hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter
+    )}
+    {hierarchyCriticism.IncongruousCooperate.MaterialEducation.OriginalArticulate.Parameter}
+    {hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter}
+  </>
+
+  const jsx = <>
+    {await (<IncongruousCooperate>
+      material education original articulate parameter
+    </IncongruousCooperate>)}
+  </>
+}
+
+=====================================output=====================================
+async function testFunction() {
+  const short = (
+    <>
+      {await Promise.all(hierarchyCriticism)}
+      {await hierarchyCriticism.ic.me.oa.p}
+      {await hierarchyCriticism}
+
+      {Promise.all(hierarchyCriticism)}
+      {hierarchyCriticism.ic.me.oa.p}
+      {hierarchyCriticism}
+    </>
+  );
+
+  const long = (
+    <>
+      {await Promise.all(
+        hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter,
+      )}
+      {
+        await hierarchyCriticism.IncongruousCooperate.MaterialEducation
+          .OriginalArticulate.Parameter
+      }
+      {
+        await hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter
+      }
+
+      {Promise.all(
+        hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter,
+      )}
+      {
+        hierarchyCriticism.IncongruousCooperate.MaterialEducation
+          .OriginalArticulate.Parameter
+      }
+      {
+        hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter
+      }
+    </>
+  );
+
+  const jsx = (
+    <>
+      {await (
+        <IncongruousCooperate>
+          material education original articulate parameter
+        </IncongruousCooperate>
+      )}
+    </>
+  );
+}
+
+================================================================================
+`;
+
+exports[`await.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function testFunction() {
+  const short = <>
+    {await Promise.all(
+      hierarchyCriticism
+    )}
+    {await hierarchyCriticism.ic.me.oa.p}
+    {await hierarchyCriticism}
+
+    {Promise.all(
+      hierarchyCriticism
+    )}
+    {hierarchyCriticism.ic.me.oa.p}
+    {hierarchyCriticism}
+  </>
+
+  const long = <>
+    {await Promise.all(
+      hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter
+    )}
+    {await hierarchyCriticism.IncongruousCooperate.MaterialEducation.OriginalArticulate.Parameter}
+    {await hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter}
+
+    {Promise.all(
+      hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter
+    )}
+    {hierarchyCriticism.IncongruousCooperate.MaterialEducation.OriginalArticulate.Parameter}
+    {hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter}
+  </>
+
+  const jsx = <>
+    {await (<IncongruousCooperate>
+      material education original articulate parameter
+    </IncongruousCooperate>)}
+  </>
+}
+
+=====================================output=====================================
+async function testFunction() {
+  const short = (
+    <>
+      {await Promise.all(hierarchyCriticism)}
+      {await hierarchyCriticism.ic.me.oa.p}
+      {await hierarchyCriticism}
+
+      {Promise.all(hierarchyCriticism)}
+      {hierarchyCriticism.ic.me.oa.p}
+      {hierarchyCriticism}
+    </>
+  );
+
+  const long = (
+    <>
+      {await Promise.all(
+        hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter,
+      )}
+      {
+        await hierarchyCriticism.IncongruousCooperate.MaterialEducation
+          .OriginalArticulate.Parameter
+      }
+      {
+        await hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter
+      }
+
+      {Promise.all(
+        hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter,
+      )}
+      {
+        hierarchyCriticism.IncongruousCooperate.MaterialEducation
+          .OriginalArticulate.Parameter
+      }
+      {
+        hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter
+      }
+    </>
+  );
+
+  const jsx = (
+    <>
+      {await (
+        <IncongruousCooperate>
+          material education original articulate parameter
+        </IncongruousCooperate>
+      )}
+    </>
+  );
+}
+
+================================================================================
+`;
+
+exports[`await.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function testFunction() {
+  const short = <>
+    {await Promise.all(
+      hierarchyCriticism
+    )}
+    {await hierarchyCriticism.ic.me.oa.p}
+    {await hierarchyCriticism}
+
+    {Promise.all(
+      hierarchyCriticism
+    )}
+    {hierarchyCriticism.ic.me.oa.p}
+    {hierarchyCriticism}
+  </>
+
+  const long = <>
+    {await Promise.all(
+      hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter
+    )}
+    {await hierarchyCriticism.IncongruousCooperate.MaterialEducation.OriginalArticulate.Parameter}
+    {await hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter}
+
+    {Promise.all(
+      hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter
+    )}
+    {hierarchyCriticism.IncongruousCooperate.MaterialEducation.OriginalArticulate.Parameter}
+    {hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter}
+  </>
+
+  const jsx = <>
+    {await (<IncongruousCooperate>
+      material education original articulate parameter
+    </IncongruousCooperate>)}
+  </>
+}
+
+=====================================output=====================================
+async function testFunction() {
+  const short = (
+    <>
+      {await Promise.all(hierarchyCriticism)}
+      {await hierarchyCriticism.ic.me.oa.p}
+      {await hierarchyCriticism}
+
+      {Promise.all(hierarchyCriticism)}
+      {hierarchyCriticism.ic.me.oa.p}
+      {hierarchyCriticism}
+    </>
+  );
+
+  const long = (
+    <>
+      {await Promise.all(
+        hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter,
+      )}
+      {
+        await hierarchyCriticism.IncongruousCooperate.MaterialEducation
+          .OriginalArticulate.Parameter
+      }
+      {
+        await hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter
+      }
+
+      {Promise.all(
+        hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter,
+      )}
+      {
+        hierarchyCriticism.IncongruousCooperate.MaterialEducation
+          .OriginalArticulate.Parameter
+      }
+      {
+        hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter
+      }
+    </>
+  );
+
+  const jsx = (
+    <>
+      {await (
+        <IncongruousCooperate>
+          material education original articulate parameter
+        </IncongruousCooperate>
+      )}
+    </>
+  );
+}
+
+================================================================================
+`;
+
+exports[`await.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function testFunction() {
+  const short = <>
+    {await Promise.all(
+      hierarchyCriticism
+    )}
+    {await hierarchyCriticism.ic.me.oa.p}
+    {await hierarchyCriticism}
+
+    {Promise.all(
+      hierarchyCriticism
+    )}
+    {hierarchyCriticism.ic.me.oa.p}
+    {hierarchyCriticism}
+  </>
+
+  const long = <>
+    {await Promise.all(
+      hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter
+    )}
+    {await hierarchyCriticism.IncongruousCooperate.MaterialEducation.OriginalArticulate.Parameter}
+    {await hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter}
+
+    {Promise.all(
+      hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter
+    )}
+    {hierarchyCriticism.IncongruousCooperate.MaterialEducation.OriginalArticulate.Parameter}
+    {hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter}
+  </>
+
+  const jsx = <>
+    {await (<IncongruousCooperate>
+      material education original articulate parameter
+    </IncongruousCooperate>)}
+  </>
+}
+
+=====================================output=====================================
+async function testFunction() {
+  const short = (
+    <>
+      {await Promise.all(hierarchyCriticism)}
+      {await hierarchyCriticism.ic.me.oa.p}
+      {await hierarchyCriticism}
+
+      {Promise.all(hierarchyCriticism)}
+      {hierarchyCriticism.ic.me.oa.p}
+      {hierarchyCriticism}
+    </>
+  );
+
+  const long = (
+    <>
+      {await Promise.all(
+        hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter,
+      )}
+      {
+        await hierarchyCriticism.IncongruousCooperate.MaterialEducation
+          .OriginalArticulate.Parameter
+      }
+      {
+        await hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter
+      }
+
+      {Promise.all(
+        hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter,
+      )}
+      {
+        hierarchyCriticism.IncongruousCooperate.MaterialEducation
+          .OriginalArticulate.Parameter
+      }
+      {
+        hierarchyCriticismIncongruousCooperateMaterialEducationOriginalArticulateParameter
+      }
+    </>
+  );
+
+  const jsx = (
+    <>
+      {await (
+        <IncongruousCooperate>
+          material education original articulate parameter
+        </IncongruousCooperate>
+      )}
+    </>
+  );
+}
+
+================================================================================
+`;
+
+exports[`conditional-expression.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// There are two ways to print ConditionalExpressions: "normal mode" and
+// "JSX mode". This is normal mode (when breaking):
+//
+//   test
+//     ? consequent
+//     : alternate;
+//
+// And this is JSX mode (when breaking):
+//
+//   test ? (
+//     consequent
+//   ) : (
+//     alternate
+//   );
+//
+// When non-breaking, they look the same:
+//
+//  test ? consequent : alternate;
+//
+// We only print a conditional expression in JSX mode if its test,
+// consequent, or alternate are JSXElements.
+// Otherwise, we print in normal mode.
+
+// This ConditionalExpression has no JSXElements so it prints in normal mode.
+// The line does not break.
+normalModeNonBreaking ? "a" : "b";
+
+// This ConditionalExpression has no JSXElements so it prints in normal mode.
+// Its consequent is very long, so it breaks out to multiple lines.
+normalModeBreaking
+  ? johnJacobJingleHeimerSchmidtHisNameIsMyNameTooWheneverWeGoOutThePeopleAlwaysShoutThereGoesJohnJacobJingleHeimerSchmidtYaDaDaDaDaDaDa
+  : "c";
+
+// This ConditionalExpression prints in JSX mode because its test is a
+// JSXElement. It is non-breaking.
+// Note: I have never, ever seen someone use a JSXElement as the test in a
+// ConditionalExpression. But this test is included for completeness.
+<div /> ? jsxModeFromElementNonBreaking : "a";
+
+// This ConditionalExpression prints in JSX mode because its consequent is a
+// JSXElement. It is non-breaking.
+jsxModeFromElementNonBreaking ? <div /> : "a";
+
+// This ConditionalExpression prints in JSX mode because its alternate is a
+// JSXElement. It is non-breaking.
+jsxModeFromElementNonBreaking ? "a" : <div />;
+
+// This ConditionalExpression prints in JSX mode because its test is a
+// JSXElement. It is breaking.
+// Note: I have never, ever seen someone use a JSXElement as the test in a
+// ConditionalExpression. But this test is included for completeness.
+<div>
+  <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+</div>  ? (
+  "jsx mode from element breaking"
+) : (
+  "a"
+);
+
+// This ConditionalExpression prints in JSX mode because its consequent is a
+// JSXElement. It is breaking.
+jsxModeFromElementBreaking ? (
+  <div>
+    <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+  </div>
+) : (
+  "a"
+);
+
+// This ConditionalExpression prints in JSX mode because its alternate is a
+// JSXElement. It is breaking.
+jsxModeFromElementBreaking ? (
+  "a"
+) : (
+  <div>
+    <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+  </div>
+);
+
+// This chain of ConditionalExpressions prints in JSX mode because the parent of
+// the outermost ConditionalExpression is a JSXExpressionContainer. It is
+// non-breaking.
+<div>
+  {a ? "a" : b ? "b" : "c"}
+</div>;
+
+// This chain of ConditionalExpressions prints in JSX mode because the parent of
+// the outermost ConditionalExpression is a JSXExpressionContainer. It is
+// breaking.
+<div>
+  {thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo ? "a" : b ? "b" : "c"}
+</div>;
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain. It is non-breaking.
+cable ? "satellite" : isPublic ? "affairs" : network ? <span id="c" /> : "dun";
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain (in this case, at the end). It is
+// breaking; notice the consequents and alternates in the entire chain get
+// wrapped in parens.
+cable ? (
+  "satellite"
+) : isPublic ? (
+  "affairs"
+) : network ? (
+  <div>
+    <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+  </div>
+) : "dunno";
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain (in this case, at the beginning). It is
+// breaking; notice the consequents and alternates in the entire chain get
+// wrapped in parens.
+cable ? (
+  <div>
+    <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+  </div>
+) : sateline ? (
+  "public"
+) : affairs ? (
+  "network"
+) : "dunno";
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain. It is breaking; notice the consequents
+// and alternates in the entire chain get wrapped in parens.
+<div>
+  {properties.length > 1 ||
+  (properties.length === 1 && properties[0].apps.size > 1) ? (
+    draggingApp == null || newPropertyName == null ? (
+      <MigrationPropertyListItem />
+    ) : (
+      <MigrationPropertyListItem apps={Immutable.List()} />
+    )
+  ) : null}
+</div>;
+
+// #3552
+foo ? <span>loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong jsx</span> :
+undefined
+
+=====================================output=====================================
+// There are two ways to print ConditionalExpressions: "normal mode" and
+// "JSX mode". This is normal mode (when breaking):
+//
+//   test
+//     ? consequent
+//     : alternate;
+//
+// And this is JSX mode (when breaking):
+//
+//   test ? (
+//     consequent
+//   ) : (
+//     alternate
+//   );
+//
+// When non-breaking, they look the same:
+//
+//  test ? consequent : alternate;
+//
+// We only print a conditional expression in JSX mode if its test,
+// consequent, or alternate are JSXElements.
+// Otherwise, we print in normal mode.
+
+// This ConditionalExpression has no JSXElements so it prints in normal mode.
+// The line does not break.
+normalModeNonBreaking ? "a" : "b";
+
+// This ConditionalExpression has no JSXElements so it prints in normal mode.
+// Its consequent is very long, so it breaks out to multiple lines.
+normalModeBreaking
+  ? johnJacobJingleHeimerSchmidtHisNameIsMyNameTooWheneverWeGoOutThePeopleAlwaysShoutThereGoesJohnJacobJingleHeimerSchmidtYaDaDaDaDaDaDa
+  : "c";
+
+// This ConditionalExpression prints in JSX mode because its test is a
+// JSXElement. It is non-breaking.
+// Note: I have never, ever seen someone use a JSXElement as the test in a
+// ConditionalExpression. But this test is included for completeness.
+<div /> ? jsxModeFromElementNonBreaking : "a";
+
+// This ConditionalExpression prints in JSX mode because its consequent is a
+// JSXElement. It is non-breaking.
+jsxModeFromElementNonBreaking ? <div /> : "a";
+
+// This ConditionalExpression prints in JSX mode because its alternate is a
+// JSXElement. It is non-breaking.
+jsxModeFromElementNonBreaking ? "a" : <div />;
+
+// This ConditionalExpression prints in JSX mode because its test is a
+// JSXElement. It is breaking.
+// Note: I have never, ever seen someone use a JSXElement as the test in a
+// ConditionalExpression. But this test is included for completeness.
+<div>
+  <span>
+    thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+  </span>
+</div> ? (
+  "jsx mode from element breaking"
+) : (
+  "a"
+);
+
+// This ConditionalExpression prints in JSX mode because its consequent is a
+// JSXElement. It is breaking.
+jsxModeFromElementBreaking ? (
+  <div>
+    <span>
+      thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    </span>
+  </div>
+) : (
+  "a"
+);
+
+// This ConditionalExpression prints in JSX mode because its alternate is a
+// JSXElement. It is breaking.
+jsxModeFromElementBreaking ? (
+  "a"
+) : (
+  <div>
+    <span>
+      thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    </span>
+  </div>
+);
+
+// This chain of ConditionalExpressions prints in JSX mode because the parent of
+// the outermost ConditionalExpression is a JSXExpressionContainer. It is
+// non-breaking.
+<div>{a ? "a" : b ? "b" : "c"}</div>;
+
+// This chain of ConditionalExpressions prints in JSX mode because the parent of
+// the outermost ConditionalExpression is a JSXExpressionContainer. It is
+// breaking.
+<div>
+  {thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    ? "a"
+    : b
+      ? "b"
+      : "c"}
+</div>;
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain. It is non-breaking.
+cable ? "satellite" : isPublic ? "affairs" : network ? <span id="c" /> : "dun";
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain (in this case, at the end). It is
+// breaking; notice the consequents and alternates in the entire chain get
+// wrapped in parens.
+cable ? (
+  "satellite"
+) : isPublic ? (
+  "affairs"
+) : network ? (
+  <div>
+    <span>
+      thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    </span>
+  </div>
+) : (
+  "dunno"
+);
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain (in this case, at the beginning). It is
+// breaking; notice the consequents and alternates in the entire chain get
+// wrapped in parens.
+cable ? (
+  <div>
+    <span>
+      thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    </span>
+  </div>
+) : sateline ? (
+  "public"
+) : affairs ? (
+  "network"
+) : (
+  "dunno"
+);
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain. It is breaking; notice the consequents
+// and alternates in the entire chain get wrapped in parens.
+<div>
+  {properties.length > 1 ||
+  (properties.length === 1 && properties[0].apps.size > 1) ? (
+    draggingApp == null || newPropertyName == null ? (
+      <MigrationPropertyListItem />
+    ) : (
+      <MigrationPropertyListItem apps={Immutable.List()} />
+    )
+  ) : null}
+</div>;
+
+// #3552
+foo ? (
+  <span>
+    loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong jsx
+  </span>
+) : undefined;
+
+================================================================================
+`;
+
+exports[`conditional-expression.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// There are two ways to print ConditionalExpressions: "normal mode" and
+// "JSX mode". This is normal mode (when breaking):
+//
+//   test
+//     ? consequent
+//     : alternate;
+//
+// And this is JSX mode (when breaking):
+//
+//   test ? (
+//     consequent
+//   ) : (
+//     alternate
+//   );
+//
+// When non-breaking, they look the same:
+//
+//  test ? consequent : alternate;
+//
+// We only print a conditional expression in JSX mode if its test,
+// consequent, or alternate are JSXElements.
+// Otherwise, we print in normal mode.
+
+// This ConditionalExpression has no JSXElements so it prints in normal mode.
+// The line does not break.
+normalModeNonBreaking ? "a" : "b";
+
+// This ConditionalExpression has no JSXElements so it prints in normal mode.
+// Its consequent is very long, so it breaks out to multiple lines.
+normalModeBreaking
+  ? johnJacobJingleHeimerSchmidtHisNameIsMyNameTooWheneverWeGoOutThePeopleAlwaysShoutThereGoesJohnJacobJingleHeimerSchmidtYaDaDaDaDaDaDa
+  : "c";
+
+// This ConditionalExpression prints in JSX mode because its test is a
+// JSXElement. It is non-breaking.
+// Note: I have never, ever seen someone use a JSXElement as the test in a
+// ConditionalExpression. But this test is included for completeness.
+<div /> ? jsxModeFromElementNonBreaking : "a";
+
+// This ConditionalExpression prints in JSX mode because its consequent is a
+// JSXElement. It is non-breaking.
+jsxModeFromElementNonBreaking ? <div /> : "a";
+
+// This ConditionalExpression prints in JSX mode because its alternate is a
+// JSXElement. It is non-breaking.
+jsxModeFromElementNonBreaking ? "a" : <div />;
+
+// This ConditionalExpression prints in JSX mode because its test is a
+// JSXElement. It is breaking.
+// Note: I have never, ever seen someone use a JSXElement as the test in a
+// ConditionalExpression. But this test is included for completeness.
+<div>
+  <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+</div>  ? (
+  "jsx mode from element breaking"
+) : (
+  "a"
+);
+
+// This ConditionalExpression prints in JSX mode because its consequent is a
+// JSXElement. It is breaking.
+jsxModeFromElementBreaking ? (
+  <div>
+    <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+  </div>
+) : (
+  "a"
+);
+
+// This ConditionalExpression prints in JSX mode because its alternate is a
+// JSXElement. It is breaking.
+jsxModeFromElementBreaking ? (
+  "a"
+) : (
+  <div>
+    <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+  </div>
+);
+
+// This chain of ConditionalExpressions prints in JSX mode because the parent of
+// the outermost ConditionalExpression is a JSXExpressionContainer. It is
+// non-breaking.
+<div>
+  {a ? "a" : b ? "b" : "c"}
+</div>;
+
+// This chain of ConditionalExpressions prints in JSX mode because the parent of
+// the outermost ConditionalExpression is a JSXExpressionContainer. It is
+// breaking.
+<div>
+  {thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo ? "a" : b ? "b" : "c"}
+</div>;
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain. It is non-breaking.
+cable ? "satellite" : isPublic ? "affairs" : network ? <span id="c" /> : "dun";
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain (in this case, at the end). It is
+// breaking; notice the consequents and alternates in the entire chain get
+// wrapped in parens.
+cable ? (
+  "satellite"
+) : isPublic ? (
+  "affairs"
+) : network ? (
+  <div>
+    <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+  </div>
+) : "dunno";
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain (in this case, at the beginning). It is
+// breaking; notice the consequents and alternates in the entire chain get
+// wrapped in parens.
+cable ? (
+  <div>
+    <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+  </div>
+) : sateline ? (
+  "public"
+) : affairs ? (
+  "network"
+) : "dunno";
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain. It is breaking; notice the consequents
+// and alternates in the entire chain get wrapped in parens.
+<div>
+  {properties.length > 1 ||
+  (properties.length === 1 && properties[0].apps.size > 1) ? (
+    draggingApp == null || newPropertyName == null ? (
+      <MigrationPropertyListItem />
+    ) : (
+      <MigrationPropertyListItem apps={Immutable.List()} />
+    )
+  ) : null}
+</div>;
+
+// #3552
+foo ? <span>loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong jsx</span> :
+undefined
+
+=====================================output=====================================
+// There are two ways to print ConditionalExpressions: "normal mode" and
+// "JSX mode". This is normal mode (when breaking):
+//
+//   test
+//     ? consequent
+//     : alternate;
+//
+// And this is JSX mode (when breaking):
+//
+//   test ? (
+//     consequent
+//   ) : (
+//     alternate
+//   );
+//
+// When non-breaking, they look the same:
+//
+//  test ? consequent : alternate;
+//
+// We only print a conditional expression in JSX mode if its test,
+// consequent, or alternate are JSXElements.
+// Otherwise, we print in normal mode.
+
+// This ConditionalExpression has no JSXElements so it prints in normal mode.
+// The line does not break.
+normalModeNonBreaking ? "a" : "b";
+
+// This ConditionalExpression has no JSXElements so it prints in normal mode.
+// Its consequent is very long, so it breaks out to multiple lines.
+normalModeBreaking
+  ? johnJacobJingleHeimerSchmidtHisNameIsMyNameTooWheneverWeGoOutThePeopleAlwaysShoutThereGoesJohnJacobJingleHeimerSchmidtYaDaDaDaDaDaDa
+  : "c";
+
+// This ConditionalExpression prints in JSX mode because its test is a
+// JSXElement. It is non-breaking.
+// Note: I have never, ever seen someone use a JSXElement as the test in a
+// ConditionalExpression. But this test is included for completeness.
+<div /> ? jsxModeFromElementNonBreaking : "a";
+
+// This ConditionalExpression prints in JSX mode because its consequent is a
+// JSXElement. It is non-breaking.
+jsxModeFromElementNonBreaking ? <div /> : "a";
+
+// This ConditionalExpression prints in JSX mode because its alternate is a
+// JSXElement. It is non-breaking.
+jsxModeFromElementNonBreaking ? "a" : <div />;
+
+// This ConditionalExpression prints in JSX mode because its test is a
+// JSXElement. It is breaking.
+// Note: I have never, ever seen someone use a JSXElement as the test in a
+// ConditionalExpression. But this test is included for completeness.
+<div>
+  <span>
+    thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+  </span>
+</div> ? (
+  "jsx mode from element breaking"
+) : (
+  "a"
+);
+
+// This ConditionalExpression prints in JSX mode because its consequent is a
+// JSXElement. It is breaking.
+jsxModeFromElementBreaking ? (
+  <div>
+    <span>
+      thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    </span>
+  </div>
+) : (
+  "a"
+);
+
+// This ConditionalExpression prints in JSX mode because its alternate is a
+// JSXElement. It is breaking.
+jsxModeFromElementBreaking ? (
+  "a"
+) : (
+  <div>
+    <span>
+      thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    </span>
+  </div>
+);
+
+// This chain of ConditionalExpressions prints in JSX mode because the parent of
+// the outermost ConditionalExpression is a JSXExpressionContainer. It is
+// non-breaking.
+<div>{a ? "a" : b ? "b" : "c"}</div>;
+
+// This chain of ConditionalExpressions prints in JSX mode because the parent of
+// the outermost ConditionalExpression is a JSXExpressionContainer. It is
+// breaking.
+<div>
+  {thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    ? "a"
+    : b
+      ? "b"
+      : "c"}
+</div>;
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain. It is non-breaking.
+cable ? "satellite" : isPublic ? "affairs" : network ? <span id='c' /> : "dun";
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain (in this case, at the end). It is
+// breaking; notice the consequents and alternates in the entire chain get
+// wrapped in parens.
+cable ? (
+  "satellite"
+) : isPublic ? (
+  "affairs"
+) : network ? (
+  <div>
+    <span>
+      thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    </span>
+  </div>
+) : (
+  "dunno"
+);
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain (in this case, at the beginning). It is
+// breaking; notice the consequents and alternates in the entire chain get
+// wrapped in parens.
+cable ? (
+  <div>
+    <span>
+      thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    </span>
+  </div>
+) : sateline ? (
+  "public"
+) : affairs ? (
+  "network"
+) : (
+  "dunno"
+);
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain. It is breaking; notice the consequents
+// and alternates in the entire chain get wrapped in parens.
+<div>
+  {properties.length > 1 ||
+  (properties.length === 1 && properties[0].apps.size > 1) ? (
+    draggingApp == null || newPropertyName == null ? (
+      <MigrationPropertyListItem />
+    ) : (
+      <MigrationPropertyListItem apps={Immutable.List()} />
+    )
+  ) : null}
+</div>;
+
+// #3552
+foo ? (
+  <span>
+    loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong jsx
+  </span>
+) : undefined;
+
+================================================================================
+`;
+
+exports[`conditional-expression.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// There are two ways to print ConditionalExpressions: "normal mode" and
+// "JSX mode". This is normal mode (when breaking):
+//
+//   test
+//     ? consequent
+//     : alternate;
+//
+// And this is JSX mode (when breaking):
+//
+//   test ? (
+//     consequent
+//   ) : (
+//     alternate
+//   );
+//
+// When non-breaking, they look the same:
+//
+//  test ? consequent : alternate;
+//
+// We only print a conditional expression in JSX mode if its test,
+// consequent, or alternate are JSXElements.
+// Otherwise, we print in normal mode.
+
+// This ConditionalExpression has no JSXElements so it prints in normal mode.
+// The line does not break.
+normalModeNonBreaking ? "a" : "b";
+
+// This ConditionalExpression has no JSXElements so it prints in normal mode.
+// Its consequent is very long, so it breaks out to multiple lines.
+normalModeBreaking
+  ? johnJacobJingleHeimerSchmidtHisNameIsMyNameTooWheneverWeGoOutThePeopleAlwaysShoutThereGoesJohnJacobJingleHeimerSchmidtYaDaDaDaDaDaDa
+  : "c";
+
+// This ConditionalExpression prints in JSX mode because its test is a
+// JSXElement. It is non-breaking.
+// Note: I have never, ever seen someone use a JSXElement as the test in a
+// ConditionalExpression. But this test is included for completeness.
+<div /> ? jsxModeFromElementNonBreaking : "a";
+
+// This ConditionalExpression prints in JSX mode because its consequent is a
+// JSXElement. It is non-breaking.
+jsxModeFromElementNonBreaking ? <div /> : "a";
+
+// This ConditionalExpression prints in JSX mode because its alternate is a
+// JSXElement. It is non-breaking.
+jsxModeFromElementNonBreaking ? "a" : <div />;
+
+// This ConditionalExpression prints in JSX mode because its test is a
+// JSXElement. It is breaking.
+// Note: I have never, ever seen someone use a JSXElement as the test in a
+// ConditionalExpression. But this test is included for completeness.
+<div>
+  <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+</div>  ? (
+  "jsx mode from element breaking"
+) : (
+  "a"
+);
+
+// This ConditionalExpression prints in JSX mode because its consequent is a
+// JSXElement. It is breaking.
+jsxModeFromElementBreaking ? (
+  <div>
+    <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+  </div>
+) : (
+  "a"
+);
+
+// This ConditionalExpression prints in JSX mode because its alternate is a
+// JSXElement. It is breaking.
+jsxModeFromElementBreaking ? (
+  "a"
+) : (
+  <div>
+    <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+  </div>
+);
+
+// This chain of ConditionalExpressions prints in JSX mode because the parent of
+// the outermost ConditionalExpression is a JSXExpressionContainer. It is
+// non-breaking.
+<div>
+  {a ? "a" : b ? "b" : "c"}
+</div>;
+
+// This chain of ConditionalExpressions prints in JSX mode because the parent of
+// the outermost ConditionalExpression is a JSXExpressionContainer. It is
+// breaking.
+<div>
+  {thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo ? "a" : b ? "b" : "c"}
+</div>;
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain. It is non-breaking.
+cable ? "satellite" : isPublic ? "affairs" : network ? <span id="c" /> : "dun";
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain (in this case, at the end). It is
+// breaking; notice the consequents and alternates in the entire chain get
+// wrapped in parens.
+cable ? (
+  "satellite"
+) : isPublic ? (
+  "affairs"
+) : network ? (
+  <div>
+    <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+  </div>
+) : "dunno";
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain (in this case, at the beginning). It is
+// breaking; notice the consequents and alternates in the entire chain get
+// wrapped in parens.
+cable ? (
+  <div>
+    <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+  </div>
+) : sateline ? (
+  "public"
+) : affairs ? (
+  "network"
+) : "dunno";
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain. It is breaking; notice the consequents
+// and alternates in the entire chain get wrapped in parens.
+<div>
+  {properties.length > 1 ||
+  (properties.length === 1 && properties[0].apps.size > 1) ? (
+    draggingApp == null || newPropertyName == null ? (
+      <MigrationPropertyListItem />
+    ) : (
+      <MigrationPropertyListItem apps={Immutable.List()} />
+    )
+  ) : null}
+</div>;
+
+// #3552
+foo ? <span>loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong jsx</span> :
+undefined
+
+=====================================output=====================================
+// There are two ways to print ConditionalExpressions: "normal mode" and
+// "JSX mode". This is normal mode (when breaking):
+//
+//   test
+//     ? consequent
+//     : alternate;
+//
+// And this is JSX mode (when breaking):
+//
+//   test ? (
+//     consequent
+//   ) : (
+//     alternate
+//   );
+//
+// When non-breaking, they look the same:
+//
+//  test ? consequent : alternate;
+//
+// We only print a conditional expression in JSX mode if its test,
+// consequent, or alternate are JSXElements.
+// Otherwise, we print in normal mode.
+
+// This ConditionalExpression has no JSXElements so it prints in normal mode.
+// The line does not break.
+normalModeNonBreaking ? 'a' : 'b';
+
+// This ConditionalExpression has no JSXElements so it prints in normal mode.
+// Its consequent is very long, so it breaks out to multiple lines.
+normalModeBreaking
+  ? johnJacobJingleHeimerSchmidtHisNameIsMyNameTooWheneverWeGoOutThePeopleAlwaysShoutThereGoesJohnJacobJingleHeimerSchmidtYaDaDaDaDaDaDa
+  : 'c';
+
+// This ConditionalExpression prints in JSX mode because its test is a
+// JSXElement. It is non-breaking.
+// Note: I have never, ever seen someone use a JSXElement as the test in a
+// ConditionalExpression. But this test is included for completeness.
+<div /> ? jsxModeFromElementNonBreaking : 'a';
+
+// This ConditionalExpression prints in JSX mode because its consequent is a
+// JSXElement. It is non-breaking.
+jsxModeFromElementNonBreaking ? <div /> : 'a';
+
+// This ConditionalExpression prints in JSX mode because its alternate is a
+// JSXElement. It is non-breaking.
+jsxModeFromElementNonBreaking ? 'a' : <div />;
+
+// This ConditionalExpression prints in JSX mode because its test is a
+// JSXElement. It is breaking.
+// Note: I have never, ever seen someone use a JSXElement as the test in a
+// ConditionalExpression. But this test is included for completeness.
+<div>
+  <span>
+    thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+  </span>
+</div> ? (
+  'jsx mode from element breaking'
+) : (
+  'a'
+);
+
+// This ConditionalExpression prints in JSX mode because its consequent is a
+// JSXElement. It is breaking.
+jsxModeFromElementBreaking ? (
+  <div>
+    <span>
+      thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    </span>
+  </div>
+) : (
+  'a'
+);
+
+// This ConditionalExpression prints in JSX mode because its alternate is a
+// JSXElement. It is breaking.
+jsxModeFromElementBreaking ? (
+  'a'
+) : (
+  <div>
+    <span>
+      thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    </span>
+  </div>
+);
+
+// This chain of ConditionalExpressions prints in JSX mode because the parent of
+// the outermost ConditionalExpression is a JSXExpressionContainer. It is
+// non-breaking.
+<div>{a ? 'a' : b ? 'b' : 'c'}</div>;
+
+// This chain of ConditionalExpressions prints in JSX mode because the parent of
+// the outermost ConditionalExpression is a JSXExpressionContainer. It is
+// breaking.
+<div>
+  {thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    ? 'a'
+    : b
+      ? 'b'
+      : 'c'}
+</div>;
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain. It is non-breaking.
+cable ? 'satellite' : isPublic ? 'affairs' : network ? <span id="c" /> : 'dun';
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain (in this case, at the end). It is
+// breaking; notice the consequents and alternates in the entire chain get
+// wrapped in parens.
+cable ? (
+  'satellite'
+) : isPublic ? (
+  'affairs'
+) : network ? (
+  <div>
+    <span>
+      thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    </span>
+  </div>
+) : (
+  'dunno'
+);
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain (in this case, at the beginning). It is
+// breaking; notice the consequents and alternates in the entire chain get
+// wrapped in parens.
+cable ? (
+  <div>
+    <span>
+      thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    </span>
+  </div>
+) : sateline ? (
+  'public'
+) : affairs ? (
+  'network'
+) : (
+  'dunno'
+);
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain. It is breaking; notice the consequents
+// and alternates in the entire chain get wrapped in parens.
+<div>
+  {properties.length > 1 ||
+  (properties.length === 1 && properties[0].apps.size > 1) ? (
+    draggingApp == null || newPropertyName == null ? (
+      <MigrationPropertyListItem />
+    ) : (
+      <MigrationPropertyListItem apps={Immutable.List()} />
+    )
+  ) : null}
+</div>;
+
+// #3552
+foo ? (
+  <span>
+    loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong jsx
+  </span>
+) : undefined;
+
+================================================================================
+`;
+
+exports[`conditional-expression.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// There are two ways to print ConditionalExpressions: "normal mode" and
+// "JSX mode". This is normal mode (when breaking):
+//
+//   test
+//     ? consequent
+//     : alternate;
+//
+// And this is JSX mode (when breaking):
+//
+//   test ? (
+//     consequent
+//   ) : (
+//     alternate
+//   );
+//
+// When non-breaking, they look the same:
+//
+//  test ? consequent : alternate;
+//
+// We only print a conditional expression in JSX mode if its test,
+// consequent, or alternate are JSXElements.
+// Otherwise, we print in normal mode.
+
+// This ConditionalExpression has no JSXElements so it prints in normal mode.
+// The line does not break.
+normalModeNonBreaking ? "a" : "b";
+
+// This ConditionalExpression has no JSXElements so it prints in normal mode.
+// Its consequent is very long, so it breaks out to multiple lines.
+normalModeBreaking
+  ? johnJacobJingleHeimerSchmidtHisNameIsMyNameTooWheneverWeGoOutThePeopleAlwaysShoutThereGoesJohnJacobJingleHeimerSchmidtYaDaDaDaDaDaDa
+  : "c";
+
+// This ConditionalExpression prints in JSX mode because its test is a
+// JSXElement. It is non-breaking.
+// Note: I have never, ever seen someone use a JSXElement as the test in a
+// ConditionalExpression. But this test is included for completeness.
+<div /> ? jsxModeFromElementNonBreaking : "a";
+
+// This ConditionalExpression prints in JSX mode because its consequent is a
+// JSXElement. It is non-breaking.
+jsxModeFromElementNonBreaking ? <div /> : "a";
+
+// This ConditionalExpression prints in JSX mode because its alternate is a
+// JSXElement. It is non-breaking.
+jsxModeFromElementNonBreaking ? "a" : <div />;
+
+// This ConditionalExpression prints in JSX mode because its test is a
+// JSXElement. It is breaking.
+// Note: I have never, ever seen someone use a JSXElement as the test in a
+// ConditionalExpression. But this test is included for completeness.
+<div>
+  <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+</div>  ? (
+  "jsx mode from element breaking"
+) : (
+  "a"
+);
+
+// This ConditionalExpression prints in JSX mode because its consequent is a
+// JSXElement. It is breaking.
+jsxModeFromElementBreaking ? (
+  <div>
+    <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+  </div>
+) : (
+  "a"
+);
+
+// This ConditionalExpression prints in JSX mode because its alternate is a
+// JSXElement. It is breaking.
+jsxModeFromElementBreaking ? (
+  "a"
+) : (
+  <div>
+    <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+  </div>
+);
+
+// This chain of ConditionalExpressions prints in JSX mode because the parent of
+// the outermost ConditionalExpression is a JSXExpressionContainer. It is
+// non-breaking.
+<div>
+  {a ? "a" : b ? "b" : "c"}
+</div>;
+
+// This chain of ConditionalExpressions prints in JSX mode because the parent of
+// the outermost ConditionalExpression is a JSXExpressionContainer. It is
+// breaking.
+<div>
+  {thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo ? "a" : b ? "b" : "c"}
+</div>;
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain. It is non-breaking.
+cable ? "satellite" : isPublic ? "affairs" : network ? <span id="c" /> : "dun";
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain (in this case, at the end). It is
+// breaking; notice the consequents and alternates in the entire chain get
+// wrapped in parens.
+cable ? (
+  "satellite"
+) : isPublic ? (
+  "affairs"
+) : network ? (
+  <div>
+    <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+  </div>
+) : "dunno";
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain (in this case, at the beginning). It is
+// breaking; notice the consequents and alternates in the entire chain get
+// wrapped in parens.
+cable ? (
+  <div>
+    <span>thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo</span>
+  </div>
+) : sateline ? (
+  "public"
+) : affairs ? (
+  "network"
+) : "dunno";
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain. It is breaking; notice the consequents
+// and alternates in the entire chain get wrapped in parens.
+<div>
+  {properties.length > 1 ||
+  (properties.length === 1 && properties[0].apps.size > 1) ? (
+    draggingApp == null || newPropertyName == null ? (
+      <MigrationPropertyListItem />
+    ) : (
+      <MigrationPropertyListItem apps={Immutable.List()} />
+    )
+  ) : null}
+</div>;
+
+// #3552
+foo ? <span>loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong jsx</span> :
+undefined
+
+=====================================output=====================================
+// There are two ways to print ConditionalExpressions: "normal mode" and
+// "JSX mode". This is normal mode (when breaking):
+//
+//   test
+//     ? consequent
+//     : alternate;
+//
+// And this is JSX mode (when breaking):
+//
+//   test ? (
+//     consequent
+//   ) : (
+//     alternate
+//   );
+//
+// When non-breaking, they look the same:
+//
+//  test ? consequent : alternate;
+//
+// We only print a conditional expression in JSX mode if its test,
+// consequent, or alternate are JSXElements.
+// Otherwise, we print in normal mode.
+
+// This ConditionalExpression has no JSXElements so it prints in normal mode.
+// The line does not break.
+normalModeNonBreaking ? 'a' : 'b';
+
+// This ConditionalExpression has no JSXElements so it prints in normal mode.
+// Its consequent is very long, so it breaks out to multiple lines.
+normalModeBreaking
+  ? johnJacobJingleHeimerSchmidtHisNameIsMyNameTooWheneverWeGoOutThePeopleAlwaysShoutThereGoesJohnJacobJingleHeimerSchmidtYaDaDaDaDaDaDa
+  : 'c';
+
+// This ConditionalExpression prints in JSX mode because its test is a
+// JSXElement. It is non-breaking.
+// Note: I have never, ever seen someone use a JSXElement as the test in a
+// ConditionalExpression. But this test is included for completeness.
+<div /> ? jsxModeFromElementNonBreaking : 'a';
+
+// This ConditionalExpression prints in JSX mode because its consequent is a
+// JSXElement. It is non-breaking.
+jsxModeFromElementNonBreaking ? <div /> : 'a';
+
+// This ConditionalExpression prints in JSX mode because its alternate is a
+// JSXElement. It is non-breaking.
+jsxModeFromElementNonBreaking ? 'a' : <div />;
+
+// This ConditionalExpression prints in JSX mode because its test is a
+// JSXElement. It is breaking.
+// Note: I have never, ever seen someone use a JSXElement as the test in a
+// ConditionalExpression. But this test is included for completeness.
+<div>
+  <span>
+    thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+  </span>
+</div> ? (
+  'jsx mode from element breaking'
+) : (
+  'a'
+);
+
+// This ConditionalExpression prints in JSX mode because its consequent is a
+// JSXElement. It is breaking.
+jsxModeFromElementBreaking ? (
+  <div>
+    <span>
+      thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    </span>
+  </div>
+) : (
+  'a'
+);
+
+// This ConditionalExpression prints in JSX mode because its alternate is a
+// JSXElement. It is breaking.
+jsxModeFromElementBreaking ? (
+  'a'
+) : (
+  <div>
+    <span>
+      thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    </span>
+  </div>
+);
+
+// This chain of ConditionalExpressions prints in JSX mode because the parent of
+// the outermost ConditionalExpression is a JSXExpressionContainer. It is
+// non-breaking.
+<div>{a ? 'a' : b ? 'b' : 'c'}</div>;
+
+// This chain of ConditionalExpressions prints in JSX mode because the parent of
+// the outermost ConditionalExpression is a JSXExpressionContainer. It is
+// breaking.
+<div>
+  {thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    ? 'a'
+    : b
+      ? 'b'
+      : 'c'}
+</div>;
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain. It is non-breaking.
+cable ? 'satellite' : isPublic ? 'affairs' : network ? <span id='c' /> : 'dun';
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain (in this case, at the end). It is
+// breaking; notice the consequents and alternates in the entire chain get
+// wrapped in parens.
+cable ? (
+  'satellite'
+) : isPublic ? (
+  'affairs'
+) : network ? (
+  <div>
+    <span>
+      thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    </span>
+  </div>
+) : (
+  'dunno'
+);
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain (in this case, at the beginning). It is
+// breaking; notice the consequents and alternates in the entire chain get
+// wrapped in parens.
+cable ? (
+  <div>
+    <span>
+      thisIsASongAboutYourPoorSickPenguinHeHasAFeverAndHisToesAreBlueButIfISingToYourPoorSickPenguinHeWillFeelBetterInADayOrTwo
+    </span>
+  </div>
+) : sateline ? (
+  'public'
+) : affairs ? (
+  'network'
+) : (
+  'dunno'
+);
+
+// This chain of ConditionalExpressions prints in JSX mode because there is a
+// JSX element somewhere in the chain. It is breaking; notice the consequents
+// and alternates in the entire chain get wrapped in parens.
+<div>
+  {properties.length > 1 ||
+  (properties.length === 1 && properties[0].apps.size > 1) ? (
+    draggingApp == null || newPropertyName == null ? (
+      <MigrationPropertyListItem />
+    ) : (
+      <MigrationPropertyListItem apps={Immutable.List()} />
+    )
+  ) : null}
+</div>;
+
+// #3552
+foo ? (
+  <span>
+    loooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong jsx
+  </span>
+) : undefined;
+
+================================================================================
+`;
+
+exports[`expression.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<View
+  style={
+    {
+      someVeryLongStyle1: "true",
+      someVeryLongStyle2: "true",
+      someVeryLongStyle3: "true",
+      someVeryLongStyle4: "true"
+    }
+  }
+/>;
+
+<View
+  style={
+    [
+      {
+        someVeryLongStyle1: "true",
+        someVeryLongStyle2: "true",
+        someVeryLongStyle3: "true",
+        someVeryLongStyle4: "true"
+      }
+    ]
+  }
+/>;
+
+<Something>
+  {() => (
+    <SomethingElse>
+      <span />
+    </SomethingElse>
+  )}
+</Something>;
+
+<Something>
+  {items.map(item => (
+    <SomethingElse>
+      <span />
+    </SomethingElse>
+  ))}
+</Something>;
+
+<Something>
+  {function() {
+    return (
+      <SomethingElse>
+        <span />
+      </SomethingElse>
+    );
+  }}
+</Something>;
+
+<RadioListItem
+  key={option}
+  imageSource={this.props.veryBigItemImageSourceFunc &&
+    this.props.veryBigItemImageSourceFunc(option)}
+  imageSize={this.props.veryBigItemImageSize}
+  imageView={this.props.veryBigItemImageViewFunc &&
+    this.props.veryBigItemImageViewFunc(option)}
+  heading={this.props.displayTextFunc(option)}
+  value={option}
+/>;
+
+<ParentComponent prop={
+  <Child>
+    test
+  </Child>
+}/>;
+
+<BookingIntroPanel
+  prop="long_string_make_to_force_break"
+  logClick={data => doLogClick("short", "short", data)}
+/>;
+
+<BookingIntroPanel
+  logClick={data =>
+    doLogClick("long_name_long_name_long_name", "long_name_long_name_long_name", data)
+  }
+/>;
+
+<BookingIntroPanel
+  logClick={data => {
+    doLogClick("long_name_long_name_long_name", "long_name_long_name_long_name", data)
+  }}
+/>;
+
+<BookingIntroPanel>
+  {data => doLogClick("short", "short", data)}
+</BookingIntroPanel>;
+
+<BookingIntroPanel>
+  {data =>
+    doLogClick("long_name_long_name_long_name", "long_name_long_name_long_name", data)
+  }
+</BookingIntroPanel>;
+
+<BookingIntroPanel>
+  {data => {
+    doLogClick("long_name_long_name_long_name", "long_name_long_name_long_name", data)
+  }}
+</BookingIntroPanel>;
+
+<SuspendyTree>
+  <div style={{ height: 200, overflow: "scroll" }}>
+    {Array(20)
+      .fill()
+      .map((_, i) => (
+        <h2 key={i}>{i + 1}</h2>
+      ))}
+  </div>
+</SuspendyTree>;
+
+=====================================output=====================================
+<View
+  style={{
+    someVeryLongStyle1: "true",
+    someVeryLongStyle2: "true",
+    someVeryLongStyle3: "true",
+    someVeryLongStyle4: "true",
+  }}
+/>;
+
+<View
+  style={[
+    {
+      someVeryLongStyle1: "true",
+      someVeryLongStyle2: "true",
+      someVeryLongStyle3: "true",
+      someVeryLongStyle4: "true",
+    },
+  ]}
+/>;
+
+<Something>
+  {() => (
+    <SomethingElse>
+      <span />
+    </SomethingElse>
+  )}
+</Something>;
+
+<Something>
+  {items.map((item) => (
+    <SomethingElse>
+      <span />
+    </SomethingElse>
+  ))}
+</Something>;
+
+<Something>
+  {function () {
+    return (
+      <SomethingElse>
+        <span />
+      </SomethingElse>
+    );
+  }}
+</Something>;
+
+<RadioListItem
+  key={option}
+  imageSource={
+    this.props.veryBigItemImageSourceFunc &&
+    this.props.veryBigItemImageSourceFunc(option)
+  }
+  imageSize={this.props.veryBigItemImageSize}
+  imageView={
+    this.props.veryBigItemImageViewFunc &&
+    this.props.veryBigItemImageViewFunc(option)
+  }
+  heading={this.props.displayTextFunc(option)}
+  value={option}
+/>;
+
+<ParentComponent prop={<Child>test</Child>} />;
+
+<BookingIntroPanel
+  prop="long_string_make_to_force_break"
+  logClick={(data) => doLogClick("short", "short", data)}
+/>;
+
+<BookingIntroPanel
+  logClick={(data) =>
+    doLogClick(
+      "long_name_long_name_long_name",
+      "long_name_long_name_long_name",
+      data,
+    )
+  }
+/>;
+
+<BookingIntroPanel
+  logClick={(data) => {
+    doLogClick(
+      "long_name_long_name_long_name",
+      "long_name_long_name_long_name",
+      data,
+    );
+  }}
+/>;
+
+<BookingIntroPanel>
+  {(data) => doLogClick("short", "short", data)}
+</BookingIntroPanel>;
+
+<BookingIntroPanel>
+  {(data) =>
+    doLogClick(
+      "long_name_long_name_long_name",
+      "long_name_long_name_long_name",
+      data,
+    )
+  }
+</BookingIntroPanel>;
+
+<BookingIntroPanel>
+  {(data) => {
+    doLogClick(
+      "long_name_long_name_long_name",
+      "long_name_long_name_long_name",
+      data,
+    );
+  }}
+</BookingIntroPanel>;
+
+<SuspendyTree>
+  <div style={{ height: 200, overflow: "scroll" }}>
+    {Array(20)
+      .fill()
+      .map((_, i) => (
+        <h2 key={i}>{i + 1}</h2>
+      ))}
+  </div>
+</SuspendyTree>;
+
+================================================================================
+`;
+
+exports[`expression.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<View
+  style={
+    {
+      someVeryLongStyle1: "true",
+      someVeryLongStyle2: "true",
+      someVeryLongStyle3: "true",
+      someVeryLongStyle4: "true"
+    }
+  }
+/>;
+
+<View
+  style={
+    [
+      {
+        someVeryLongStyle1: "true",
+        someVeryLongStyle2: "true",
+        someVeryLongStyle3: "true",
+        someVeryLongStyle4: "true"
+      }
+    ]
+  }
+/>;
+
+<Something>
+  {() => (
+    <SomethingElse>
+      <span />
+    </SomethingElse>
+  )}
+</Something>;
+
+<Something>
+  {items.map(item => (
+    <SomethingElse>
+      <span />
+    </SomethingElse>
+  ))}
+</Something>;
+
+<Something>
+  {function() {
+    return (
+      <SomethingElse>
+        <span />
+      </SomethingElse>
+    );
+  }}
+</Something>;
+
+<RadioListItem
+  key={option}
+  imageSource={this.props.veryBigItemImageSourceFunc &&
+    this.props.veryBigItemImageSourceFunc(option)}
+  imageSize={this.props.veryBigItemImageSize}
+  imageView={this.props.veryBigItemImageViewFunc &&
+    this.props.veryBigItemImageViewFunc(option)}
+  heading={this.props.displayTextFunc(option)}
+  value={option}
+/>;
+
+<ParentComponent prop={
+  <Child>
+    test
+  </Child>
+}/>;
+
+<BookingIntroPanel
+  prop="long_string_make_to_force_break"
+  logClick={data => doLogClick("short", "short", data)}
+/>;
+
+<BookingIntroPanel
+  logClick={data =>
+    doLogClick("long_name_long_name_long_name", "long_name_long_name_long_name", data)
+  }
+/>;
+
+<BookingIntroPanel
+  logClick={data => {
+    doLogClick("long_name_long_name_long_name", "long_name_long_name_long_name", data)
+  }}
+/>;
+
+<BookingIntroPanel>
+  {data => doLogClick("short", "short", data)}
+</BookingIntroPanel>;
+
+<BookingIntroPanel>
+  {data =>
+    doLogClick("long_name_long_name_long_name", "long_name_long_name_long_name", data)
+  }
+</BookingIntroPanel>;
+
+<BookingIntroPanel>
+  {data => {
+    doLogClick("long_name_long_name_long_name", "long_name_long_name_long_name", data)
+  }}
+</BookingIntroPanel>;
+
+<SuspendyTree>
+  <div style={{ height: 200, overflow: "scroll" }}>
+    {Array(20)
+      .fill()
+      .map((_, i) => (
+        <h2 key={i}>{i + 1}</h2>
+      ))}
+  </div>
+</SuspendyTree>;
+
+=====================================output=====================================
+<View
+  style={{
+    someVeryLongStyle1: "true",
+    someVeryLongStyle2: "true",
+    someVeryLongStyle3: "true",
+    someVeryLongStyle4: "true",
+  }}
+/>;
+
+<View
+  style={[
+    {
+      someVeryLongStyle1: "true",
+      someVeryLongStyle2: "true",
+      someVeryLongStyle3: "true",
+      someVeryLongStyle4: "true",
+    },
+  ]}
+/>;
+
+<Something>
+  {() => (
+    <SomethingElse>
+      <span />
+    </SomethingElse>
+  )}
+</Something>;
+
+<Something>
+  {items.map((item) => (
+    <SomethingElse>
+      <span />
+    </SomethingElse>
+  ))}
+</Something>;
+
+<Something>
+  {function () {
+    return (
+      <SomethingElse>
+        <span />
+      </SomethingElse>
+    );
+  }}
+</Something>;
+
+<RadioListItem
+  key={option}
+  imageSource={
+    this.props.veryBigItemImageSourceFunc &&
+    this.props.veryBigItemImageSourceFunc(option)
+  }
+  imageSize={this.props.veryBigItemImageSize}
+  imageView={
+    this.props.veryBigItemImageViewFunc &&
+    this.props.veryBigItemImageViewFunc(option)
+  }
+  heading={this.props.displayTextFunc(option)}
+  value={option}
+/>;
+
+<ParentComponent prop={<Child>test</Child>} />;
+
+<BookingIntroPanel
+  prop='long_string_make_to_force_break'
+  logClick={(data) => doLogClick("short", "short", data)}
+/>;
+
+<BookingIntroPanel
+  logClick={(data) =>
+    doLogClick(
+      "long_name_long_name_long_name",
+      "long_name_long_name_long_name",
+      data,
+    )
+  }
+/>;
+
+<BookingIntroPanel
+  logClick={(data) => {
+    doLogClick(
+      "long_name_long_name_long_name",
+      "long_name_long_name_long_name",
+      data,
+    );
+  }}
+/>;
+
+<BookingIntroPanel>
+  {(data) => doLogClick("short", "short", data)}
+</BookingIntroPanel>;
+
+<BookingIntroPanel>
+  {(data) =>
+    doLogClick(
+      "long_name_long_name_long_name",
+      "long_name_long_name_long_name",
+      data,
+    )
+  }
+</BookingIntroPanel>;
+
+<BookingIntroPanel>
+  {(data) => {
+    doLogClick(
+      "long_name_long_name_long_name",
+      "long_name_long_name_long_name",
+      data,
+    );
+  }}
+</BookingIntroPanel>;
+
+<SuspendyTree>
+  <div style={{ height: 200, overflow: "scroll" }}>
+    {Array(20)
+      .fill()
+      .map((_, i) => (
+        <h2 key={i}>{i + 1}</h2>
+      ))}
+  </div>
+</SuspendyTree>;
+
+================================================================================
+`;
+
+exports[`expression.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<View
+  style={
+    {
+      someVeryLongStyle1: "true",
+      someVeryLongStyle2: "true",
+      someVeryLongStyle3: "true",
+      someVeryLongStyle4: "true"
+    }
+  }
+/>;
+
+<View
+  style={
+    [
+      {
+        someVeryLongStyle1: "true",
+        someVeryLongStyle2: "true",
+        someVeryLongStyle3: "true",
+        someVeryLongStyle4: "true"
+      }
+    ]
+  }
+/>;
+
+<Something>
+  {() => (
+    <SomethingElse>
+      <span />
+    </SomethingElse>
+  )}
+</Something>;
+
+<Something>
+  {items.map(item => (
+    <SomethingElse>
+      <span />
+    </SomethingElse>
+  ))}
+</Something>;
+
+<Something>
+  {function() {
+    return (
+      <SomethingElse>
+        <span />
+      </SomethingElse>
+    );
+  }}
+</Something>;
+
+<RadioListItem
+  key={option}
+  imageSource={this.props.veryBigItemImageSourceFunc &&
+    this.props.veryBigItemImageSourceFunc(option)}
+  imageSize={this.props.veryBigItemImageSize}
+  imageView={this.props.veryBigItemImageViewFunc &&
+    this.props.veryBigItemImageViewFunc(option)}
+  heading={this.props.displayTextFunc(option)}
+  value={option}
+/>;
+
+<ParentComponent prop={
+  <Child>
+    test
+  </Child>
+}/>;
+
+<BookingIntroPanel
+  prop="long_string_make_to_force_break"
+  logClick={data => doLogClick("short", "short", data)}
+/>;
+
+<BookingIntroPanel
+  logClick={data =>
+    doLogClick("long_name_long_name_long_name", "long_name_long_name_long_name", data)
+  }
+/>;
+
+<BookingIntroPanel
+  logClick={data => {
+    doLogClick("long_name_long_name_long_name", "long_name_long_name_long_name", data)
+  }}
+/>;
+
+<BookingIntroPanel>
+  {data => doLogClick("short", "short", data)}
+</BookingIntroPanel>;
+
+<BookingIntroPanel>
+  {data =>
+    doLogClick("long_name_long_name_long_name", "long_name_long_name_long_name", data)
+  }
+</BookingIntroPanel>;
+
+<BookingIntroPanel>
+  {data => {
+    doLogClick("long_name_long_name_long_name", "long_name_long_name_long_name", data)
+  }}
+</BookingIntroPanel>;
+
+<SuspendyTree>
+  <div style={{ height: 200, overflow: "scroll" }}>
+    {Array(20)
+      .fill()
+      .map((_, i) => (
+        <h2 key={i}>{i + 1}</h2>
+      ))}
+  </div>
+</SuspendyTree>;
+
+=====================================output=====================================
+<View
+  style={{
+    someVeryLongStyle1: 'true',
+    someVeryLongStyle2: 'true',
+    someVeryLongStyle3: 'true',
+    someVeryLongStyle4: 'true',
+  }}
+/>;
+
+<View
+  style={[
+    {
+      someVeryLongStyle1: 'true',
+      someVeryLongStyle2: 'true',
+      someVeryLongStyle3: 'true',
+      someVeryLongStyle4: 'true',
+    },
+  ]}
+/>;
+
+<Something>
+  {() => (
+    <SomethingElse>
+      <span />
+    </SomethingElse>
+  )}
+</Something>;
+
+<Something>
+  {items.map((item) => (
+    <SomethingElse>
+      <span />
+    </SomethingElse>
+  ))}
+</Something>;
+
+<Something>
+  {function () {
+    return (
+      <SomethingElse>
+        <span />
+      </SomethingElse>
+    );
+  }}
+</Something>;
+
+<RadioListItem
+  key={option}
+  imageSource={
+    this.props.veryBigItemImageSourceFunc &&
+    this.props.veryBigItemImageSourceFunc(option)
+  }
+  imageSize={this.props.veryBigItemImageSize}
+  imageView={
+    this.props.veryBigItemImageViewFunc &&
+    this.props.veryBigItemImageViewFunc(option)
+  }
+  heading={this.props.displayTextFunc(option)}
+  value={option}
+/>;
+
+<ParentComponent prop={<Child>test</Child>} />;
+
+<BookingIntroPanel
+  prop="long_string_make_to_force_break"
+  logClick={(data) => doLogClick('short', 'short', data)}
+/>;
+
+<BookingIntroPanel
+  logClick={(data) =>
+    doLogClick(
+      'long_name_long_name_long_name',
+      'long_name_long_name_long_name',
+      data,
+    )
+  }
+/>;
+
+<BookingIntroPanel
+  logClick={(data) => {
+    doLogClick(
+      'long_name_long_name_long_name',
+      'long_name_long_name_long_name',
+      data,
+    );
+  }}
+/>;
+
+<BookingIntroPanel>
+  {(data) => doLogClick('short', 'short', data)}
+</BookingIntroPanel>;
+
+<BookingIntroPanel>
+  {(data) =>
+    doLogClick(
+      'long_name_long_name_long_name',
+      'long_name_long_name_long_name',
+      data,
+    )
+  }
+</BookingIntroPanel>;
+
+<BookingIntroPanel>
+  {(data) => {
+    doLogClick(
+      'long_name_long_name_long_name',
+      'long_name_long_name_long_name',
+      data,
+    );
+  }}
+</BookingIntroPanel>;
+
+<SuspendyTree>
+  <div style={{ height: 200, overflow: 'scroll' }}>
+    {Array(20)
+      .fill()
+      .map((_, i) => (
+        <h2 key={i}>{i + 1}</h2>
+      ))}
+  </div>
+</SuspendyTree>;
+
+================================================================================
+`;
+
+exports[`expression.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<View
+  style={
+    {
+      someVeryLongStyle1: "true",
+      someVeryLongStyle2: "true",
+      someVeryLongStyle3: "true",
+      someVeryLongStyle4: "true"
+    }
+  }
+/>;
+
+<View
+  style={
+    [
+      {
+        someVeryLongStyle1: "true",
+        someVeryLongStyle2: "true",
+        someVeryLongStyle3: "true",
+        someVeryLongStyle4: "true"
+      }
+    ]
+  }
+/>;
+
+<Something>
+  {() => (
+    <SomethingElse>
+      <span />
+    </SomethingElse>
+  )}
+</Something>;
+
+<Something>
+  {items.map(item => (
+    <SomethingElse>
+      <span />
+    </SomethingElse>
+  ))}
+</Something>;
+
+<Something>
+  {function() {
+    return (
+      <SomethingElse>
+        <span />
+      </SomethingElse>
+    );
+  }}
+</Something>;
+
+<RadioListItem
+  key={option}
+  imageSource={this.props.veryBigItemImageSourceFunc &&
+    this.props.veryBigItemImageSourceFunc(option)}
+  imageSize={this.props.veryBigItemImageSize}
+  imageView={this.props.veryBigItemImageViewFunc &&
+    this.props.veryBigItemImageViewFunc(option)}
+  heading={this.props.displayTextFunc(option)}
+  value={option}
+/>;
+
+<ParentComponent prop={
+  <Child>
+    test
+  </Child>
+}/>;
+
+<BookingIntroPanel
+  prop="long_string_make_to_force_break"
+  logClick={data => doLogClick("short", "short", data)}
+/>;
+
+<BookingIntroPanel
+  logClick={data =>
+    doLogClick("long_name_long_name_long_name", "long_name_long_name_long_name", data)
+  }
+/>;
+
+<BookingIntroPanel
+  logClick={data => {
+    doLogClick("long_name_long_name_long_name", "long_name_long_name_long_name", data)
+  }}
+/>;
+
+<BookingIntroPanel>
+  {data => doLogClick("short", "short", data)}
+</BookingIntroPanel>;
+
+<BookingIntroPanel>
+  {data =>
+    doLogClick("long_name_long_name_long_name", "long_name_long_name_long_name", data)
+  }
+</BookingIntroPanel>;
+
+<BookingIntroPanel>
+  {data => {
+    doLogClick("long_name_long_name_long_name", "long_name_long_name_long_name", data)
+  }}
+</BookingIntroPanel>;
+
+<SuspendyTree>
+  <div style={{ height: 200, overflow: "scroll" }}>
+    {Array(20)
+      .fill()
+      .map((_, i) => (
+        <h2 key={i}>{i + 1}</h2>
+      ))}
+  </div>
+</SuspendyTree>;
+
+=====================================output=====================================
+<View
+  style={{
+    someVeryLongStyle1: 'true',
+    someVeryLongStyle2: 'true',
+    someVeryLongStyle3: 'true',
+    someVeryLongStyle4: 'true',
+  }}
+/>;
+
+<View
+  style={[
+    {
+      someVeryLongStyle1: 'true',
+      someVeryLongStyle2: 'true',
+      someVeryLongStyle3: 'true',
+      someVeryLongStyle4: 'true',
+    },
+  ]}
+/>;
+
+<Something>
+  {() => (
+    <SomethingElse>
+      <span />
+    </SomethingElse>
+  )}
+</Something>;
+
+<Something>
+  {items.map((item) => (
+    <SomethingElse>
+      <span />
+    </SomethingElse>
+  ))}
+</Something>;
+
+<Something>
+  {function () {
+    return (
+      <SomethingElse>
+        <span />
+      </SomethingElse>
+    );
+  }}
+</Something>;
+
+<RadioListItem
+  key={option}
+  imageSource={
+    this.props.veryBigItemImageSourceFunc &&
+    this.props.veryBigItemImageSourceFunc(option)
+  }
+  imageSize={this.props.veryBigItemImageSize}
+  imageView={
+    this.props.veryBigItemImageViewFunc &&
+    this.props.veryBigItemImageViewFunc(option)
+  }
+  heading={this.props.displayTextFunc(option)}
+  value={option}
+/>;
+
+<ParentComponent prop={<Child>test</Child>} />;
+
+<BookingIntroPanel
+  prop='long_string_make_to_force_break'
+  logClick={(data) => doLogClick('short', 'short', data)}
+/>;
+
+<BookingIntroPanel
+  logClick={(data) =>
+    doLogClick(
+      'long_name_long_name_long_name',
+      'long_name_long_name_long_name',
+      data,
+    )
+  }
+/>;
+
+<BookingIntroPanel
+  logClick={(data) => {
+    doLogClick(
+      'long_name_long_name_long_name',
+      'long_name_long_name_long_name',
+      data,
+    );
+  }}
+/>;
+
+<BookingIntroPanel>
+  {(data) => doLogClick('short', 'short', data)}
+</BookingIntroPanel>;
+
+<BookingIntroPanel>
+  {(data) =>
+    doLogClick(
+      'long_name_long_name_long_name',
+      'long_name_long_name_long_name',
+      data,
+    )
+  }
+</BookingIntroPanel>;
+
+<BookingIntroPanel>
+  {(data) => {
+    doLogClick(
+      'long_name_long_name_long_name',
+      'long_name_long_name_long_name',
+      data,
+    );
+  }}
+</BookingIntroPanel>;
+
+<SuspendyTree>
+  <div style={{ height: 200, overflow: 'scroll' }}>
+    {Array(20)
+      .fill()
+      .map((_, i) => (
+        <h2 key={i}>{i + 1}</h2>
+      ))}
+  </div>
+</SuspendyTree>;
+
+================================================================================
+`;
+
+exports[`flow_fix_me.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const aDiv = (
+  /* $FlowFixMe */
+  <div className="foo">
+    Foo bar
+  </div>
+);
+
+=====================================output=====================================
+const aDiv = (
+  /* $FlowFixMe */
+  <div className="foo">Foo bar</div>
+);
+
+================================================================================
+`;
+
+exports[`flow_fix_me.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const aDiv = (
+  /* $FlowFixMe */
+  <div className="foo">
+    Foo bar
+  </div>
+);
+
+=====================================output=====================================
+const aDiv = (
+  /* $FlowFixMe */
+  <div className='foo'>Foo bar</div>
+);
+
+================================================================================
+`;
+
+exports[`flow_fix_me.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const aDiv = (
+  /* $FlowFixMe */
+  <div className="foo">
+    Foo bar
+  </div>
+);
+
+=====================================output=====================================
+const aDiv = (
+  /* $FlowFixMe */
+  <div className="foo">Foo bar</div>
+);
+
+================================================================================
+`;
+
+exports[`flow_fix_me.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const aDiv = (
+  /* $FlowFixMe */
+  <div className="foo">
+    Foo bar
+  </div>
+);
+
+=====================================output=====================================
+const aDiv = (
+  /* $FlowFixMe */
+  <div className='foo'>Foo bar</div>
+);
+
+================================================================================
+`;
+
+exports[`html_escape.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export default () => <a href="https://foo.bar?q1=foo&q2=bar" />;
+
+() => <img src="https://bar.foo?param1=1&param2=2" />;
+
+=====================================output=====================================
+export default () => <a href="https://foo.bar?q1=foo&q2=bar" />;
+
+() => <img src="https://bar.foo?param1=1&param2=2" />;
+
+================================================================================
+`;
+
+exports[`html_escape.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export default () => <a href="https://foo.bar?q1=foo&q2=bar" />;
+
+() => <img src="https://bar.foo?param1=1&param2=2" />;
+
+=====================================output=====================================
+export default () => <a href='https://foo.bar?q1=foo&q2=bar' />;
+
+() => <img src='https://bar.foo?param1=1&param2=2' />;
+
+================================================================================
+`;
+
+exports[`html_escape.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export default () => <a href="https://foo.bar?q1=foo&q2=bar" />;
+
+() => <img src="https://bar.foo?param1=1&param2=2" />;
+
+=====================================output=====================================
+export default () => <a href="https://foo.bar?q1=foo&q2=bar" />;
+
+() => <img src="https://bar.foo?param1=1&param2=2" />;
+
+================================================================================
+`;
+
+exports[`html_escape.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export default () => <a href="https://foo.bar?q1=foo&q2=bar" />;
+
+() => <img src="https://bar.foo?param1=1&param2=2" />;
+
+=====================================output=====================================
+export default () => <a href='https://foo.bar?q1=foo&q2=bar' />;
+
+() => <img src='https://bar.foo?param1=1&param2=2' />;
+
+================================================================================
+`;
+
+exports[`hug.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div>
+  {__DEV__
+    ? this.renderDevApp()
+    : <div>
+      {routes.map(route => (
+        <MatchAsync
+          key={\`\${route.to}-async\`}
+          pattern={route.to}
+          exactly={route.to === "/"}
+          getComponent={routeES6Modules[route.value]}
+        />
+      ))}
+    </div>}
+</div>;
+
+<div>
+  {__DEV__ && <div>
+    {routes.map(route => (
+      <MatchAsync
+        key={\`\${route.to}-async\`}
+        pattern={route.to}
+        exactly={route.to === "/"}
+        getComponent={routeES6Modules[route.value]}
+      />
+    ))}
+    </div>}
+</div>;
+
+<div>
+  {member.memberName.memberSomething +
+    (member.memberDef.memberSomething.signatures ? '()' : '')}
+</div>
+
+=====================================output=====================================
+<div>
+  {__DEV__ ? (
+    this.renderDevApp()
+  ) : (
+    <div>
+      {routes.map((route) => (
+        <MatchAsync
+          key={\`\${route.to}-async\`}
+          pattern={route.to}
+          exactly={route.to === "/"}
+          getComponent={routeES6Modules[route.value]}
+        />
+      ))}
+    </div>
+  )}
+</div>;
+
+<div>
+  {__DEV__ && (
+    <div>
+      {routes.map((route) => (
+        <MatchAsync
+          key={\`\${route.to}-async\`}
+          pattern={route.to}
+          exactly={route.to === "/"}
+          getComponent={routeES6Modules[route.value]}
+        />
+      ))}
+    </div>
+  )}
+</div>;
+
+<div>
+  {member.memberName.memberSomething +
+    (member.memberDef.memberSomething.signatures ? "()" : "")}
+</div>;
+
+================================================================================
+`;
+
+exports[`hug.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div>
+  {__DEV__
+    ? this.renderDevApp()
+    : <div>
+      {routes.map(route => (
+        <MatchAsync
+          key={\`\${route.to}-async\`}
+          pattern={route.to}
+          exactly={route.to === "/"}
+          getComponent={routeES6Modules[route.value]}
+        />
+      ))}
+    </div>}
+</div>;
+
+<div>
+  {__DEV__ && <div>
+    {routes.map(route => (
+      <MatchAsync
+        key={\`\${route.to}-async\`}
+        pattern={route.to}
+        exactly={route.to === "/"}
+        getComponent={routeES6Modules[route.value]}
+      />
+    ))}
+    </div>}
+</div>;
+
+<div>
+  {member.memberName.memberSomething +
+    (member.memberDef.memberSomething.signatures ? '()' : '')}
+</div>
+
+=====================================output=====================================
+<div>
+  {__DEV__ ? (
+    this.renderDevApp()
+  ) : (
+    <div>
+      {routes.map((route) => (
+        <MatchAsync
+          key={\`\${route.to}-async\`}
+          pattern={route.to}
+          exactly={route.to === "/"}
+          getComponent={routeES6Modules[route.value]}
+        />
+      ))}
+    </div>
+  )}
+</div>;
+
+<div>
+  {__DEV__ && (
+    <div>
+      {routes.map((route) => (
+        <MatchAsync
+          key={\`\${route.to}-async\`}
+          pattern={route.to}
+          exactly={route.to === "/"}
+          getComponent={routeES6Modules[route.value]}
+        />
+      ))}
+    </div>
+  )}
+</div>;
+
+<div>
+  {member.memberName.memberSomething +
+    (member.memberDef.memberSomething.signatures ? "()" : "")}
+</div>;
+
+================================================================================
+`;
+
+exports[`hug.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div>
+  {__DEV__
+    ? this.renderDevApp()
+    : <div>
+      {routes.map(route => (
+        <MatchAsync
+          key={\`\${route.to}-async\`}
+          pattern={route.to}
+          exactly={route.to === "/"}
+          getComponent={routeES6Modules[route.value]}
+        />
+      ))}
+    </div>}
+</div>;
+
+<div>
+  {__DEV__ && <div>
+    {routes.map(route => (
+      <MatchAsync
+        key={\`\${route.to}-async\`}
+        pattern={route.to}
+        exactly={route.to === "/"}
+        getComponent={routeES6Modules[route.value]}
+      />
+    ))}
+    </div>}
+</div>;
+
+<div>
+  {member.memberName.memberSomething +
+    (member.memberDef.memberSomething.signatures ? '()' : '')}
+</div>
+
+=====================================output=====================================
+<div>
+  {__DEV__ ? (
+    this.renderDevApp()
+  ) : (
+    <div>
+      {routes.map((route) => (
+        <MatchAsync
+          key={\`\${route.to}-async\`}
+          pattern={route.to}
+          exactly={route.to === '/'}
+          getComponent={routeES6Modules[route.value]}
+        />
+      ))}
+    </div>
+  )}
+</div>;
+
+<div>
+  {__DEV__ && (
+    <div>
+      {routes.map((route) => (
+        <MatchAsync
+          key={\`\${route.to}-async\`}
+          pattern={route.to}
+          exactly={route.to === '/'}
+          getComponent={routeES6Modules[route.value]}
+        />
+      ))}
+    </div>
+  )}
+</div>;
+
+<div>
+  {member.memberName.memberSomething +
+    (member.memberDef.memberSomething.signatures ? '()' : '')}
+</div>;
+
+================================================================================
+`;
+
+exports[`hug.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div>
+  {__DEV__
+    ? this.renderDevApp()
+    : <div>
+      {routes.map(route => (
+        <MatchAsync
+          key={\`\${route.to}-async\`}
+          pattern={route.to}
+          exactly={route.to === "/"}
+          getComponent={routeES6Modules[route.value]}
+        />
+      ))}
+    </div>}
+</div>;
+
+<div>
+  {__DEV__ && <div>
+    {routes.map(route => (
+      <MatchAsync
+        key={\`\${route.to}-async\`}
+        pattern={route.to}
+        exactly={route.to === "/"}
+        getComponent={routeES6Modules[route.value]}
+      />
+    ))}
+    </div>}
+</div>;
+
+<div>
+  {member.memberName.memberSomething +
+    (member.memberDef.memberSomething.signatures ? '()' : '')}
+</div>
+
+=====================================output=====================================
+<div>
+  {__DEV__ ? (
+    this.renderDevApp()
+  ) : (
+    <div>
+      {routes.map((route) => (
+        <MatchAsync
+          key={\`\${route.to}-async\`}
+          pattern={route.to}
+          exactly={route.to === '/'}
+          getComponent={routeES6Modules[route.value]}
+        />
+      ))}
+    </div>
+  )}
+</div>;
+
+<div>
+  {__DEV__ && (
+    <div>
+      {routes.map((route) => (
+        <MatchAsync
+          key={\`\${route.to}-async\`}
+          pattern={route.to}
+          exactly={route.to === '/'}
+          getComponent={routeES6Modules[route.value]}
+        />
+      ))}
+    </div>
+  )}
+</div>;
+
+<div>
+  {member.memberName.memberSomething +
+    (member.memberDef.memberSomething.signatures ? '()' : '')}
+</div>;
+
+================================================================================
+`;
+
+exports[`logical-expression.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div>
+  {a || "b"}
+</div>;
+
+<div>
+  {a && "b"}
+</div>;
+
+<div>
+  {a || <span></span>}
+</div>;
+
+<div>
+  {a && <span></span>}
+</div>;
+
+<div>
+  {a && <span>make this text just so long enough to break this to the next line</span>}
+</div>;
+
+<div>
+  {a && b && <span>make this text just so long enough to break this to the next line</span>}
+</div>;
+
+<div>
+  {a && <span>
+    <div>
+      <div></div>
+    </div>
+  </span>}
+</div>;
+
+=====================================output=====================================
+<div>{a || "b"}</div>;
+
+<div>{a && "b"}</div>;
+
+<div>{a || <span></span>}</div>;
+
+<div>{a && <span></span>}</div>;
+
+<div>
+  {a && (
+    <span>
+      make this text just so long enough to break this to the next line
+    </span>
+  )}
+</div>;
+
+<div>
+  {a && b && (
+    <span>
+      make this text just so long enough to break this to the next line
+    </span>
+  )}
+</div>;
+
+<div>
+  {a && (
+    <span>
+      <div>
+        <div></div>
+      </div>
+    </span>
+  )}
+</div>;
+
+================================================================================
+`;
+
+exports[`logical-expression.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div>
+  {a || "b"}
+</div>;
+
+<div>
+  {a && "b"}
+</div>;
+
+<div>
+  {a || <span></span>}
+</div>;
+
+<div>
+  {a && <span></span>}
+</div>;
+
+<div>
+  {a && <span>make this text just so long enough to break this to the next line</span>}
+</div>;
+
+<div>
+  {a && b && <span>make this text just so long enough to break this to the next line</span>}
+</div>;
+
+<div>
+  {a && <span>
+    <div>
+      <div></div>
+    </div>
+  </span>}
+</div>;
+
+=====================================output=====================================
+<div>{a || "b"}</div>;
+
+<div>{a && "b"}</div>;
+
+<div>{a || <span></span>}</div>;
+
+<div>{a && <span></span>}</div>;
+
+<div>
+  {a && (
+    <span>
+      make this text just so long enough to break this to the next line
+    </span>
+  )}
+</div>;
+
+<div>
+  {a && b && (
+    <span>
+      make this text just so long enough to break this to the next line
+    </span>
+  )}
+</div>;
+
+<div>
+  {a && (
+    <span>
+      <div>
+        <div></div>
+      </div>
+    </span>
+  )}
+</div>;
+
+================================================================================
+`;
+
+exports[`logical-expression.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div>
+  {a || "b"}
+</div>;
+
+<div>
+  {a && "b"}
+</div>;
+
+<div>
+  {a || <span></span>}
+</div>;
+
+<div>
+  {a && <span></span>}
+</div>;
+
+<div>
+  {a && <span>make this text just so long enough to break this to the next line</span>}
+</div>;
+
+<div>
+  {a && b && <span>make this text just so long enough to break this to the next line</span>}
+</div>;
+
+<div>
+  {a && <span>
+    <div>
+      <div></div>
+    </div>
+  </span>}
+</div>;
+
+=====================================output=====================================
+<div>{a || 'b'}</div>;
+
+<div>{a && 'b'}</div>;
+
+<div>{a || <span></span>}</div>;
+
+<div>{a && <span></span>}</div>;
+
+<div>
+  {a && (
+    <span>
+      make this text just so long enough to break this to the next line
+    </span>
+  )}
+</div>;
+
+<div>
+  {a && b && (
+    <span>
+      make this text just so long enough to break this to the next line
+    </span>
+  )}
+</div>;
+
+<div>
+  {a && (
+    <span>
+      <div>
+        <div></div>
+      </div>
+    </span>
+  )}
+</div>;
+
+================================================================================
+`;
+
+exports[`logical-expression.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div>
+  {a || "b"}
+</div>;
+
+<div>
+  {a && "b"}
+</div>;
+
+<div>
+  {a || <span></span>}
+</div>;
+
+<div>
+  {a && <span></span>}
+</div>;
+
+<div>
+  {a && <span>make this text just so long enough to break this to the next line</span>}
+</div>;
+
+<div>
+  {a && b && <span>make this text just so long enough to break this to the next line</span>}
+</div>;
+
+<div>
+  {a && <span>
+    <div>
+      <div></div>
+    </div>
+  </span>}
+</div>;
+
+=====================================output=====================================
+<div>{a || 'b'}</div>;
+
+<div>{a && 'b'}</div>;
+
+<div>{a || <span></span>}</div>;
+
+<div>{a && <span></span>}</div>;
+
+<div>
+  {a && (
+    <span>
+      make this text just so long enough to break this to the next line
+    </span>
+  )}
+</div>;
+
+<div>
+  {a && b && (
+    <span>
+      make this text just so long enough to break this to the next line
+    </span>
+  )}
+</div>;
+
+<div>
+  {a && (
+    <span>
+      <div>
+        <div></div>
+      </div>
+    </span>
+  )}
+</div>;
+
+================================================================================
+`;
+
+exports[`object-property.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const tabs = [
+  {
+    title: "General Info",
+    content: (
+      <GeneralForm
+        long-attribute="i-need-long-value-here"
+        onSave={ onSave }
+        onCancel={ onCancel }
+        countries={ countries }
+      />
+    )
+  }
+];
+
+=====================================output=====================================
+const tabs = [
+  {
+    title: "General Info",
+    content: (
+      <GeneralForm
+        long-attribute="i-need-long-value-here"
+        onSave={onSave}
+        onCancel={onCancel}
+        countries={countries}
+      />
+    ),
+  },
+];
+
+================================================================================
+`;
+
+exports[`object-property.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const tabs = [
+  {
+    title: "General Info",
+    content: (
+      <GeneralForm
+        long-attribute="i-need-long-value-here"
+        onSave={ onSave }
+        onCancel={ onCancel }
+        countries={ countries }
+      />
+    )
+  }
+];
+
+=====================================output=====================================
+const tabs = [
+  {
+    title: "General Info",
+    content: (
+      <GeneralForm
+        long-attribute='i-need-long-value-here'
+        onSave={onSave}
+        onCancel={onCancel}
+        countries={countries}
+      />
+    ),
+  },
+];
+
+================================================================================
+`;
+
+exports[`object-property.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const tabs = [
+  {
+    title: "General Info",
+    content: (
+      <GeneralForm
+        long-attribute="i-need-long-value-here"
+        onSave={ onSave }
+        onCancel={ onCancel }
+        countries={ countries }
+      />
+    )
+  }
+];
+
+=====================================output=====================================
+const tabs = [
+  {
+    title: 'General Info',
+    content: (
+      <GeneralForm
+        long-attribute="i-need-long-value-here"
+        onSave={onSave}
+        onCancel={onCancel}
+        countries={countries}
+      />
+    ),
+  },
+];
+
+================================================================================
+`;
+
+exports[`object-property.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const tabs = [
+  {
+    title: "General Info",
+    content: (
+      <GeneralForm
+        long-attribute="i-need-long-value-here"
+        onSave={ onSave }
+        onCancel={ onCancel }
+        countries={ countries }
+      />
+    )
+  }
+];
+
+=====================================output=====================================
+const tabs = [
+  {
+    title: 'General Info',
+    content: (
+      <GeneralForm
+        long-attribute='i-need-long-value-here'
+        onSave={onSave}
+        onCancel={onCancel}
+        countries={countries}
+      />
+    ),
+  },
+];
+
+================================================================================
+`;
+
+exports[`open-break.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<td
+onClick={() => {
+  a
+}}>{header}{showSort}</td>;
+
+<td
+onClick={() => {
+  a
+}}>{header}<showSort attr="long long long long long long long long long long long"/></td>;
+
+<Foo>{\`    a    very    long    text    that    does    not    break    \`}</Foo>;
+
+=====================================output=====================================
+<td
+  onClick={() => {
+    a;
+  }}
+>
+  {header}
+  {showSort}
+</td>;
+
+<td
+  onClick={() => {
+    a;
+  }}
+>
+  {header}
+  <showSort attr="long long long long long long long long long long long" />
+</td>;
+
+<Foo>{\`    a    very    long    text    that    does    not    break    \`}</Foo>;
+
+================================================================================
+`;
+
+exports[`open-break.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<td
+onClick={() => {
+  a
+}}>{header}{showSort}</td>;
+
+<td
+onClick={() => {
+  a
+}}>{header}<showSort attr="long long long long long long long long long long long"/></td>;
+
+<Foo>{\`    a    very    long    text    that    does    not    break    \`}</Foo>;
+
+=====================================output=====================================
+<td
+  onClick={() => {
+    a;
+  }}
+>
+  {header}
+  {showSort}
+</td>;
+
+<td
+  onClick={() => {
+    a;
+  }}
+>
+  {header}
+  <showSort attr='long long long long long long long long long long long' />
+</td>;
+
+<Foo>{\`    a    very    long    text    that    does    not    break    \`}</Foo>;
+
+================================================================================
+`;
+
+exports[`open-break.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<td
+onClick={() => {
+  a
+}}>{header}{showSort}</td>;
+
+<td
+onClick={() => {
+  a
+}}>{header}<showSort attr="long long long long long long long long long long long"/></td>;
+
+<Foo>{\`    a    very    long    text    that    does    not    break    \`}</Foo>;
+
+=====================================output=====================================
+<td
+  onClick={() => {
+    a;
+  }}
+>
+  {header}
+  {showSort}
+</td>;
+
+<td
+  onClick={() => {
+    a;
+  }}
+>
+  {header}
+  <showSort attr="long long long long long long long long long long long" />
+</td>;
+
+<Foo>{\`    a    very    long    text    that    does    not    break    \`}</Foo>;
+
+================================================================================
+`;
+
+exports[`open-break.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<td
+onClick={() => {
+  a
+}}>{header}{showSort}</td>;
+
+<td
+onClick={() => {
+  a
+}}>{header}<showSort attr="long long long long long long long long long long long"/></td>;
+
+<Foo>{\`    a    very    long    text    that    does    not    break    \`}</Foo>;
+
+=====================================output=====================================
+<td
+  onClick={() => {
+    a;
+  }}
+>
+  {header}
+  {showSort}
+</td>;
+
+<td
+  onClick={() => {
+    a;
+  }}
+>
+  {header}
+  <showSort attr='long long long long long long long long long long long' />
+</td>;
+
+<Foo>{\`    a    very    long    text    that    does    not    break    \`}</Foo>;
+
+================================================================================
+`;
+
+exports[`parens.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = [
+  <path
+    key='0'
+    d='M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,'
+  />,
+  <path
+    key='1'
+    d='M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,'
+  />,
+];
+
+<div {...((foo || foo === null) ? {foo} : null)} />
+
+f?.(<div/>);
+(<div/>)();
+(<div/>)?.();
+
+new Foo(<Component/>);
+new Foo((<Component/>))
+
+=====================================output=====================================
+a = [
+  <path
+    key="0"
+    d="M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,"
+  />,
+  <path
+    key="1"
+    d="M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,"
+  />,
+];
+
+<div {...(foo || foo === null ? { foo } : null)} />;
+
+f?.(<div />);
+(<div />)();
+(<div />)?.();
+
+new Foo(<Component />);
+new Foo(<Component />);
+
+================================================================================
+`;
+
+exports[`parens.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = [
+  <path
+    key='0'
+    d='M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,'
+  />,
+  <path
+    key='1'
+    d='M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,'
+  />,
+];
+
+<div {...((foo || foo === null) ? {foo} : null)} />
+
+f?.(<div/>);
+(<div/>)();
+(<div/>)?.();
+
+new Foo(<Component/>);
+new Foo((<Component/>))
+
+=====================================output=====================================
+a = [
+  <path
+    key='0'
+    d='M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,'
+  />,
+  <path
+    key='1'
+    d='M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,'
+  />,
+];
+
+<div {...(foo || foo === null ? { foo } : null)} />;
+
+f?.(<div />);
+(<div />)();
+(<div />)?.();
+
+new Foo(<Component />);
+new Foo(<Component />);
+
+================================================================================
+`;
+
+exports[`parens.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = [
+  <path
+    key='0'
+    d='M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,'
+  />,
+  <path
+    key='1'
+    d='M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,'
+  />,
+];
+
+<div {...((foo || foo === null) ? {foo} : null)} />
+
+f?.(<div/>);
+(<div/>)();
+(<div/>)?.();
+
+new Foo(<Component/>);
+new Foo((<Component/>))
+
+=====================================output=====================================
+a = [
+  <path
+    key="0"
+    d="M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,"
+  />,
+  <path
+    key="1"
+    d="M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,"
+  />,
+];
+
+<div {...(foo || foo === null ? { foo } : null)} />;
+
+f?.(<div />);
+(<div />)();
+(<div />)?.();
+
+new Foo(<Component />);
+new Foo(<Component />);
+
+================================================================================
+`;
+
+exports[`parens.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = [
+  <path
+    key='0'
+    d='M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,'
+  />,
+  <path
+    key='1'
+    d='M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,'
+  />,
+];
+
+<div {...((foo || foo === null) ? {foo} : null)} />
+
+f?.(<div/>);
+(<div/>)();
+(<div/>)?.();
+
+new Foo(<Component/>);
+new Foo((<Component/>))
+
+=====================================output=====================================
+a = [
+  <path
+    key='0'
+    d='M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,'
+  />,
+  <path
+    key='1'
+    d='M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,M13.6,10.6l,4-2.8L9.5,'
+  />,
+];
+
+<div {...(foo || foo === null ? { foo } : null)} />;
+
+f?.(<div />);
+(<div />)();
+(<div />)?.();
+
+new Foo(<Component />);
+new Foo(<Component />);
+
+================================================================================
+`;
+
+exports[`quotes.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div id="&quot;'<>&amp;quot;" />;
+<div id='"&#39;<>&amp;quot;' />;
+<div id={'\\'"&quot;<>&amp;quot;'} />;
+<div id='123' />;
+<div id='&#39;&quot;' />;
+<div id={'\\'\\"\\\\\\''} />;
+<div
+  single='foo'
+  single2={'foo'}
+
+  double="bar"
+  double2={"bar"}
+
+  singleDouble='"'
+  singleDouble2={'"'}
+
+  doubleSingle="'"
+  doubleSingle2={"'"}
+
+  singleEscaped={'\\''}
+  singleEscaped2='&apos;'
+
+  doubleEscaped={"\\""}
+  doubleEscaped2="&quot;"
+
+  singleBothEscaped={'\\'"'}
+  singleBothEscaped2='&apos;"'
+
+  singleBoth='&apos; "'
+  singleBoth2={'\\' "'}
+  singleBoth3='&apos; &apos; "'
+
+  doubleBoth="&quot; '"
+  doubleBoth2={"\\" '"}
+  doubleBoth3="&quot; &apos; '"
+/>;
+
+<p>
+  GitHub Desktop has encountered an unrecoverable error and will need to 1231231
+  restart. This has been reported to the team, but if youencounter this121312331
+  repeatedly please report this issue to the GitHub 12312312312312313{'  '}{' '}
+</p>
+
+=====================================output=====================================
+<div id="&quot;'<>&amp;quot;" />;
+<div id='"&#39;<>&amp;quot;' />;
+<div id={"'\\"&quot;<>&amp;quot;"} />;
+<div id="123" />;
+<div id='&#39;"' />;
+<div id={"'\\"\\\\'"} />;
+<div
+  single="foo"
+  single2={"foo"}
+
+  double="bar"
+  double2={"bar"}
+
+  singleDouble='"'
+  singleDouble2={'"'}
+
+  doubleSingle="'"
+  doubleSingle2={"'"}
+
+  singleEscaped={"'"}
+  singleEscaped2="'"
+
+  doubleEscaped={'"'}
+  doubleEscaped2='"'
+
+  singleBothEscaped={"'\\""}
+  singleBothEscaped2="'&quot;"
+
+  singleBoth="' &quot;"
+  singleBoth2={"' \\""}
+  singleBoth3="' ' &quot;"
+
+  doubleBoth="&quot; '"
+  doubleBoth2={"\\" '"}
+  doubleBoth3="&quot; ' '"
+/>;
+
+<p>
+  GitHub Desktop has encountered an unrecoverable error and will need to 1231231
+  restart. This has been reported to the team, but if youencounter this121312331
+  repeatedly please report this issue to the GitHub 12312312312312313{"  "}{" "}
+</p>;
+
+================================================================================
+`;
+
+exports[`quotes.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div id="&quot;'<>&amp;quot;" />;
+<div id='"&#39;<>&amp;quot;' />;
+<div id={'\\'"&quot;<>&amp;quot;'} />;
+<div id='123' />;
+<div id='&#39;&quot;' />;
+<div id={'\\'\\"\\\\\\''} />;
+<div
+  single='foo'
+  single2={'foo'}
+
+  double="bar"
+  double2={"bar"}
+
+  singleDouble='"'
+  singleDouble2={'"'}
+
+  doubleSingle="'"
+  doubleSingle2={"'"}
+
+  singleEscaped={'\\''}
+  singleEscaped2='&apos;'
+
+  doubleEscaped={"\\""}
+  doubleEscaped2="&quot;"
+
+  singleBothEscaped={'\\'"'}
+  singleBothEscaped2='&apos;"'
+
+  singleBoth='&apos; "'
+  singleBoth2={'\\' "'}
+  singleBoth3='&apos; &apos; "'
+
+  doubleBoth="&quot; '"
+  doubleBoth2={"\\" '"}
+  doubleBoth3="&quot; &apos; '"
+/>;
+
+<p>
+  GitHub Desktop has encountered an unrecoverable error and will need to 1231231
+  restart. This has been reported to the team, but if youencounter this121312331
+  repeatedly please report this issue to the GitHub 12312312312312313{'  '}{' '}
+</p>
+
+=====================================output=====================================
+<div id='"&apos;<>&amp;quot;' />;
+<div id='"&#39;<>&amp;quot;' />;
+<div id={"'\\"&quot;<>&amp;quot;"} />;
+<div id='123' />;
+<div id='&#39;"' />;
+<div id={"'\\"\\\\'"} />;
+<div
+  single='foo'
+  single2={"foo"}
+
+  double='bar'
+  double2={"bar"}
+
+  singleDouble='"'
+  singleDouble2={'"'}
+
+  doubleSingle="'"
+  doubleSingle2={"'"}
+
+  singleEscaped={"'"}
+  singleEscaped2="'"
+
+  doubleEscaped={'"'}
+  doubleEscaped2='"'
+
+  singleBothEscaped={"'\\""}
+  singleBothEscaped2='&apos;"'
+
+  singleBoth='&apos; "'
+  singleBoth2={"' \\""}
+  singleBoth3="' ' &quot;"
+
+  doubleBoth='" &apos;'
+  doubleBoth2={"\\" '"}
+  doubleBoth3="&quot; ' '"
+/>;
+
+<p>
+  GitHub Desktop has encountered an unrecoverable error and will need to 1231231
+  restart. This has been reported to the team, but if youencounter this121312331
+  repeatedly please report this issue to the GitHub 12312312312312313{"  "}{" "}
+</p>;
+
+================================================================================
+`;
+
+exports[`quotes.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div id="&quot;'<>&amp;quot;" />;
+<div id='"&#39;<>&amp;quot;' />;
+<div id={'\\'"&quot;<>&amp;quot;'} />;
+<div id='123' />;
+<div id='&#39;&quot;' />;
+<div id={'\\'\\"\\\\\\''} />;
+<div
+  single='foo'
+  single2={'foo'}
+
+  double="bar"
+  double2={"bar"}
+
+  singleDouble='"'
+  singleDouble2={'"'}
+
+  doubleSingle="'"
+  doubleSingle2={"'"}
+
+  singleEscaped={'\\''}
+  singleEscaped2='&apos;'
+
+  doubleEscaped={"\\""}
+  doubleEscaped2="&quot;"
+
+  singleBothEscaped={'\\'"'}
+  singleBothEscaped2='&apos;"'
+
+  singleBoth='&apos; "'
+  singleBoth2={'\\' "'}
+  singleBoth3='&apos; &apos; "'
+
+  doubleBoth="&quot; '"
+  doubleBoth2={"\\" '"}
+  doubleBoth3="&quot; &apos; '"
+/>;
+
+<p>
+  GitHub Desktop has encountered an unrecoverable error and will need to 1231231
+  restart. This has been reported to the team, but if youencounter this121312331
+  repeatedly please report this issue to the GitHub 12312312312312313{'  '}{' '}
+</p>
+
+=====================================output=====================================
+<div id="&quot;'<>&amp;quot;" />;
+<div id='"&#39;<>&amp;quot;' />;
+<div id={'\\'"&quot;<>&amp;quot;'} />;
+<div id="123" />;
+<div id='&#39;"' />;
+<div id={"'\\"\\\\'"} />;
+<div
+  single="foo"
+  single2={'foo'}
+
+  double="bar"
+  double2={'bar'}
+
+  singleDouble='"'
+  singleDouble2={'"'}
+
+  doubleSingle="'"
+  doubleSingle2={"'"}
+
+  singleEscaped={"'"}
+  singleEscaped2="'"
+
+  doubleEscaped={'"'}
+  doubleEscaped2='"'
+
+  singleBothEscaped={'\\'"'}
+  singleBothEscaped2="'&quot;"
+
+  singleBoth="' &quot;"
+  singleBoth2={'\\' "'}
+  singleBoth3="' ' &quot;"
+
+  doubleBoth="&quot; '"
+  doubleBoth2={'" \\''}
+  doubleBoth3="&quot; ' '"
+/>;
+
+<p>
+  GitHub Desktop has encountered an unrecoverable error and will need to 1231231
+  restart. This has been reported to the team, but if youencounter this121312331
+  repeatedly please report this issue to the GitHub 12312312312312313{'  '}{' '}
+</p>;
+
+================================================================================
+`;
+
+exports[`quotes.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div id="&quot;'<>&amp;quot;" />;
+<div id='"&#39;<>&amp;quot;' />;
+<div id={'\\'"&quot;<>&amp;quot;'} />;
+<div id='123' />;
+<div id='&#39;&quot;' />;
+<div id={'\\'\\"\\\\\\''} />;
+<div
+  single='foo'
+  single2={'foo'}
+
+  double="bar"
+  double2={"bar"}
+
+  singleDouble='"'
+  singleDouble2={'"'}
+
+  doubleSingle="'"
+  doubleSingle2={"'"}
+
+  singleEscaped={'\\''}
+  singleEscaped2='&apos;'
+
+  doubleEscaped={"\\""}
+  doubleEscaped2="&quot;"
+
+  singleBothEscaped={'\\'"'}
+  singleBothEscaped2='&apos;"'
+
+  singleBoth='&apos; "'
+  singleBoth2={'\\' "'}
+  singleBoth3='&apos; &apos; "'
+
+  doubleBoth="&quot; '"
+  doubleBoth2={"\\" '"}
+  doubleBoth3="&quot; &apos; '"
+/>;
+
+<p>
+  GitHub Desktop has encountered an unrecoverable error and will need to 1231231
+  restart. This has been reported to the team, but if youencounter this121312331
+  repeatedly please report this issue to the GitHub 12312312312312313{'  '}{' '}
+</p>
+
+=====================================output=====================================
+<div id='"&apos;<>&amp;quot;' />;
+<div id='"&#39;<>&amp;quot;' />;
+<div id={'\\'"&quot;<>&amp;quot;'} />;
+<div id='123' />;
+<div id='&#39;"' />;
+<div id={"'\\"\\\\'"} />;
+<div
+  single='foo'
+  single2={'foo'}
+
+  double='bar'
+  double2={'bar'}
+
+  singleDouble='"'
+  singleDouble2={'"'}
+
+  doubleSingle="'"
+  doubleSingle2={"'"}
+
+  singleEscaped={"'"}
+  singleEscaped2="'"
+
+  doubleEscaped={'"'}
+  doubleEscaped2='"'
+
+  singleBothEscaped={'\\'"'}
+  singleBothEscaped2='&apos;"'
+
+  singleBoth='&apos; "'
+  singleBoth2={'\\' "'}
+  singleBoth3="' ' &quot;"
+
+  doubleBoth='" &apos;'
+  doubleBoth2={'" \\''}
+  doubleBoth3="&quot; ' '"
+/>;
+
+<p>
+  GitHub Desktop has encountered an unrecoverable error and will need to 1231231
+  restart. This has been reported to the team, but if youencounter this121312331
+  repeatedly please report this issue to the GitHub 12312312312312313{'  '}{' '}
+</p>;
+
+================================================================================
+`;
+
+exports[`regex.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+x = <div>one</div>, <div>two</div>;
+x = <a>{}</a>
+x = <a>{1/2}</a>
+x = <a>{/w/.test(s)}</a>
+
+=====================================output=====================================
+((x = <div>one</div>), (<div>two</div>));
+x = <a>{}</a>;
+x = <a>{1 / 2}</a>;
+x = <a>{/w/.test(s)}</a>;
+
+================================================================================
+`;
+
+exports[`regex.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+x = <div>one</div>, <div>two</div>;
+x = <a>{}</a>
+x = <a>{1/2}</a>
+x = <a>{/w/.test(s)}</a>
+
+=====================================output=====================================
+((x = <div>one</div>), (<div>two</div>));
+x = <a>{}</a>;
+x = <a>{1 / 2}</a>;
+x = <a>{/w/.test(s)}</a>;
+
+================================================================================
+`;
+
+exports[`regex.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+x = <div>one</div>, <div>two</div>;
+x = <a>{}</a>
+x = <a>{1/2}</a>
+x = <a>{/w/.test(s)}</a>
+
+=====================================output=====================================
+((x = <div>one</div>), (<div>two</div>));
+x = <a>{}</a>;
+x = <a>{1 / 2}</a>;
+x = <a>{/w/.test(s)}</a>;
+
+================================================================================
+`;
+
+exports[`regex.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+x = <div>one</div>, <div>two</div>;
+x = <a>{}</a>
+x = <a>{1/2}</a>
+x = <a>{/w/.test(s)}</a>
+
+=====================================output=====================================
+((x = <div>one</div>), (<div>two</div>));
+x = <a>{}</a>;
+x = <a>{1 / 2}</a>;
+x = <a>{/w/.test(s)}</a>;
+
+================================================================================
+`;
+
+exports[`return-statement.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const NonBreakingArrowExpression = () => <div />;
+
+const BreakingArrowExpression = () => <div>
+  <div>
+    bla bla bla
+  </div>
+</div>;
+
+const NonBreakingArrowExpressionWBody = () => {
+  return (
+    <div />
+  );
+};
+
+const BreakingArrowExpressionWBody = () => {
+  return <div>
+    <div>
+      bla bla bla
+    </div>
+  </div>
+};
+
+const NonBreakingFunction = function() {
+  return (
+    <div />
+  );
+};
+
+const BreakingFunction = function() {
+  return <div>
+    <div>
+      bla bla bla
+    </div>
+  </div>
+};
+
+class NonBreakingClass extends React.component {
+  render() {
+    return (
+      <div />
+    );
+  }
+}
+
+class BreakingClass extends React.component {
+  render() {
+    return <div>
+      <div>
+        bla bla bla
+      </div>
+    </div>;
+  }
+}
+
+=====================================output=====================================
+const NonBreakingArrowExpression = () => <div />;
+
+const BreakingArrowExpression = () => (
+  <div>
+    <div>bla bla bla</div>
+  </div>
+);
+
+const NonBreakingArrowExpressionWBody = () => {
+  return <div />;
+};
+
+const BreakingArrowExpressionWBody = () => {
+  return (
+    <div>
+      <div>bla bla bla</div>
+    </div>
+  );
+};
+
+const NonBreakingFunction = function () {
+  return <div />;
+};
+
+const BreakingFunction = function () {
+  return (
+    <div>
+      <div>bla bla bla</div>
+    </div>
+  );
+};
+
+class NonBreakingClass extends React.component {
+  render() {
+    return <div />;
+  }
+}
+
+class BreakingClass extends React.component {
+  render() {
+    return (
+      <div>
+        <div>bla bla bla</div>
+      </div>
+    );
+  }
+}
+
+================================================================================
+`;
+
+exports[`return-statement.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const NonBreakingArrowExpression = () => <div />;
+
+const BreakingArrowExpression = () => <div>
+  <div>
+    bla bla bla
+  </div>
+</div>;
+
+const NonBreakingArrowExpressionWBody = () => {
+  return (
+    <div />
+  );
+};
+
+const BreakingArrowExpressionWBody = () => {
+  return <div>
+    <div>
+      bla bla bla
+    </div>
+  </div>
+};
+
+const NonBreakingFunction = function() {
+  return (
+    <div />
+  );
+};
+
+const BreakingFunction = function() {
+  return <div>
+    <div>
+      bla bla bla
+    </div>
+  </div>
+};
+
+class NonBreakingClass extends React.component {
+  render() {
+    return (
+      <div />
+    );
+  }
+}
+
+class BreakingClass extends React.component {
+  render() {
+    return <div>
+      <div>
+        bla bla bla
+      </div>
+    </div>;
+  }
+}
+
+=====================================output=====================================
+const NonBreakingArrowExpression = () => <div />;
+
+const BreakingArrowExpression = () => (
+  <div>
+    <div>bla bla bla</div>
+  </div>
+);
+
+const NonBreakingArrowExpressionWBody = () => {
+  return <div />;
+};
+
+const BreakingArrowExpressionWBody = () => {
+  return (
+    <div>
+      <div>bla bla bla</div>
+    </div>
+  );
+};
+
+const NonBreakingFunction = function () {
+  return <div />;
+};
+
+const BreakingFunction = function () {
+  return (
+    <div>
+      <div>bla bla bla</div>
+    </div>
+  );
+};
+
+class NonBreakingClass extends React.component {
+  render() {
+    return <div />;
+  }
+}
+
+class BreakingClass extends React.component {
+  render() {
+    return (
+      <div>
+        <div>bla bla bla</div>
+      </div>
+    );
+  }
+}
+
+================================================================================
+`;
+
+exports[`return-statement.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const NonBreakingArrowExpression = () => <div />;
+
+const BreakingArrowExpression = () => <div>
+  <div>
+    bla bla bla
+  </div>
+</div>;
+
+const NonBreakingArrowExpressionWBody = () => {
+  return (
+    <div />
+  );
+};
+
+const BreakingArrowExpressionWBody = () => {
+  return <div>
+    <div>
+      bla bla bla
+    </div>
+  </div>
+};
+
+const NonBreakingFunction = function() {
+  return (
+    <div />
+  );
+};
+
+const BreakingFunction = function() {
+  return <div>
+    <div>
+      bla bla bla
+    </div>
+  </div>
+};
+
+class NonBreakingClass extends React.component {
+  render() {
+    return (
+      <div />
+    );
+  }
+}
+
+class BreakingClass extends React.component {
+  render() {
+    return <div>
+      <div>
+        bla bla bla
+      </div>
+    </div>;
+  }
+}
+
+=====================================output=====================================
+const NonBreakingArrowExpression = () => <div />;
+
+const BreakingArrowExpression = () => (
+  <div>
+    <div>bla bla bla</div>
+  </div>
+);
+
+const NonBreakingArrowExpressionWBody = () => {
+  return <div />;
+};
+
+const BreakingArrowExpressionWBody = () => {
+  return (
+    <div>
+      <div>bla bla bla</div>
+    </div>
+  );
+};
+
+const NonBreakingFunction = function () {
+  return <div />;
+};
+
+const BreakingFunction = function () {
+  return (
+    <div>
+      <div>bla bla bla</div>
+    </div>
+  );
+};
+
+class NonBreakingClass extends React.component {
+  render() {
+    return <div />;
+  }
+}
+
+class BreakingClass extends React.component {
+  render() {
+    return (
+      <div>
+        <div>bla bla bla</div>
+      </div>
+    );
+  }
+}
+
+================================================================================
+`;
+
+exports[`return-statement.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const NonBreakingArrowExpression = () => <div />;
+
+const BreakingArrowExpression = () => <div>
+  <div>
+    bla bla bla
+  </div>
+</div>;
+
+const NonBreakingArrowExpressionWBody = () => {
+  return (
+    <div />
+  );
+};
+
+const BreakingArrowExpressionWBody = () => {
+  return <div>
+    <div>
+      bla bla bla
+    </div>
+  </div>
+};
+
+const NonBreakingFunction = function() {
+  return (
+    <div />
+  );
+};
+
+const BreakingFunction = function() {
+  return <div>
+    <div>
+      bla bla bla
+    </div>
+  </div>
+};
+
+class NonBreakingClass extends React.component {
+  render() {
+    return (
+      <div />
+    );
+  }
+}
+
+class BreakingClass extends React.component {
+  render() {
+    return <div>
+      <div>
+        bla bla bla
+      </div>
+    </div>;
+  }
+}
+
+=====================================output=====================================
+const NonBreakingArrowExpression = () => <div />;
+
+const BreakingArrowExpression = () => (
+  <div>
+    <div>bla bla bla</div>
+  </div>
+);
+
+const NonBreakingArrowExpressionWBody = () => {
+  return <div />;
+};
+
+const BreakingArrowExpressionWBody = () => {
+  return (
+    <div>
+      <div>bla bla bla</div>
+    </div>
+  );
+};
+
+const NonBreakingFunction = function () {
+  return <div />;
+};
+
+const BreakingFunction = function () {
+  return (
+    <div>
+      <div>bla bla bla</div>
+    </div>
+  );
+};
+
+class NonBreakingClass extends React.component {
+  render() {
+    return <div />;
+  }
+}
+
+class BreakingClass extends React.component {
+  render() {
+    return (
+      <div>
+        <div>bla bla bla</div>
+      </div>
+    );
+  }
+}
+
+================================================================================
+`;
+
+exports[`self-closing.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<Foo></Foo>;
+<Bar />;
+
+=====================================output=====================================
+<Foo></Foo>;
+<Bar />;
+
+================================================================================
+`;
+
+exports[`self-closing.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<Foo></Foo>;
+<Bar />;
+
+=====================================output=====================================
+<Foo></Foo>;
+<Bar />;
+
+================================================================================
+`;
+
+exports[`self-closing.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<Foo></Foo>;
+<Bar />;
+
+=====================================output=====================================
+<Foo></Foo>;
+<Bar />;
+
+================================================================================
+`;
+
+exports[`self-closing.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<Foo></Foo>;
+<Bar />;
+
+=====================================output=====================================
+<Foo></Foo>;
+<Bar />;
+
+================================================================================
+`;
+
+exports[`spacing.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const Labels = {
+  label1: (
+    <fbt>
+      Label 1
+    </fbt>
+  ),
+
+  label2: (
+    <fbt>
+      Label 2
+    </fbt>
+  ),
+
+  label3: (
+    <fbt>
+      Label 3
+    </fbt>
+  ),
+};
+
+=====================================output=====================================
+const Labels = {
+  label1: <fbt>Label 1</fbt>,
+
+  label2: <fbt>Label 2</fbt>,
+
+  label3: <fbt>Label 3</fbt>,
+};
+
+================================================================================
+`;
+
+exports[`spacing.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const Labels = {
+  label1: (
+    <fbt>
+      Label 1
+    </fbt>
+  ),
+
+  label2: (
+    <fbt>
+      Label 2
+    </fbt>
+  ),
+
+  label3: (
+    <fbt>
+      Label 3
+    </fbt>
+  ),
+};
+
+=====================================output=====================================
+const Labels = {
+  label1: <fbt>Label 1</fbt>,
+
+  label2: <fbt>Label 2</fbt>,
+
+  label3: <fbt>Label 3</fbt>,
+};
+
+================================================================================
+`;
+
+exports[`spacing.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const Labels = {
+  label1: (
+    <fbt>
+      Label 1
+    </fbt>
+  ),
+
+  label2: (
+    <fbt>
+      Label 2
+    </fbt>
+  ),
+
+  label3: (
+    <fbt>
+      Label 3
+    </fbt>
+  ),
+};
+
+=====================================output=====================================
+const Labels = {
+  label1: <fbt>Label 1</fbt>,
+
+  label2: <fbt>Label 2</fbt>,
+
+  label3: <fbt>Label 3</fbt>,
+};
+
+================================================================================
+`;
+
+exports[`spacing.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const Labels = {
+  label1: (
+    <fbt>
+      Label 1
+    </fbt>
+  ),
+
+  label2: (
+    <fbt>
+      Label 2
+    </fbt>
+  ),
+
+  label3: (
+    <fbt>
+      Label 3
+    </fbt>
+  ),
+};
+
+=====================================output=====================================
+const Labels = {
+  label1: <fbt>Label 1</fbt>,
+
+  label2: <fbt>Label 2</fbt>,
+
+  label3: <fbt>Label 3</fbt>,
+};
+
+================================================================================
+`;
+
+exports[`template-literal-in-attr.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+  <div>
+    <div>
+    <div
+          className="js-structured-feedback js-trigger-feedback-negative-reasons item-feedback-button"
+          data-feedback-tags-url={\`/xhr/negative-feedback-tags/\${this.props.item.id}\`}
+        >foo</div>
+</div>
+</div>
+
+=====================================output=====================================
+<div>
+  <div>
+    <div
+      className="js-structured-feedback js-trigger-feedback-negative-reasons item-feedback-button"
+      data-feedback-tags-url={\`/xhr/negative-feedback-tags/\${this.props.item.id}\`}
+    >
+      foo
+    </div>
+  </div>
+</div>;
+
+================================================================================
+`;
+
+exports[`template-literal-in-attr.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+  <div>
+    <div>
+    <div
+          className="js-structured-feedback js-trigger-feedback-negative-reasons item-feedback-button"
+          data-feedback-tags-url={\`/xhr/negative-feedback-tags/\${this.props.item.id}\`}
+        >foo</div>
+</div>
+</div>
+
+=====================================output=====================================
+<div>
+  <div>
+    <div
+      className='js-structured-feedback js-trigger-feedback-negative-reasons item-feedback-button'
+      data-feedback-tags-url={\`/xhr/negative-feedback-tags/\${this.props.item.id}\`}
+    >
+      foo
+    </div>
+  </div>
+</div>;
+
+================================================================================
+`;
+
+exports[`template-literal-in-attr.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+  <div>
+    <div>
+    <div
+          className="js-structured-feedback js-trigger-feedback-negative-reasons item-feedback-button"
+          data-feedback-tags-url={\`/xhr/negative-feedback-tags/\${this.props.item.id}\`}
+        >foo</div>
+</div>
+</div>
+
+=====================================output=====================================
+<div>
+  <div>
+    <div
+      className="js-structured-feedback js-trigger-feedback-negative-reasons item-feedback-button"
+      data-feedback-tags-url={\`/xhr/negative-feedback-tags/\${this.props.item.id}\`}
+    >
+      foo
+    </div>
+  </div>
+</div>;
+
+================================================================================
+`;
+
+exports[`template-literal-in-attr.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+  <div>
+    <div>
+    <div
+          className="js-structured-feedback js-trigger-feedback-negative-reasons item-feedback-button"
+          data-feedback-tags-url={\`/xhr/negative-feedback-tags/\${this.props.item.id}\`}
+        >foo</div>
+</div>
+</div>
+
+=====================================output=====================================
+<div>
+  <div>
+    <div
+      className='js-structured-feedback js-trigger-feedback-negative-reasons item-feedback-button'
+      data-feedback-tags-url={\`/xhr/negative-feedback-tags/\${this.props.item.id}\`}
+    >
+      foo
+    </div>
+  </div>
+</div>;
+
+================================================================================
+`;
+
+exports[`ternary.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a == 3 ? (a = <h1>123</h1>) : (a = <h1>abc</h1>);
+
+=====================================output=====================================
+a == 3 ? (a = <h1>123</h1>) : (a = <h1>abc</h1>);
+
+================================================================================
+`;
+
+exports[`ternary.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a == 3 ? (a = <h1>123</h1>) : (a = <h1>abc</h1>);
+
+=====================================output=====================================
+a == 3 ? (a = <h1>123</h1>) : (a = <h1>abc</h1>);
+
+================================================================================
+`;
+
+exports[`ternary.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a == 3 ? (a = <h1>123</h1>) : (a = <h1>abc</h1>);
+
+=====================================output=====================================
+a == 3 ? (a = <h1>123</h1>) : (a = <h1>abc</h1>);
+
+================================================================================
+`;
+
+exports[`ternary.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "babel", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a == 3 ? (a = <h1>123</h1>) : (a = <h1>abc</h1>);
+
+=====================================output=====================================
+a == 3 ? (a = <h1>123</h1>) : (a = <h1>abc</h1>);
+
+================================================================================
+`;

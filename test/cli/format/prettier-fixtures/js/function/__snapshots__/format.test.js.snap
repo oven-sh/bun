@@ -1,0 +1,408 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`dangling-comments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+arrow = (// 101
+) => {}
+arrow = (
+// 102
+) => {}
+fn = function a(// 103
+) {}
+fn = function a(
+// 104
+) {}
+c = class {
+  constructor(// 105
+  ){}
+  method(// 106
+  ) {}
+  method2(
+// 107
+  ) {}
+  get getter(// 108
+) {
+  }
+  get getter2(
+// 109
+) {
+  }
+  property = function a(// 110
+) {}
+  property2 = function a(
+// 111
+) {}
+}
+c = class {
+  constructor(
+// 112
+  ){}
+}
+object = {
+  method(// 113
+  ) {},
+  method2(
+// 114
+  ) {},
+  property: function a(// 115
+) {},
+  property2: function a(
+// 116
+) {},
+}
+
+arrow = (/* 201 */
+) => {}
+arrow = (
+/* 202 */
+) => {}
+arrow = (
+/* 203 */) => {}
+fn = function a(/* 204 */
+) {}
+fn = function a(
+/* 205 */
+) {}
+fn = function a(
+/* 206 */) {}
+c = class {
+  constructor(/* 207 */
+  ){}
+  method(/* 208 */
+  ) {}
+  method2(
+/* 209 */
+  ) {}
+  method3(
+/* 210 */) {}
+  get getter(/* 211 */
+) {
+  }
+  get getter2(
+/* 212 */
+) {
+  }
+  get getter3(
+/* 213 */) {
+  }
+  property = function a(/* 214 */
+) {}
+  property2 = function a(
+/* 215 */
+) {}
+  property3 = function a(
+/* 216 */) {}
+}
+c = class {
+  constructor(
+/* 217 */
+  ){}
+}
+c = class {
+  constructor(
+/* 218 */){}
+}
+object = {
+  method(/* 219 */
+  ) {},
+  method2(
+/* 220 */
+  ) {},
+  method3(
+/* 221 */) {},
+  property: function a(/* 222 */
+) {},
+  property2: function a(
+/* 223 */
+) {},
+  property2: function a(
+/* 224 */) {},
+}
+
+
+=====================================output=====================================
+arrow = (
+  // 101
+) => {};
+arrow = (
+  // 102
+) => {};
+fn = function a(
+  // 103
+) {};
+fn = function a(
+  // 104
+) {};
+c = class {
+  constructor(
+    // 105
+  ) {}
+  method(
+    // 106
+  ) {}
+  method2(
+    // 107
+  ) {}
+  get getter(
+    // 108
+  ) {}
+  get getter2(
+    // 109
+  ) {}
+  property = function a(
+    // 110
+  ) {};
+  property2 = function a(
+    // 111
+  ) {};
+};
+c = class {
+  constructor(
+    // 112
+  ) {}
+};
+object = {
+  method(
+    // 113
+  ) {},
+  method2(
+    // 114
+  ) {},
+  property: function a(
+    // 115
+  ) {},
+  property2: function a(
+    // 116
+  ) {},
+};
+
+arrow = (/* 201 */) => {};
+arrow = (/* 202 */) => {};
+arrow = (/* 203 */) => {};
+fn = function a(/* 204 */) {};
+fn = function a(/* 205 */) {};
+fn = function a(/* 206 */) {};
+c = class {
+  constructor(/* 207 */) {}
+  method(/* 208 */) {}
+  method2(/* 209 */) {}
+  method3(/* 210 */) {}
+  get getter(/* 211 */) {}
+  get getter2(/* 212 */) {}
+  get getter3(/* 213 */) {}
+  property = function a(/* 214 */) {};
+  property2 = function a(/* 215 */) {};
+  property3 = function a(/* 216 */) {};
+};
+c = class {
+  constructor(/* 217 */) {}
+};
+c = class {
+  constructor(/* 218 */) {}
+};
+object = {
+  method(/* 219 */) {},
+  method2(/* 220 */) {},
+  method3(/* 221 */) {},
+  property: function a(/* 222 */) {},
+  property2: function a(/* 223 */) {},
+  property2: function a(/* 224 */) {},
+};
+
+================================================================================
+`;
+
+exports[`function_expression.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(function() {}).length
+typeof (function() {});
+export default (function() {})();
+(function() {})()\`\`;
+(function() {})\`\`;
+new (function() {});
+(function() {});
+a = function f() {} || b;
+(function() {} && a);
+a + function() {};
+new function() {};
+
+=====================================output=====================================
+(function () {}).length;
+typeof function () {};
+export default (function () {})();
+(function () {})()\`\`;
+(function () {})\`\`;
+new (function () {})();
+(function () {});
+a = function f() {} || b;
+(function () {}) && a;
+a + function () {};
+new (function () {})();
+
+================================================================================
+`;
+
+exports[`iife.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+[
+  (// leading 1
+  function () {})(),
+  (// leading 2
+  function () {})?.(),
+  (/*block 1*/
+  function () {})(),
+  (function () {}
+  // trialing 1
+  )(),
+  (function () {}
+  // block 2
+  )(),
+  (// prettier-ignore
+  function () {      })(),
+  (function () {}/* trialing 2 */)(),
+  (// tagged
+  function () {      })\`\`,
+  (// prettier-ignore
+  function () {      })\`\`,
+
+
+  (// leading 1
+  () => {})(),
+  (// leading 2
+  () => {})?.(),
+  (/*block 1*/
+  () => {})(),
+  (() => {}
+  // trialing 1
+  )(),
+  (// tagged
+  () => {})\`\`,
+  (// prettier-ignore
+  () => {      })\`\`,
+
+  ((/*dangling 1*/) =>{})(),
+  ( () => {}/* trialing 2 */)(),
+
+  (/* not a comment for function */function() {}()),
+]
+
+=====================================output=====================================
+[
+  (
+    // leading 1
+    function () {}
+  )(),
+  (
+    // leading 2
+    function () {}
+  )?.(),
+  (/*block 1*/ function () {})(),
+  (
+    function () {}
+    // trialing 1
+  )(),
+  (
+    function () {}
+    // block 2
+  )(),
+  (
+    // prettier-ignore
+    function () {      }
+  )(),
+  (function () {} /* trialing 2 */)(),
+  (
+    // tagged
+    function () {}
+  )\`\`,
+  (
+    // prettier-ignore
+    function () {      }
+  )\`\`,
+
+  (
+    // leading 1
+    () => {}
+  )(),
+  (
+    // leading 2
+    () => {}
+  )?.(),
+  (/*block 1*/ () => {})(),
+  (
+    () => {}
+    // trialing 1
+  )(),
+  (
+    // tagged
+    () => {}
+  )\`\`,
+  (
+    // prettier-ignore
+    () => {      }
+  )\`\`,
+
+  ((/*dangling 1*/) => {})(),
+  (() => {} /* trialing 2 */)(),
+
+  /* not a comment for function */ (function () {})(),
+];
+
+================================================================================
+`;
+
+exports[`issue-10277.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(fold => fold)(fmap => algebra => function doFold(v) {return algebra(fmap(doFold)(v))})
+
+=====================================output=====================================
+((fold) => fold)(
+  (fmap) => (algebra) =>
+    function doFold(v) {
+      return algebra(fmap(doFold)(v));
+    },
+);
+
+================================================================================
+`;
+
+exports[`issue-12967.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = (
+/**
+ * @param {number} a
+ * @param {number} b
+ */
+(a, b) => { // <-- in editor hints apply the types to a and b
+  console.log(a + b);
+}
+)()
+
+=====================================output=====================================
+a = (
+  /**
+   * @param {number} a
+   * @param {number} b
+   */
+  (a, b) => {
+    // <-- in editor hints apply the types to a and b
+    console.log(a + b);
+  }
+)();
+
+================================================================================
+`;

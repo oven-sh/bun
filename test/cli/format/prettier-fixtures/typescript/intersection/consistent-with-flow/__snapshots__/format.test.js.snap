@@ -1,0 +1,231 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`comment.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A1 = /* 4 */ (
+  & A
+  & B
+)[]
+
+=====================================output=====================================
+type A1 = /* 4 */ (A & B)[];
+
+================================================================================
+`;
+
+exports[`intersection-parens.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A = (number | string) & boolean;
+type B = ((number | string)) & boolean;
+type C = (((number | string))) & boolean;
+type D = ((((number | string)))) & boolean;
+
+let b1 : C;
+let b2 : & C;
+let b3 : (& C);
+let b4 : & (C);
+let b5 : (& (C));
+let b6 : /*1*/ & C;
+let b7 : /*1*/ & (C);
+let b8 : /*1*/ (& C);
+let b9 : (/*1*/ & C);
+let b10: /*1*/ & /*2*/ C;
+let b11: /*1*/ (& /*2*/ C);
+
+let bb1: /*1*/ & /*2*/ C & D;
+let bb2: /*1*/ & /*2*/ C & /*3*/ D;
+let bb3: /*1*/ & /*2*/ C & /*3*/ D /*5*/;
+
+type B2  = & C;
+type B3  = (& C);
+type B4  = & (C);
+type B5  = (& (C));
+type B6  = /*1*/ & C;
+type B7  = /*1*/ & (C);
+type B8  = /*1*/ (& C);
+type B9  = (/*1*/ & C);
+type B10 = /*1*/ & /*2*/ C;
+type B11 = /*1*/ (& /*2*/ C);
+type B12 = /*1*/ & ( (C));
+
+type Bb1 = /*1*/ & /*2*/ C & D;
+type Bb2 = /*1*/ & /*2*/ C & /*3*/ D;
+type Bb3 = /*1*/ & /*2*/ C & /*3*/ D /*4*/;
+
+type D1 = /*1*/ | a & b;
+type D2 = /*1*/ | a & (b);
+type D3 = /*1*/ | a & (| b);
+type D4 = /*1*/ | (a & b);
+type D5 = /*1*/ (| a & b);
+type D6 /*0*/ = /*1*/ (| a & b);
+
+=====================================output=====================================
+type A = (number | string) & boolean;
+type B = (number | string) & boolean;
+type C = (number | string) & boolean;
+type D = (number | string) & boolean;
+
+let b1: C;
+let b2: C;
+let b3: C;
+let b4: C;
+let b5: C;
+let b6: /*1*/ C;
+let b7: /*1*/ C;
+let b8: /*1*/ C;
+let b9: /*1*/ C;
+let b10: /*1*/ /*2*/ C;
+let b11: /*1*/ /*2*/ C;
+
+let bb1: /*1*/ /*2*/ C & D;
+let bb2: /*1*/ /*2*/ C & /*3*/ D;
+let bb3: /*1*/ /*2*/ C & /*3*/ D; /*5*/
+
+type B2 = C;
+type B3 = C;
+type B4 = C;
+type B5 = C;
+type B6 = /*1*/ C;
+type B7 = /*1*/ C;
+type B8 = /*1*/ C;
+type B9 = /*1*/ C;
+type B10 = /*1*/ /*2*/ C;
+type B11 = /*1*/ /*2*/ C;
+type B12 = /*1*/ C;
+
+type Bb1 = /*1*/ /*2*/ C & D;
+type Bb2 = /*1*/ /*2*/ C & /*3*/ D;
+type Bb3 = /*1*/ /*2*/ C & /*3*/ D /*4*/;
+
+type D1 = /*1*/ a & b;
+type D2 = /*1*/ a & b;
+type D3 = /*1*/ a & b;
+type D4 = /*1*/ a & b;
+type D5 = /*1*/ a & b;
+type D6 /*0*/ = /*1*/ a & b;
+
+================================================================================
+`;
+
+exports[`single-member.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/oxc-project/oxc/pull/21915
+
+export type aType = & // Comment
+"VALUE";
+
+export type bType = &
+// Comment
+"VALUE";
+
+export type cType = & /* Comment */
+"VALUE";
+
+export type dType = /* Comment */
+& "VALUE";
+
+export type eType = // Comment
+& "VALUE";
+
+export type fType = &
+/* Comment */
+"VALUE";
+
+export type gType = &
+// Comment
+// Comment
+"VALUE";
+
+export type hType = &
+"VALUE";
+
+export type iType = /* Comment */ /* Comment */ & "VALUE";
+
+export type jType = /* Comment */
+/* Comment */ & "VALUE";
+
+export type kType = /* Comment */
+&
+// Comment
+"VALUE";
+
+export type lType = /* Comment */ &
+// Comment
+"VALUE";
+
+export type mType = & "VALUE" /* Comment */;
+
+export type nType = // Comment
+& /* Comment */
+"VALUE";
+
+type oType = // Comment
+& // Comment
+"VALUE"
+
+=====================================output=====================================
+// https://github.com/oxc-project/oxc/pull/21915
+
+export type aType =
+  // Comment
+  "VALUE";
+
+export type bType =
+  // Comment
+  "VALUE";
+
+export type cType = /* Comment */ "VALUE";
+
+export type dType = /* Comment */ "VALUE";
+
+export type eType =
+  // Comment
+  "VALUE";
+
+export type fType =
+  /* Comment */
+  "VALUE";
+
+export type gType =
+  // Comment
+  // Comment
+  "VALUE";
+
+export type hType = "VALUE";
+
+export type iType = /* Comment */ /* Comment */ "VALUE";
+
+export type jType = /* Comment */ /* Comment */ "VALUE";
+
+export type kType =
+  /* Comment */
+  // Comment
+  "VALUE";
+
+export type lType =
+  /* Comment */ // Comment
+  "VALUE";
+
+export type mType = "VALUE"; /* Comment */
+
+export type nType =
+  // Comment
+  /* Comment */
+  "VALUE";
+
+type oType =
+  // Comment
+  // Comment
+  "VALUE";
+
+================================================================================
+`;

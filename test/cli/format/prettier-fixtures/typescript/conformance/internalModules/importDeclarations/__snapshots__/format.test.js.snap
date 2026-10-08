@@ -1,0 +1,450 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`circularImportAlias.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// expected no error
+
+module B {
+    export import a = A;
+    export class D extends a.C {
+        id: number;
+    }
+}
+
+module A {
+    export class C { name: string }
+    export import b = B;
+}
+
+var c: { name: string };
+var c = new B.a.C();
+
+
+
+=====================================output=====================================
+// expected no error
+
+module B {
+  export import a = A;
+  export class D extends a.C {
+    id: number;
+  }
+}
+
+module A {
+  export class C {
+    name: string;
+  }
+  export import b = B;
+}
+
+var c: { name: string };
+var c = new B.a.C();
+
+================================================================================
+`;
+
+exports[`exportImportAlias.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// expect no errors here
+
+module A {
+
+    export var x = 'hello world'
+    export class Point {
+        constructor(public x: number, public y: number) { }
+    }
+    export module B {
+        export interface Id {
+            name: string;
+        }
+    }
+}
+
+module C {
+    export import a = A;
+}
+
+var a: string = C.a.x;
+var b: { x: number; y: number; } = new C.a.Point(0, 0);
+var c: { name: string };
+var c: C.a.B.Id;
+
+module X {
+    export function Y() {
+        return 42;
+    }
+
+    export module Y {
+        export class Point {
+            constructor(public x: number, public y: number) { }
+        }
+    }
+}
+
+module Z {
+
+    // 'y' should be a fundule here
+    export import y = X.Y;
+}
+
+var m: number = Z.y();
+var n: { x: number; y: number; } = new Z.y.Point(0, 0);
+
+module K {
+    export class L {
+        constructor(public name: string) { }
+    }
+
+    export module L {
+        export var y = 12;
+        export interface Point {
+            x: number;
+            y: number;
+        }
+    }
+}
+
+module M {
+    export import D = K.L;
+}
+
+var o: { name: string };
+var o = new M.D('Hello');
+
+var p: { x: number; y: number; }
+var p: M.D.Point;
+=====================================output=====================================
+// expect no errors here
+
+module A {
+  export var x = "hello world";
+  export class Point {
+    constructor(
+      public x: number,
+      public y: number,
+    ) {}
+  }
+  export module B {
+    export interface Id {
+      name: string;
+    }
+  }
+}
+
+module C {
+  export import a = A;
+}
+
+var a: string = C.a.x;
+var b: { x: number; y: number } = new C.a.Point(0, 0);
+var c: { name: string };
+var c: C.a.B.Id;
+
+module X {
+  export function Y() {
+    return 42;
+  }
+
+  export module Y {
+    export class Point {
+      constructor(
+        public x: number,
+        public y: number,
+      ) {}
+    }
+  }
+}
+
+module Z {
+  // 'y' should be a fundule here
+  export import y = X.Y;
+}
+
+var m: number = Z.y();
+var n: { x: number; y: number } = new Z.y.Point(0, 0);
+
+module K {
+  export class L {
+    constructor(public name: string) {}
+  }
+
+  export module L {
+    export var y = 12;
+    export interface Point {
+      x: number;
+      y: number;
+    }
+  }
+}
+
+module M {
+  export import D = K.L;
+}
+
+var o: { name: string };
+var o = new M.D("Hello");
+
+var p: { x: number; y: number };
+var p: M.D.Point;
+
+================================================================================
+`;
+
+exports[`exportInterface.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export interface I {}
+=====================================output=====================================
+export interface I {}
+
+================================================================================
+`;
+
+exports[`importAliasIdentifiers.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+module moduleA {
+    export class Point {
+        constructor(public x: number, public y: number) { }
+    }
+}
+
+import alias = moduleA;
+
+var p: alias.Point;
+var p: moduleA.Point;
+var p: { x: number; y: number; };
+
+class clodule {
+    name: string;
+}
+
+module clodule {
+    export interface Point {
+        x: number; y: number;
+    }
+    var Point: Point = { x: 0, y: 0 };
+}
+
+import clolias = clodule;
+
+var p: clolias.Point;
+var p: clodule.Point;
+var p: { x: number; y: number; };
+
+
+function fundule() {
+    return { x: 0, y: 0 };
+}
+
+module fundule {
+    export interface Point {
+        x: number; y: number;
+    }
+    var Point: Point = { x: 0, y: 0 };
+}
+
+import funlias = fundule;
+
+var p: funlias.Point;
+var p: fundule.Point;
+var p: { x: number; y: number; };
+=====================================output=====================================
+module moduleA {
+  export class Point {
+    constructor(
+      public x: number,
+      public y: number,
+    ) {}
+  }
+}
+
+import alias = moduleA;
+
+var p: alias.Point;
+var p: moduleA.Point;
+var p: { x: number; y: number };
+
+class clodule {
+  name: string;
+}
+
+module clodule {
+  export interface Point {
+    x: number;
+    y: number;
+  }
+  var Point: Point = { x: 0, y: 0 };
+}
+
+import clolias = clodule;
+
+var p: clolias.Point;
+var p: clodule.Point;
+var p: { x: number; y: number };
+
+function fundule() {
+  return { x: 0, y: 0 };
+}
+
+module fundule {
+  export interface Point {
+    x: number;
+    y: number;
+  }
+  var Point: Point = { x: 0, y: 0 };
+}
+
+import funlias = fundule;
+
+var p: funlias.Point;
+var p: fundule.Point;
+var p: { x: number; y: number };
+
+================================================================================
+`;
+
+exports[`invalidImportAliasIdentifiers.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// none of these should work, since non are actually modules
+
+var V = 12;
+
+import v = V;
+
+class C {
+    name: string;
+}
+
+import c = C;
+
+enum E {
+    Red, Blue
+}
+
+import e = E;
+
+interface I {
+    id: number;
+}
+
+import i = I;
+
+=====================================output=====================================
+// none of these should work, since non are actually modules
+
+var V = 12;
+
+import v = V;
+
+class C {
+  name: string;
+}
+
+import c = C;
+
+enum E {
+  Red,
+  Blue,
+}
+
+import e = E;
+
+interface I {
+  id: number;
+}
+
+import i = I;
+
+================================================================================
+`;
+
+exports[`shadowedInternalModule.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// all errors imported modules conflict with local variables
+
+module A {
+    export var Point = { x: 0, y: 0 }
+    export interface Point {
+        x: number;
+        y: number;
+    }
+} 
+
+module B {
+    var A = { x: 0, y: 0 };
+    import Point = A;
+}
+
+module X {
+    export module Y {
+        export interface Point{
+            x: number;
+            y: number
+        }
+    }
+
+    export class Y {
+        name: string;
+    }
+}
+
+module Z {
+    import Y = X.Y;
+
+    var Y = 12;
+}
+=====================================output=====================================
+// all errors imported modules conflict with local variables
+
+module A {
+  export var Point = { x: 0, y: 0 };
+  export interface Point {
+    x: number;
+    y: number;
+  }
+}
+
+module B {
+  var A = { x: 0, y: 0 };
+  import Point = A;
+}
+
+module X {
+  export module Y {
+    export interface Point {
+      x: number;
+      y: number;
+    }
+  }
+
+  export class Y {
+    name: string;
+  }
+}
+
+module Z {
+  import Y = X.Y;
+
+  var Y = 12;
+}
+
+================================================================================
+`;

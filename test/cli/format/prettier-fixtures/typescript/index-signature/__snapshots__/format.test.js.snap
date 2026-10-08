@@ -1,0 +1,37 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`index-signature.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class LocalStorage implements Storage {
+  [index: number]: string;
+  [key: string]: any;
+}
+
+=====================================output=====================================
+class LocalStorage implements Storage {
+  [index: number]: string;
+  [key: string]: any;
+}
+
+================================================================================
+`;
+
+exports[`static.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Foo {
+  static [value: string]: Type;
+}
+
+=====================================output=====================================
+class Foo {
+  static [value: string]: Type;
+}
+
+================================================================================
+`;

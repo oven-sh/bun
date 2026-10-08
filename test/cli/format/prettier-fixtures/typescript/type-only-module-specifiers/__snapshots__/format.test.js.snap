@@ -1,0 +1,30 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`basic.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import { type A } from "foo";
+import { type B, C } from "foo";
+import { type D, type E } from "foo";
+import { type E as F } from "foo";
+
+export { type A } from "foo";
+export { type B, C } from "foo";
+export { type D, type E } from "foo";
+export { type E as F } from "foo";
+
+=====================================output=====================================
+import { type A } from "foo";
+import { type B, C } from "foo";
+import { type D, type E } from "foo";
+import { type E as F } from "foo";
+
+export { type A } from "foo";
+export { type B, C } from "foo";
+export { type D, type E } from "foo";
+export { type E as F } from "foo";
+
+================================================================================
+`;

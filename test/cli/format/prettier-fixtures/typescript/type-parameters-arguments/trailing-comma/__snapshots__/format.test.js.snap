@@ -1,0 +1,58 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`type-paramters.ts - {"trailingComma":"all"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+trailingComma: "all"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type FooThisNameIsVeryLongSoThatItBreaksToTheNextLine = Something<FirstParam, SecondParam>;
+type ShortName = Something<FirstParam, SecondParam>;
+
+=====================================output=====================================
+type FooThisNameIsVeryLongSoThatItBreaksToTheNextLine = Something<
+  FirstParam,
+  SecondParam
+>;
+type ShortName = Something<FirstParam, SecondParam>;
+
+================================================================================
+`;
+
+exports[`type-paramters.ts - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type FooThisNameIsVeryLongSoThatItBreaksToTheNextLine = Something<FirstParam, SecondParam>;
+type ShortName = Something<FirstParam, SecondParam>;
+
+=====================================output=====================================
+type FooThisNameIsVeryLongSoThatItBreaksToTheNextLine = Something<
+  FirstParam,
+  SecondParam
+>;
+type ShortName = Something<FirstParam, SecondParam>;
+
+================================================================================
+`;
+
+exports[`type-paramters.ts - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type FooThisNameIsVeryLongSoThatItBreaksToTheNextLine = Something<FirstParam, SecondParam>;
+type ShortName = Something<FirstParam, SecondParam>;
+
+=====================================output=====================================
+type FooThisNameIsVeryLongSoThatItBreaksToTheNextLine = Something<
+  FirstParam,
+  SecondParam
+>;
+type ShortName = Something<FirstParam, SecondParam>;
+
+================================================================================
+`;

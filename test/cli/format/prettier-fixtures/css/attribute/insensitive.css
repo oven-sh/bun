@@ -1,0 +1,10 @@
+input[type="radio" i] {}
+img[alt~="person" i][src*="lorem" i] {}
+section:has(:not([type="radio" i], [type="checkbox" i])) {}
+
+input[type="radio" I] {}
+img[alt~="person" I][src*="lorem" I] {}
+section:has(:not([type="radio" I], [type="checkbox" I])) {}
+
+[type=a   I] {}
+[type="a"   I] {}

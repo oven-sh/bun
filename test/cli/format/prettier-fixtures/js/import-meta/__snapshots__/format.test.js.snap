@@ -1,0 +1,22 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`import_meta.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const x = import.meta;
+const url = import.meta.url;
+import.meta;
+import.meta.url;
+import.meta.couldBeMutable = true;
+
+=====================================output=====================================
+const x = import.meta;
+const url = import.meta.url;
+import.meta;
+import.meta.url;
+import.meta.couldBeMutable = true;
+
+================================================================================
+`;

@@ -1,0 +1,47 @@
+@value 4XLarge 28/36px;
+
+.postCssLowerCasingValueName {
+  font: 4XLarge Helvetica;
+}
+
+.cssUnits {
+  a: 5EM;
+  a: 5REM;
+  a: 5EX;
+  a: 5REX;
+  a: 5CAP;
+  a: 5RCAP;
+  a: 5CH;
+  a: 5RCH;
+  a: 5IC;
+  a: 5RIC;
+  a: 5LH;
+  a: 5RLH;
+  a: 5VH;
+  a: 5VW;
+  a: 5VI;
+  a: 5VB;
+  a: 5VMIN;
+  a: 5VMAX;
+  a: 5CM;
+  a: 5MM;
+  a: 5q;
+  a: 5IN;
+  a: 5PT;
+  a: 5PC;
+  a: 5PX;
+  a: 5DEG;
+  a: 5GRAD;
+  a: 5RAD;
+  a: 5S;
+  a: 5MS;
+  a: 5hZ;
+  a: 5KhZ;
+  a: 5DPI;
+  a: 5DPCM;
+  a: 5DPPX;
+  a: 5X;
+
+  a: 5PROTOTYPE;
+  a: 5constructoR;
+}

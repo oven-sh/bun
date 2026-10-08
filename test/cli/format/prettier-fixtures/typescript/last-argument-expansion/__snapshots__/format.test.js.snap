@@ -1,0 +1,261 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`break.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export default class AddAssetHtmlPlugin {
+  apply(compiler: WebpackCompilerType) {
+    compiler.plugin('compilation', (compilation: WebpackCompilationType) => {
+      compilation.plugin('html-webpack-plugin-before-html', (callback: Callback<any>) => {
+        addAllAssetsToCompilation(this.assets, compilation, htmlPluginData, callback);
+      });
+    });
+  }
+}
+
+=====================================output=====================================
+export default class AddAssetHtmlPlugin {
+  apply(compiler: WebpackCompilerType) {
+    compiler.plugin("compilation", (compilation: WebpackCompilationType) => {
+      compilation.plugin(
+        "html-webpack-plugin-before-html",
+        (callback: Callback<any>) => {
+          addAllAssetsToCompilation(
+            this.assets,
+            compilation,
+            htmlPluginData,
+            callback,
+          );
+        },
+      );
+    });
+  }
+}
+
+================================================================================
+`;
+
+exports[`decorated-function.tsx format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const Counter = decorator("my-counter")(
+  (props: { initialCount?: number; label?: string }) => {
+    const p = useDefault(props, {
+      initialCount: 0,
+      label: "Counter",
+    });
+
+    const [s, set] = useState({ count: p.initialCount });
+    const onClick = () => set("count", (it) => it + 1);
+
+    return () => (
+      <button onclick={onClick}>
+        {p.label}: {s.count}
+      </button>
+    );
+  }
+);
+
+const Counter2 = decorators.decorator("my-counter")(
+  (props: { initialCount?: number; label?: string }) => {
+    return () => (
+      <button onclick={onClick}>
+        {p.label}: {s.count}
+      </button>
+    );
+  }
+);
+
+export default decorators.decorator("my-counter")(
+  (props: { initialCount?: number; label?: string }) => {
+    return foo;
+  }
+);
+
+export = decorators.decorator("my-counter")(
+  (props: { initialCount?: number; label?: string }) => {
+    return foo;
+  }
+);
+
+module.exports = decorators.decorator("my-counter")(
+  (props: { initialCount?: number; label?: string }) => {
+    return foo;
+  }
+);
+
+const Counter =
+  decorator("foo")(
+  decorator("bar")(
+  (props: {
+    loremFoo1: Array<Promise<any>>,
+    ipsumBarr2: Promise<number>,
+  }) => {
+    return <div/>;
+  }));
+
+=====================================output=====================================
+const Counter = decorator("my-counter")((props: {
+  initialCount?: number;
+  label?: string;
+}) => {
+  const p = useDefault(props, {
+    initialCount: 0,
+    label: "Counter",
+  });
+
+  const [s, set] = useState({ count: p.initialCount });
+  const onClick = () => set("count", (it) => it + 1);
+
+  return () => (
+    <button onclick={onClick}>
+      {p.label}: {s.count}
+    </button>
+  );
+});
+
+const Counter2 = decorators.decorator("my-counter")((props: {
+  initialCount?: number;
+  label?: string;
+}) => {
+  return () => (
+    <button onclick={onClick}>
+      {p.label}: {s.count}
+    </button>
+  );
+});
+
+export default decorators.decorator("my-counter")((props: {
+  initialCount?: number;
+  label?: string;
+}) => {
+  return foo;
+});
+
+export = decorators.decorator("my-counter")((props: {
+  initialCount?: number;
+  label?: string;
+}) => {
+  return foo;
+});
+
+module.exports = decorators.decorator("my-counter")((props: {
+  initialCount?: number;
+  label?: string;
+}) => {
+  return foo;
+});
+
+const Counter = decorator("foo")(
+  decorator("bar")(
+    (props: {
+      loremFoo1: Array<Promise<any>>;
+      ipsumBarr2: Promise<number>;
+    }) => {
+      return <div />;
+    },
+  ),
+);
+
+================================================================================
+`;
+
+exports[`edge_case.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var listener = DOM.listen(
+  introCard,
+  'click',
+  sigil,
+  (event: JavelinEvent): void =>
+    BanzaiLogger.log(
+      config,
+      {...logData, ...DataStore.get(event.getNode(sigil))},
+    ),
+);
+
+=====================================output=====================================
+var listener = DOM.listen(
+  introCard,
+  "click",
+  sigil,
+  (event: JavelinEvent): void =>
+    BanzaiLogger.log(config, {
+      ...logData,
+      ...DataStore.get(event.getNode(sigil)),
+    }),
+);
+
+================================================================================
+`;
+
+exports[`forward-ref.tsx format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export const Link = forwardRef<HTMLAnchorElement, LinkProps>(
+  function Link(props, ref) {
+    return <ThemeUILink ref={ref} variant="default" {...props} />;
+  }
+);
+
+export const LinkWithLongName = forwardRef<HTMLAnchorElement, LinkProps>(
+  function Link(props, ref) {
+    return <ThemeUILink ref={ref} variant="default" {...props} />;
+  }
+);
+
+export const Arrow = forwardRef<HTMLAnchorElement, LinkProps>((props, ref) => {
+  return <ThemeUILink ref={ref} variant="default" {...props} />;
+});
+
+export const ArrowWithLongName = forwardRef<HTMLAnchorElement, LinkProps>(
+  (props, ref) => {
+    return <ThemeUILink ref={ref} variant="default" {...props} />;
+  }
+);
+
+const Link = React.forwardRef<HTMLAnchorElement, LinkProps>(
+  function Link(props, ref) {
+    return <ThemeUILink ref={ref} variant="default" {...props} />;
+  },
+);
+
+=====================================output=====================================
+export const Link = forwardRef<HTMLAnchorElement, LinkProps>(
+  function Link(props, ref) {
+    return <ThemeUILink ref={ref} variant="default" {...props} />;
+  },
+);
+
+export const LinkWithLongName = forwardRef<HTMLAnchorElement, LinkProps>(
+  function Link(props, ref) {
+    return <ThemeUILink ref={ref} variant="default" {...props} />;
+  },
+);
+
+export const Arrow = forwardRef<HTMLAnchorElement, LinkProps>((props, ref) => {
+  return <ThemeUILink ref={ref} variant="default" {...props} />;
+});
+
+export const ArrowWithLongName = forwardRef<HTMLAnchorElement, LinkProps>(
+  (props, ref) => {
+    return <ThemeUILink ref={ref} variant="default" {...props} />;
+  },
+);
+
+const Link = React.forwardRef<HTMLAnchorElement, LinkProps>(
+  function Link(props, ref) {
+    return <ThemeUILink ref={ref} variant="default" {...props} />;
+  },
+);
+
+================================================================================
+`;

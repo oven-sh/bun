@@ -1,0 +1,393 @@
+@supports (transform-origin: 5% 5%) {}
+@supports (transform-origin:5% 5%) {}
+@supports ( transform-origin : 5% 5% ) {}
+@supports (  transform-origin  :  5%  5%  ) {}
+@supports
+    (transform-origin: 5% 5%) {}
+@supports
+(transform-origin: 5% 5%) {}
+@supports
+(
+transform-origin
+:
+5%
+5%
+) {}
+@supports
+
+(
+
+transform-origin
+
+:
+
+5%
+
+5%
+
+)
+
+{}
+@supports (very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-prop: very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-value) {}
+@supports
+  (very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-prop: very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-value) {}
+@supports
+(
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-prop
+:
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-value
+) {}
+@supports
+
+(
+
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-prop
+
+:
+
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-value
+
+)
+
+{}
+@supports not(transform-origin: 10em 10em 10em) {}
+@supports not (transform-origin: 10em 10em 10em) {}
+@supports  not  ( transform-origin : 10em 10em 10em ) {}
+@supports   not   (  transform-origin  :  10em  10em  10em  ) {}
+@supports not
+  (transform-origin: 10em 10em 10em) {}
+@supports
+    not (transform-origin: 10em 10em 10em) {}
+@supports
+  not
+  (transform-origin: 10em 10em 10em) {}
+@supports
+not
+(
+transform-origin
+:
+10em
+10em
+10em
+) {}
+@supports
+
+not
+
+(
+
+transform-origin
+
+:
+
+10em
+
+10em
+
+10em
+
+)
+
+{}
+@supports not (very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-prop: very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-value) {}
+@supports
+  not (very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-prop: very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-value) {}
+@supports not
+  (very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-prop: very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-value) {}
+@supports
+not
+(
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-prop
+:
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-value
+) {}
+@supports
+
+not
+
+(
+
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-prop
+
+:
+
+very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-value
+
+)
+
+{}
+@supports not (not (transform-origin: 2px)) {}
+@supports not(not(transform-origin:2px)) {}
+@supports not ( not ( transform-origin : 2px ) ) {}
+@supports  not  (  not  (  transform-origin  :  2px  )  ) {}
+@supports not
+  (not (transform-origin: 2px)) {}
+@supports not
+  (
+    not (transform-origin: 2px)
+  ) {}
+@supports
+not
+(
+not
+(
+transform-origin
+:
+2px
+)
+) {}
+@supports
+
+not
+
+(
+
+not
+
+(
+
+transform-origin
+
+:
+
+2px
+
+)
+
+)
+
+{}
+@supports (display: flexbox) and (not (display: inline-grid)) {}
+@supports (display: table-cell) and (display: list-item) {}
+@supports ( display : table-cell ) and ( display : list-item ) {}
+@supports  (  display  :  table-cell  )  and  (  display  :  list-item  ) {}
+@supports
+  (display: table-cell) and (display: list-item) {}
+@supports (display: table-cell) and
+  (display: list-item) {}
+@supports (display: table-cell)
+  and (display: list-item) {}
+@supports
+(
+display
+:
+table-cell
+)
+and
+(
+display
+:
+list-item
+) {}
+@supports
+
+(
+
+display
+
+:
+
+table-cell
+
+)
+
+and
+
+(
+
+display
+
+:
+
+list-item
+
+)
+
+{}
+@supports (display: table-cell) and (display: list-item) and (display: run-in) {}
+@supports (display: table-cell) and ((display: list-item) and (display: run-in)) {}
+@supports
+  (display: table-cell) and ((display: list-item) and (display: run-in)) {}
+@supports (display: table-cell)
+  and ((display: list-item)
+  and (display: run-in)) {}
+@supports (display: table-cell) and
+  ((display: list-item) and
+  (display: run-in)) {}
+@supports
+(
+display
+:
+table-cell
+)
+and
+(
+(
+display
+:
+list-item
+)
+and
+(
+display
+:
+run-in
+)
+) {}
+@supports
+
+(
+
+display
+
+:
+
+table-cell
+
+)
+
+and
+
+(
+
+(
+
+display
+
+:
+
+list-item
+
+)
+
+and
+
+(
+
+display
+
+:
+
+run-in
+
+)
+
+)
+
+{}
+@supports (transform-style: preserve) or (-moz-transform-style: preserve) {}
+@supports (transform-style: preserve) or (-moz-transform-style: preserve) or (-o-transform-style: preserve) or (-webkit-transform-style: preserve) {}
+@supports (transform-style: preserve-3d) or ((-moz-transform-style: preserve-3d) or ((-o-transform-style: preserve-3d) or (-webkit-transform-style: preserve-3d))) {}
+@supports not((text-align-last:justify)or(-moz-text-align-last:justify)){ }
+@supports not((text-align-last:justify)and(-moz-text-align-last:justify)){ }
+@supports (--foo:green) {}
+
+@supports selector(:after) {}
+@supports selector(:focus) {}
+@supports selector(:focus-visible) {}
+@supports selector(A>B) {}
+@supports selector(A       >      B) {}
+@supports selector(A       >
+     B) {}
+@supports selector(A
+>
+B
+) {}
+@supports selector(
+A
+<
+B
+) {}
+@supports selector(.a:not(.b)){}
+@supports selector(:not(.b)){}
+@supports not selector(:after){
+}
+@supports (--foo:green) and selector(:after){
+}
+@supports selector(:before) and selector(:focus-visible){
+}
+@supports selector(:not(.a,.b)) and selector(:focus-visible){
+}
+@supports selector(.a,.b){
+
+}
+@supports selector(){
+
+}
+
+@supports selector(:focus-visible) {
+  button:focus {
+    outline: none;
+  }
+
+  button:focus-visible {
+    outline: 2px solid orange;
+  }
+}
+
+@supports selector(:not(.a,.b)) {
+}
+
+@supports selector(:not(.a,.b), :not(.b,.c)) {
+}
+@supports selector(:not(.a,.b), .b, .c) {
+}
+
+@supports selector(
+  :not(
+  .a,.b)
+  ) {
+}
+@supports selector(
+  :not(
+  .a,.b
+  )
+  ) {
+}
+@supports selector(.asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkas .asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkas,
+.asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkas .asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkas){
+}
+@supports selector(.parent>.child ){
+}
+@supports selector(> .child-one){
+}
+@supports selector(.parent  ~  .child){
+}
+@supports selector(ns|* ){
+}
+@supports selector(svg|a ){
+}
+@supports selector(|B ){
+}
+@supports selector(*|*){
+}
+@supports selector(|*){
+}
+@supports selector(.a,.b,:not(asdasldaskdhjkashdahsdkjahskdjhakj,asdasldaskdhjkashdahsdkjahskdjhakj)){
+}
+@supports not (selector(:before) or not (not (selector(:before)))) {
+}
+@supports selector(selector(:focus-visible)) {}
+@supports selector(:::selector(:focus-visible)) {}
+@supports selector(--selector(:focus-visible)) {}
+@supports not (transform-origin: 10em 10em 10em) {}
+@supports not (not (transform-origin: 2px)) {}
+@supports (display: grid) and (not (display: inline-grid)) {}
+@supports (display: table-cell) and (display: list-item) and (display:run-in) {}
+@supports (display: table-cell) and ((display: list-item) and (display:run-in)) {}
+@supports (transform-style: preserve) or (-moz-transform-style: preserve) {}
+@supports (transform-style: preserve) or (-moz-transform-style: preserve) or
+          (-o-transform-style: preserve) or (-webkit-transform-style: preserve) {}
+
+@supports (transform-style: preserve-3d) or ((-moz-transform-style: preserve-3d) or
+          ((-o-transform-style: preserve-3d) or (-webkit-transform-style: preserve-3d))) {}
+
+/* #8201 */
+@supports (--element(".minwidth", {"minWidth": 300})) {
+  [--self] {
+    background: greenyellow;
+  }
+}
+@supports ({"example": 1}) {
+  * { background: red; }
+}

@@ -1,0 +1,61 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format[babel-ts] 1`] = `
+"Missing semicolon. (1:12)
+> 1 | for (var of X);
+    |            ^
+Cause: Missing semicolon. (1:11)"
+`;
+
+exports[`snippet: #0 format[oxc-ts] 1`] = `
+"Expected \`;\` but found \`Identifier\` (1:13)
+> 1 | for (var of X);
+    |             ^"
+`;
+
+exports[`snippet: #0 format[typescript] 1`] = `
+"Only a single variable declaration is allowed in a 'for...of' statement. (1:6)
+> 1 | for (var of X);
+    |      ^^^
+Cause: Only a single variable declaration is allowed in a 'for...of' statement."
+`;
+
+exports[`snippet: #1 format[babel-ts] 1`] = `
+"Unexpected token (1:15)
+> 1 | for (var of of);
+    |               ^
+Cause: Unexpected token (1:14)"
+`;
+
+exports[`snippet: #1 format[oxc-ts] 1`] = `
+"Unexpected token (1:15)
+> 1 | for (var of of);
+    |               ^"
+`;
+
+exports[`snippet: #1 format[typescript] 1`] = `
+"Only a single variable declaration is allowed in a 'for...of' statement. (1:6)
+> 1 | for (var of of);
+    |      ^^^
+Cause: Only a single variable declaration is allowed in a 'for...of' statement."
+`;
+
+exports[`snippet: #2 format[babel-ts] 1`] = `
+"Unexpected keyword 'in'. (1:10)
+> 1 | for (var in X);
+    |          ^
+Cause: Unexpected keyword 'in'. (1:9)"
+`;
+
+exports[`snippet: #2 format[oxc-ts] 1`] = `
+"Identifier expected. 'in' is a reserved word that cannot be used here. (1:10)
+> 1 | for (var in X);
+    |          ^^"
+`;
+
+exports[`snippet: #2 format[typescript] 1`] = `
+"Only a single variable declaration is allowed in a 'for...in' statement. (1:6)
+> 1 | for (var in X);
+    |      ^^^
+Cause: Only a single variable declaration is allowed in a 'for...in' statement."
+`;

@@ -1,0 +1,61 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format[babel-ts] 1`] = `
+"Unexpected token, expected ";" (1:25)
+> 1 | interface I { x: number = 1;}
+    |                         ^
+Cause: Unexpected token, expected ";" (1:24)"
+`;
+
+exports[`snippet: #0 format[oxc-ts] 1`] = `
+"Unexpected token (1:25)
+> 1 | interface I { x: number = 1;}
+    |                         ^"
+`;
+
+exports[`snippet: #0 format[typescript] 1`] = `
+"A property signature cannot have an initializer. (1:27)
+> 1 | interface I { x: number = 1;}
+    |                           ^
+Cause: A property signature cannot have an initializer."
+`;
+
+exports[`snippet: #1 format[babel-ts] 1`] = `
+"Unexpected token, expected "{" (1:13)
+> 1 | interface A mixins B {}
+    |             ^
+Cause: Unexpected token, expected "{" (1:12)"
+`;
+
+exports[`snippet: #1 format[oxc-ts] 1`] = `
+"Expected \`{\` but found \`Identifier\` (1:13)
+> 1 | interface A mixins B {}
+    |             ^^^^^^"
+`;
+
+exports[`snippet: #1 format[typescript] 1`] = `
+"'{' expected. (1:13)
+> 1 | interface A mixins B {}
+    |             ^
+Cause: '{' expected."
+`;
+
+exports[`snippet: #2 format[babel-ts] 1`] = `
+"Unexpected token, expected "{" (1:13)
+> 1 | interface A implements B {}
+    |             ^
+Cause: Unexpected token, expected "{" (1:12)"
+`;
+
+exports[`snippet: #2 format[oxc-ts] 1`] = `
+"Interface declaration cannot have 'implements' clause. (1:13)
+> 1 | interface A implements B {}
+    |             ^^^^^^^^^^"
+`;
+
+exports[`snippet: #2 format[typescript] 1`] = `
+"Interface declaration cannot have 'implements' clause. (1:13)
+> 1 | interface A implements B {}
+    |             ^^^^^^^^^^^^
+Cause: Interface declaration cannot have 'implements' clause."
+`;

@@ -1,0 +1,5 @@
+h1 {
+  @include foo   ('A');
+  @include bar('A (B)');
+  @include baz   ('A (B)');
+}

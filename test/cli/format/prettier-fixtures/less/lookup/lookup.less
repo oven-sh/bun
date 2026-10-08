@@ -1,0 +1,11 @@
+.average(@x, @y) {
+  @result: ((@x + @y) / 2);
+}
+
+div {
+  padding: .average(16px, 50px)   [   @result   ];
+}
+
+div {
+  padding: @foo   [   @bar   ];
+}

@@ -1,0 +1,12 @@
+.background-gradient(@cut) {
+    background: linear-gradient(
+        to right,
+
+
+        /* Should preserve empty lines */
+        @white 0%,
+        @white (@cut - 0.01%),
+        @portal-background @cut,
+        @portal-background 100%
+    );
+}

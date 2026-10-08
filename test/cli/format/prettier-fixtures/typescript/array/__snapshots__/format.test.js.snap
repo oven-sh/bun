@@ -1,0 +1,47 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`comment.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export class ViewTokensChangedEvent {
+  public readonly ranges: {
+    /**
+     * Start line number of range
+     */
+    readonly fromLineNumber: number;
+  }[];
+}
+
+=====================================output=====================================
+export class ViewTokensChangedEvent {
+  public readonly ranges: {
+    /**
+     * Start line number of range
+     */
+    readonly fromLineNumber: number;
+  }[];
+}
+
+================================================================================
+`;
+
+exports[`key.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const subtractDuration = moment.duration(
+  subtractMap[interval][0],
+  subtractMap[interval][1] as unitOfTime.DurationConstructor
+);
+
+=====================================output=====================================
+const subtractDuration = moment.duration(
+  subtractMap[interval][0],
+  subtractMap[interval][1] as unitOfTime.DurationConstructor,
+);
+
+================================================================================
+`;

@@ -1,0 +1,221 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`expression.js - {"singleQuote":false,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<Component
+  onChange={(
+    key: "possible_key_1" | "possible_key_2" | "possible_key_3",
+    value: string | Immutable.List<string>,
+  ) => {
+    this.setState({
+      updatedTask: this.state.updatedTask.set(key, value)
+    });
+  }}
+/>;
+
+<Component>
+  {(
+    key: "possible_key_1" | "possible_key_2" | "possible_key_3",
+    value: string | Immutable.List<string>,
+  ) => {
+    this.setState({
+      updatedTask: this.state.updatedTask.set(key, value)
+    });
+  }}
+</Component>;
+
+=====================================output=====================================
+<Component
+  onChange={(
+    key: "possible_key_1" | "possible_key_2" | "possible_key_3",
+    value: string | Immutable.List<string>,
+  ) => {
+    this.setState({
+      updatedTask: this.state.updatedTask.set(key, value),
+    });
+  }}
+/>;
+
+<Component>
+  {(
+    key: "possible_key_1" | "possible_key_2" | "possible_key_3",
+    value: string | Immutable.List<string>,
+  ) => {
+    this.setState({
+      updatedTask: this.state.updatedTask.set(key, value),
+    });
+  }}
+</Component>;
+
+================================================================================
+`;
+
+exports[`expression.js - {"singleQuote":false,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "typescript"]
+singleQuote: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<Component
+  onChange={(
+    key: "possible_key_1" | "possible_key_2" | "possible_key_3",
+    value: string | Immutable.List<string>,
+  ) => {
+    this.setState({
+      updatedTask: this.state.updatedTask.set(key, value)
+    });
+  }}
+/>;
+
+<Component>
+  {(
+    key: "possible_key_1" | "possible_key_2" | "possible_key_3",
+    value: string | Immutable.List<string>,
+  ) => {
+    this.setState({
+      updatedTask: this.state.updatedTask.set(key, value)
+    });
+  }}
+</Component>;
+
+=====================================output=====================================
+<Component
+  onChange={(
+    key: "possible_key_1" | "possible_key_2" | "possible_key_3",
+    value: string | Immutable.List<string>,
+  ) => {
+    this.setState({
+      updatedTask: this.state.updatedTask.set(key, value),
+    });
+  }}
+/>;
+
+<Component>
+  {(
+    key: "possible_key_1" | "possible_key_2" | "possible_key_3",
+    value: string | Immutable.List<string>,
+  ) => {
+    this.setState({
+      updatedTask: this.state.updatedTask.set(key, value),
+    });
+  }}
+</Component>;
+
+================================================================================
+`;
+
+exports[`expression.js - {"singleQuote":true,"jsxSingleQuote":false} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: false
+parsers: ["flow", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<Component
+  onChange={(
+    key: "possible_key_1" | "possible_key_2" | "possible_key_3",
+    value: string | Immutable.List<string>,
+  ) => {
+    this.setState({
+      updatedTask: this.state.updatedTask.set(key, value)
+    });
+  }}
+/>;
+
+<Component>
+  {(
+    key: "possible_key_1" | "possible_key_2" | "possible_key_3",
+    value: string | Immutable.List<string>,
+  ) => {
+    this.setState({
+      updatedTask: this.state.updatedTask.set(key, value)
+    });
+  }}
+</Component>;
+
+=====================================output=====================================
+<Component
+  onChange={(
+    key: 'possible_key_1' | 'possible_key_2' | 'possible_key_3',
+    value: string | Immutable.List<string>,
+  ) => {
+    this.setState({
+      updatedTask: this.state.updatedTask.set(key, value),
+    });
+  }}
+/>;
+
+<Component>
+  {(
+    key: 'possible_key_1' | 'possible_key_2' | 'possible_key_3',
+    value: string | Immutable.List<string>,
+  ) => {
+    this.setState({
+      updatedTask: this.state.updatedTask.set(key, value),
+    });
+  }}
+</Component>;
+
+================================================================================
+`;
+
+exports[`expression.js - {"singleQuote":true,"jsxSingleQuote":true} format 1`] = `
+====================================options=====================================
+jsxSingleQuote: true
+parsers: ["flow", "typescript"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<Component
+  onChange={(
+    key: "possible_key_1" | "possible_key_2" | "possible_key_3",
+    value: string | Immutable.List<string>,
+  ) => {
+    this.setState({
+      updatedTask: this.state.updatedTask.set(key, value)
+    });
+  }}
+/>;
+
+<Component>
+  {(
+    key: "possible_key_1" | "possible_key_2" | "possible_key_3",
+    value: string | Immutable.List<string>,
+  ) => {
+    this.setState({
+      updatedTask: this.state.updatedTask.set(key, value)
+    });
+  }}
+</Component>;
+
+=====================================output=====================================
+<Component
+  onChange={(
+    key: 'possible_key_1' | 'possible_key_2' | 'possible_key_3',
+    value: string | Immutable.List<string>,
+  ) => {
+    this.setState({
+      updatedTask: this.state.updatedTask.set(key, value),
+    });
+  }}
+/>;
+
+<Component>
+  {(
+    key: 'possible_key_1' | 'possible_key_2' | 'possible_key_3',
+    value: string | Immutable.List<string>,
+  ) => {
+    this.setState({
+      updatedTask: this.state.updatedTask.set(key, value),
+    });
+  }}
+</Component>;
+
+================================================================================
+`;

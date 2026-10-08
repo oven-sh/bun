@@ -1,0 +1,19 @@
+:where(#p0:checked ~ #play:checked ~ #c1:checked, #p1:checked ~ #play:checked ~ #c2:checked, #p2:checked ~ #play:checked ~ #cO:checked) ~ #result >
+#c { display: block; }
+
+:where(ol, ul, menu:unsupported) :where(ol, ul) {
+    color: green;
+}
+
+:where(ol, ul) :where(ol, ul) ol {
+    list-style-type: lower-greek;
+    color: chocolate;
+}
+
+:is(section.is-styling, aside.is-styling, footer.is-styling) a {
+  color: red;
+}
+
+:where(section.where-styling, aside.where-styling, footer.where-styling) a {
+  color: orange;
+}

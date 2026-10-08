@@ -1,0 +1,289 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`array.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function excludeFirstFiveResults([first, second, third, fourth, fifth, ...rest]) {
+  return rest;
+}
+
+function excludeFirstFiveResults2([first, second, third, fourth, fifth, ...rest] = DEFAULT_FIVE_RESULTS) {
+  return rest;
+}
+
+function excludeFirstFiveResults3([firstResult, secondResult, thirdResult, fourthResult, fifthResult, ...rest] = [1, 2, 3, 4, 5]) {
+  return rest;
+}
+
+const excludeFirstFiveResults5 = ([first, second, third, fourth, fifth, ...rest]) => {
+  return rest;
+}
+
+class A {
+  excludeFirstFiveResults([first, second, third, fourth, fifth, ...restOfResults]) {
+    return restOfResults;
+  }
+}
+
+promise.then(([firstResult, secondResult, thirdResult, fourthResult, fifthResult, ...rest]) => {
+  return rest;
+});
+
+=====================================output=====================================
+function excludeFirstFiveResults([
+  first,
+  second,
+  third,
+  fourth,
+  fifth,
+  ...rest
+]) {
+  return rest;
+}
+
+function excludeFirstFiveResults2([
+  first,
+  second,
+  third,
+  fourth,
+  fifth,
+  ...rest
+] = DEFAULT_FIVE_RESULTS) {
+  return rest;
+}
+
+function excludeFirstFiveResults3(
+  [
+    firstResult,
+    secondResult,
+    thirdResult,
+    fourthResult,
+    fifthResult,
+    ...rest
+  ] = [1, 2, 3, 4, 5],
+) {
+  return rest;
+}
+
+const excludeFirstFiveResults5 = ([
+  first,
+  second,
+  third,
+  fourth,
+  fifth,
+  ...rest
+]) => {
+  return rest;
+};
+
+class A {
+  excludeFirstFiveResults([
+    first,
+    second,
+    third,
+    fourth,
+    fifth,
+    ...restOfResults
+  ]) {
+    return restOfResults;
+  }
+}
+
+promise.then(
+  ([
+    firstResult,
+    secondResult,
+    thirdResult,
+    fourthResult,
+    fifthResult,
+    ...rest
+  ]) => {
+    return rest;
+  },
+);
+
+================================================================================
+`;
+
+exports[`array-and-object.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function StatelessFunctionalComponent1({
+  isActive = true,
+  onFiltersUpdated = () => null,
+  onSelect = () => null,
+  onSubmitAndDeselect = () => null,
+  onCancel = () => null,
+  searchFilters = null,
+  title = '',
+  items = [],
+} = {}) {
+}
+
+function StatelessFunctionalComponent3([
+  isActive = true,
+  onFiltersUpdated = () => null,
+  onSelect = () => null,
+  onSubmitAndDeselect = () => null,
+  onCancel = () => null,
+  searchFilters = null,
+  title = '',
+  items = [],
+] = []) {
+}
+
+=====================================output=====================================
+function StatelessFunctionalComponent1({
+  isActive = true,
+  onFiltersUpdated = () => null,
+  onSelect = () => null,
+  onSubmitAndDeselect = () => null,
+  onCancel = () => null,
+  searchFilters = null,
+  title = "",
+  items = [],
+} = {}) {}
+
+function StatelessFunctionalComponent3([
+  isActive = true,
+  onFiltersUpdated = () => null,
+  onSelect = () => null,
+  onSubmitAndDeselect = () => null,
+  onCancel = () => null,
+  searchFilters = null,
+  title = "",
+  items = [],
+] = []) {}
+
+================================================================================
+`;
+
+exports[`object.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function StatelessFunctionalComponent({
+  isActive,
+  onFiltersUpdated,
+  onSelect,
+  onSubmitAndDeselect,
+  onCancel,
+  searchFilters,
+  title,
+  items,
+}) {
+  return <div />
+}
+
+function StatelessFunctionalComponent2({
+  isActive = true,
+  onFiltersUpdated = () => null,
+  onSelect = () => null,
+  onSubmitAndDeselect = () => null,
+  onCancel = () => null,
+  searchFilters = null,
+  title = '',
+  items = [],
+} = {}) {
+  return <div />
+}
+
+function StatelessFunctionalComponent3(
+  {
+    isActive,
+    onFiltersUpdated = () => null,
+    onSelect = () => null,
+    onSubmitAndDeselect = () => null,
+    onCancel = () => null,
+    searchFilters = null,
+    title = '',
+    items = [],
+  } = {
+    isActive: true
+  }
+) {
+  return <div />
+}
+
+
+class C {
+  StatelessFunctionalComponent({
+    isActive,
+    onFiltersUpdated,
+    onSelect,
+    onSubmitAndDeselect,
+    onCancel,
+    searchFilters,
+    title,
+    items,
+  }) {
+    return <div />
+  }
+}
+
+=====================================output=====================================
+function StatelessFunctionalComponent({
+  isActive,
+  onFiltersUpdated,
+  onSelect,
+  onSubmitAndDeselect,
+  onCancel,
+  searchFilters,
+  title,
+  items,
+}) {
+  return <div />;
+}
+
+function StatelessFunctionalComponent2({
+  isActive = true,
+  onFiltersUpdated = () => null,
+  onSelect = () => null,
+  onSubmitAndDeselect = () => null,
+  onCancel = () => null,
+  searchFilters = null,
+  title = "",
+  items = [],
+} = {}) {
+  return <div />;
+}
+
+function StatelessFunctionalComponent3(
+  {
+    isActive,
+    onFiltersUpdated = () => null,
+    onSelect = () => null,
+    onSubmitAndDeselect = () => null,
+    onCancel = () => null,
+    searchFilters = null,
+    title = "",
+    items = [],
+  } = {
+    isActive: true,
+  },
+) {
+  return <div />;
+}
+
+class C {
+  StatelessFunctionalComponent({
+    isActive,
+    onFiltersUpdated,
+    onSelect,
+    onSubmitAndDeselect,
+    onCancel,
+    searchFilters,
+    title,
+    items,
+  }) {
+    return <div />;
+  }
+}
+
+================================================================================
+`;

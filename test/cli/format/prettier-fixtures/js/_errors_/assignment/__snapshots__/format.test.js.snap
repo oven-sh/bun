@@ -1,0 +1,71 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format[acorn] 1`] = `
+"Assigning to rvalue (1:1)
+> 1 | ({}) = x;
+    | ^
+Cause: Assigning to rvalue (1:0)"
+`;
+
+exports[`snippet: #0 format[acorn] 2`] = `
+"The keyword 'let' is reserved (1:21)
+> 1 | class Foo extends ((let)[0] = 1) {}
+    |                     ^
+Cause: The keyword 'let' is reserved (1:20)"
+`;
+
+exports[`snippet: #0 format[babel] 1`] = `
+"Invalid parenthesized assignment pattern. (1:1)
+> 1 | ({}) = x;
+    | ^
+Cause: Invalid parenthesized assignment pattern. (1:0)"
+`;
+
+exports[`snippet: #0 format[babel-ts] 1`] = `
+"Invalid parenthesized assignment pattern. (1:1)
+> 1 | ({}) = x;
+    | ^
+Cause: Invalid parenthesized assignment pattern. (1:0)"
+`;
+
+exports[`snippet: #0 format[espree] 1`] = `
+"Assigning to rvalue (1:1)
+> 1 | ({}) = x;
+    | ^
+Cause: Assigning to rvalue"
+`;
+
+exports[`snippet: #0 format[espree] 2`] = `
+"The keyword 'let' is reserved (1:21)
+> 1 | class Foo extends ((let)[0] = 1) {}
+    |                     ^
+Cause: The keyword 'let' is reserved"
+`;
+
+exports[`snippet: #0 format[espree] 3`] = `
+"The keyword 'let' is reserved (1:18)
+> 1 | export default ((let)[0] = 1);
+    |                  ^
+Cause: The keyword 'let' is reserved"
+`;
+
+exports[`snippet: #0 format[meriyah] 1`] = `
+"Invalid left-hand side in assignment (1:6)
+> 1 | ({}) = x;
+    |      ^
+Cause: [1:5-1:6]: Invalid left-hand side in assignment"
+`;
+
+exports[`snippet: #0 format[meriyah] 2`] = `
+"The identifier 'let' must not be in expression position in strict mode (1:24)
+> 1 | class Foo extends ((let)[0] = 1) {}
+    |                        ^
+Cause: [1:23-1:24]: The identifier 'let' must not be in expression position in strict mode"
+`;
+
+exports[`snippet: #0 format[meriyah] 3`] = `
+"The identifier 'let' must not be in expression position in strict mode (1:21)
+> 1 | export default ((let)[0] = 1);
+    |                     ^
+Cause: [1:20-1:21]: The identifier 'let' must not be in expression position in strict mode"
+`;

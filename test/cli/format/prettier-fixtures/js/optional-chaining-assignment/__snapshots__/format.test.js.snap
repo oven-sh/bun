@@ -1,0 +1,736 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`invalid-destructuring-arr.js format[__babel_estree] 1`] = `
+"Invalid optional chaining in the left-hand side of array destructuring pattern. (1:2)
+> 1 | [a?.b] = [];
+    |  ^
+  2 |
+Cause: Invalid optional chaining in the left-hand side of array destructuring pattern. (1:1)"
+`;
+
+exports[`invalid-destructuring-arr.js format[acorn] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:2)
+> 1 | [a?.b] = [];
+    |  ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side (1:1)"
+`;
+
+exports[`invalid-destructuring-arr.js format[babel] 1`] = `
+"Invalid optional chaining in the left-hand side of array destructuring pattern. (1:2)
+> 1 | [a?.b] = [];
+    |  ^
+  2 |
+Cause: Invalid optional chaining in the left-hand side of array destructuring pattern. (1:1)"
+`;
+
+exports[`invalid-destructuring-arr.js format[espree] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:2)
+> 1 | [a?.b] = [];
+    |  ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side"
+`;
+
+exports[`invalid-destructuring-arr.js format[meriyah] 1`] = `
+"Invalid left-hand side in assignment (1:10)
+> 1 | [a?.b] = [];
+    |          ^
+  2 |
+Cause: [1:9-1:10]: Invalid left-hand side in assignment"
+`;
+
+exports[`invalid-destructuring-arr.js format[oxc] 1`] = `
+"Cannot assign to this expression (1:2)
+> 1 | [a?.b] = [];
+    |  ^^^^
+  2 |"
+`;
+
+exports[`invalid-destructuring-arr.js format[yuku] 1`] = `
+"Optional chaining is not allowed in assignment pattern (1:2)
+> 1 | [a?.b] = [];
+    |  ^^^^
+  2 |"
+`;
+
+exports[`invalid-destructuring-obj.js format[__babel_estree] 1`] = `
+"Invalid optional chaining in the left-hand side of object destructuring pattern. (1:10)
+> 1 | ({ prop: a?.b } = {});
+    |          ^
+  2 |
+Cause: Invalid optional chaining in the left-hand side of object destructuring pattern. (1:9)"
+`;
+
+exports[`invalid-destructuring-obj.js format[acorn] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:10)
+> 1 | ({ prop: a?.b } = {});
+    |          ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side (1:9)"
+`;
+
+exports[`invalid-destructuring-obj.js format[babel] 1`] = `
+"Invalid optional chaining in the left-hand side of object destructuring pattern. (1:10)
+> 1 | ({ prop: a?.b } = {});
+    |          ^
+  2 |
+Cause: Invalid optional chaining in the left-hand side of object destructuring pattern. (1:9)"
+`;
+
+exports[`invalid-destructuring-obj.js format[espree] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:10)
+> 1 | ({ prop: a?.b } = {});
+    |          ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side"
+`;
+
+exports[`invalid-destructuring-obj.js format[meriyah] 1`] = `
+"Invalid left-hand side in assignment (1:19)
+> 1 | ({ prop: a?.b } = {});
+    |                   ^
+  2 |
+Cause: [1:18-1:19]: Invalid left-hand side in assignment"
+`;
+
+exports[`invalid-destructuring-obj.js format[oxc] 1`] = `
+"Cannot assign to this expression (1:10)
+> 1 | ({ prop: a?.b } = {});
+    |          ^^^^
+  2 |"
+`;
+
+exports[`invalid-destructuring-obj.js format[yuku] 1`] = `
+"Optional chaining is not allowed in assignment pattern (1:10)
+> 1 | ({ prop: a?.b } = {});
+    |          ^^^^
+  2 |"
+`;
+
+exports[`invalid-fn-param.js format[__babel_estree] 1`] = `
+"Unexpected token, expected "," (1:13)
+> 1 | function f(a?.b) {}
+    |             ^
+  2 |
+Cause: Unexpected token, expected "," (1:12)"
+`;
+
+exports[`invalid-fn-param.js format[acorn] 1`] = `
+"Unexpected token (1:13)
+> 1 | function f(a?.b) {}
+    |             ^
+  2 |
+Cause: Unexpected token (1:12)"
+`;
+
+exports[`invalid-fn-param.js format[babel] 1`] = `
+"Unexpected token, expected "," (1:13)
+> 1 | function f(a?.b) {}
+    |             ^
+  2 |
+Cause: Unexpected token, expected "," (1:12)"
+`;
+
+exports[`invalid-fn-param.js format[espree] 1`] = `
+"Unexpected token ?. (1:13)
+> 1 | function f(a?.b) {}
+    |             ^
+  2 |
+Cause: Unexpected token ?."
+`;
+
+exports[`invalid-fn-param.js format[meriyah] 1`] = `
+"Expected ')' (1:13)
+> 1 | function f(a?.b) {}
+    |             ^^
+  2 |
+Cause: [1:12-1:14]: Expected ')'"
+`;
+
+exports[`invalid-fn-param.js format[oxc] 1`] = `
+"Expected \`,\` or \`)\` but found \`?.\` (1:13)
+> 1 | function f(a?.b) {}
+    |             ^^
+  2 |"
+`;
+
+exports[`invalid-fn-param.js format[yuku] 1`] = `
+"Expected ')' to close parameter list, but found '?.' (1:13)
+> 1 | function f(a?.b) {}
+    |             ^^
+  2 |"
+`;
+
+exports[`invalid-fn-param-arrow.js format[__babel_estree] 1`] = `
+"Invalid optional chaining in the left-hand side of function parameter list. (1:2)
+> 1 | (a?.b) => {}
+    |  ^
+  2 |
+Cause: Invalid optional chaining in the left-hand side of function parameter list. (1:1)"
+`;
+
+exports[`invalid-fn-param-arrow.js format[acorn] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:2)
+> 1 | (a?.b) => {}
+    |  ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side (1:1)"
+`;
+
+exports[`invalid-fn-param-arrow.js format[babel] 1`] = `
+"Invalid optional chaining in the left-hand side of function parameter list. (1:2)
+> 1 | (a?.b) => {}
+    |  ^
+  2 |
+Cause: Invalid optional chaining in the left-hand side of function parameter list. (1:1)"
+`;
+
+exports[`invalid-fn-param-arrow.js format[espree] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:2)
+> 1 | (a?.b) => {}
+    |  ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side"
+`;
+
+exports[`invalid-fn-param-arrow.js format[meriyah] 1`] = `
+"The left-hand side of the arrow can only be destructed through assignment (1:8)
+> 1 | (a?.b) => {}
+    |        ^^
+  2 |
+Cause: [1:7-1:9]: The left-hand side of the arrow can only be destructed through assignment"
+`;
+
+exports[`invalid-fn-param-arrow.js format[oxc] 1`] = `
+"Expected a semicolon or an implicit semicolon after a statement, but found none (1:7)
+> 1 | (a?.b) => {}
+    |       ^
+  2 |"
+`;
+
+exports[`invalid-fn-param-arrow.js format[yuku] 1`] = `
+"Optional chaining is not allowed in binding pattern (1:2)
+> 1 | (a?.b) => {}
+    |  ^^^^
+  2 |"
+`;
+
+exports[`invalid-fn-param-assign.js format[__babel_estree] 1`] = `
+"Unexpected token, expected "," (1:13)
+> 1 | function f(a?.b = c) {}
+    |             ^
+  2 |
+Cause: Unexpected token, expected "," (1:12)"
+`;
+
+exports[`invalid-fn-param-assign.js format[acorn] 1`] = `
+"Unexpected token (1:13)
+> 1 | function f(a?.b = c) {}
+    |             ^
+  2 |
+Cause: Unexpected token (1:12)"
+`;
+
+exports[`invalid-fn-param-assign.js format[babel] 1`] = `
+"Unexpected token, expected "," (1:13)
+> 1 | function f(a?.b = c) {}
+    |             ^
+  2 |
+Cause: Unexpected token, expected "," (1:12)"
+`;
+
+exports[`invalid-fn-param-assign.js format[espree] 1`] = `
+"Unexpected token ?. (1:13)
+> 1 | function f(a?.b = c) {}
+    |             ^
+  2 |
+Cause: Unexpected token ?."
+`;
+
+exports[`invalid-fn-param-assign.js format[meriyah] 1`] = `
+"Expected ')' (1:13)
+> 1 | function f(a?.b = c) {}
+    |             ^^
+  2 |
+Cause: [1:12-1:14]: Expected ')'"
+`;
+
+exports[`invalid-fn-param-assign.js format[oxc] 1`] = `
+"Expected \`,\` or \`)\` but found \`?.\` (1:13)
+> 1 | function f(a?.b = c) {}
+    |             ^^
+  2 |"
+`;
+
+exports[`invalid-fn-param-assign.js format[yuku] 1`] = `
+"Expected ')' to close parameter list, but found '?.' (1:13)
+> 1 | function f(a?.b = c) {}
+    |             ^^
+  2 |"
+`;
+
+exports[`invalid-for-await-of.js format[__babel_estree] 1`] = `
+"Invalid optional chaining in the left-hand side of for-of statement. (1:6)
+> 1 | for (a?.b of x);
+    |      ^
+  2 |
+Cause: Invalid optional chaining in the left-hand side of for-of statement. (1:5)"
+`;
+
+exports[`invalid-for-await-of.js format[acorn] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:6)
+> 1 | for (a?.b of x);
+    |      ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side (1:5)"
+`;
+
+exports[`invalid-for-await-of.js format[babel] 1`] = `
+"Invalid optional chaining in the left-hand side of for-of statement. (1:6)
+> 1 | for (a?.b of x);
+    |      ^
+  2 |
+Cause: Invalid optional chaining in the left-hand side of for-of statement. (1:5)"
+`;
+
+exports[`invalid-for-await-of.js format[espree] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:6)
+> 1 | for (a?.b of x);
+    |      ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side"
+`;
+
+exports[`invalid-for-await-of.js format[meriyah] 1`] = `
+"Invalid left-hand side in for-of (1:11)
+> 1 | for (a?.b of x);
+    |           ^^
+  2 |
+Cause: [1:10-1:12]: Invalid left-hand side in for-of"
+`;
+
+exports[`invalid-for-await-of.js format[oxc] 1`] = `
+"Cannot assign to this expression (1:6)
+> 1 | for (a?.b of x);
+    |      ^^^^
+  2 |"
+`;
+
+exports[`invalid-for-await-of.js format[yuku] 1`] = `
+"Optional chaining is not allowed in assignment pattern (1:6)
+> 1 | for (a?.b of x);
+    |      ^^^^
+  2 |"
+`;
+
+exports[`invalid-for-in.js format[__babel_estree] 1`] = `
+"Invalid optional chaining in the left-hand side of for-in statement. (1:6)
+> 1 | for (a?.b in x);
+    |      ^
+  2 |
+Cause: Invalid optional chaining in the left-hand side of for-in statement. (1:5)"
+`;
+
+exports[`invalid-for-in.js format[acorn] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:6)
+> 1 | for (a?.b in x);
+    |      ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side (1:5)"
+`;
+
+exports[`invalid-for-in.js format[babel] 1`] = `
+"Invalid optional chaining in the left-hand side of for-in statement. (1:6)
+> 1 | for (a?.b in x);
+    |      ^
+  2 |
+Cause: Invalid optional chaining in the left-hand side of for-in statement. (1:5)"
+`;
+
+exports[`invalid-for-in.js format[espree] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:6)
+> 1 | for (a?.b in x);
+    |      ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side"
+`;
+
+exports[`invalid-for-in.js format[meriyah] 1`] = `
+"Invalid left-hand side in for-in (1:11)
+> 1 | for (a?.b in x);
+    |           ^^
+  2 |
+Cause: [1:10-1:12]: Invalid left-hand side in for-in"
+`;
+
+exports[`invalid-for-in.js format[oxc] 1`] = `
+"Cannot assign to this expression (1:6)
+> 1 | for (a?.b in x);
+    |      ^^^^
+  2 |"
+`;
+
+exports[`invalid-for-in.js format[yuku] 1`] = `
+"Optional chaining is not allowed in assignment pattern (1:6)
+> 1 | for (a?.b in x);
+    |      ^^^^
+  2 |"
+`;
+
+exports[`invalid-for-of.js format[__babel_estree] 1`] = `
+"Invalid optional chaining in the left-hand side of for-of statement. (1:6)
+> 1 | for (a?.b of x);
+    |      ^
+  2 |
+Cause: Invalid optional chaining in the left-hand side of for-of statement. (1:5)"
+`;
+
+exports[`invalid-for-of.js format[acorn] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:6)
+> 1 | for (a?.b of x);
+    |      ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side (1:5)"
+`;
+
+exports[`invalid-for-of.js format[babel] 1`] = `
+"Invalid optional chaining in the left-hand side of for-of statement. (1:6)
+> 1 | for (a?.b of x);
+    |      ^
+  2 |
+Cause: Invalid optional chaining in the left-hand side of for-of statement. (1:5)"
+`;
+
+exports[`invalid-for-of.js format[espree] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:6)
+> 1 | for (a?.b of x);
+    |      ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side"
+`;
+
+exports[`invalid-for-of.js format[meriyah] 1`] = `
+"Invalid left-hand side in for-of (1:11)
+> 1 | for (a?.b of x);
+    |           ^^
+  2 |
+Cause: [1:10-1:12]: Invalid left-hand side in for-of"
+`;
+
+exports[`invalid-for-of.js format[oxc] 1`] = `
+"Cannot assign to this expression (1:6)
+> 1 | for (a?.b of x);
+    |      ^^^^
+  2 |"
+`;
+
+exports[`invalid-for-of.js format[yuku] 1`] = `
+"Optional chaining is not allowed in assignment pattern (1:6)
+> 1 | for (a?.b of x);
+    |      ^^^^
+  2 |"
+`;
+
+exports[`invalid-inc-postfix.js format[__babel_estree] 1`] = `
+"Invalid optional chaining in the left-hand side of postfix operation. (1:1)
+> 1 | a?.b++;
+    | ^
+  2 |
+Cause: Invalid optional chaining in the left-hand side of postfix operation. (1:0)"
+`;
+
+exports[`invalid-inc-postfix.js format[acorn] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:1)
+> 1 | a?.b++;
+    | ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side (1:0)"
+`;
+
+exports[`invalid-inc-postfix.js format[babel] 1`] = `
+"Invalid optional chaining in the left-hand side of postfix operation. (1:1)
+> 1 | a?.b++;
+    | ^
+  2 |
+Cause: Invalid optional chaining in the left-hand side of postfix operation. (1:0)"
+`;
+
+exports[`invalid-inc-postfix.js format[espree] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:1)
+> 1 | a?.b++;
+    | ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side"
+`;
+
+exports[`invalid-inc-postfix.js format[meriyah] 1`] = `
+"Invalid increment/decrement operand (1:5)
+> 1 | a?.b++;
+    |     ^^
+  2 |
+Cause: [1:4-1:6]: Invalid increment/decrement operand"
+`;
+
+exports[`invalid-inc-postfix.js format[oxc] 1`] = `
+"Cannot assign to this expression (1:1)
+> 1 | a?.b++;
+    | ^^^^
+  2 |"
+`;
+
+exports[`invalid-inc-postfix.js format[yuku] 1`] = `
+"Invalid operand for increment/decrement operator (1:1)
+> 1 | a?.b++;
+    | ^^^^
+  2 |"
+`;
+
+exports[`invalid-inc-prefix.js format[__babel_estree] 1`] = `
+"Invalid optional chaining in the left-hand side of prefix operation. (1:3)
+> 1 | ++a?.b;
+    |   ^
+  2 |
+Cause: Invalid optional chaining in the left-hand side of prefix operation. (1:2)"
+`;
+
+exports[`invalid-inc-prefix.js format[acorn] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:3)
+> 1 | ++a?.b;
+    |   ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side (1:2)"
+`;
+
+exports[`invalid-inc-prefix.js format[babel] 1`] = `
+"Invalid optional chaining in the left-hand side of prefix operation. (1:3)
+> 1 | ++a?.b;
+    |   ^
+  2 |
+Cause: Invalid optional chaining in the left-hand side of prefix operation. (1:2)"
+`;
+
+exports[`invalid-inc-prefix.js format[espree] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:3)
+> 1 | ++a?.b;
+    |   ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side"
+`;
+
+exports[`invalid-inc-prefix.js format[meriyah] 1`] = `
+"Invalid increment/decrement operand (1:7)
+> 1 | ++a?.b;
+    |       ^
+  2 |
+Cause: [1:6-1:7]: Invalid increment/decrement operand"
+`;
+
+exports[`invalid-inc-prefix.js format[oxc] 1`] = `
+"Cannot assign to this expression (1:3)
+> 1 | ++a?.b;
+    |   ^^^^
+  2 |"
+`;
+
+exports[`invalid-inc-prefix.js format[yuku] 1`] = `
+"Invalid operand for increment/decrement operator (1:3)
+> 1 | ++a?.b;
+    |   ^^^^
+  2 |"
+`;
+
+exports[`valid-complex-case.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let?.()[a] =1;
+let?.[a] = 1;
+
+=====================================output=====================================
+let?.()[a] = 1;
+let?.[a] = 1;
+
+================================================================================
+`;
+
+exports[`valid-complex-case.js format[acorn] 1`] = `
+"The keyword 'let' is reserved (1:1)
+> 1 | let?.()[a] =1;
+    | ^
+  2 | let?.[a] = 1;
+  3 |
+Cause: The keyword 'let' is reserved (1:0)"
+`;
+
+exports[`valid-complex-case.js format[espree] 1`] = `
+"The keyword 'let' is reserved (1:1)
+> 1 | let?.()[a] =1;
+    | ^
+  2 | let?.[a] = 1;
+  3 |
+Cause: The keyword 'let' is reserved"
+`;
+
+exports[`valid-complex-case.js format[meriyah] 1`] = `
+"\`let\` declaration not allowed here and \`let\` cannot be a regular var name in strict mode (1:4)
+> 1 | let?.()[a] =1;
+    |    ^^
+  2 | let?.[a] = 1;
+  3 |
+Cause: [1:3-1:5]: \`let\` declaration not allowed here and \`let\` cannot be a regular var name in strict mode"
+`;
+
+exports[`valid-complex-case.js format[oxc] 1`] = `
+"Cannot assign to this expression (1:1)
+> 1 | let?.()[a] =1;
+    | ^^^^^^^^^^
+  2 | let?.[a] = 1;
+  3 |"
+`;
+
+exports[`valid-complex-case.js format[yuku] 1`] = `
+"Optional chaining is not allowed in assignment pattern (1:1)
+> 1 | let?.()[a] =1;
+    | ^^^^^^^^^^
+  2 | let?.[a] = 1;
+  3 |"
+`;
+
+exports[`valid-lhs-eq.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a?.b.c = d;
+
+=====================================output=====================================
+a?.b.c = d;
+
+================================================================================
+`;
+
+exports[`valid-lhs-eq.js format[acorn] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:1)
+> 1 | a?.b.c = d;
+    | ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side (1:0)"
+`;
+
+exports[`valid-lhs-eq.js format[espree] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:1)
+> 1 | a?.b.c = d;
+    | ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side"
+`;
+
+exports[`valid-lhs-eq.js format[oxc] 1`] = `
+"Cannot assign to this expression (1:1)
+> 1 | a?.b.c = d;
+    | ^^^^^^
+  2 |"
+`;
+
+exports[`valid-lhs-eq.js format[yuku] 1`] = `
+"Optional chaining is not allowed in assignment pattern (1:1)
+> 1 | a?.b.c = d;
+    | ^^^^^^
+  2 |"
+`;
+
+exports[`valid-lhs-plus-eq.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a?.b.c += d;
+
+=====================================output=====================================
+a?.b.c += d;
+
+================================================================================
+`;
+
+exports[`valid-lhs-plus-eq.js format[acorn] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:1)
+> 1 | a?.b.c += d;
+    | ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side (1:0)"
+`;
+
+exports[`valid-lhs-plus-eq.js format[espree] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:1)
+> 1 | a?.b.c += d;
+    | ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side"
+`;
+
+exports[`valid-lhs-plus-eq.js format[oxc] 1`] = `
+"Cannot assign to this expression (1:1)
+> 1 | a?.b.c += d;
+    | ^^^^^^
+  2 |"
+`;
+
+exports[`valid-lhs-plus-eq.js format[yuku] 1`] = `
+"Invalid assignment target (1:1)
+> 1 | a?.b.c += d;
+    | ^^^^^^
+  2 |"
+`;
+
+exports[`valid-parenthesized.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(a?.b) = c;
+
+=====================================output=====================================
+a?.b = c;
+
+================================================================================
+`;
+
+exports[`valid-parenthesized.js format[acorn] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:2)
+> 1 | (a?.b) = c;
+    |  ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side (1:1)"
+`;
+
+exports[`valid-parenthesized.js format[espree] 1`] = `
+"Optional chaining cannot appear in left-hand side (1:2)
+> 1 | (a?.b) = c;
+    |  ^
+  2 |
+Cause: Optional chaining cannot appear in left-hand side"
+`;
+
+exports[`valid-parenthesized.js format[meriyah] 1`] = `
+"Invalid left-hand side in assignment (1:8)
+> 1 | (a?.b) = c;
+    |        ^
+  2 |
+Cause: [1:7-1:8]: Invalid left-hand side in assignment"
+`;
+
+exports[`valid-parenthesized.js format[oxc] 1`] = `
+"Cannot assign to this expression (1:2)
+> 1 | (a?.b) = c;
+    |  ^^^^
+  2 |"
+`;
+
+exports[`valid-parenthesized.js format[yuku] 1`] = `
+"Parenthesized expression in assignment pattern must be a simple assignment target (1:2)
+> 1 | (a?.b) = c;
+    |  ^^^^
+  2 |"
+`;

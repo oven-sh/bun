@@ -1,0 +1,311 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`dynamic-import.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import("./foo.json", { with: { type: "json" } });
+
+=====================================output=====================================
+import("./foo.json", { with: { type: "json" } });
+
+================================================================================
+`;
+
+exports[`empty.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export * as foo from "foo.json"
+export * as bar from "bar.json" with { }
+export * as baz from "baz.json" with { /* comment */ }
+
+import * as foo from "foo.json"
+import * as bar from "bar.json" with { }
+import * as baz from "baz.json" with { /* comment */ }
+
+=====================================output=====================================
+export * as foo from "foo.json";
+export * as bar from "bar.json" with {};
+export * as baz from "baz.json" /* comment */ with {};
+
+import * as foo from "foo.json";
+import * as bar from "bar.json" with {};
+import * as baz from "baz.json" /* comment */ with {};
+
+================================================================================
+`;
+
+exports[`keyword-detect.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import "./test.json" /* assert */ with /* assert */  { type: "json" }
+import a from "./test.json" /* assert */ with /* assert */  { type: "json" }
+
+export {default as c} from "./test.json" /* assert */ with /* assert */  { type: "json" }
+
+export * from "./test.json" /* assert */ with /* assert */  { type: "json" }
+
+=====================================output=====================================
+import "./test.json" /* assert */ /* assert */ with { type: "json" };
+import a from "./test.json" /* assert */ /* assert */ with { type: "json" };
+
+export { default as c } from "./test.json" /* assert */ /* assert */ with { type: "json" };
+
+export * from "./test.json" /* assert */ /* assert */ with { type: "json" };
+
+================================================================================
+`;
+
+exports[`long-sources.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import a11 from "./aaaaaaaaaa.json" with {
+type: "json" };
+import a12 from "./aaaaaaaaaaaaaaaaaaaa.json" with { type: "json" };
+import a13 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with { type: "json" };
+import a14 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with { type: "json" };
+import a15 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with { type: "json" };
+import a16 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with { type: "json" };
+import a17 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with {
+type: "json" };
+import a18
+from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with { type: "json" };
+
+import a21 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with{
+// comment
+type: "json"
+};
+import a22 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with{
+type:
+// comment
+"json"
+};
+import a23 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with{
+type:"json" // comment
+};
+
+
+import a31 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with{
+/* comment */
+type: "json"
+};
+import a32 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with{
+type:
+/* comment */
+"json"
+};
+import a33 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with{
+type:"json" /* comment */
+};
+
+import("./aaaaaaaaaa.json", {with: { type: "json" }})
+import("./aaaaaaaaaaaaaaaaaaaa.json", {with: { type: "json" }})
+import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json", {with: { type: "json" }})
+import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json", {with: { type: "json" }})
+import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json", {with: { type: "json" }})
+import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json", {with: { type: "json" }})
+import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json", {with: { type: "json" }})
+import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json", {with: { type: "json" }})
+
+=====================================output=====================================
+import a11 from "./aaaaaaaaaa.json" with { type: "json" };
+import a12 from "./aaaaaaaaaaaaaaaaaaaa.json" with { type: "json" };
+import a13 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with { type: "json" };
+import a14 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with { type: "json" };
+import a15 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with { type: "json" };
+import a16 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with { type: "json" };
+import a17 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with { type: "json" };
+import a18 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with { type: "json" };
+
+import a21 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with {
+  // comment
+  type: "json",
+};
+import a22 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with {
+  type:
+    // comment
+    "json",
+};
+import a23 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with {
+  type: "json", // comment
+};
+
+import a31 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with {
+  /* comment */
+  type: "json",
+};
+import a32 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with {
+  type:
+    /* comment */
+    "json",
+};
+import a33 from "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json" with {
+  type: "json" /* comment */,
+};
+
+import("./aaaaaaaaaa.json", { with: { type: "json" } });
+import("./aaaaaaaaaaaaaaaaaaaa.json", { with: { type: "json" } });
+import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json", { with: { type: "json" } });
+import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json", {
+  with: { type: "json" },
+});
+import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json", {
+  with: { type: "json" },
+});
+import("./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json", {
+  with: { type: "json" },
+});
+import(
+  "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+  { with: { type: "json" } }
+);
+import(
+  "./aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.json",
+  { with: { type: "json" } }
+);
+
+================================================================================
+`;
+
+exports[`multi-types.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import json from "./foo.json" with { type: "json", type: "bar" };
+
+=====================================output=====================================
+import json from "./foo.json" with { type: "json", type: "bar" };
+
+================================================================================
+`;
+
+exports[`multi-types.js format[acorn] 1`] = `
+"Duplicate attribute key 'type' (1:52)
+> 1 | import json from "./foo.json" with { type: "json", type: "bar" };
+    |                                                    ^
+  2 |
+Cause: Duplicate attribute key 'type' (1:51)"
+`;
+
+exports[`multi-types.js format[espree] 1`] = `
+"Duplicate attribute key 'type' (1:52)
+> 1 | import json from "./foo.json" with { type: "json", type: "bar" };
+    |                                                    ^
+  2 |
+Cause: Duplicate attribute key 'type'"
+`;
+
+exports[`multi-types.js format[meriyah] 1`] = `
+"Duplicate binding 'type' (1:64)
+> 1 | import json from "./foo.json" with { type: "json", type: "bar" };
+    |                                                                ^
+  2 |
+Cause: [1:63-1:64]: Duplicate binding 'type'"
+`;
+
+exports[`multiple.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import syntaxImportAssertions from "@babel/plugin-syntax-import-assertions" with {
+  BABEL_8_BREAKING: "false",
+  USE_ESM: "true", IS_STANDALONE: "false" };
+
+import a1 from "foo" with {
+  BABEL_8_BREAKING: "false",
+  USE_ESM: "true", IS_STANDALONE: "false" };
+import a2 from "foo" with {BABEL_8_BREAKING: "false",
+  USE_ESM: "true", IS_STANDALONE: "false" };
+import a3 from "foo" with {
+  BABEL_8_BREAKING: "false", };
+import a4 from "foo" with { BABEL_8_BREAKING: "false", };
+
+=====================================output=====================================
+import syntaxImportAssertions from "@babel/plugin-syntax-import-assertions" with {
+  BABEL_8_BREAKING: "false",
+  USE_ESM: "true",
+  IS_STANDALONE: "false",
+};
+
+import a1 from "foo" with {
+  BABEL_8_BREAKING: "false",
+  USE_ESM: "true",
+  IS_STANDALONE: "false",
+};
+import a2 from "foo" with {
+  BABEL_8_BREAKING: "false",
+  USE_ESM: "true",
+  IS_STANDALONE: "false",
+};
+import a3 from "foo" with {
+  BABEL_8_BREAKING: "false",
+};
+import a4 from "foo" with { BABEL_8_BREAKING: "false" };
+
+================================================================================
+`;
+
+exports[`non-type.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import foo from "foo.json" with { lazy: "true" };
+
+=====================================output=====================================
+import foo from "foo.json" with { lazy: "true" };
+
+================================================================================
+`;
+
+exports[`re-export.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export { default as foo2 } from "foo.json" with { type: "json" };
+export * from "foo.json" with { type: "json" };
+export * as foo3 from "foo.json" with { type: "json" };
+
+=====================================output=====================================
+export { default as foo2 } from "foo.json" with { type: "json" };
+export * from "foo.json" with { type: "json" };
+export * as foo3 from "foo.json" with { type: "json" };
+
+================================================================================
+`;
+
+exports[`static-import.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import json from "./foo.json" with { type: "json" };
+
+=====================================output=====================================
+import json from "./foo.json" with { type: "json" };
+
+================================================================================
+`;
+
+exports[`without-from.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import "foo" with { type: "json" }
+
+=====================================output=====================================
+import "foo" with { type: "json" };
+
+================================================================================
+`;

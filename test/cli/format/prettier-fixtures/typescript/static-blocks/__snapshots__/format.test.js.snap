@@ -1,0 +1,113 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`multiple.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "babel-ts"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Foo {
+  static prop = 1
+  static {
+    console.log(Foo.prop++);
+  }
+  static {
+    console.log(Foo.prop++);
+  }
+  static {
+    console.log(Foo.prop++);
+  }
+}
+
+=====================================output=====================================
+class Foo {
+  static prop = 1;
+  static {
+    console.log(Foo.prop++);
+  }
+  static {
+    console.log(Foo.prop++);
+  }
+  static {
+    console.log(Foo.prop++);
+  }
+}
+
+================================================================================
+`;
+
+exports[`nested.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "babel-ts"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function foo () {
+  return class {
+    static foo = 1;
+    static {
+      const c = class {
+        static bar = 2;
+        static {
+          // do
+        }
+      }
+    }
+  }
+}
+
+=====================================output=====================================
+function foo() {
+  return class {
+    static foo = 1;
+    static {
+      const c = class {
+        static bar = 2;
+        static {
+          // do
+        }
+      };
+    }
+  };
+}
+
+================================================================================
+`;
+
+exports[`static-blocks.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "babel-ts"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Foo {
+  static #count = 0;
+
+  get count() {
+    return Foo.#count;
+  }
+
+  static {
+    try {
+      const lastInstances = loadLastInstances();
+      Foo.#count += lastInstances.length;
+    }
+    catch {}
+  }
+}
+
+=====================================output=====================================
+class Foo {
+  static #count = 0;
+
+  get count() {
+    return Foo.#count;
+  }
+
+  static {
+    try {
+      const lastInstances = loadLastInstances();
+      Foo.#count += lastInstances.length;
+    } catch {}
+  }
+}
+
+================================================================================
+`;

@@ -1,0 +1,37 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`invalid-await.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+namespace N {
+  const x = await 42;
+}
+
+=====================================output=====================================
+namespace N {
+  const x = await 42;
+}
+
+================================================================================
+`;
+
+exports[`invalid-await.ts format[babel-ts] 1`] = `
+"'await' is only allowed within async functions and at the top levels of modules. (2:13)
+  1 | namespace N {
+> 2 |   const x = await 42;
+    |             ^
+  3 | }
+  4 |
+Cause: 'await' is only allowed within async functions and at the top levels of modules. (2:12)"
+`;
+
+exports[`invalid-await.ts format[oxc-ts] 1`] = `
+"\`await\` is only allowed within async functions and at the top levels of modules (2:13)
+  1 | namespace N {
+> 2 |   const x = await 42;
+    |             ^^^^^
+  3 | }
+  4 |"
+`;

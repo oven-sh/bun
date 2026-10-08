@@ -1,0 +1,345 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`attribute-blank-lines.tsx format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const element = (
+  <Component<Props>
+    first={1}
+
+    second={2}
+  />
+);
+
+=====================================output=====================================
+const element = (
+  <Component<Props>
+    first={1}
+
+    second={2}
+  />
+);
+
+================================================================================
+`;
+
+exports[`generic-component.tsx format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const c1 = <MyComponent<number> data={12} />
+
+const c2 = <MyComponent<number> />
+
+const c3 = <MyComponent<number> attr="value" />
+
+=====================================output=====================================
+const c1 = <MyComponent<number> data={12} />;
+
+const c2 = <MyComponent<number> />;
+
+const c3 = <MyComponent<number> attr="value" />;
+
+================================================================================
+`;
+
+exports[`keyword.tsx format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<try />;
+<object />
+
+=====================================output=====================================
+<try />;
+<object />;
+
+================================================================================
+`;
+
+exports[`member-expression.tsx format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(<a />).method();
+(<a />).property;
+(<a />)["computed"];
+(<a />)["computed"]();
+(
+  <div>
+    <a>foo</a>
+  </div>
+).method();
+(
+  <div>
+    <a>foo</a>
+  </div>
+).property;
+(
+  <div>
+    <a>foo</a>
+  </div>
+)["computed"];
+(
+  <div>
+    <a>foo</a>
+  </div>
+)["computed"]();
+
+=====================================output=====================================
+(<a />).method();
+(<a />).property;
+(<a />)["computed"];
+(<a />)["computed"]();
+(
+  <div>
+    <a>foo</a>
+  </div>
+).method();
+(
+  <div>
+    <a>foo</a>
+  </div>
+).property;
+(
+  <div>
+    <a>foo</a>
+  </div>
+)["computed"];
+(
+  <div>
+    <a>foo</a>
+  </div>
+)["computed"]();
+
+================================================================================
+`;
+
+exports[`not-react.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/// <reference types="node" />
+
+type ul = any;
+const somethingElse = 1;
+const thing = <ul>somethingElse;
+const div = "<div></div>";
+const h1 = \`<h1>Hi</h1>\`;
+const footer = '<footer></footer>';
+
+=====================================output=====================================
+/// <reference types="node" />
+
+type ul = any;
+const somethingElse = 1;
+const thing = <ul>somethingElse;
+const div = "<div></div>";
+const h1 = \`<h1>Hi</h1>\`;
+const footer = "<footer></footer>";
+
+================================================================================
+`;
+
+exports[`optional-chaining.tsx format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = (
+    <div>
+      {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?.bbbbbbbbbbbbbbbbbbbbbbbbb.map(
+        (p, i) => <p key={i}>{p}</p>
+      )}
+    </div>
+  );
+a = (
+    <div>
+      {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?.bbbbbbbbbbbbbbbbbbbbbbbbb.map(
+        (p, i) => <p key={i}>{p}</p>
+      )!}
+    </div>
+  );
+a = (
+    <div>
+      {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbb.map(
+        (p, i) => <p key={i}>{p}</p>
+      )}
+    </div>
+  );
+a = (
+    <div>
+      {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbb.map(
+        (p, i) => <p key={i}>{p}</p>
+      )!}
+    </div>
+  );
+
+=====================================output=====================================
+a = (
+  <div>
+    {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?.bbbbbbbbbbbbbbbbbbbbbbbbb.map((p, i) => (
+      <p key={i}>{p}</p>
+    ))}
+  </div>
+);
+a = (
+  <div>
+    {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?.bbbbbbbbbbbbbbbbbbbbbbbbb.map((p, i) => (
+      <p key={i}>{p}</p>
+    ))!}
+  </div>
+);
+a = (
+  <div>
+    {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbb.map((p, i) => (
+      <p key={i}>{p}</p>
+    ))}
+  </div>
+);
+a = (
+  <div>
+    {aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbb.map((p, i) => (
+      <p key={i}>{p}</p>
+    ))!}
+  </div>
+);
+
+================================================================================
+`;
+
+exports[`react.tsx format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const MyCoolList = ({ things }) =>
+    <ul>
+        {things.map(MyCoolThing)}
+    </ul>;
+
+const MyCoolThing = ({ thingo }) => <li>{thingo}</li>;
+
+=====================================output=====================================
+const MyCoolList = ({ things }) => <ul>{things.map(MyCoolThing)}</ul>;
+
+const MyCoolThing = ({ thingo }) => <li>{thingo}</li>;
+
+================================================================================
+`;
+
+exports[`this.tsx format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<this.state.Component />;
+<this.Component />;
+
+=====================================output=====================================
+<this.state.Component />;
+<this.Component />;
+
+================================================================================
+`;
+
+exports[`type-parameters.tsx format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const functionName1 = <T,>(arg) => false;
+const functionName2 = <T extends any>(arg) => false;
+const functionName3 = <T, S>(arg) => false;
+
+function functionName4<T>() {
+  return false;
+}
+
+functionName5<T>();
+
+interface Interface1<T> {
+  one: "one";
+}
+
+interface Interface2 {
+  two: Two<T>;
+}
+
+type Type1<T> = "type1";
+
+type Type2 = Two<T>;
+
+=====================================output=====================================
+const functionName1 = <T,>(arg) => false;
+const functionName2 = <T extends any>(arg) => false;
+const functionName3 = <T, S>(arg) => false;
+
+function functionName4<T>() {
+  return false;
+}
+
+functionName5<T>();
+
+interface Interface1<T> {
+  one: "one";
+}
+
+interface Interface2 {
+  two: Two<T>;
+}
+
+type Type1<T> = "type1";
+
+type Type2 = Two<T>;
+
+================================================================================
+`;
+
+exports[`url.tsx format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const link = <a href="example.com">http://example.com</a>;
+
+const first = <div>http://example.com</div>;
+
+ const second = <>http://example.com</>;
+
+ const third = <div><br />http://example.com</div>;
+
+ const fourth = <div><span></span>http://example.com</div>;
+
+ const fifth = <div>{}http://example.com</div>;
+
+=====================================output=====================================
+const link = <a href="example.com">http://example.com</a>;
+
+const first = <div>http://example.com</div>;
+
+const second = <>http://example.com</>;
+
+const third = (
+  <div>
+    <br />
+    http://example.com
+  </div>
+);
+
+const fourth = (
+  <div>
+    <span></span>http://example.com
+  </div>
+);
+
+const fifth = <div>{}http://example.com</div>;
+
+================================================================================
+`;

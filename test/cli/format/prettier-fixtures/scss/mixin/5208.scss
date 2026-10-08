@@ -1,0 +1,8 @@
+// Ignore escape "\" in SCSS mixins
+@mixin margin-bottom-1\/3 {
+  margin-bottom: 0.8rem;
+}
+
+label {
+  @include margin-bottom-1\/3;
+}

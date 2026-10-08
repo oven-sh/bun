@@ -1,0 +1,201 @@
+a {
+  order: 1;
+  @nest b & {
+    order: 2;
+  }
+  @nest c & {
+    order: 3;
+  }
+  @nest d & {
+    order: 4;
+  }
+  @nest e & {
+    order: 5;
+  }
+}
+a {
+  order: 1;
+  @nest & b {
+    order: 2;
+  }
+  @nest & c {
+    order: 3;
+  }
+  @nest & d {
+    order: 4;
+  }
+  @nest & e {
+    order: 5;
+  }
+}
+
+.rule-1 {
+  order: 1;
+  @media screen, print {
+    order: 2;
+    &.rule-2 {
+      order: 3;
+      @media (max-width: 30em) {
+        order: 4;
+        @nest .rule-prefix & {
+          order: 5;
+        }
+        order: 6;
+      }
+      order: 7;
+    }
+    order: 8;
+  }
+  order: 9;
+}
+
+a, b {
+  order: 1;
+  & c, & d {
+    order: 2;
+    & e, & f {
+      order: 3;
+    }
+    order: 4;
+  }
+  order: 5;
+}
+a, b {
+  order: 1;
+  @nest & c, & d {
+    order: 2;
+    @nest & e, & f {
+      order: 3;
+    }
+    order: 4;
+  }
+  order: 5;
+}
+
+a {
+  & b {
+    & c {
+      order: 1;
+    }
+  }
+}
+d {
+  order: 2;
+  & e {
+    order: 3;
+  }
+}
+f {
+  & g {
+    order: 4;
+  }
+  order: 5;
+}
+a {
+  @nest & b {
+    @nest & c {
+      order: 1;
+    }
+  }
+}
+d {
+  order: 2;
+  @nest & e {
+    order: 3;
+  }
+}
+f {
+  @nest & g {
+    order: 4;
+  }
+  order: 5;
+}
+
+a, b {
+  order: 1;
+  c, d {
+    order: 2;
+  }
+}
+& e {
+  order: 3;
+}
+f {
+  & g & {
+    order: 4;
+  }
+  &h {
+    order: 5;
+  }
+}
+a, b {
+  order: 1;
+  @nest c, d {
+    order: 2;
+  }
+}
+@nest & e {
+  order: 3;
+}
+f {
+  @nest & g & {
+    order: 4;
+  }
+  @nest &h {
+    order: 5;
+  }
+}
+
+a {
+  order: 1;
+  @media (min-width: 100px) {
+    order: 2;
+    @media (max-width: 200px) {
+      order: 3;
+    }
+    & b {
+      @media (max-width: 200px) {
+        order: 4;
+      }
+    }
+  }
+  @media screen, print and speech {
+    @media (max-width: 300px), (min-aspect-ratio: 16/9) {
+      order: 5;
+      & c {
+        order: 6;
+      }
+    }
+  }
+}
+a {
+  order: 1;
+  @media (min-width: 100px) {
+    order: 2;
+    @media (max-width: 200px) {
+      order: 3;
+    }
+    @nest & b {
+      @media (max-width: 200px) {
+        order: 4;
+      }
+    }
+  }
+  @media screen, print and speech {
+    @media (max-width: 300px), (min-aspect-ratio: 16/9) {
+      order: 5;
+      @nest & c {
+        order: 6;
+      }
+    }
+  }
+}
+a {
+  order: 1;
+  @nest very-very-very-very-very-very-very-very-very-long-selector &, very-very-very-very-very-very-very-very-very-long-selector & {
+    order: 2;
+  }
+  @nest very-very-very-very-very-very-very-very-very-long-selector + very-very-very-very-very-very-very-very-very-long-selector  &, very-very-very-very-very-very-very-very-very-long-selector very-very-very-very-very-very-very-very-very-long-selector & {
+    order: 2;
+  }
+}

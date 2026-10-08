@@ -1,0 +1,128 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`comments.ts - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+interface A1  // comment
+{  foo(): bar;}
+
+interface A2  // comment
+extends Base
+{  foo(): bar;}
+
+interface A3  // comment1
+extends Base  // comment2
+{  foo(): bar;}
+
+interface A4  // comment1
+extends Base  // comment2
+              // comment3
+{  foo(): bar;}
+
+interface A5  // comment1
+extends Base  // comment2
+              // comment3
+{             // comment4
+foo(): bar;}
+
+interface A6  // comment1
+extends Base  // comment2
+              // comment3
+{
+// comment4
+foo(): bar;}
+
+=====================================output=====================================
+interface A1 {
+  // comment
+  foo(): bar;
+}
+
+interface A2 // comment
+  extends Base {
+  foo(): bar;
+}
+
+interface A3 // comment1
+  extends Base {
+  // comment2
+  foo(): bar;
+}
+
+interface A4 // comment1
+  extends Base {
+  // comment2
+  // comment3
+  foo(): bar;
+}
+
+interface A5 // comment1
+  extends Base {
+  // comment2
+  // comment3
+  // comment4
+  foo(): bar;
+}
+
+interface A6 // comment1
+  extends Base {
+  // comment2
+  // comment3
+  // comment4
+  foo(): bar;
+}
+
+================================================================================
+`;
+
+exports[`comments-declare.ts - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare interface a // 1
+  extends b  // 2
+{  foo: boolean}
+
+=====================================output=====================================
+declare interface a // 1
+  extends b {
+  // 2
+  foo: boolean;
+}
+
+================================================================================
+`;
+
+exports[`module.ts - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare module X {
+  declare interface Y { x: number; }
+}
+
+=====================================output=====================================
+declare module X {
+  declare interface Y {
+    x: number;
+  }
+}
+
+================================================================================
+`;
+
+exports[`module.ts - {"trailingComma":"es5"} format[oxc-ts] 1`] = `
+"A 'declare' modifier cannot be used in an already ambient context. (2:3)
+  1 | declare module X {
+> 2 |   declare interface Y { x: number; }
+    |   ^^^^^^^
+  3 | }
+  4 |"
+`;

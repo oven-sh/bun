@@ -1,0 +1,15 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format[babel-ts] 1`] = `
+"An import alias can not use 'import type'. (1:17)
+> 1 | import type F = T;
+    |                 ^
+Cause: An import alias can not use 'import type'. (1:16)"
+`;
+
+exports[`snippet: #0 format[typescript] 1`] = `
+"An import alias cannot use 'import type' (1:1)
+> 1 | import type F = T;
+    | ^^^^^^^^^^^^^^^^^^
+Cause: An import alias cannot use 'import type'"
+`;

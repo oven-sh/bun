@@ -1,0 +1,4947 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`array-and-object.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const fn12 = (a) => (b) => (c) => (d) => (e) =>
+  ({ foo: bar, bar: baz, baz: foo });
+
+map(() => ([
+  // comment
+  foo
+]));
+
+map(() => ({
+  // comment
+  foo
+}));
+
+=====================================output=====================================
+const fn12 = (a) => (b) => (c) => (d) => (e) => ({
+  foo: bar,
+  bar: baz,
+  baz: foo,
+});
+
+map(() => [
+  // comment
+  foo,
+]);
+
+map(() => ({
+  // comment
+  foo,
+}));
+
+================================================================================
+`;
+
+exports[`array-and-object.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const fn12 = (a) => (b) => (c) => (d) => (e) =>
+  ({ foo: bar, bar: baz, baz: foo });
+
+map(() => ([
+  // comment
+  foo
+]));
+
+map(() => ({
+  // comment
+  foo
+}));
+
+=====================================output=====================================
+const fn12 = a => b => c => d => e => ({ foo: bar, bar: baz, baz: foo });
+
+map(() => [
+  // comment
+  foo,
+]);
+
+map(() => ({
+  // comment
+  foo,
+}));
+
+================================================================================
+`;
+
+exports[`arrow_function_expression.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(a => {}).length
+typeof (() => {});
+export default (() => {})();
+(() => {})()\`\`;
+(() => {})\`\`;
+new (() => {});
+if ((() => {}) ? 1 : 0) {}
+let f = () => ({}())
+let a = () => ({} instanceof a);
+a = () => ({} && a);
+a = () => ({}() && a);
+a = () => ({} && a && b);
+a = () => ({} + a);
+a = () => ({}()() && a);
+a = () => ({}.b && a);
+a = () => ({}[b] && a);
+a = () => ({}\`\` && a);
+a = () => ({} = 0);
+a = () => ({}, a);
+a => a instanceof {};
+a => ({}().b && 0)
+a => ({}().c = 0)
+x => ({}()())
+x => ({}()\`\`)
+x => ({}().b);
+a = b => c;
+x => (y = z);
+x => (y += z);
+f(a => ({})) + 1;
+(a => ({})) || 0;
+a = b => c;
+a = b => {
+  return c
+};
+
+=====================================output=====================================
+((a) => {}).length;
+typeof (() => {});
+export default (() => {})();
+(() => {})()\`\`;
+(() => {})\`\`;
+new (() => {})();
+if ((() => {}) ? 1 : 0) {
+}
+let f = () => ({})();
+let a = () => ({}) instanceof a;
+a = () => ({}) && a;
+a = () => ({})() && a;
+a = () => ({}) && a && b;
+a = () => ({}) + a;
+a = () => ({})()() && a;
+a = () => ({}).b && a;
+a = () => ({})[b] && a;
+a = () => ({})\`\` && a;
+a = () => ({} = 0);
+a = () => ({}, a);
+(a) => a instanceof {};
+(a) => ({})().b && 0;
+(a) => ({}().c = 0);
+(x) => ({})()();
+(x) => ({})()\`\`;
+(x) => ({})().b;
+a = (b) => c;
+(x) => (y = z);
+(x) => (y += z);
+f((a) => ({})) + 1;
+((a) => ({})) || 0;
+a = (b) => c;
+a = (b) => {
+  return c;
+};
+
+================================================================================
+`;
+
+exports[`arrow_function_expression.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(a => {}).length
+typeof (() => {});
+export default (() => {})();
+(() => {})()\`\`;
+(() => {})\`\`;
+new (() => {});
+if ((() => {}) ? 1 : 0) {}
+let f = () => ({}())
+let a = () => ({} instanceof a);
+a = () => ({} && a);
+a = () => ({}() && a);
+a = () => ({} && a && b);
+a = () => ({} + a);
+a = () => ({}()() && a);
+a = () => ({}.b && a);
+a = () => ({}[b] && a);
+a = () => ({}\`\` && a);
+a = () => ({} = 0);
+a = () => ({}, a);
+a => a instanceof {};
+a => ({}().b && 0)
+a => ({}().c = 0)
+x => ({}()())
+x => ({}()\`\`)
+x => ({}().b);
+a = b => c;
+x => (y = z);
+x => (y += z);
+f(a => ({})) + 1;
+(a => ({})) || 0;
+a = b => c;
+a = b => {
+  return c
+};
+
+=====================================output=====================================
+(a => {}).length;
+typeof (() => {});
+export default (() => {})();
+(() => {})()\`\`;
+(() => {})\`\`;
+new (() => {})();
+if ((() => {}) ? 1 : 0) {
+}
+let f = () => ({})();
+let a = () => ({}) instanceof a;
+a = () => ({}) && a;
+a = () => ({})() && a;
+a = () => ({}) && a && b;
+a = () => ({}) + a;
+a = () => ({})()() && a;
+a = () => ({}).b && a;
+a = () => ({})[b] && a;
+a = () => ({})\`\` && a;
+a = () => ({} = 0);
+a = () => ({}, a);
+a => a instanceof {};
+a => ({})().b && 0;
+a => ({}().c = 0);
+x => ({})()();
+x => ({})()\`\`;
+x => ({})().b;
+a = b => c;
+x => (y = z);
+x => (y += z);
+f(a => ({})) + 1;
+(a => ({})) || 0;
+a = b => c;
+a = b => {
+  return c;
+};
+
+================================================================================
+`;
+
+exports[`arrow-chain-with-trailing-comments.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+x = (bifornCringerMoshedPerplexSawder) => ((askTrovenaBeenaDependsRowans, glimseGlyphsHazardNoopsTieTie) => (f00) => {
+  averredBathersBoxroomBuggyNurl();
+} // BOOM
+)
+
+x2 = (a) => ((askTrovenaBeenaDependsRowans1, askTrovenaBeenaDependsRowans2, askTrovenaBeenaDependsRowans3) => {
+  c();
+} /* ! */ // KABOOM
+)
+
+=====================================output=====================================
+x =
+  (bifornCringerMoshedPerplexSawder) =>
+  (askTrovenaBeenaDependsRowans, glimseGlyphsHazardNoopsTieTie) =>
+  (f00) => {
+    averredBathersBoxroomBuggyNurl();
+  }; // BOOM
+
+x2 =
+  (a) =>
+  (
+    askTrovenaBeenaDependsRowans1,
+    askTrovenaBeenaDependsRowans2,
+    askTrovenaBeenaDependsRowans3,
+  ) => {
+    c();
+  } /* ! */; // KABOOM
+
+================================================================================
+`;
+
+exports[`arrow-chain-with-trailing-comments.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+x = (bifornCringerMoshedPerplexSawder) => ((askTrovenaBeenaDependsRowans, glimseGlyphsHazardNoopsTieTie) => (f00) => {
+  averredBathersBoxroomBuggyNurl();
+} // BOOM
+)
+
+x2 = (a) => ((askTrovenaBeenaDependsRowans1, askTrovenaBeenaDependsRowans2, askTrovenaBeenaDependsRowans3) => {
+  c();
+} /* ! */ // KABOOM
+)
+
+=====================================output=====================================
+x =
+  bifornCringerMoshedPerplexSawder =>
+  (askTrovenaBeenaDependsRowans, glimseGlyphsHazardNoopsTieTie) =>
+  f00 => {
+    averredBathersBoxroomBuggyNurl();
+  }; // BOOM
+
+x2 =
+  a =>
+  (
+    askTrovenaBeenaDependsRowans1,
+    askTrovenaBeenaDependsRowans2,
+    askTrovenaBeenaDependsRowans3,
+  ) => {
+    c();
+  } /* ! */; // KABOOM
+
+================================================================================
+`;
+
+exports[`assignment-chain-with-arrow-chain.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+bifornCringer = askTrovenaBeenaDepends = glimseGlyphs = (
+  argumentOne,
+  argumentTwo,
+) => restOfTheArguments12345678 => {
+  return "baz";
+};
+
+bifornCringer = askTrovenaBeenaDepends = glimseGlyphs = (
+  argumentOne,
+  argumentTwo,
+  argumentThree
+) => restOfTheArguments12345678 => {
+  return "baz";
+};
+
+bifornCringer = askTrovenaBeenaDepends = glimseGlyphs = (
+  argumentOne,
+  argumentTwo,
+  argumentThree
+) => {
+  return "baz";
+};
+
+const bifornCringer1 =
+  askTrovenaBeenaDepends =
+  glimseGlyphs =
+    (argumentOne, argumentTwo) => (restOfTheArguments12345678) => {
+      return "baz";
+    };
+
+const bifornCringer2 =
+  askTrovenaBeenaDepends =
+  glimseGlyphs =
+    (argumentOne, argumentTwo, argumentThree) =>
+    (restOfTheArguments12345678) => {
+      return "baz";
+    };
+
+const bifornCringer3 =
+  askTrovenaBeenaDepends =
+  glimseGlyphs =
+    (argumentOne, argumentTwo, argumentThree) => {
+      return "baz";
+    };
+
+=====================================output=====================================
+bifornCringer =
+  askTrovenaBeenaDepends =
+  glimseGlyphs =
+    (argumentOne, argumentTwo) => (restOfTheArguments12345678) => {
+      return "baz";
+    };
+
+bifornCringer =
+  askTrovenaBeenaDepends =
+  glimseGlyphs =
+    (argumentOne, argumentTwo, argumentThree) =>
+    (restOfTheArguments12345678) => {
+      return "baz";
+    };
+
+bifornCringer =
+  askTrovenaBeenaDepends =
+  glimseGlyphs =
+    (argumentOne, argumentTwo, argumentThree) => {
+      return "baz";
+    };
+
+const bifornCringer1 =
+  (askTrovenaBeenaDepends =
+  glimseGlyphs =
+    (argumentOne, argumentTwo) => (restOfTheArguments12345678) => {
+      return "baz";
+    });
+
+const bifornCringer2 =
+  (askTrovenaBeenaDepends =
+  glimseGlyphs =
+    (argumentOne, argumentTwo, argumentThree) =>
+    (restOfTheArguments12345678) => {
+      return "baz";
+    });
+
+const bifornCringer3 =
+  (askTrovenaBeenaDepends =
+  glimseGlyphs =
+    (argumentOne, argumentTwo, argumentThree) => {
+      return "baz";
+    });
+
+================================================================================
+`;
+
+exports[`assignment-chain-with-arrow-chain.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+bifornCringer = askTrovenaBeenaDepends = glimseGlyphs = (
+  argumentOne,
+  argumentTwo,
+) => restOfTheArguments12345678 => {
+  return "baz";
+};
+
+bifornCringer = askTrovenaBeenaDepends = glimseGlyphs = (
+  argumentOne,
+  argumentTwo,
+  argumentThree
+) => restOfTheArguments12345678 => {
+  return "baz";
+};
+
+bifornCringer = askTrovenaBeenaDepends = glimseGlyphs = (
+  argumentOne,
+  argumentTwo,
+  argumentThree
+) => {
+  return "baz";
+};
+
+const bifornCringer1 =
+  askTrovenaBeenaDepends =
+  glimseGlyphs =
+    (argumentOne, argumentTwo) => (restOfTheArguments12345678) => {
+      return "baz";
+    };
+
+const bifornCringer2 =
+  askTrovenaBeenaDepends =
+  glimseGlyphs =
+    (argumentOne, argumentTwo, argumentThree) =>
+    (restOfTheArguments12345678) => {
+      return "baz";
+    };
+
+const bifornCringer3 =
+  askTrovenaBeenaDepends =
+  glimseGlyphs =
+    (argumentOne, argumentTwo, argumentThree) => {
+      return "baz";
+    };
+
+=====================================output=====================================
+bifornCringer =
+  askTrovenaBeenaDepends =
+  glimseGlyphs =
+    (argumentOne, argumentTwo) => restOfTheArguments12345678 => {
+      return "baz";
+    };
+
+bifornCringer =
+  askTrovenaBeenaDepends =
+  glimseGlyphs =
+    (argumentOne, argumentTwo, argumentThree) => restOfTheArguments12345678 => {
+      return "baz";
+    };
+
+bifornCringer =
+  askTrovenaBeenaDepends =
+  glimseGlyphs =
+    (argumentOne, argumentTwo, argumentThree) => {
+      return "baz";
+    };
+
+const bifornCringer1 =
+  (askTrovenaBeenaDepends =
+  glimseGlyphs =
+    (argumentOne, argumentTwo) => restOfTheArguments12345678 => {
+      return "baz";
+    });
+
+const bifornCringer2 =
+  (askTrovenaBeenaDepends =
+  glimseGlyphs =
+    (argumentOne, argumentTwo, argumentThree) => restOfTheArguments12345678 => {
+      return "baz";
+    });
+
+const bifornCringer3 =
+  (askTrovenaBeenaDepends =
+  glimseGlyphs =
+    (argumentOne, argumentTwo, argumentThree) => {
+      return "baz";
+    });
+
+================================================================================
+`;
+
+exports[`block_like.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = () => ({} = this);
+
+=====================================output=====================================
+a = () => ({} = this);
+
+================================================================================
+`;
+
+exports[`block_like.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = () => ({} = this);
+
+=====================================output=====================================
+a = () => ({} = this);
+
+================================================================================
+`;
+
+exports[`call.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+Seq(typeDef.interface.groups).forEach(group =>
+  Seq(group.members).forEach((member, memberName) =>
+    markdownDoc(
+      member.doc,
+      { typePath: typePath.concat(memberName.slice(1)),
+       signatures: member.signatures }
+    )
+  )
+)
+
+const promiseFromCallback = fn =>
+  new Promise((resolve, reject) =>
+    fn((err, result) => {
+      if (err) return reject(err);
+      return resolve(result);
+    })
+  );
+
+runtimeAgent.getProperties(
+  objectId,
+  false, // ownProperties
+  false, // accessorPropertiesOnly
+  false, // generatePreview
+  (error, properties, internalProperties) => {
+    return 1
+  },
+);
+
+function render() {
+  return (
+    <View>
+      <Image
+        onProgress={(e) => this.setState({progress: Math.round(100 * e.nativeEvent.loaded / e.nativeEvent.total)})}
+      />
+    </View>
+  );
+}
+
+function render() {
+  return (
+    <View>
+      <Image
+        onProgress={e =>
+          this.setState({
+            progress: Math.round(
+              100 * e.nativeEvent.loaded / e.nativeEvent.total,
+            ),
+          })}
+      />
+    </View>
+  );
+}
+
+function render() {
+  return (
+    <View>
+      <Image
+        onProgress={e =>
+          this.setState({
+            progress: Math.round(
+              100 * e.nativeEvent.loaded / e.nativeEvent.total,
+            ),
+          })}
+      />
+    </View>
+  );
+}
+
+jest.mock(
+  '../SearchSource',
+  () => class {
+    findMatchingTests(pattern) {
+      return {paths: []};
+    }
+  },
+);
+
+fooooooooooooooooooooooooooooooooooooooooooooooooooo(action => next =>
+    dispatch(action),
+);
+
+foo(
+  ({
+    a,
+
+    b
+  }) => {}
+);
+
+foo(
+  ({
+    a,
+    b
+
+  }) => {}
+);
+
+foo(
+  ({
+    a,
+    b
+  }) => {}
+);
+
+foo(
+  a,
+  ({
+    a,
+
+    b
+  }) => {}
+)
+
+foo(
+  ({
+    a,
+
+    b
+  }) => a
+);
+
+foo(
+  ({
+    a,
+    b
+  }) => a
+);
+
+foo(
+  ({
+    a,
+    b
+
+  }) => a
+);
+
+foo(
+  ({
+    a: {
+      a,
+
+      b
+    }
+  }) => {}
+);
+
+foo(
+  ({
+    a: {
+      b: {
+        c,
+
+        d
+      }
+    }
+  }) => {}
+);
+
+foo(
+  ({
+    a: {
+      b: {
+        c: {
+          d,
+
+          e
+        }
+      }
+    }
+  }) => {}
+);
+
+foo(
+  ({
+    a: {
+      a,
+
+      b
+    }
+  }) => a
+);
+
+foo(
+  ({
+    a: {
+      b: {
+        c,
+
+        d
+      }
+    }
+  }) => a
+);
+
+foo(
+  ({
+    a: {
+      b: {
+        c: {
+          d,
+
+          e
+        }
+      }
+    }
+  }) => a
+);
+
+foo(
+  ([
+    {
+      a: {
+        b: {
+          c: {
+            d,
+
+            e
+          }
+        }
+      }
+    }
+  ]) => {}
+);
+
+foo(
+  ([
+    ...{
+      a: {
+        b: {
+          c: {
+            d,
+
+            e
+          }
+        }
+      }
+    }
+  ]) => {}
+);
+
+foo(
+  (
+    n = {
+      a: {
+        b: {
+          c: {
+            d,
+
+            e
+          }
+        }
+      }
+    }
+  ) => {}
+);
+
+foo(
+  ({
+    x: [
+      {
+        a,
+
+        b
+      }
+    ]
+  }) => {}
+);
+
+foo(
+  (
+    a = [
+      {
+        a,
+
+        b
+      }
+    ]
+  ) => a
+);
+
+foo(
+  ([
+    [
+      {
+        a,
+
+        b
+      }
+    ]
+  ]) => {}
+);
+
+foo(
+  ([
+    [
+      [
+        [
+          {
+            a,
+            b: {
+              c,
+              d: {
+                e,
+
+                f
+              }
+            }
+          }
+        ]
+      ]
+    ]
+  ]) => {}
+);
+
+foo(
+  (
+    ...{
+      a,
+
+      b
+    }
+  ) => {}
+);
+
+foo(
+  (
+    ...[
+      {
+        a,
+
+        b
+      }
+    ]
+  ) => {}
+);
+
+foo(
+  ([
+    ...[
+      {
+        a,
+
+        b
+      }
+    ]
+  ]) => {}
+);
+
+foo(
+  (
+    a = [{
+      a,
+
+      b
+    }]
+  ) => {}
+);
+
+foo(
+  (
+    a = (({
+      a,
+
+      b
+    }) => {})()
+  ) => {}
+);
+
+foo(
+  (
+    a = f({
+      a,
+
+      b
+    })
+  ) => {}
+);
+
+foo(
+  (
+    a = ({
+      a,
+
+      b
+    }) => {}
+  ) => {}
+);
+
+foo(
+  (
+    a = 1 +
+      f({
+        a,
+
+        b
+      })
+  ) => {}
+);
+
+=====================================output=====================================
+Seq(typeDef.interface.groups).forEach((group) =>
+  Seq(group.members).forEach((member, memberName) =>
+    markdownDoc(member.doc, {
+      typePath: typePath.concat(memberName.slice(1)),
+      signatures: member.signatures,
+    }),
+  ),
+);
+
+const promiseFromCallback = (fn) =>
+  new Promise((resolve, reject) =>
+    fn((err, result) => {
+      if (err) return reject(err);
+      return resolve(result);
+    }),
+  );
+
+runtimeAgent.getProperties(
+  objectId,
+  false, // ownProperties
+  false, // accessorPropertiesOnly
+  false, // generatePreview
+  (error, properties, internalProperties) => {
+    return 1;
+  },
+);
+
+function render() {
+  return (
+    <View>
+      <Image
+        onProgress={(e) =>
+          this.setState({
+            progress: Math.round(
+              (100 * e.nativeEvent.loaded) / e.nativeEvent.total,
+            ),
+          })
+        }
+      />
+    </View>
+  );
+}
+
+function render() {
+  return (
+    <View>
+      <Image
+        onProgress={(e) =>
+          this.setState({
+            progress: Math.round(
+              (100 * e.nativeEvent.loaded) / e.nativeEvent.total,
+            ),
+          })
+        }
+      />
+    </View>
+  );
+}
+
+function render() {
+  return (
+    <View>
+      <Image
+        onProgress={(e) =>
+          this.setState({
+            progress: Math.round(
+              (100 * e.nativeEvent.loaded) / e.nativeEvent.total,
+            ),
+          })
+        }
+      />
+    </View>
+  );
+}
+
+jest.mock(
+  "../SearchSource",
+  () =>
+    class {
+      findMatchingTests(pattern) {
+        return { paths: [] };
+      }
+    },
+);
+
+fooooooooooooooooooooooooooooooooooooooooooooooooooo(
+  (action) => (next) => dispatch(action),
+);
+
+foo(
+  ({
+    a,
+
+    b,
+  }) => {},
+);
+
+foo(({ a, b }) => {});
+
+foo(({ a, b }) => {});
+
+foo(
+  a,
+  ({
+    a,
+
+    b,
+  }) => {},
+);
+
+foo(
+  ({
+    a,
+
+    b,
+  }) => a,
+);
+
+foo(({ a, b }) => a);
+
+foo(({ a, b }) => a);
+
+foo(
+  ({
+    a: {
+      a,
+
+      b,
+    },
+  }) => {},
+);
+
+foo(
+  ({
+    a: {
+      b: {
+        c,
+
+        d,
+      },
+    },
+  }) => {},
+);
+
+foo(
+  ({
+    a: {
+      b: {
+        c: {
+          d,
+
+          e,
+        },
+      },
+    },
+  }) => {},
+);
+
+foo(
+  ({
+    a: {
+      a,
+
+      b,
+    },
+  }) => a,
+);
+
+foo(
+  ({
+    a: {
+      b: {
+        c,
+
+        d,
+      },
+    },
+  }) => a,
+);
+
+foo(
+  ({
+    a: {
+      b: {
+        c: {
+          d,
+
+          e,
+        },
+      },
+    },
+  }) => a,
+);
+
+foo(
+  ([
+    {
+      a: {
+        b: {
+          c: {
+            d,
+
+            e,
+          },
+        },
+      },
+    },
+  ]) => {},
+);
+
+foo(
+  ([
+    ...{
+      a: {
+        b: {
+          c: {
+            d,
+
+            e,
+          },
+        },
+      },
+    }
+  ]) => {},
+);
+
+foo(
+  (
+    n = {
+      a: {
+        b: {
+          c: {
+            d,
+
+            e,
+          },
+        },
+      },
+    },
+  ) => {},
+);
+
+foo(
+  ({
+    x: [
+      {
+        a,
+
+        b,
+      },
+    ],
+  }) => {},
+);
+
+foo(
+  (
+    a = [
+      {
+        a,
+
+        b,
+      },
+    ],
+  ) => a,
+);
+
+foo(
+  ([
+    [
+      {
+        a,
+
+        b,
+      },
+    ],
+  ]) => {},
+);
+
+foo(
+  ([
+    [
+      [
+        [
+          {
+            a,
+            b: {
+              c,
+              d: {
+                e,
+
+                f,
+              },
+            },
+          },
+        ],
+      ],
+    ],
+  ]) => {},
+);
+
+foo(
+  (
+    ...{
+      a,
+
+      b,
+    }
+  ) => {},
+);
+
+foo(
+  (
+    ...[
+      {
+        a,
+
+        b,
+      },
+    ]
+  ) => {},
+);
+
+foo(
+  ([
+    ...[
+      {
+        a,
+
+        b,
+      },
+    ]
+  ]) => {},
+);
+
+foo(
+  (
+    a = [
+      {
+        a,
+
+        b,
+      },
+    ],
+  ) => {},
+);
+
+foo(
+  (
+    a = (({
+      a,
+
+      b,
+    }) => {})(),
+  ) => {},
+);
+
+foo(
+  (
+    a = f({
+      a,
+
+      b,
+    }),
+  ) => {},
+);
+
+foo(
+  (
+    a = ({
+      a,
+
+      b,
+    }) => {},
+  ) => {},
+);
+
+foo(
+  (
+    a = 1 +
+      f({
+        a,
+
+        b,
+      }),
+  ) => {},
+);
+
+================================================================================
+`;
+
+exports[`call.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+Seq(typeDef.interface.groups).forEach(group =>
+  Seq(group.members).forEach((member, memberName) =>
+    markdownDoc(
+      member.doc,
+      { typePath: typePath.concat(memberName.slice(1)),
+       signatures: member.signatures }
+    )
+  )
+)
+
+const promiseFromCallback = fn =>
+  new Promise((resolve, reject) =>
+    fn((err, result) => {
+      if (err) return reject(err);
+      return resolve(result);
+    })
+  );
+
+runtimeAgent.getProperties(
+  objectId,
+  false, // ownProperties
+  false, // accessorPropertiesOnly
+  false, // generatePreview
+  (error, properties, internalProperties) => {
+    return 1
+  },
+);
+
+function render() {
+  return (
+    <View>
+      <Image
+        onProgress={(e) => this.setState({progress: Math.round(100 * e.nativeEvent.loaded / e.nativeEvent.total)})}
+      />
+    </View>
+  );
+}
+
+function render() {
+  return (
+    <View>
+      <Image
+        onProgress={e =>
+          this.setState({
+            progress: Math.round(
+              100 * e.nativeEvent.loaded / e.nativeEvent.total,
+            ),
+          })}
+      />
+    </View>
+  );
+}
+
+function render() {
+  return (
+    <View>
+      <Image
+        onProgress={e =>
+          this.setState({
+            progress: Math.round(
+              100 * e.nativeEvent.loaded / e.nativeEvent.total,
+            ),
+          })}
+      />
+    </View>
+  );
+}
+
+jest.mock(
+  '../SearchSource',
+  () => class {
+    findMatchingTests(pattern) {
+      return {paths: []};
+    }
+  },
+);
+
+fooooooooooooooooooooooooooooooooooooooooooooooooooo(action => next =>
+    dispatch(action),
+);
+
+foo(
+  ({
+    a,
+
+    b
+  }) => {}
+);
+
+foo(
+  ({
+    a,
+    b
+
+  }) => {}
+);
+
+foo(
+  ({
+    a,
+    b
+  }) => {}
+);
+
+foo(
+  a,
+  ({
+    a,
+
+    b
+  }) => {}
+)
+
+foo(
+  ({
+    a,
+
+    b
+  }) => a
+);
+
+foo(
+  ({
+    a,
+    b
+  }) => a
+);
+
+foo(
+  ({
+    a,
+    b
+
+  }) => a
+);
+
+foo(
+  ({
+    a: {
+      a,
+
+      b
+    }
+  }) => {}
+);
+
+foo(
+  ({
+    a: {
+      b: {
+        c,
+
+        d
+      }
+    }
+  }) => {}
+);
+
+foo(
+  ({
+    a: {
+      b: {
+        c: {
+          d,
+
+          e
+        }
+      }
+    }
+  }) => {}
+);
+
+foo(
+  ({
+    a: {
+      a,
+
+      b
+    }
+  }) => a
+);
+
+foo(
+  ({
+    a: {
+      b: {
+        c,
+
+        d
+      }
+    }
+  }) => a
+);
+
+foo(
+  ({
+    a: {
+      b: {
+        c: {
+          d,
+
+          e
+        }
+      }
+    }
+  }) => a
+);
+
+foo(
+  ([
+    {
+      a: {
+        b: {
+          c: {
+            d,
+
+            e
+          }
+        }
+      }
+    }
+  ]) => {}
+);
+
+foo(
+  ([
+    ...{
+      a: {
+        b: {
+          c: {
+            d,
+
+            e
+          }
+        }
+      }
+    }
+  ]) => {}
+);
+
+foo(
+  (
+    n = {
+      a: {
+        b: {
+          c: {
+            d,
+
+            e
+          }
+        }
+      }
+    }
+  ) => {}
+);
+
+foo(
+  ({
+    x: [
+      {
+        a,
+
+        b
+      }
+    ]
+  }) => {}
+);
+
+foo(
+  (
+    a = [
+      {
+        a,
+
+        b
+      }
+    ]
+  ) => a
+);
+
+foo(
+  ([
+    [
+      {
+        a,
+
+        b
+      }
+    ]
+  ]) => {}
+);
+
+foo(
+  ([
+    [
+      [
+        [
+          {
+            a,
+            b: {
+              c,
+              d: {
+                e,
+
+                f
+              }
+            }
+          }
+        ]
+      ]
+    ]
+  ]) => {}
+);
+
+foo(
+  (
+    ...{
+      a,
+
+      b
+    }
+  ) => {}
+);
+
+foo(
+  (
+    ...[
+      {
+        a,
+
+        b
+      }
+    ]
+  ) => {}
+);
+
+foo(
+  ([
+    ...[
+      {
+        a,
+
+        b
+      }
+    ]
+  ]) => {}
+);
+
+foo(
+  (
+    a = [{
+      a,
+
+      b
+    }]
+  ) => {}
+);
+
+foo(
+  (
+    a = (({
+      a,
+
+      b
+    }) => {})()
+  ) => {}
+);
+
+foo(
+  (
+    a = f({
+      a,
+
+      b
+    })
+  ) => {}
+);
+
+foo(
+  (
+    a = ({
+      a,
+
+      b
+    }) => {}
+  ) => {}
+);
+
+foo(
+  (
+    a = 1 +
+      f({
+        a,
+
+        b
+      })
+  ) => {}
+);
+
+=====================================output=====================================
+Seq(typeDef.interface.groups).forEach(group =>
+  Seq(group.members).forEach((member, memberName) =>
+    markdownDoc(member.doc, {
+      typePath: typePath.concat(memberName.slice(1)),
+      signatures: member.signatures,
+    }),
+  ),
+);
+
+const promiseFromCallback = fn =>
+  new Promise((resolve, reject) =>
+    fn((err, result) => {
+      if (err) return reject(err);
+      return resolve(result);
+    }),
+  );
+
+runtimeAgent.getProperties(
+  objectId,
+  false, // ownProperties
+  false, // accessorPropertiesOnly
+  false, // generatePreview
+  (error, properties, internalProperties) => {
+    return 1;
+  },
+);
+
+function render() {
+  return (
+    <View>
+      <Image
+        onProgress={e =>
+          this.setState({
+            progress: Math.round(
+              (100 * e.nativeEvent.loaded) / e.nativeEvent.total,
+            ),
+          })
+        }
+      />
+    </View>
+  );
+}
+
+function render() {
+  return (
+    <View>
+      <Image
+        onProgress={e =>
+          this.setState({
+            progress: Math.round(
+              (100 * e.nativeEvent.loaded) / e.nativeEvent.total,
+            ),
+          })
+        }
+      />
+    </View>
+  );
+}
+
+function render() {
+  return (
+    <View>
+      <Image
+        onProgress={e =>
+          this.setState({
+            progress: Math.round(
+              (100 * e.nativeEvent.loaded) / e.nativeEvent.total,
+            ),
+          })
+        }
+      />
+    </View>
+  );
+}
+
+jest.mock(
+  "../SearchSource",
+  () =>
+    class {
+      findMatchingTests(pattern) {
+        return { paths: [] };
+      }
+    },
+);
+
+fooooooooooooooooooooooooooooooooooooooooooooooooooo(
+  action => next => dispatch(action),
+);
+
+foo(
+  ({
+    a,
+
+    b,
+  }) => {},
+);
+
+foo(({ a, b }) => {});
+
+foo(({ a, b }) => {});
+
+foo(
+  a,
+  ({
+    a,
+
+    b,
+  }) => {},
+);
+
+foo(
+  ({
+    a,
+
+    b,
+  }) => a,
+);
+
+foo(({ a, b }) => a);
+
+foo(({ a, b }) => a);
+
+foo(
+  ({
+    a: {
+      a,
+
+      b,
+    },
+  }) => {},
+);
+
+foo(
+  ({
+    a: {
+      b: {
+        c,
+
+        d,
+      },
+    },
+  }) => {},
+);
+
+foo(
+  ({
+    a: {
+      b: {
+        c: {
+          d,
+
+          e,
+        },
+      },
+    },
+  }) => {},
+);
+
+foo(
+  ({
+    a: {
+      a,
+
+      b,
+    },
+  }) => a,
+);
+
+foo(
+  ({
+    a: {
+      b: {
+        c,
+
+        d,
+      },
+    },
+  }) => a,
+);
+
+foo(
+  ({
+    a: {
+      b: {
+        c: {
+          d,
+
+          e,
+        },
+      },
+    },
+  }) => a,
+);
+
+foo(
+  ([
+    {
+      a: {
+        b: {
+          c: {
+            d,
+
+            e,
+          },
+        },
+      },
+    },
+  ]) => {},
+);
+
+foo(
+  ([
+    ...{
+      a: {
+        b: {
+          c: {
+            d,
+
+            e,
+          },
+        },
+      },
+    }
+  ]) => {},
+);
+
+foo(
+  (
+    n = {
+      a: {
+        b: {
+          c: {
+            d,
+
+            e,
+          },
+        },
+      },
+    },
+  ) => {},
+);
+
+foo(
+  ({
+    x: [
+      {
+        a,
+
+        b,
+      },
+    ],
+  }) => {},
+);
+
+foo(
+  (
+    a = [
+      {
+        a,
+
+        b,
+      },
+    ],
+  ) => a,
+);
+
+foo(
+  ([
+    [
+      {
+        a,
+
+        b,
+      },
+    ],
+  ]) => {},
+);
+
+foo(
+  ([
+    [
+      [
+        [
+          {
+            a,
+            b: {
+              c,
+              d: {
+                e,
+
+                f,
+              },
+            },
+          },
+        ],
+      ],
+    ],
+  ]) => {},
+);
+
+foo(
+  (
+    ...{
+      a,
+
+      b,
+    }
+  ) => {},
+);
+
+foo(
+  (
+    ...[
+      {
+        a,
+
+        b,
+      },
+    ]
+  ) => {},
+);
+
+foo(
+  ([
+    ...[
+      {
+        a,
+
+        b,
+      },
+    ]
+  ]) => {},
+);
+
+foo(
+  (
+    a = [
+      {
+        a,
+
+        b,
+      },
+    ],
+  ) => {},
+);
+
+foo(
+  (
+    a = (({
+      a,
+
+      b,
+    }) => {})(),
+  ) => {},
+);
+
+foo(
+  (
+    a = f({
+      a,
+
+      b,
+    }),
+  ) => {},
+);
+
+foo(
+  (
+    a = ({
+      a,
+
+      b,
+    }) => {},
+  ) => {},
+);
+
+foo(
+  (
+    a = 1 +
+      f({
+        a,
+
+        b,
+      }),
+  ) => {},
+);
+
+================================================================================
+`;
+
+exports[`chain-as-arg.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const w = a.b(
+  (
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef"
+  ) =>
+  (e) =>
+    0
+);
+
+const x = a.b(
+  (
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef"
+  ) =>
+  (e) =>
+    0
+)(x);
+
+const y = a.b(
+  1,
+  (
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef"
+  ) =>
+  (e) =>
+    0
+)(x);
+
+const z = a.b(
+  (
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef"
+  ) =>
+  (e) =>
+    0,
+  2
+)(x);
+
+
+=====================================output=====================================
+const w = a.b(
+  (
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+  ) =>
+    (e) =>
+      0,
+);
+
+const x = a.b(
+  (
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+  ) =>
+    (e) =>
+      0,
+)(x);
+
+const y = a.b(
+  1,
+  (
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+  ) =>
+    (e) =>
+      0,
+)(x);
+
+const z = a.b(
+  (
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+  ) =>
+    (e) =>
+      0,
+  2,
+)(x);
+
+================================================================================
+`;
+
+exports[`chain-as-arg.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const w = a.b(
+  (
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef"
+  ) =>
+  (e) =>
+    0
+);
+
+const x = a.b(
+  (
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef"
+  ) =>
+  (e) =>
+    0
+)(x);
+
+const y = a.b(
+  1,
+  (
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef"
+  ) =>
+  (e) =>
+    0
+)(x);
+
+const z = a.b(
+  (
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef"
+  ) =>
+  (e) =>
+    0,
+  2
+)(x);
+
+
+=====================================output=====================================
+const w = a.b(
+  (
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+  ) =>
+    e =>
+      0,
+);
+
+const x = a.b(
+  (
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+  ) =>
+    e =>
+      0,
+)(x);
+
+const y = a.b(
+  1,
+  (
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+  ) =>
+    e =>
+      0,
+)(x);
+
+const z = a.b(
+  (
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+  ) =>
+    e =>
+      0,
+  2,
+)(x);
+
+================================================================================
+`;
+
+exports[`chain-in-logical-expression.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const x = a.b ?? (
+  (
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef"
+  ) =>
+  (e) =>
+    0
+);
+
+=====================================output=====================================
+const x =
+  a.b ??
+  ((
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+  ) =>
+    (e) =>
+      0);
+
+================================================================================
+`;
+
+exports[`chain-in-logical-expression.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const x = a.b ?? (
+  (
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef"
+  ) =>
+  (e) =>
+    0
+);
+
+=====================================output=====================================
+const x =
+  a.b ??
+  ((
+    c = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+    d = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdef",
+  ) =>
+    e =>
+      0);
+
+================================================================================
+`;
+
+exports[`comment.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/**
+ * Curried function that ends with a BEM CSS Selector
+ *
+ * @param {String} block - the BEM Block you'd like to select.
+ * @returns {Function}
+ */
+export const bem = block =>
+  /**
+   * @param {String} [element] - the BEM Element within that block; if undefined, selects the block itself.
+   * @returns {Function}
+   */
+  element =>
+    /**
+     * @param {?String} [modifier] - the BEM Modifier for the Block or Element; if undefined, selects the Block or Element unmodified.
+     * @returns {String}
+     */
+    modifier =>
+      [
+        ".",
+        css(block),
+        element ? \`__\${css(element)}\` : "",
+        modifier ? \`--\${css(modifier)}\` : ""
+      ].join("");
+
+<FlatList
+  renderItem={(
+    info, // $FlowExpectedError - bad widgetCount type 6, should be Object
+  ) => <span>{info.item.widget.missingProp}</span>}
+  data={data}
+/>
+
+func(() => // comment
+a);
+func(() => () => // comment
+a);
+func(() => () => () => // comment
+a);
+
+func(() => // comment
+a ? b : c);
+func(() => () => // comment
+a ? b : c);
+func(() => () => () => // comment
+a ? b : c);
+
+func(() => // comment
+(a , b , c))
+func(() => () => // comment
+(a , b , c))
+func(() => () => () => // comment
+(a , b , c))
+
+=====================================output=====================================
+/**
+ * Curried function that ends with a BEM CSS Selector
+ *
+ * @param {String} block - the BEM Block you'd like to select.
+ * @returns {Function}
+ */
+export const bem =
+  (block) =>
+  /**
+   * @param {String} [element] - the BEM Element within that block; if undefined, selects the block itself.
+   * @returns {Function}
+   */
+  (element) =>
+  /**
+   * @param {?String} [modifier] - the BEM Modifier for the Block or Element; if undefined, selects the Block or Element unmodified.
+   * @returns {String}
+   */
+  (modifier) =>
+    [
+      ".",
+      css(block),
+      element ? \`__\${css(element)}\` : "",
+      modifier ? \`--\${css(modifier)}\` : "",
+    ].join("");
+
+<FlatList
+  renderItem={(
+    info, // $FlowExpectedError - bad widgetCount type 6, should be Object
+  ) => <span>{info.item.widget.missingProp}</span>}
+  data={data}
+/>;
+
+func(
+  () =>
+    // comment
+    a,
+);
+func(
+  () => () =>
+    // comment
+    a,
+);
+func(
+  () => () => () =>
+    // comment
+    a,
+);
+
+func(() =>
+  // comment
+  a ? b : c,
+);
+func(
+  () => () =>
+    // comment
+    a ? b : c,
+);
+func(
+  () => () => () =>
+    // comment
+    a ? b : c,
+);
+
+func(
+  () =>
+    // comment
+    (a, b, c),
+);
+func(
+  () => () =>
+    // comment
+    (a, b, c),
+);
+func(
+  () => () => () =>
+    // comment
+    (a, b, c),
+);
+
+================================================================================
+`;
+
+exports[`comment.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/**
+ * Curried function that ends with a BEM CSS Selector
+ *
+ * @param {String} block - the BEM Block you'd like to select.
+ * @returns {Function}
+ */
+export const bem = block =>
+  /**
+   * @param {String} [element] - the BEM Element within that block; if undefined, selects the block itself.
+   * @returns {Function}
+   */
+  element =>
+    /**
+     * @param {?String} [modifier] - the BEM Modifier for the Block or Element; if undefined, selects the Block or Element unmodified.
+     * @returns {String}
+     */
+    modifier =>
+      [
+        ".",
+        css(block),
+        element ? \`__\${css(element)}\` : "",
+        modifier ? \`--\${css(modifier)}\` : ""
+      ].join("");
+
+<FlatList
+  renderItem={(
+    info, // $FlowExpectedError - bad widgetCount type 6, should be Object
+  ) => <span>{info.item.widget.missingProp}</span>}
+  data={data}
+/>
+
+func(() => // comment
+a);
+func(() => () => // comment
+a);
+func(() => () => () => // comment
+a);
+
+func(() => // comment
+a ? b : c);
+func(() => () => // comment
+a ? b : c);
+func(() => () => () => // comment
+a ? b : c);
+
+func(() => // comment
+(a , b , c))
+func(() => () => // comment
+(a , b , c))
+func(() => () => () => // comment
+(a , b , c))
+
+=====================================output=====================================
+/**
+ * Curried function that ends with a BEM CSS Selector
+ *
+ * @param {String} block - the BEM Block you'd like to select.
+ * @returns {Function}
+ */
+export const bem =
+  block =>
+  /**
+   * @param {String} [element] - the BEM Element within that block; if undefined, selects the block itself.
+   * @returns {Function}
+   */
+  element =>
+  /**
+   * @param {?String} [modifier] - the BEM Modifier for the Block or Element; if undefined, selects the Block or Element unmodified.
+   * @returns {String}
+   */
+  modifier =>
+    [
+      ".",
+      css(block),
+      element ? \`__\${css(element)}\` : "",
+      modifier ? \`--\${css(modifier)}\` : "",
+    ].join("");
+
+<FlatList
+  renderItem={(
+    info, // $FlowExpectedError - bad widgetCount type 6, should be Object
+  ) => <span>{info.item.widget.missingProp}</span>}
+  data={data}
+/>;
+
+func(
+  () =>
+    // comment
+    a,
+);
+func(
+  () => () =>
+    // comment
+    a,
+);
+func(
+  () => () => () =>
+    // comment
+    a,
+);
+
+func(() =>
+  // comment
+  a ? b : c,
+);
+func(
+  () => () =>
+    // comment
+    a ? b : c,
+);
+func(
+  () => () => () =>
+    // comment
+    a ? b : c,
+);
+
+func(
+  () =>
+    // comment
+    (a, b, c),
+);
+func(
+  () => () =>
+    // comment
+    (a, b, c),
+);
+func(
+  () => () => () =>
+    // comment
+    (a, b, c),
+);
+
+================================================================================
+`;
+
+exports[`curried.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const fn1 = a => 3;
+const fn2 = a => b => 3;
+const fn3 = a => b => c => 3;
+const fn4 = a => b => c => d => 3;
+const fn5 = a => b => c => d => e => 3;
+const fn6 = a => b => c => d => e => g => 3;
+const fn7 = a => b => c => d => e => g => f => 3;
+
+const fn8 = a => ({ foo: bar, bar: baz, baz: foo });
+const fn9 = a => b => ({ foo: bar, bar: baz, baz: foo });
+const fn10 = a => b => c => ({ foo: bar, bar: baz, baz: foo });
+const fn11 = a => b => c => d => ({ foo: bar, bar: baz, baz: foo });
+const fn12 = a => b => c => d => e => ({ foo: bar, bar: baz, baz: foo });
+const fn13 = a => b => c => d => e => g => ({ foo: bar, bar: baz, baz: foo });
+const fn14 = a => b => c => d => e => g => f => ({ foo: bar, bar: baz, baz: foo });
+
+const curryTest =
+    (argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) =>
+      ({
+        foo: argument1,
+        bar: argument2,
+      });
+
+let curryTest2 =
+    (argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) => {
+      const foo = "foo";
+      return foo + "bar";
+    };
+
+curryTest2 =
+    (argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) => {
+      const foo = "foo";
+      return foo + "bar";
+    };
+
+throw (argument1) =>
+(argument2) =>
+(argument3) =>
+(argument4) =>
+(argument5) =>
+(argument6) =>
+(argument7) =>
+(argument8) =>
+(argument9) =>
+(argument10) =>
+(argument11) =>
+(argument12) => {
+  const foo = "foo";
+  return foo + "bar";
+};
+
+foo((argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) => 3);
+
+foo((argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) => ({
+        foo: bar,
+        bar: baz,
+        baz: foo
+    }));
+
+foo(
+    (argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) => {
+      const foo = "foo";
+      return foo + "bar";
+    }
+);
+
+((argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) => 3)(3);
+
+bar(
+  foo(
+    (argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) => ({
+      foo: bar,
+      bar: baz,
+    })
+  )
+);
+
+const baaaz = (aaaaa1, bbbbb1) => (aaaaa2, bbbbb2) => (aaaaa3, bbbbb3) => (aaaaa4, bbbbb4) => ({
+  foo: bar
+});
+
+new Fooooooooooooooooooooooooooooooooooooooooooooooooooo(
+  (action) =>
+    (next) =>
+    (next) =>
+    (next) =>
+    (next) =>
+    (next) =>
+    (next) =>
+    dispatch(action)
+);
+
+foo?.Fooooooooooooooooooooooooooooooooooooooooooooooooooo(
+  (action) =>
+    (next) =>
+    (next) =>
+    (next) =>
+    (next) =>
+    (next) =>
+    (next) =>
+    dispatch(action)
+);
+
+foo(action => action => action);
+
+import( (argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) => {
+      const foo = "foo";
+      return foo + "bar";
+    });
+
+=====================================output=====================================
+const fn1 = (a) => 3;
+const fn2 = (a) => (b) => 3;
+const fn3 = (a) => (b) => (c) => 3;
+const fn4 = (a) => (b) => (c) => (d) => 3;
+const fn5 = (a) => (b) => (c) => (d) => (e) => 3;
+const fn6 = (a) => (b) => (c) => (d) => (e) => (g) => 3;
+const fn7 = (a) => (b) => (c) => (d) => (e) => (g) => (f) => 3;
+
+const fn8 = (a) => ({ foo: bar, bar: baz, baz: foo });
+const fn9 = (a) => (b) => ({ foo: bar, bar: baz, baz: foo });
+const fn10 = (a) => (b) => (c) => ({ foo: bar, bar: baz, baz: foo });
+const fn11 = (a) => (b) => (c) => (d) => ({ foo: bar, bar: baz, baz: foo });
+const fn12 = (a) => (b) => (c) => (d) => (e) => ({
+  foo: bar,
+  bar: baz,
+  baz: foo,
+});
+const fn13 = (a) => (b) => (c) => (d) => (e) => (g) => ({
+  foo: bar,
+  bar: baz,
+  baz: foo,
+});
+const fn14 = (a) => (b) => (c) => (d) => (e) => (g) => (f) => ({
+  foo: bar,
+  bar: baz,
+  baz: foo,
+});
+
+const curryTest =
+  (argument1) =>
+  (argument2) =>
+  (argument3) =>
+  (argument4) =>
+  (argument5) =>
+  (argument6) =>
+  (argument7) =>
+  (argument8) =>
+  (argument9) =>
+  (argument10) =>
+  (argument11) =>
+  (argument12) => ({
+    foo: argument1,
+    bar: argument2,
+  });
+
+let curryTest2 =
+  (argument1) =>
+  (argument2) =>
+  (argument3) =>
+  (argument4) =>
+  (argument5) =>
+  (argument6) =>
+  (argument7) =>
+  (argument8) =>
+  (argument9) =>
+  (argument10) =>
+  (argument11) =>
+  (argument12) => {
+    const foo = "foo";
+    return foo + "bar";
+  };
+
+curryTest2 =
+  (argument1) =>
+  (argument2) =>
+  (argument3) =>
+  (argument4) =>
+  (argument5) =>
+  (argument6) =>
+  (argument7) =>
+  (argument8) =>
+  (argument9) =>
+  (argument10) =>
+  (argument11) =>
+  (argument12) => {
+    const foo = "foo";
+    return foo + "bar";
+  };
+
+throw (argument1) =>
+  (argument2) =>
+  (argument3) =>
+  (argument4) =>
+  (argument5) =>
+  (argument6) =>
+  (argument7) =>
+  (argument8) =>
+  (argument9) =>
+  (argument10) =>
+  (argument11) =>
+  (argument12) => {
+    const foo = "foo";
+    return foo + "bar";
+  };
+
+foo(
+  (argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) =>
+      3,
+);
+
+foo(
+  (argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) => ({
+      foo: bar,
+      bar: baz,
+      baz: foo,
+    }),
+);
+
+foo(
+  (argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) => {
+      const foo = "foo";
+      return foo + "bar";
+    },
+);
+
+(
+  (argument1) =>
+  (argument2) =>
+  (argument3) =>
+  (argument4) =>
+  (argument5) =>
+  (argument6) =>
+  (argument7) =>
+  (argument8) =>
+  (argument9) =>
+  (argument10) =>
+  (argument11) =>
+  (argument12) =>
+    3
+)(3);
+
+bar(
+  foo(
+    (argument1) =>
+      (argument2) =>
+      (argument3) =>
+      (argument4) =>
+      (argument5) =>
+      (argument6) =>
+      (argument7) =>
+      (argument8) =>
+      (argument9) =>
+      (argument10) =>
+      (argument11) =>
+      (argument12) => ({
+        foo: bar,
+        bar: baz,
+      }),
+  ),
+);
+
+const baaaz =
+  (aaaaa1, bbbbb1) =>
+  (aaaaa2, bbbbb2) =>
+  (aaaaa3, bbbbb3) =>
+  (aaaaa4, bbbbb4) => ({
+    foo: bar,
+  });
+
+new Fooooooooooooooooooooooooooooooooooooooooooooooooooo(
+  (action) => (next) => (next) => (next) => (next) => (next) => (next) =>
+    dispatch(action),
+);
+
+foo?.Fooooooooooooooooooooooooooooooooooooooooooooooooooo(
+  (action) => (next) => (next) => (next) => (next) => (next) => (next) =>
+    dispatch(action),
+);
+
+foo((action) => (action) => action);
+
+import(
+  (argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) => {
+      const foo = "foo";
+      return foo + "bar";
+    }
+);
+
+================================================================================
+`;
+
+exports[`curried.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const fn1 = a => 3;
+const fn2 = a => b => 3;
+const fn3 = a => b => c => 3;
+const fn4 = a => b => c => d => 3;
+const fn5 = a => b => c => d => e => 3;
+const fn6 = a => b => c => d => e => g => 3;
+const fn7 = a => b => c => d => e => g => f => 3;
+
+const fn8 = a => ({ foo: bar, bar: baz, baz: foo });
+const fn9 = a => b => ({ foo: bar, bar: baz, baz: foo });
+const fn10 = a => b => c => ({ foo: bar, bar: baz, baz: foo });
+const fn11 = a => b => c => d => ({ foo: bar, bar: baz, baz: foo });
+const fn12 = a => b => c => d => e => ({ foo: bar, bar: baz, baz: foo });
+const fn13 = a => b => c => d => e => g => ({ foo: bar, bar: baz, baz: foo });
+const fn14 = a => b => c => d => e => g => f => ({ foo: bar, bar: baz, baz: foo });
+
+const curryTest =
+    (argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) =>
+      ({
+        foo: argument1,
+        bar: argument2,
+      });
+
+let curryTest2 =
+    (argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) => {
+      const foo = "foo";
+      return foo + "bar";
+    };
+
+curryTest2 =
+    (argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) => {
+      const foo = "foo";
+      return foo + "bar";
+    };
+
+throw (argument1) =>
+(argument2) =>
+(argument3) =>
+(argument4) =>
+(argument5) =>
+(argument6) =>
+(argument7) =>
+(argument8) =>
+(argument9) =>
+(argument10) =>
+(argument11) =>
+(argument12) => {
+  const foo = "foo";
+  return foo + "bar";
+};
+
+foo((argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) => 3);
+
+foo((argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) => ({
+        foo: bar,
+        bar: baz,
+        baz: foo
+    }));
+
+foo(
+    (argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) => {
+      const foo = "foo";
+      return foo + "bar";
+    }
+);
+
+((argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) => 3)(3);
+
+bar(
+  foo(
+    (argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) => ({
+      foo: bar,
+      bar: baz,
+    })
+  )
+);
+
+const baaaz = (aaaaa1, bbbbb1) => (aaaaa2, bbbbb2) => (aaaaa3, bbbbb3) => (aaaaa4, bbbbb4) => ({
+  foo: bar
+});
+
+new Fooooooooooooooooooooooooooooooooooooooooooooooooooo(
+  (action) =>
+    (next) =>
+    (next) =>
+    (next) =>
+    (next) =>
+    (next) =>
+    (next) =>
+    dispatch(action)
+);
+
+foo?.Fooooooooooooooooooooooooooooooooooooooooooooooooooo(
+  (action) =>
+    (next) =>
+    (next) =>
+    (next) =>
+    (next) =>
+    (next) =>
+    (next) =>
+    dispatch(action)
+);
+
+foo(action => action => action);
+
+import( (argument1) =>
+    (argument2) =>
+    (argument3) =>
+    (argument4) =>
+    (argument5) =>
+    (argument6) =>
+    (argument7) =>
+    (argument8) =>
+    (argument9) =>
+    (argument10) =>
+    (argument11) =>
+    (argument12) => {
+      const foo = "foo";
+      return foo + "bar";
+    });
+
+=====================================output=====================================
+const fn1 = a => 3;
+const fn2 = a => b => 3;
+const fn3 = a => b => c => 3;
+const fn4 = a => b => c => d => 3;
+const fn5 = a => b => c => d => e => 3;
+const fn6 = a => b => c => d => e => g => 3;
+const fn7 = a => b => c => d => e => g => f => 3;
+
+const fn8 = a => ({ foo: bar, bar: baz, baz: foo });
+const fn9 = a => b => ({ foo: bar, bar: baz, baz: foo });
+const fn10 = a => b => c => ({ foo: bar, bar: baz, baz: foo });
+const fn11 = a => b => c => d => ({ foo: bar, bar: baz, baz: foo });
+const fn12 = a => b => c => d => e => ({ foo: bar, bar: baz, baz: foo });
+const fn13 = a => b => c => d => e => g => ({ foo: bar, bar: baz, baz: foo });
+const fn14 = a => b => c => d => e => g => f => ({
+  foo: bar,
+  bar: baz,
+  baz: foo,
+});
+
+const curryTest =
+  argument1 =>
+  argument2 =>
+  argument3 =>
+  argument4 =>
+  argument5 =>
+  argument6 =>
+  argument7 =>
+  argument8 =>
+  argument9 =>
+  argument10 =>
+  argument11 =>
+  argument12 => ({
+    foo: argument1,
+    bar: argument2,
+  });
+
+let curryTest2 =
+  argument1 =>
+  argument2 =>
+  argument3 =>
+  argument4 =>
+  argument5 =>
+  argument6 =>
+  argument7 =>
+  argument8 =>
+  argument9 =>
+  argument10 =>
+  argument11 =>
+  argument12 => {
+    const foo = "foo";
+    return foo + "bar";
+  };
+
+curryTest2 =
+  argument1 =>
+  argument2 =>
+  argument3 =>
+  argument4 =>
+  argument5 =>
+  argument6 =>
+  argument7 =>
+  argument8 =>
+  argument9 =>
+  argument10 =>
+  argument11 =>
+  argument12 => {
+    const foo = "foo";
+    return foo + "bar";
+  };
+
+throw argument1 =>
+  argument2 =>
+  argument3 =>
+  argument4 =>
+  argument5 =>
+  argument6 =>
+  argument7 =>
+  argument8 =>
+  argument9 =>
+  argument10 =>
+  argument11 =>
+  argument12 => {
+    const foo = "foo";
+    return foo + "bar";
+  };
+
+foo(
+  argument1 =>
+    argument2 =>
+    argument3 =>
+    argument4 =>
+    argument5 =>
+    argument6 =>
+    argument7 =>
+    argument8 =>
+    argument9 =>
+    argument10 =>
+    argument11 =>
+    argument12 =>
+      3,
+);
+
+foo(
+  argument1 =>
+    argument2 =>
+    argument3 =>
+    argument4 =>
+    argument5 =>
+    argument6 =>
+    argument7 =>
+    argument8 =>
+    argument9 =>
+    argument10 =>
+    argument11 =>
+    argument12 => ({
+      foo: bar,
+      bar: baz,
+      baz: foo,
+    }),
+);
+
+foo(
+  argument1 =>
+    argument2 =>
+    argument3 =>
+    argument4 =>
+    argument5 =>
+    argument6 =>
+    argument7 =>
+    argument8 =>
+    argument9 =>
+    argument10 =>
+    argument11 =>
+    argument12 => {
+      const foo = "foo";
+      return foo + "bar";
+    },
+);
+
+(
+  argument1 =>
+  argument2 =>
+  argument3 =>
+  argument4 =>
+  argument5 =>
+  argument6 =>
+  argument7 =>
+  argument8 =>
+  argument9 =>
+  argument10 =>
+  argument11 =>
+  argument12 =>
+    3
+)(3);
+
+bar(
+  foo(
+    argument1 =>
+      argument2 =>
+      argument3 =>
+      argument4 =>
+      argument5 =>
+      argument6 =>
+      argument7 =>
+      argument8 =>
+      argument9 =>
+      argument10 =>
+      argument11 =>
+      argument12 => ({
+        foo: bar,
+        bar: baz,
+      }),
+  ),
+);
+
+const baaaz =
+  (aaaaa1, bbbbb1) =>
+  (aaaaa2, bbbbb2) =>
+  (aaaaa3, bbbbb3) =>
+  (aaaaa4, bbbbb4) => ({
+    foo: bar,
+  });
+
+new Fooooooooooooooooooooooooooooooooooooooooooooooooooo(
+  action => next => next => next => next => next => next => dispatch(action),
+);
+
+foo?.Fooooooooooooooooooooooooooooooooooooooooooooooooooo(
+  action => next => next => next => next => next => next => dispatch(action),
+);
+
+foo(action => action => action);
+
+import(
+  argument1 =>
+    argument2 =>
+    argument3 =>
+    argument4 =>
+    argument5 =>
+    argument6 =>
+    argument7 =>
+    argument8 =>
+    argument9 =>
+    argument10 =>
+    argument11 =>
+    argument12 => {
+      const foo = "foo";
+      return foo + "bar";
+    }
+);
+
+================================================================================
+`;
+
+exports[`currying.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const fn = b => c => d => {
+  return 3;
+};
+
+const foo = (a, b) => c => d => {
+  return 3;
+};
+
+const bar = a => b => c => a + b + c
+
+const mw = store => next => action => {
+  return next(action)
+}
+
+const middleware = options => (req, res, next) => {
+  // ...
+};
+
+=====================================output=====================================
+const fn = (b) => (c) => (d) => {
+  return 3;
+};
+
+const foo = (a, b) => (c) => (d) => {
+  return 3;
+};
+
+const bar = (a) => (b) => (c) => a + b + c;
+
+const mw = (store) => (next) => (action) => {
+  return next(action);
+};
+
+const middleware = (options) => (req, res, next) => {
+  // ...
+};
+
+================================================================================
+`;
+
+exports[`currying.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const fn = b => c => d => {
+  return 3;
+};
+
+const foo = (a, b) => c => d => {
+  return 3;
+};
+
+const bar = a => b => c => a + b + c
+
+const mw = store => next => action => {
+  return next(action)
+}
+
+const middleware = options => (req, res, next) => {
+  // ...
+};
+
+=====================================output=====================================
+const fn = b => c => d => {
+  return 3;
+};
+
+const foo = (a, b) => c => d => {
+  return 3;
+};
+
+const bar = a => b => c => a + b + c;
+
+const mw = store => next => action => {
+  return next(action);
+};
+
+const middleware = options => (req, res, next) => {
+  // ...
+};
+
+================================================================================
+`;
+
+exports[`currying-2.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const a =
+  (x) => (y) => (z) =>
+    x / 0.123456789 + (y * calculateSomething(z)) / Math.PI;
+
+request.get('https://preview-9992--prettier.netlify.app', head => body => {
+  console.log(head, body);
+});
+
+request.get('https://preview-9992--prettier.netlify.app', head => body => mody => {
+  console.log(head, body);
+});
+
+request.get('https://preview-9992--prettier.netlify.app', head => body => modyLoremIpsumDolorAbstractProviderFactoryServiceModule => {
+  console.log(head, body);
+});
+=====================================output=====================================
+const a = (x) => (y) => (z) =>
+  x / 0.123456789 + (y * calculateSomething(z)) / Math.PI;
+
+request.get("https://preview-9992--prettier.netlify.app", (head) => (body) => {
+  console.log(head, body);
+});
+
+request.get(
+  "https://preview-9992--prettier.netlify.app",
+  (head) => (body) => (mody) => {
+    console.log(head, body);
+  },
+);
+
+request.get(
+  "https://preview-9992--prettier.netlify.app",
+  (head) =>
+    (body) =>
+    (modyLoremIpsumDolorAbstractProviderFactoryServiceModule) => {
+      console.log(head, body);
+    },
+);
+
+================================================================================
+`;
+
+exports[`currying-2.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const a =
+  (x) => (y) => (z) =>
+    x / 0.123456789 + (y * calculateSomething(z)) / Math.PI;
+
+request.get('https://preview-9992--prettier.netlify.app', head => body => {
+  console.log(head, body);
+});
+
+request.get('https://preview-9992--prettier.netlify.app', head => body => mody => {
+  console.log(head, body);
+});
+
+request.get('https://preview-9992--prettier.netlify.app', head => body => modyLoremIpsumDolorAbstractProviderFactoryServiceModule => {
+  console.log(head, body);
+});
+=====================================output=====================================
+const a = x => y => z =>
+  x / 0.123456789 + (y * calculateSomething(z)) / Math.PI;
+
+request.get("https://preview-9992--prettier.netlify.app", head => body => {
+  console.log(head, body);
+});
+
+request.get(
+  "https://preview-9992--prettier.netlify.app",
+  head => body => mody => {
+    console.log(head, body);
+  },
+);
+
+request.get(
+  "https://preview-9992--prettier.netlify.app",
+  head => body => modyLoremIpsumDolorAbstractProviderFactoryServiceModule => {
+    console.log(head, body);
+  },
+);
+
+================================================================================
+`;
+
+exports[`currying-3.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+((b) => (c) => (d) => {
+  return 3;
+})(x);
+
+function f(
+  a = (fooLorem) => (bazIpsum) => (barLorem) => {
+    return 3;
+  }
+) {}
+
+(
+  (fooLoremIpsumFactory) =>
+  (bazLoremIpsumFactory) =>
+  (barLoremIpsumServiceFactory) => {
+    return 3;
+  }
+)(x);
+
+(
+  (b) => (c) => (d) =>
+    b + fooLoremIpsumFactory(c) - bazLoremIpsumFactory(b + d)
+)(x, fooLoremIpsumFactory, fooLoremIpsumFactory);
+
+(
+  (fooLorem) => (bazIpsum) => (barLorem) =>
+    b + fooLoremIpsumFactory(c) - bazLoremIpsumFactory(b + d)
+)(boo);
+
+(
+  (fooLoremIpsumFactory) =>
+  (bazLoremIpsumFactory) =>
+  (barLoremIpsumServiceFactory) =>
+    b + fooLoremIpsumFactory(c) - bazLoremIpsumFactory(b + d)
+)(x);
+=====================================output=====================================
+((b) => (c) => (d) => {
+  return 3;
+})(x);
+
+function f(
+  a = (fooLorem) => (bazIpsum) => (barLorem) => {
+    return 3;
+  },
+) {}
+
+(
+  (fooLoremIpsumFactory) =>
+  (bazLoremIpsumFactory) =>
+  (barLoremIpsumServiceFactory) => {
+    return 3;
+  }
+)(x);
+
+(
+  (b) => (c) => (d) =>
+    b + fooLoremIpsumFactory(c) - bazLoremIpsumFactory(b + d)
+)(x, fooLoremIpsumFactory, fooLoremIpsumFactory);
+
+(
+  (fooLorem) => (bazIpsum) => (barLorem) =>
+    b + fooLoremIpsumFactory(c) - bazLoremIpsumFactory(b + d)
+)(boo);
+
+(
+  (fooLoremIpsumFactory) =>
+  (bazLoremIpsumFactory) =>
+  (barLoremIpsumServiceFactory) =>
+    b + fooLoremIpsumFactory(c) - bazLoremIpsumFactory(b + d)
+)(x);
+
+================================================================================
+`;
+
+exports[`currying-3.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+((b) => (c) => (d) => {
+  return 3;
+})(x);
+
+function f(
+  a = (fooLorem) => (bazIpsum) => (barLorem) => {
+    return 3;
+  }
+) {}
+
+(
+  (fooLoremIpsumFactory) =>
+  (bazLoremIpsumFactory) =>
+  (barLoremIpsumServiceFactory) => {
+    return 3;
+  }
+)(x);
+
+(
+  (b) => (c) => (d) =>
+    b + fooLoremIpsumFactory(c) - bazLoremIpsumFactory(b + d)
+)(x, fooLoremIpsumFactory, fooLoremIpsumFactory);
+
+(
+  (fooLorem) => (bazIpsum) => (barLorem) =>
+    b + fooLoremIpsumFactory(c) - bazLoremIpsumFactory(b + d)
+)(boo);
+
+(
+  (fooLoremIpsumFactory) =>
+  (bazLoremIpsumFactory) =>
+  (barLoremIpsumServiceFactory) =>
+    b + fooLoremIpsumFactory(c) - bazLoremIpsumFactory(b + d)
+)(x);
+=====================================output=====================================
+(b => c => d => {
+  return 3;
+})(x);
+
+function f(
+  a = fooLorem => bazIpsum => barLorem => {
+    return 3;
+  },
+) {}
+
+(
+  fooLoremIpsumFactory =>
+  bazLoremIpsumFactory =>
+  barLoremIpsumServiceFactory => {
+    return 3;
+  }
+)(x);
+
+(
+  b => c => d =>
+    b + fooLoremIpsumFactory(c) - bazLoremIpsumFactory(b + d)
+)(x, fooLoremIpsumFactory, fooLoremIpsumFactory);
+
+(
+  fooLorem => bazIpsum => barLorem =>
+    b + fooLoremIpsumFactory(c) - bazLoremIpsumFactory(b + d)
+)(boo);
+
+(
+  fooLoremIpsumFactory => bazLoremIpsumFactory => barLoremIpsumServiceFactory =>
+    b + fooLoremIpsumFactory(c) - bazLoremIpsumFactory(b + d)
+)(x);
+
+================================================================================
+`;
+
+exports[`currying-4.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+Y(() => a ? b : c);
+
+Y(() => () => a ? b : c);
+
+Y(() => () => () => a ? b : c);
+
+Y(() => longlonglonglonglonglonglonglonglonglongCondition ? 'Prettier is an opinionated code formatter.' : 'Prettier takes your code and reprints it from scratch by taking the line length into account.')
+
+Y(() => () => longlonglonglonglonglonglonglonglonglongCondition ? 'Prettier is an opinionated code formatter.' : 'Prettier takes your code and reprints it from scratch by taking the line length into account.')
+
+Y(() => () => () => longlonglonglonglonglonglonglonglonglongCondition ? 'Prettier is an opinionated code formatter.' : 'Prettier takes your code and reprints it from scratch by taking the line length into account.')
+
+const x1 = (() => ['The', 'green', 'dragon', 'liked', 'to', 'knit', 'sweaters', 'for', 'the', 'fluffy', 'clouds', 'in', 'the', 'sky.'])
+
+const x2 = (() => () => ['The', 'green', 'dragon', 'liked', 'to', 'knit', 'sweaters', 'for', 'the', 'fluffy', 'clouds', 'in', 'the', 'sky.'])
+
+const x3 = (() => () => () => ['The', 'green', 'dragon', 'liked', 'to', 'knit', 'sweaters', 'for', 'the', 'fluffy', 'clouds', 'in', 'the', 'sky.'])
+
+f((a) => (1, 2, 3) /* a */);
+f((a) => (
+  (b) => (1, 2, 3) /* b */
+) /* a */);
+f((a) => (
+  (b) => (
+   (c) => (1, 2, 3) /* c */
+  ) /* b */
+) /* a */);
+
+f((a) => (1 ? 2 : 3) /* a */);
+f((a) => (
+  (b) => (1 ? 2 : 3) /* b */
+) /* a */);
+f((a) => (
+  (b) => (
+   (c) => (1 ? 2 : 3) /* c */
+  ) /* b */
+) /* a */);
+
+a(
+  "",
+  "",
+  ({}) =>
+    () =>
+    () =>
+    () =>
+    () =>
+    () =>
+    () => test,
+);
+a(
+  "",
+  "",
+  ({}) =>
+    () =>
+    () =>
+    () =>
+    () =>
+    () =>
+    () => (test ? 1 : 2),
+);
+
+=====================================output=====================================
+Y(() => (a ? b : c));
+
+Y(() => () => (a ? b : c));
+
+Y(() => () => () => (a ? b : c));
+
+Y(() =>
+  longlonglonglonglonglonglonglonglonglongCondition
+    ? "Prettier is an opinionated code formatter."
+    : "Prettier takes your code and reprints it from scratch by taking the line length into account.",
+);
+
+Y(
+  () => () =>
+    longlonglonglonglonglonglonglonglonglongCondition
+      ? "Prettier is an opinionated code formatter."
+      : "Prettier takes your code and reprints it from scratch by taking the line length into account.",
+);
+
+Y(
+  () => () => () =>
+    longlonglonglonglonglonglonglonglonglongCondition
+      ? "Prettier is an opinionated code formatter."
+      : "Prettier takes your code and reprints it from scratch by taking the line length into account.",
+);
+
+const x1 = () => [
+  "The",
+  "green",
+  "dragon",
+  "liked",
+  "to",
+  "knit",
+  "sweaters",
+  "for",
+  "the",
+  "fluffy",
+  "clouds",
+  "in",
+  "the",
+  "sky.",
+];
+
+const x2 = () => () => [
+  "The",
+  "green",
+  "dragon",
+  "liked",
+  "to",
+  "knit",
+  "sweaters",
+  "for",
+  "the",
+  "fluffy",
+  "clouds",
+  "in",
+  "the",
+  "sky.",
+];
+
+const x3 = () => () => () => [
+  "The",
+  "green",
+  "dragon",
+  "liked",
+  "to",
+  "knit",
+  "sweaters",
+  "for",
+  "the",
+  "fluffy",
+  "clouds",
+  "in",
+  "the",
+  "sky.",
+];
+
+f((a) => (1, 2, 3) /* a */);
+f((a) => (b) => (1, 2, 3) /* b */ /* a */);
+f((a) => (b) => (c) => (1, 2, 3) /* c */ /* b */ /* a */);
+
+f((a) => (1 ? 2 : 3) /* a */);
+f((a) => (b) => (1 ? 2 : 3) /* b */ /* a */);
+f((a) => (b) => (c) => (1 ? 2 : 3) /* c */ /* b */ /* a */);
+
+a(
+  "",
+  "",
+  ({}) =>
+    () =>
+    () =>
+    () =>
+    () =>
+    () =>
+    () =>
+      test,
+);
+a(
+  "",
+  "",
+  ({}) =>
+    () =>
+    () =>
+    () =>
+    () =>
+    () =>
+    () =>
+      test ? 1 : 2,
+);
+
+================================================================================
+`;
+
+exports[`currying-4.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+Y(() => a ? b : c);
+
+Y(() => () => a ? b : c);
+
+Y(() => () => () => a ? b : c);
+
+Y(() => longlonglonglonglonglonglonglonglonglongCondition ? 'Prettier is an opinionated code formatter.' : 'Prettier takes your code and reprints it from scratch by taking the line length into account.')
+
+Y(() => () => longlonglonglonglonglonglonglonglonglongCondition ? 'Prettier is an opinionated code formatter.' : 'Prettier takes your code and reprints it from scratch by taking the line length into account.')
+
+Y(() => () => () => longlonglonglonglonglonglonglonglonglongCondition ? 'Prettier is an opinionated code formatter.' : 'Prettier takes your code and reprints it from scratch by taking the line length into account.')
+
+const x1 = (() => ['The', 'green', 'dragon', 'liked', 'to', 'knit', 'sweaters', 'for', 'the', 'fluffy', 'clouds', 'in', 'the', 'sky.'])
+
+const x2 = (() => () => ['The', 'green', 'dragon', 'liked', 'to', 'knit', 'sweaters', 'for', 'the', 'fluffy', 'clouds', 'in', 'the', 'sky.'])
+
+const x3 = (() => () => () => ['The', 'green', 'dragon', 'liked', 'to', 'knit', 'sweaters', 'for', 'the', 'fluffy', 'clouds', 'in', 'the', 'sky.'])
+
+f((a) => (1, 2, 3) /* a */);
+f((a) => (
+  (b) => (1, 2, 3) /* b */
+) /* a */);
+f((a) => (
+  (b) => (
+   (c) => (1, 2, 3) /* c */
+  ) /* b */
+) /* a */);
+
+f((a) => (1 ? 2 : 3) /* a */);
+f((a) => (
+  (b) => (1 ? 2 : 3) /* b */
+) /* a */);
+f((a) => (
+  (b) => (
+   (c) => (1 ? 2 : 3) /* c */
+  ) /* b */
+) /* a */);
+
+a(
+  "",
+  "",
+  ({}) =>
+    () =>
+    () =>
+    () =>
+    () =>
+    () =>
+    () => test,
+);
+a(
+  "",
+  "",
+  ({}) =>
+    () =>
+    () =>
+    () =>
+    () =>
+    () =>
+    () => (test ? 1 : 2),
+);
+
+=====================================output=====================================
+Y(() => (a ? b : c));
+
+Y(() => () => (a ? b : c));
+
+Y(() => () => () => (a ? b : c));
+
+Y(() =>
+  longlonglonglonglonglonglonglonglonglongCondition
+    ? "Prettier is an opinionated code formatter."
+    : "Prettier takes your code and reprints it from scratch by taking the line length into account.",
+);
+
+Y(
+  () => () =>
+    longlonglonglonglonglonglonglonglonglongCondition
+      ? "Prettier is an opinionated code formatter."
+      : "Prettier takes your code and reprints it from scratch by taking the line length into account.",
+);
+
+Y(
+  () => () => () =>
+    longlonglonglonglonglonglonglonglonglongCondition
+      ? "Prettier is an opinionated code formatter."
+      : "Prettier takes your code and reprints it from scratch by taking the line length into account.",
+);
+
+const x1 = () => [
+  "The",
+  "green",
+  "dragon",
+  "liked",
+  "to",
+  "knit",
+  "sweaters",
+  "for",
+  "the",
+  "fluffy",
+  "clouds",
+  "in",
+  "the",
+  "sky.",
+];
+
+const x2 = () => () => [
+  "The",
+  "green",
+  "dragon",
+  "liked",
+  "to",
+  "knit",
+  "sweaters",
+  "for",
+  "the",
+  "fluffy",
+  "clouds",
+  "in",
+  "the",
+  "sky.",
+];
+
+const x3 = () => () => () => [
+  "The",
+  "green",
+  "dragon",
+  "liked",
+  "to",
+  "knit",
+  "sweaters",
+  "for",
+  "the",
+  "fluffy",
+  "clouds",
+  "in",
+  "the",
+  "sky.",
+];
+
+f(a => (1, 2, 3) /* a */);
+f(a => b => (1, 2, 3) /* b */ /* a */);
+f(a => b => c => (1, 2, 3) /* c */ /* b */ /* a */);
+
+f(a => (1 ? 2 : 3) /* a */);
+f(a => b => (1 ? 2 : 3) /* b */ /* a */);
+f(a => b => c => (1 ? 2 : 3) /* c */ /* b */ /* a */);
+
+a(
+  "",
+  "",
+  ({}) =>
+    () =>
+    () =>
+    () =>
+    () =>
+    () =>
+    () =>
+      test,
+);
+a(
+  "",
+  "",
+  ({}) =>
+    () =>
+    () =>
+    () =>
+    () =>
+    () =>
+    () =>
+      test ? 1 : 2,
+);
+
+================================================================================
+`;
+
+exports[`issue-1389-curry.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const foobar = (argumentOne, argumentTwo, argumentThree) =>
+  (...restOfTheArguments) => {
+    return "baz";
+  };
+
+const foobaz = (argumentOne, argumentTwo, argumentThree) =>
+  (restOfTheArguments123, j) => {
+    return "baz";
+  };
+
+
+const makeSomeFunction =
+  (services = {logger:null}) =>
+    (a, b, c) =>
+      services.logger(a,b,c)
+
+const makeSomeFunction2 =
+  (services = {
+    logger: null
+  }) =>
+    (a, b, c) =>
+      services.logger(a, b, c)
+
+=====================================output=====================================
+const foobar =
+  (argumentOne, argumentTwo, argumentThree) =>
+  (...restOfTheArguments) => {
+    return "baz";
+  };
+
+const foobaz =
+  (argumentOne, argumentTwo, argumentThree) => (restOfTheArguments123, j) => {
+    return "baz";
+  };
+
+const makeSomeFunction =
+  (services = { logger: null }) =>
+  (a, b, c) =>
+    services.logger(a, b, c);
+
+const makeSomeFunction2 =
+  (
+    services = {
+      logger: null,
+    },
+  ) =>
+  (a, b, c) =>
+    services.logger(a, b, c);
+
+================================================================================
+`;
+
+exports[`issue-1389-curry.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const foobar = (argumentOne, argumentTwo, argumentThree) =>
+  (...restOfTheArguments) => {
+    return "baz";
+  };
+
+const foobaz = (argumentOne, argumentTwo, argumentThree) =>
+  (restOfTheArguments123, j) => {
+    return "baz";
+  };
+
+
+const makeSomeFunction =
+  (services = {logger:null}) =>
+    (a, b, c) =>
+      services.logger(a,b,c)
+
+const makeSomeFunction2 =
+  (services = {
+    logger: null
+  }) =>
+    (a, b, c) =>
+      services.logger(a, b, c)
+
+=====================================output=====================================
+const foobar =
+  (argumentOne, argumentTwo, argumentThree) =>
+  (...restOfTheArguments) => {
+    return "baz";
+  };
+
+const foobaz =
+  (argumentOne, argumentTwo, argumentThree) => (restOfTheArguments123, j) => {
+    return "baz";
+  };
+
+const makeSomeFunction =
+  (services = { logger: null }) =>
+  (a, b, c) =>
+    services.logger(a, b, c);
+
+const makeSomeFunction2 =
+  (
+    services = {
+      logger: null,
+    },
+  ) =>
+  (a, b, c) =>
+    services.logger(a, b, c);
+
+================================================================================
+`;
+
+exports[`issue-4166-curry.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const myCurriedFn = arg1 =>
+  arg2 =>
+    arg3 => arg1 + arg2 + arg3;
+
+=====================================output=====================================
+const myCurriedFn = (arg1) => (arg2) => (arg3) => arg1 + arg2 + arg3;
+
+================================================================================
+`;
+
+exports[`issue-4166-curry.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const myCurriedFn = arg1 =>
+  arg2 =>
+    arg3 => arg1 + arg2 + arg3;
+
+=====================================output=====================================
+const myCurriedFn = arg1 => arg2 => arg3 => arg1 + arg2 + arg3;
+
+================================================================================
+`;
+
+exports[`issue-10814.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const fastifyLoggerOptions = async (
+  fastify,
+  { skip2xxHttpLogging = false },
+  // eslint-disable-next-line require-await
+) => {
+  const middleware = getMiddleware(skip2xxHttpLogging);
+};
+
+=====================================output=====================================
+const fastifyLoggerOptions = async (
+  fastify,
+  { skip2xxHttpLogging = false },
+  // eslint-disable-next-line require-await
+) => {
+  const middleware = getMiddleware(skip2xxHttpLogging);
+};
+
+================================================================================
+`;
+
+exports[`issue-10814.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const fastifyLoggerOptions = async (
+  fastify,
+  { skip2xxHttpLogging = false },
+  // eslint-disable-next-line require-await
+) => {
+  const middleware = getMiddleware(skip2xxHttpLogging);
+};
+
+=====================================output=====================================
+const fastifyLoggerOptions = async (
+  fastify,
+  { skip2xxHttpLogging = false },
+  // eslint-disable-next-line require-await
+) => {
+  const middleware = getMiddleware(skip2xxHttpLogging);
+};
+
+================================================================================
+`;
+
+exports[`issue-14563.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const createIdFilter =
+  /** @param {string} id */
+  (id) =>
+  /** @param {any} s */
+  (s) => s.id === id
+
+=====================================output=====================================
+const createIdFilter =
+  /** @param {string} id */
+  (id) =>
+    /** @param {any} s */
+    (s) =>
+      s.id === id;
+
+================================================================================
+`;
+
+exports[`issue-14563.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const createIdFilter =
+  /** @param {string} id */
+  (id) =>
+  /** @param {any} s */
+  (s) => s.id === id
+
+=====================================output=====================================
+const createIdFilter =
+  /** @param {string} id */
+  id =>
+    /** @param {any} s */
+    s =>
+      s.id === id;
+
+================================================================================
+`;
+
+exports[`issue-14702.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = () => (1, 2, 3 /* abc */);
+
+=====================================output=====================================
+a = () => (1, 2, 3 /* abc */);
+
+================================================================================
+`;
+
+exports[`issue-14702.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = () => (1, 2, 3 /* abc */);
+
+=====================================output=====================================
+a = () => (1, 2, 3 /* abc */);
+
+================================================================================
+`;
+
+exports[`issue-17421.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a =
+  (id) => // 11
+	(id) => id
+a =
+  (id) =>
+  // 12
+	(id) => id
+
+a =
+  (id) => // 21
+	{}
+a =
+  (id) =>
+  // 22
+	{}
+
+a =
+  (id) => // 21
+	{call()}
+a =
+  (id) =>
+  // 22
+	{call()}
+
+a =
+  () => // 31
+	(id) => id
+a =
+  () =>
+  // 32
+	(id) => id
+
+a =
+  (id) => /** @param {string} id */
+	(id) => id
+
+a =
+  (id) =>
+  /** @param {string} id */
+	(id) => id
+
+a =
+  (id) =>
+  /** @param {string} id */ (id) => id
+
+a =
+  () => /** @param {string} id */
+	(id) => id
+
+a =
+  () =>
+  /** @param {string} id */
+	(id) => id
+
+a =
+  () =>
+  /** @param {string} id */ (id) => id
+
+=====================================output=====================================
+a =
+  (id) =>
+  // 11
+  (id) =>
+    id;
+a =
+  (id) =>
+  // 12
+  (id) =>
+    id;
+
+a = (id) => {
+  // 21
+};
+a = (id) =>
+  // 22
+  {};
+
+a = (id) => {
+  // 21
+  call();
+};
+a = (id) =>
+  // 22
+  {
+    call();
+  };
+
+a =
+  () =>
+  // 31
+  (id) =>
+    id;
+a =
+  () =>
+  // 32
+  (id) =>
+    id;
+
+a = (id) => /** @param {string} id */ (id) => id;
+
+a =
+  (id) =>
+  /** @param {string} id */
+  (id) =>
+    id;
+
+a = (id) => /** @param {string} id */ (id) => id;
+
+a = () => /** @param {string} id */ (id) => id;
+
+a =
+  () =>
+  /** @param {string} id */
+  (id) =>
+    id;
+
+a = () => /** @param {string} id */ (id) => id;
+
+================================================================================
+`;
+
+exports[`issue-17421.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a =
+  (id) => // 11
+	(id) => id
+a =
+  (id) =>
+  // 12
+	(id) => id
+
+a =
+  (id) => // 21
+	{}
+a =
+  (id) =>
+  // 22
+	{}
+
+a =
+  (id) => // 21
+	{call()}
+a =
+  (id) =>
+  // 22
+	{call()}
+
+a =
+  () => // 31
+	(id) => id
+a =
+  () =>
+  // 32
+	(id) => id
+
+a =
+  (id) => /** @param {string} id */
+	(id) => id
+
+a =
+  (id) =>
+  /** @param {string} id */
+	(id) => id
+
+a =
+  (id) =>
+  /** @param {string} id */ (id) => id
+
+a =
+  () => /** @param {string} id */
+	(id) => id
+
+a =
+  () =>
+  /** @param {string} id */
+	(id) => id
+
+a =
+  () =>
+  /** @param {string} id */ (id) => id
+
+=====================================output=====================================
+a =
+  id =>
+  // 11
+  id =>
+    id;
+a =
+  id =>
+  // 12
+  id =>
+    id;
+
+a = id => {
+  // 21
+};
+a = id =>
+  // 22
+  {};
+
+a = id => {
+  // 21
+  call();
+};
+a = id =>
+  // 22
+  {
+    call();
+  };
+
+a =
+  () =>
+  // 31
+  id =>
+    id;
+a =
+  () =>
+  // 32
+  id =>
+    id;
+
+a = id => /** @param {string} id */ id => id;
+
+a =
+  id =>
+  /** @param {string} id */
+  id =>
+    id;
+
+a = id => /** @param {string} id */ id => id;
+
+a = () => /** @param {string} id */ id => id;
+
+a =
+  () =>
+  /** @param {string} id */
+  id =>
+    id;
+
+a = () => /** @param {string} id */ id => id;
+
+================================================================================
+`;
+
+exports[`long-call-no-args.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+veryLongCall(VERY_VERY_VERY_VERY_VERY_VERY_VERY_VERY_VERY_VERY_LONG_CONSTANT, () => {})
+
+=====================================output=====================================
+veryLongCall(
+  VERY_VERY_VERY_VERY_VERY_VERY_VERY_VERY_VERY_VERY_LONG_CONSTANT,
+  () => {},
+);
+
+================================================================================
+`;
+
+exports[`long-call-no-args.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+veryLongCall(VERY_VERY_VERY_VERY_VERY_VERY_VERY_VERY_VERY_VERY_LONG_CONSTANT, () => {})
+
+=====================================output=====================================
+veryLongCall(
+  VERY_VERY_VERY_VERY_VERY_VERY_VERY_VERY_VERY_VERY_LONG_CONSTANT,
+  () => {},
+);
+
+================================================================================
+`;
+
+exports[`long-contents.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const foo = () => {
+  expect(arg1, arg2, arg3).toEqual({message: 'test', messageType: 'SMS', status: 'Unknown', created: '11/01/2017 13:36'});
+};
+
+=====================================output=====================================
+const foo = () => {
+  expect(arg1, arg2, arg3).toEqual({
+    message: "test",
+    messageType: "SMS",
+    status: "Unknown",
+    created: "11/01/2017 13:36",
+  });
+};
+
+================================================================================
+`;
+
+exports[`long-contents.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const foo = () => {
+  expect(arg1, arg2, arg3).toEqual({message: 'test', messageType: 'SMS', status: 'Unknown', created: '11/01/2017 13:36'});
+};
+
+=====================================output=====================================
+const foo = () => {
+  expect(arg1, arg2, arg3).toEqual({
+    message: "test",
+    messageType: "SMS",
+    status: "Unknown",
+    created: "11/01/2017 13:36",
+  });
+};
+
+================================================================================
+`;
+
+exports[`parens.js - {"arrowParens":"always"} format 1`] = `
+====================================options=====================================
+arrowParens: "always"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+promise.then(
+  (result) => result,
+  (err) => err
+)
+
+promise.then(
+  (result) => { f(); return result },
+  (err) => { f(); return err }
+)
+
+foo(a => b)
+foo(a => { return b })
+foo(c, a => b)
+foo(c, a => b, d)
+foo(a => b, d)
+
+foo(a => (0, 1));
+foo(a => b => (0, 1));
+
+() => ({} ? 1 : 2);
+() => () => ({} ? 1 : 2);
+
+=====================================output=====================================
+promise.then(
+  (result) => result,
+  (err) => err,
+);
+
+promise.then(
+  (result) => {
+    f();
+    return result;
+  },
+  (err) => {
+    f();
+    return err;
+  },
+);
+
+foo((a) => b);
+foo((a) => {
+  return b;
+});
+foo(c, (a) => b);
+foo(c, (a) => b, d);
+foo((a) => b, d);
+
+foo((a) => (0, 1));
+foo((a) => (b) => (0, 1));
+
+() => ({}) ? 1 : 2;
+() => () => ({}) ? 1 : 2;
+
+================================================================================
+`;
+
+exports[`parens.js - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+promise.then(
+  (result) => result,
+  (err) => err
+)
+
+promise.then(
+  (result) => { f(); return result },
+  (err) => { f(); return err }
+)
+
+foo(a => b)
+foo(a => { return b })
+foo(c, a => b)
+foo(c, a => b, d)
+foo(a => b, d)
+
+foo(a => (0, 1));
+foo(a => b => (0, 1));
+
+() => ({} ? 1 : 2);
+() => () => ({} ? 1 : 2);
+
+=====================================output=====================================
+promise.then(
+  result => result,
+  err => err,
+);
+
+promise.then(
+  result => {
+    f();
+    return result;
+  },
+  err => {
+    f();
+    return err;
+  },
+);
+
+foo(a => b);
+foo(a => {
+  return b;
+});
+foo(c, a => b);
+foo(c, a => b, d);
+foo(a => b, d);
+
+foo(a => (0, 1));
+foo(a => b => (0, 1));
+
+() => ({}) ? 1 : 2;
+() => () => ({}) ? 1 : 2;
+
+================================================================================
+`;

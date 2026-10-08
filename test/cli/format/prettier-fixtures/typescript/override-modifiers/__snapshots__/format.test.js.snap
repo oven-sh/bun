@@ -1,0 +1,49 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`override-modifier.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class MyClass extends BaseClass {
+  override show() {}
+  public override show() {}
+  override size = 5;
+  override readonly size = 5;
+  abstract override foo: string;
+  static override foo: string;
+}
+
+=====================================output=====================================
+class MyClass extends BaseClass {
+  override show() {}
+  public override show() {}
+  override size = 5;
+  override readonly size = 5;
+  abstract override foo: string;
+  static override foo: string;
+}
+
+================================================================================
+`;
+
+exports[`parameter-property.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class D extends B {
+  constructor(override foo: string) {
+    super();
+  }
+}
+
+=====================================output=====================================
+class D extends B {
+  constructor(override foo: string) {
+    super();
+  }
+}
+
+================================================================================
+`;

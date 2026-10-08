@@ -1,0 +1,20 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`typeof.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A = (typeof node.children)[number];
+type B = (typeof node.children)[];
+type C = ((typeof node.children)[number])[];
+type D = number[(typeof node.children)];
+
+=====================================output=====================================
+type A = (typeof node.children)[number];
+type B = (typeof node.children)[];
+type C = (typeof node.children)[number][];
+type D = number[typeof node.children];
+
+================================================================================
+`;

@@ -1,0 +1,129 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`comments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+require(
+// 1
+"foo"
+);
+require.resolve(// 2
+"foo");
+require.resolve.paths(// 3
+"foo");
+
+call(
+// 4
+"foo"
+);
+
+=====================================output=====================================
+require(
+  // 1
+  "foo",
+);
+require.resolve(
+  // 2
+  "foo",
+);
+require.resolve.paths(
+  // 3
+  "foo",
+);
+
+call(
+  // 4
+  "foo",
+);
+
+================================================================================
+`;
+
+exports[`long-module-name.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+require("./a/long/long/long/long/long/long/long/long/long/long/long/path/to/module");
+require.resolve("./a/long/long/long/long/long/long/long/long/long/long/long/path/to/module");
+require.resolve.paths("./a/long/long/long/long/long/long/long/long/long/long/long/path/to/module");
+
+=====================================output=====================================
+require("./a/long/long/long/long/long/long/long/long/long/long/long/path/to/module");
+require.resolve("./a/long/long/long/long/long/long/long/long/long/long/long/path/to/module");
+require.resolve
+  .paths("./a/long/long/long/long/long/long/long/long/long/long/long/path/to/module");
+
+================================================================================
+`;
+
+exports[`require.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const { one, two, three, four, five, six, seven, eight, nine, ten } = require('./my-utils');
+const { one1, two1, three1, four1, five1, six1, seven1, eight1, nine1, ten1, eleven1 } = require('./my-utils');
+
+const MyReallyExtrememlyLongModuleName = require('MyReallyExtrememlyLongModuleName');
+
+const plugin = require(
+  global.STANDALONE
+    ? path.join(__dirname, "../standalone.js")
+    : path.join(__dirname, "..")
+);
+
+const plugin2 = require(
+  path.join(
+    __dirname,
+    global.STANDALONE ? "../standalone.js" : '..'
+  )
+);
+
+const plugin3 = require('./a/long/long/long/long/long/long/long/long/long/long/long/path/to/module')
+
+=====================================output=====================================
+const {
+  one,
+  two,
+  three,
+  four,
+  five,
+  six,
+  seven,
+  eight,
+  nine,
+  ten,
+} = require("./my-utils");
+const {
+  one1,
+  two1,
+  three1,
+  four1,
+  five1,
+  six1,
+  seven1,
+  eight1,
+  nine1,
+  ten1,
+  eleven1,
+} = require("./my-utils");
+
+const MyReallyExtrememlyLongModuleName = require("MyReallyExtrememlyLongModuleName");
+
+const plugin = require(
+  global.STANDALONE
+    ? path.join(__dirname, "../standalone.js")
+    : path.join(__dirname, ".."),
+);
+
+const plugin2 = require(
+  path.join(__dirname, global.STANDALONE ? "../standalone.js" : ".."),
+);
+
+const plugin3 = require("./a/long/long/long/long/long/long/long/long/long/long/long/path/to/module");
+
+================================================================================
+`;

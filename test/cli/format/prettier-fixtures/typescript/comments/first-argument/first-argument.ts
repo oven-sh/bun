@@ -1,0 +1,39 @@
+type T11 = import( // 11
+  "a"
+);
+type T12 = import(
+// 12
+  "a"
+);
+type T13 = import( /* 13 */
+  "a"
+);
+type T14 = import(
+/* 14 */
+  "a"
+);
+type T15 = import( /* 15 */"a"
+);
+type T16 = import(
+/* 16 */"a"
+);
+
+import type T21 = require( // 11
+  "a"
+);
+import type T22 = require(
+// 12
+  "a"
+);
+import type T23 = require( /* 13 */
+  "a"
+);
+import type T24 = require(
+/* 14 */
+  "a"
+);
+import type T25 = require( /* 15 */"a"
+);
+import type T26 = require(
+/* 16 */"a"
+);

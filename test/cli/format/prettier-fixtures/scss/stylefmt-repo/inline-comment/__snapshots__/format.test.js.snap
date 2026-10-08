@@ -1,0 +1,23 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`inline-comment.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+  // inline comments
+
+
+
+    .class {color: red;}
+
+=====================================output=====================================
+// inline comments
+
+.class {
+  color: red;
+}
+
+================================================================================
+`;

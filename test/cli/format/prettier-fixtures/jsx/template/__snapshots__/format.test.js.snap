@@ -1,0 +1,77 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`styled-components.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<style jsx>{\`
+  p {
+    color: red;
+  }
+\`}</style>;
+
+<style jsx>{tpl\`
+  p {
+    color: red;
+  }
+\`}</style>;
+
+<style jsx>
+  {\`p {
+     color: red;
+     }
+  \`}
+</style>;
+
+// #5886
+<style jsx>{\`
+  .class {
+    flex-direction: column\${long_cond && long_cond && long_cond
+        ? "-reverse"
+        : ""};
+  }
+\`}</style>;
+<style jsx>{\`
+  .class {
+    flex-direction: column\${long_cond && long_cond && long_cond? "-reverse": ""};
+  }
+\`}</style>;
+
+=====================================output=====================================
+<style jsx>{\`
+  p {
+    color: red;
+  }
+\`}</style>;
+
+<style jsx>{tpl\`
+  p {
+    color: red;
+  }
+\`}</style>;
+
+<style jsx>
+  {\`
+    p {
+      color: red;
+    }
+  \`}
+</style>;
+
+// #5886
+<style jsx>{\`
+  .class {
+    flex-direction: column\${
+        long_cond && long_cond && long_cond ? "-reverse" : ""
+      };
+  }
+\`}</style>;
+<style jsx>{\`
+  .class {
+    flex-direction: column\${long_cond && long_cond && long_cond ? "-reverse" : ""};
+  }
+\`}</style>;
+
+================================================================================
+`;

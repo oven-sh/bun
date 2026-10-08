@@ -1,0 +1,288 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`class-implements.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class a1 extends b // comment
+implements z
+{
+  constructor() {}
+}
+
+class a2 extends b implements z { // comment
+  constructor() {}
+}
+
+class a3 extends b
+implements
+// comment
+z,
+y {
+  constructor() {}
+}
+
+class a4 extends b
+implements z, // comment
+y {
+  constructor() {}
+}
+
+class a5 extends b  implements
+    z, // comment-z
+    y // comment-y
+    {
+  constructor() {}
+}
+
+class a6 extends b  implements
+// comment-z1
+    z, // comment-z2
+    // comment-y1
+    y // comment-y2
+    {
+  constructor() {}
+}
+
+class a7 extends b  implements
+// comment-z1
+    z, // comment-z2
+    // comment-y1
+    y // comment-y2
+         // comment-y3
+    {
+      //comment-body
+  constructor() {}
+}
+
+class a8 extends b // comment-b
+ implements
+// comment-z1
+    z, // comment-z2
+    // comment-y1
+    y // comment-y2
+    {
+  constructor() {}
+}
+
+class a9 extends
+// comment-b1
+b // comment-b2
+// comment-b3
+ implements
+// comment-z1
+    z, // comment-z2
+    // comment-y1
+    y // comment-y2
+    {
+  constructor() {}
+}
+
+=====================================output=====================================
+class a1
+  extends b // comment
+  implements z
+{
+  constructor() {}
+}
+
+class a2 extends b implements z {
+  // comment
+  constructor() {}
+}
+
+class a3
+  extends b
+  // comment
+  implements z, y
+{
+  constructor() {}
+}
+
+class a4
+  extends b
+  implements
+    z, // comment
+    y
+{
+  constructor() {}
+}
+
+class a5
+  extends b
+  implements
+    z, // comment-z
+    y
+{
+  // comment-y
+  constructor() {}
+}
+
+class a6
+  extends b
+  // comment-z1
+  implements
+    z, // comment-z2
+    // comment-y1
+    y
+{
+  // comment-y2
+  constructor() {}
+}
+
+class a7
+  extends b
+  // comment-z1
+  implements
+    z, // comment-z2
+    // comment-y1
+    y
+{
+  // comment-y2
+  // comment-y3
+  //comment-body
+  constructor() {}
+}
+
+class a8
+  extends b // comment-b
+  // comment-z1
+  implements
+    z, // comment-z2
+    // comment-y1
+    y
+{
+  // comment-y2
+  constructor() {}
+}
+
+class a9
+  // comment-b1
+  extends b // comment-b2
+  // comment-b3
+  // comment-z1
+  implements
+    z, // comment-z2
+    // comment-y1
+    y
+{
+  // comment-y2
+  constructor() {}
+}
+
+================================================================================
+`;
+
+exports[`declare.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare class a  // 1
+  // extends b   // 2
+  implements z,x // 3
+{
+  doo:boolean
+}
+
+declare class A1<T> // 1
+// 2
+extends B<T> // 3
+{}
+
+=====================================output=====================================
+declare class a // 1
+  // extends b   // 2
+  implements z, x
+{
+  // 3
+  doo: boolean;
+}
+
+declare class A1<T> // 1
+  // 2
+  extends B<T> {
+  // 3
+}
+
+================================================================================
+`;
+
+exports[`generic.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class G1<T> implements IPoly<T> {
+  x: T;
+}
+
+class G2 // g2
+<T> implements IPoly<T> {
+  x: T;
+}
+
+class G3 // g3
+<T> extends U implements IPoly<T> {
+  x: T;
+}
+
+class G4<T // g4
+> extends U implements IPoly<T> {
+  x: T;
+}
+
+=====================================output=====================================
+class G1<T> implements IPoly<T> {
+  x: T;
+}
+
+class G2<T> // g2
+  implements IPoly<T>
+{
+  x: T;
+}
+
+class G3<T> // g3
+  extends U
+  implements IPoly<T>
+{
+  x: T;
+}
+
+class G4<
+  T, // g4
+>
+  extends U
+  implements IPoly<T>
+{
+  x: T;
+}
+
+================================================================================
+`;
+
+exports[`misc.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export class SnapshotLogger {
+  constructor(
+    retentionPeriod: number = 5 * 60 * 1000, // retain past five minutes
+    snapshotInterval: number = 30 * 1000, // snapshot no more than every 30s
+  ) {
+  }
+}
+
+=====================================output=====================================
+export class SnapshotLogger {
+  constructor(
+    retentionPeriod: number = 5 * 60 * 1000, // retain past five minutes
+    snapshotInterval: number = 30 * 1000, // snapshot no more than every 30s
+  ) {}
+}
+
+================================================================================
+`;

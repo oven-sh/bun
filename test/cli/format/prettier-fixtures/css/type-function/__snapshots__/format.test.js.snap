@@ -1,0 +1,58 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`type.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+div {
+  border-radius: attr(br type(<length>+));
+}
+
+div {
+  background: attr(bg type(<color>+));
+}
+
+div {
+  background: attr(bg type(<color>#));
+}
+
+div {
+  margin: attr(data-margin type(<percentage> | <number> | auto));
+}
+
+div {
+  margin: attr(data-margin type(<percentage>+ | <number>+ | auto));
+}
+
+div {
+  aspect-ratio: attr(data-ar type(*));
+}
+
+=====================================output=====================================
+div {
+  border-radius: attr(br type(<length>+));
+}
+
+div {
+  background: attr(bg type(<color>+));
+}
+
+div {
+  background: attr(bg type(<color>#));
+}
+
+div {
+  margin: attr(data-margin type(<percentage> | <number> | auto));
+}
+
+div {
+  margin: attr(data-margin type(<percentage>+ | <number>+ | auto));
+}
+
+div {
+  aspect-ratio: attr(data-ar type(*));
+}
+
+================================================================================
+`;

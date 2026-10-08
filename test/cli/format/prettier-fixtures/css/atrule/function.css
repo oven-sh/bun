@@ -1,0 +1,88 @@
+@function func($arg, $arg1, $arg2: 10, $args...) {
+    @return "Func";
+}
+@function func($arg,$arg1,$arg2:10,$args...){
+    @return "Func";
+}
+@function func ( $arg , $arg1 , $arg2 : 10 , $args ... ) {
+    @return "Func";
+}
+@function  func  (  $arg  ,  $arg1  ,  $arg2  :  10  ,  $args  ...  )  {
+    @return "Func";
+}
+@function func(
+    $arg,
+    $arg1,
+    $arg2: 10,
+    $args...
+)  {
+    @return "Func";
+}
+@function
+    func(
+        $arg,
+        $arg1,
+        $arg2: 10,
+        $args...
+    )  {
+    @return "Func";
+}
+@function
+func
+(
+$arg
+,
+$arg1
+,
+$arg2
+:
+10
+,
+$args
+...
+)
+{
+@return
+"Func"
+;
+}
+@function
+
+func
+
+(
+
+$arg
+
+,
+
+$arg1
+
+,
+
+$arg2
+
+:
+
+10
+
+,
+
+$args
+
+...
+
+)
+
+{
+
+@return
+
+"Func"
+
+;
+
+}
+@function func($very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-arg, $very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-arg1, $very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-arg2: 10, $very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-args...) {
+    @return "Func";
+}

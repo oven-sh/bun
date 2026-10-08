@@ -1,0 +1,41 @@
+body {
+  test: foo(return-list($list)...);
+}
+body {
+  test: foo(bar($list)...);
+}
+body {
+  test: foo($list...);
+}
+@mixin syntax-colors($args...) {
+  @debug meta.keywords($args);
+  // (string: #080, comment: #800, variable: $60b)
+
+  @each $name, $color in meta.keywords($args) {
+    pre span.stx-#{$name} {
+      color: $color;
+    }
+  }
+}
+$form-selectors: "input.name", "input.address", "input.zip" !default;
+@include order(150px, $form-selectors...);
+@mixin linear-gradient($direction, $gradients...) {
+  background-color: nth($gradients, 1);
+  background-image: linear-gradient($direction, $gradients...);
+}
+$parameters: (
+  'c': 'kittens',
+  'a': true,
+  'b': 42
+);
+$value: dummy($parameters...);
+
+body {
+  background-color: rgba(50, 50, 50, 50);
+  background-color: rgba(50 50 50 50...);
+  background-color: rgba(50 50 .50 50...);
+  background-color: rgba(50 50 50. .50...);
+  // Input is not technically valid ( output is ), but still nice to know that the `.` gets dropped as it would for `50.`
+  background-color: rgba(50 50 50 50....);
+  width: min(50px 20px 30px...);
+}

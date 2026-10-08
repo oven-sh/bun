@@ -1,0 +1,106 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`values.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@value 4XLarge 28/36px;
+
+.postCssLowerCasingValueName {
+  font: 4XLarge Helvetica;
+}
+
+.cssUnits {
+  a: 5EM;
+  a: 5REM;
+  a: 5EX;
+  a: 5REX;
+  a: 5CAP;
+  a: 5RCAP;
+  a: 5CH;
+  a: 5RCH;
+  a: 5IC;
+  a: 5RIC;
+  a: 5LH;
+  a: 5RLH;
+  a: 5VH;
+  a: 5VW;
+  a: 5VI;
+  a: 5VB;
+  a: 5VMIN;
+  a: 5VMAX;
+  a: 5CM;
+  a: 5MM;
+  a: 5q;
+  a: 5IN;
+  a: 5PT;
+  a: 5PC;
+  a: 5PX;
+  a: 5DEG;
+  a: 5GRAD;
+  a: 5RAD;
+  a: 5S;
+  a: 5MS;
+  a: 5hZ;
+  a: 5KhZ;
+  a: 5DPI;
+  a: 5DPCM;
+  a: 5DPPX;
+  a: 5X;
+
+  a: 5PROTOTYPE;
+  a: 5constructoR;
+}
+
+=====================================output=====================================
+@value 4XLarge 28/36px;
+
+.postCssLowerCasingValueName {
+  font: 4XLarge Helvetica;
+}
+
+.cssUnits {
+  a: 5em;
+  a: 5rem;
+  a: 5ex;
+  a: 5rex;
+  a: 5cap;
+  a: 5rcap;
+  a: 5ch;
+  a: 5rch;
+  a: 5ic;
+  a: 5ric;
+  a: 5lh;
+  a: 5rlh;
+  a: 5vh;
+  a: 5vw;
+  a: 5vi;
+  a: 5vb;
+  a: 5vmin;
+  a: 5vmax;
+  a: 5cm;
+  a: 5mm;
+  a: 5Q;
+  a: 5in;
+  a: 5pt;
+  a: 5pc;
+  a: 5px;
+  a: 5deg;
+  a: 5grad;
+  a: 5rad;
+  a: 5s;
+  a: 5ms;
+  a: 5Hz;
+  a: 5kHz;
+  a: 5dpi;
+  a: 5dpcm;
+  a: 5dppx;
+  a: 5x;
+
+  a: 5PROTOTYPE;
+  a: 5constructoR;
+}
+
+================================================================================
+`;

@@ -1,0 +1,60 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`issue-11100.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const fn3 = (): any => /*
+Multiple line
+*/
+null;
+
+const fn4 = (): any => /* single line */
+null;
+
+const fn5 = (): any /* single line */ =>
+null;
+
+const fn6 = (): any => // line comment
+null;
+
+const fn7 = (a) => /*
+Multiple line
+*/
+null;
+
+const fn8 = () => /*
+Multiple line
+*/
+null;
+
+=====================================output=====================================
+const fn3 = (): any =>
+  /*
+Multiple line
+*/
+  null;
+
+const fn4 = (): any => /* single line */ null;
+
+const fn5 = (): any /* single line */ => null;
+
+const fn6 = (): any =>
+  // line comment
+  null;
+
+const fn7 = (a) =>
+  /*
+Multiple line
+*/
+  null;
+
+const fn8 = () =>
+  /*
+Multiple line
+*/
+  null;
+
+================================================================================
+`;

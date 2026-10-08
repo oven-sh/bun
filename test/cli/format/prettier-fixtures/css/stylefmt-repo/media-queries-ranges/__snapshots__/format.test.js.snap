@@ -1,0 +1,29 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`media-queries-ranges.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@media (width >= 500px) and (width <= 1200px) {
+  .rule {color:red;}
+}
+@custom-media --only-medium-screen (    width    >=500px     ) and (width<=    1200px    ) ;
+@media (       --only-medium-screen ){
+  .rule{color:blue;}}
+
+=====================================output=====================================
+@media (width >= 500px) and (width <= 1200px) {
+  .rule {
+    color: red;
+  }
+}
+@custom-media --only-medium-screen (width >=500px) and (width<= 1200px);
+@media (--only-medium-screen) {
+  .rule {
+    color: blue;
+  }
+}
+
+================================================================================
+`;

@@ -1,0 +1,167 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`callAndConstructSignatureLong.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+interface Interface {
+    <
+        Voila, 
+        InViewHumbleVaudevillianVeteran, 
+        CastVicariouslyAsBothVictimAndVillainByTheVicissitudesOfFate
+    >(): V;
+    new <
+        ThisVisage, 
+        NoMereVeneerOfVanity, 
+        IsAVestigeOfTheVoxPopuliNowVacant, 
+        Vanished
+    >(): V;
+}
+
+=====================================output=====================================
+interface Interface {
+  <
+    Voila,
+    InViewHumbleVaudevillianVeteran,
+    CastVicariouslyAsBothVictimAndVillainByTheVicissitudesOfFate,
+  >(): V;
+  new <
+    ThisVisage,
+    NoMereVeneerOfVanity,
+    IsAVestigeOfTheVoxPopuliNowVacant,
+    Vanished,
+  >(): V;
+}
+
+================================================================================
+`;
+
+exports[`functionTypeLong.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type AwkwardlyLongFunctionTypeDefinition = <
+    GenericTypeNumberOne,
+    GenericTypeNumberTwo,
+    GenericTypeNumberThree
+>(
+    arg1: GenericTypeNumberOne,
+    arg2: GenericTypeNumberTwo,
+    arg3: GenericTypeNumberThree
+) => (GenericTypeNumberOne | GenericTypeNumberTwo | GenericTypeNumberThree);
+
+=====================================output=====================================
+type AwkwardlyLongFunctionTypeDefinition = <
+  GenericTypeNumberOne,
+  GenericTypeNumberTwo,
+  GenericTypeNumberThree,
+>(
+  arg1: GenericTypeNumberOne,
+  arg2: GenericTypeNumberTwo,
+  arg3: GenericTypeNumberThree,
+) => GenericTypeNumberOne | GenericTypeNumberTwo | GenericTypeNumberThree;
+
+================================================================================
+`;
+
+exports[`interfaceParamsLong.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+interface ReallyReallyLongName<
+    TypeArgumentNumberOne, 
+    TypeArgumentNumberTwo,
+    TypeArgumentNumberThree
+> {}
+
+=====================================output=====================================
+interface ReallyReallyLongName<
+  TypeArgumentNumberOne,
+  TypeArgumentNumberTwo,
+  TypeArgumentNumberThree,
+> {}
+
+================================================================================
+`;
+
+exports[`typeParametersLong.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type ReallyReallyReallyLongName<
+    ReallyReallyReallyLongName1, ReallyReallyReallyLongName2
+> = any;
+
+=====================================output=====================================
+type ReallyReallyReallyLongName<
+  ReallyReallyReallyLongName1,
+  ReallyReallyReallyLongName2,
+> = any;
+
+================================================================================
+`;
+
+exports[`variables.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const foo: SomeThing<boolean> = func();
+const bar: SomeThing<boolean, boolean> = func();
+const fooo: SomeThing<{ [P in "x" | "y"]: number }> = func();
+const baar: SomeThing<K extends T ? G : S> = func();
+const fooooooooooooooo: SomeThing<boolean> = looooooooooooooooooooooooooooooongNameFunc();
+const baaaaaaaaaaaaaaaaaaaaar: SomeThing<boolean, boolean> = looooooooooooooooooooooooooooooongNameFunc();
+const baaaaaaaaaaaaaaar: SomeThing<{ [P in "x" | "y"]: number }> = looooooooooooooooooooooooooooooongNameFunc();
+const baaaaaaaaaaaaaaaar: SomeThing<K extends T ? G : S> = looooooooooooooooooooooooooooooongNameFunc();
+const isAnySuccessfulAttempt$: Observable<boolean> = this._quizService.isAnySuccessfulAttempt$().pipe(
+  tap((isAnySuccessfulAttempt: boolean) => {
+    this.isAnySuccessfulAttempt = isAnySuccessfulAttempt;
+  }),
+);
+const isAnySuccessfulAttempt2$: Observable<boolean> = this._someMethodWithLongName();
+const fooooooooooooooo: SomeThing<boolean | string> = looooooooooooooooooooooooooooooongNameFunc();
+const fooooooooooooooo: SomeThing<boolean & string> = looooooooooooooooooooooooooooooongNameFunc();
+const fooooooooooooooo: SomeThing<keyof string> = looooooooooooooooooooooooooooooongNameFunc();
+const fooooooooooooooo: SomeThing<string[]> = looooooooooooooooooooooooooooooongNameFunc();
+const fooooooooooooooo: SomeThing<string["anchor"]> = looooooooooooooooooooooooooooooongNameFunc();
+
+=====================================output=====================================
+const foo: SomeThing<boolean> = func();
+const bar: SomeThing<boolean, boolean> = func();
+const fooo: SomeThing<{ [P in "x" | "y"]: number }> = func();
+const baar: SomeThing<K extends T ? G : S> = func();
+const fooooooooooooooo: SomeThing<boolean> =
+  looooooooooooooooooooooooooooooongNameFunc();
+const baaaaaaaaaaaaaaaaaaaaar: SomeThing<boolean, boolean> =
+  looooooooooooooooooooooooooooooongNameFunc();
+const baaaaaaaaaaaaaaar: SomeThing<{ [P in "x" | "y"]: number }> =
+  looooooooooooooooooooooooooooooongNameFunc();
+const baaaaaaaaaaaaaaaar: SomeThing<K extends T ? G : S> =
+  looooooooooooooooooooooooooooooongNameFunc();
+const isAnySuccessfulAttempt$: Observable<boolean> = this._quizService
+  .isAnySuccessfulAttempt$()
+  .pipe(
+    tap((isAnySuccessfulAttempt: boolean) => {
+      this.isAnySuccessfulAttempt = isAnySuccessfulAttempt;
+    }),
+  );
+const isAnySuccessfulAttempt2$: Observable<boolean> =
+  this._someMethodWithLongName();
+const fooooooooooooooo: SomeThing<boolean | string> =
+  looooooooooooooooooooooooooooooongNameFunc();
+const fooooooooooooooo: SomeThing<boolean & string> =
+  looooooooooooooooooooooooooooooongNameFunc();
+const fooooooooooooooo: SomeThing<keyof string> =
+  looooooooooooooooooooooooooooooongNameFunc();
+const fooooooooooooooo: SomeThing<string[]> =
+  looooooooooooooooooooooooooooooongNameFunc();
+const fooooooooooooooo: SomeThing<string["anchor"]> =
+  looooooooooooooooooooooooooooooongNameFunc();
+
+================================================================================
+`;

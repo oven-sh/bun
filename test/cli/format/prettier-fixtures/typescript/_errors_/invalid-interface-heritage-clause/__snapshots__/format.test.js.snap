@@ -1,0 +1,68 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format 1`] = `
+"'extends' list cannot be empty. (1:13)
+> 1 | interface F extends implements {}
+    |             ^^^^^^^
+Cause: 'extends' list cannot be empty."
+`;
+
+exports[`snippet: #0 format[babel-ts] 1`] = `
+"'extends' list cannot be empty. (1:23)
+> 1 | interface Foo extends {}
+    |                       ^
+Cause: 'extends' list cannot be empty. (1:22)"
+`;
+
+exports[`snippet: #0 format[oxc-ts] 1`] = `
+"Expected \`{\` but found \`EOF\` (1:25)
+> 1 | interface Foo extends {}
+    |                         ^"
+`;
+
+exports[`snippet: #0 format[typescript] 1`] = `
+"'extends' list cannot be empty. (1:15)
+> 1 | interface Foo extends {}
+    |               ^^^^^^^
+Cause: 'extends' list cannot be empty."
+`;
+
+exports[`snippet: #1 format[babel-ts] 1`] = `
+"Unexpected token, expected "{" (1:13)
+> 1 | interface F implements {}
+    |             ^
+Cause: Unexpected token, expected "{" (1:12)"
+`;
+
+exports[`snippet: #1 format[oxc-ts] 1`] = `
+"Unexpected token (1:24)
+> 1 | interface F implements {}
+    |                        ^"
+`;
+
+exports[`snippet: #1 format[typescript] 1`] = `
+"Interface declaration cannot have 'implements' clause. (1:13)
+> 1 | interface F implements {}
+    |             ^^^^^^^^^^
+Cause: Interface declaration cannot have 'implements' clause."
+`;
+
+exports[`snippet: #2 format[babel-ts] 1`] = `
+"Unexpected token, expected "{" (1:13)
+> 1 | interface F implements A {}
+    |             ^
+Cause: Unexpected token, expected "{" (1:12)"
+`;
+
+exports[`snippet: #2 format[oxc-ts] 1`] = `
+"Interface declaration cannot have 'implements' clause. (1:13)
+> 1 | interface F implements A {}
+    |             ^^^^^^^^^^"
+`;
+
+exports[`snippet: #2 format[typescript] 1`] = `
+"Interface declaration cannot have 'implements' clause. (1:13)
+> 1 | interface F implements A {}
+    |             ^^^^^^^^^^^^
+Cause: Interface declaration cannot have 'implements' clause."
+`;

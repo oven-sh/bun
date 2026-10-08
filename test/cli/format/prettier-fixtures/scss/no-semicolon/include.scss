@@ -1,0 +1,7 @@
+@mixin foo() {
+  a {
+    color: #f99;
+  }
+}
+
+@include foo() /* comment*/

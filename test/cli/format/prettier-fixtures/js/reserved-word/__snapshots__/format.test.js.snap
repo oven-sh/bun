@@ -1,0 +1,76 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`interfaces.js format 1`] = `
+====================================options=====================================
+parsers: ["acorn", "espree", "meriyah", "babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo.interface;
+interface.foo;
+new interface();
+({ interface: "foo" });
+(interface, "foo");
+void interface;
+var interface = "foo";
+
+=====================================output=====================================
+foo.interface;
+interface.foo;
+new interface();
+({ interface: "foo" });
+(interface, "foo");
+void interface;
+var interface = "foo";
+
+================================================================================
+`;
+
+exports[`let.js format 1`] = `
+====================================options=====================================
+parsers: ["acorn", "espree", "meriyah", "babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo.let;
+let.foo;
+new let();
+({ let: "foo" });
+(let, "foo");
+void let;
+var let = "foo";
+
+=====================================output=====================================
+foo.let;
+let.foo;
+new let();
+({ let: "foo" });
+(let, "foo");
+void let;
+var let = "foo";
+
+================================================================================
+`;
+
+exports[`yield.js format 1`] = `
+====================================options=====================================
+parsers: ["acorn", "espree", "meriyah", "babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo.yield;
+yield.foo;
+new yield();
+({ yield: "foo" });
+(yield, "foo");
+void yield;
+var yield = "foo";
+
+=====================================output=====================================
+foo.yield;
+yield.foo;
+new yield();
+({ yield: "foo" });
+(yield, "foo");
+void yield;
+var yield = "foo";
+
+================================================================================
+`;

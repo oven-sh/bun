@@ -1,0 +1,56 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`with-noformat-pragma.html - {"checkIgnorePragma":true} format 1`] = `
+====================================options=====================================
+checkIgnorePragma: true
+parsers: ["html"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<!-- @noformat -->
+
+<div
+            >  ABC             </div>
+
+=====================================output=====================================
+<!-- @noformat -->
+
+<div
+            >  ABC             </div>
+
+================================================================================
+`;
+
+exports[`with-noprettier-pragma.html - {"checkIgnorePragma":true} format 1`] = `
+====================================options=====================================
+checkIgnorePragma: true
+parsers: ["html"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<!-- @noprettier -->
+
+<div
+            >  ABC             </div>
+
+=====================================output=====================================
+<!-- @noprettier -->
+
+<div
+            >  ABC             </div>
+
+================================================================================
+`;
+
+exports[`without-pragma.html - {"checkIgnorePragma":true} format 1`] = `
+====================================options=====================================
+checkIgnorePragma: true
+parsers: ["html"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div
+            >  ABC             </div>
+
+=====================================output=====================================
+<div>ABC</div>
+
+================================================================================
+`;

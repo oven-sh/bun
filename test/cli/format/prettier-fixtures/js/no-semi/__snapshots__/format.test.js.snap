@@ -1,0 +1,2347 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`blank-lines.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const a1=foo
+  .bar()
+  ;
+
+bar();
+
+const a2=foo
+  .bar()
+  ;
+
++bar();
+
+a=foo
+  .bar()
+  ;
+
+bar();
+
+a=foo
+  .bar()
+  ;
+
++bar();
+
+=====================================output=====================================
+const a1 = foo.bar()
+
+bar()
+
+const a2 = foo.bar()
+
+;+bar()
+
+a = foo.bar()
+
+bar()
+
+a = foo.bar()
+
+;+bar()
+
+================================================================================
+`;
+
+exports[`blank-lines.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const a1=foo
+  .bar()
+  ;
+
+bar();
+
+const a2=foo
+  .bar()
+  ;
+
++bar();
+
+a=foo
+  .bar()
+  ;
+
+bar();
+
+a=foo
+  .bar()
+  ;
+
++bar();
+
+=====================================output=====================================
+const a1 = foo.bar();
+
+bar();
+
+const a2 = foo.bar();
+
++bar();
+
+a = foo.bar();
+
+bar();
+
+a = foo.bar();
+
++bar();
+
+================================================================================
+`;
+
+exports[`class.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// TODO: upgrade parser
+// class A {
+//   async; // The semicolon is *not* necessary
+//   x(){}
+// }
+// class B {
+//   static; // The semicolon *is* necessary
+//   x(){}
+// }
+
+class C1 {
+  get; // The semicolon *is* necessary
+  x(){}
+}
+class C2 {
+  get = () => {}; // The semicolon is *not* necessary
+  x(){}
+}
+class C3 {
+  set; // The semicolon *is* necessary
+  x(){}
+}
+class C4 {
+  set = () => {}; // The semicolon is *not* necessary
+  x(){}
+}
+
+
+
+class A1 {
+  a = 0;
+  [b](){}
+
+  c = 0;
+  *d(){}
+
+  e = 0;
+  [f] = 0
+
+  // none of the semicolons above this comment can be omitted.
+  // none of the semicolons below this comment are necessary.
+
+  q() {};
+  [h](){}
+
+  p() {};
+  *i(){}
+
+  a = 1;
+  get ['y']() {}
+
+  a = 1;
+  static ['y']() {}
+
+  a = 1;
+  set ['z'](z) {}
+
+  a = 1;
+  async ['a']() {}
+
+  a = 1;
+  async *g() {}
+
+  a = 0;
+  b = 1;
+}
+
+class A2 {
+  a = 0;
+  [b](){}
+
+  c = 0;
+  *d(){}
+
+  e = 0;
+  [f] = 0
+
+  // none of the semicolons above this comment can be omitted.
+  // none of the semicolons below this comment are necessary.
+
+  q() {};
+  [h](){}
+
+  p() {};
+  *i(){}
+
+  a = 1;
+  get ['y']() {}
+
+  a = 1;
+  static ['y']() {}
+
+  a = 1;
+  set ['z'](z) {}
+
+  a = 1;
+  async ['a']() {}
+
+  a = 1;
+  async *g() {}
+
+  a = 0;
+  b = 1;
+}
+
+// being first/last shouldn't break things
+class G1 {
+  x = 1
+}
+class G2 {
+  x() {}
+}
+class G3 {
+  *x() {}
+}
+class G4 {
+  [x] = 1
+}
+
+=====================================output=====================================
+// TODO: upgrade parser
+// class A {
+//   async; // The semicolon is *not* necessary
+//   x(){}
+// }
+// class B {
+//   static; // The semicolon *is* necessary
+//   x(){}
+// }
+
+class C1 {
+  get; // The semicolon *is* necessary
+  x() {}
+}
+class C2 {
+  get = () => {} // The semicolon is *not* necessary
+  x() {}
+}
+class C3 {
+  set; // The semicolon *is* necessary
+  x() {}
+}
+class C4 {
+  set = () => {} // The semicolon is *not* necessary
+  x() {}
+}
+
+class A1 {
+  a = 0;
+  [b]() {}
+
+  c = 0;
+  *d() {}
+
+  e = 0;
+  [f] = 0
+
+  // none of the semicolons above this comment can be omitted.
+  // none of the semicolons below this comment are necessary.
+
+  q() {}
+  [h]() {}
+
+  p() {}
+  *i() {}
+
+  a = 1
+  get ["y"]() {}
+
+  a = 1
+  static ["y"]() {}
+
+  a = 1
+  set ["z"](z) {}
+
+  a = 1
+  async ["a"]() {}
+
+  a = 1
+  async *g() {}
+
+  a = 0
+  b = 1
+}
+
+class A2 {
+  a = 0;
+  [b]() {}
+
+  c = 0;
+  *d() {}
+
+  e = 0;
+  [f] = 0
+
+  // none of the semicolons above this comment can be omitted.
+  // none of the semicolons below this comment are necessary.
+
+  q() {}
+  [h]() {}
+
+  p() {}
+  *i() {}
+
+  a = 1
+  get ["y"]() {}
+
+  a = 1
+  static ["y"]() {}
+
+  a = 1
+  set ["z"](z) {}
+
+  a = 1
+  async ["a"]() {}
+
+  a = 1
+  async *g() {}
+
+  a = 0
+  b = 1
+}
+
+// being first/last shouldn't break things
+class G1 {
+  x = 1
+}
+class G2 {
+  x() {}
+}
+class G3 {
+  *x() {}
+}
+class G4 {
+  [x] = 1
+}
+
+================================================================================
+`;
+
+exports[`class.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// TODO: upgrade parser
+// class A {
+//   async; // The semicolon is *not* necessary
+//   x(){}
+// }
+// class B {
+//   static; // The semicolon *is* necessary
+//   x(){}
+// }
+
+class C1 {
+  get; // The semicolon *is* necessary
+  x(){}
+}
+class C2 {
+  get = () => {}; // The semicolon is *not* necessary
+  x(){}
+}
+class C3 {
+  set; // The semicolon *is* necessary
+  x(){}
+}
+class C4 {
+  set = () => {}; // The semicolon is *not* necessary
+  x(){}
+}
+
+
+
+class A1 {
+  a = 0;
+  [b](){}
+
+  c = 0;
+  *d(){}
+
+  e = 0;
+  [f] = 0
+
+  // none of the semicolons above this comment can be omitted.
+  // none of the semicolons below this comment are necessary.
+
+  q() {};
+  [h](){}
+
+  p() {};
+  *i(){}
+
+  a = 1;
+  get ['y']() {}
+
+  a = 1;
+  static ['y']() {}
+
+  a = 1;
+  set ['z'](z) {}
+
+  a = 1;
+  async ['a']() {}
+
+  a = 1;
+  async *g() {}
+
+  a = 0;
+  b = 1;
+}
+
+class A2 {
+  a = 0;
+  [b](){}
+
+  c = 0;
+  *d(){}
+
+  e = 0;
+  [f] = 0
+
+  // none of the semicolons above this comment can be omitted.
+  // none of the semicolons below this comment are necessary.
+
+  q() {};
+  [h](){}
+
+  p() {};
+  *i(){}
+
+  a = 1;
+  get ['y']() {}
+
+  a = 1;
+  static ['y']() {}
+
+  a = 1;
+  set ['z'](z) {}
+
+  a = 1;
+  async ['a']() {}
+
+  a = 1;
+  async *g() {}
+
+  a = 0;
+  b = 1;
+}
+
+// being first/last shouldn't break things
+class G1 {
+  x = 1
+}
+class G2 {
+  x() {}
+}
+class G3 {
+  *x() {}
+}
+class G4 {
+  [x] = 1
+}
+
+=====================================output=====================================
+// TODO: upgrade parser
+// class A {
+//   async; // The semicolon is *not* necessary
+//   x(){}
+// }
+// class B {
+//   static; // The semicolon *is* necessary
+//   x(){}
+// }
+
+class C1 {
+  get; // The semicolon *is* necessary
+  x() {}
+}
+class C2 {
+  get = () => {}; // The semicolon is *not* necessary
+  x() {}
+}
+class C3 {
+  set; // The semicolon *is* necessary
+  x() {}
+}
+class C4 {
+  set = () => {}; // The semicolon is *not* necessary
+  x() {}
+}
+
+class A1 {
+  a = 0;
+  [b]() {}
+
+  c = 0;
+  *d() {}
+
+  e = 0;
+  [f] = 0;
+
+  // none of the semicolons above this comment can be omitted.
+  // none of the semicolons below this comment are necessary.
+
+  q() {}
+  [h]() {}
+
+  p() {}
+  *i() {}
+
+  a = 1;
+  get ["y"]() {}
+
+  a = 1;
+  static ["y"]() {}
+
+  a = 1;
+  set ["z"](z) {}
+
+  a = 1;
+  async ["a"]() {}
+
+  a = 1;
+  async *g() {}
+
+  a = 0;
+  b = 1;
+}
+
+class A2 {
+  a = 0;
+  [b]() {}
+
+  c = 0;
+  *d() {}
+
+  e = 0;
+  [f] = 0;
+
+  // none of the semicolons above this comment can be omitted.
+  // none of the semicolons below this comment are necessary.
+
+  q() {}
+  [h]() {}
+
+  p() {}
+  *i() {}
+
+  a = 1;
+  get ["y"]() {}
+
+  a = 1;
+  static ["y"]() {}
+
+  a = 1;
+  set ["z"](z) {}
+
+  a = 1;
+  async ["a"]() {}
+
+  a = 1;
+  async *g() {}
+
+  a = 0;
+  b = 1;
+}
+
+// being first/last shouldn't break things
+class G1 {
+  x = 1;
+}
+class G2 {
+  x() {}
+}
+class G3 {
+  *x() {}
+}
+class G4 {
+  [x] = 1;
+}
+
+================================================================================
+`;
+
+exports[`comments.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let error = new Error(response.statusText);
+// comment
+[].response = response
+
+x;
+
+/* comment */ [].response = response
+
+x;
+
+[].response = response; /* comment */
+
+
+{
+  let foo
+
+  // comment
+  ;[foo] = [1]
+}
+
+{
+  let foo = 42
+
+  // comment
+  ;[foo] = [1]
+}
+
+=====================================output=====================================
+let error = new Error(response.statusText)
+// comment
+;[].response = response
+
+x
+
+/* comment */ ;[].response = response
+
+x
+
+;[].response = response /* comment */
+
+{
+  let foo
+
+  // comment
+  ;[foo] = [1]
+}
+
+{
+  let foo = 42
+
+  // comment
+  ;[foo] = [1]
+}
+
+================================================================================
+`;
+
+exports[`comments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let error = new Error(response.statusText);
+// comment
+[].response = response
+
+x;
+
+/* comment */ [].response = response
+
+x;
+
+[].response = response; /* comment */
+
+
+{
+  let foo
+
+  // comment
+  ;[foo] = [1]
+}
+
+{
+  let foo = 42
+
+  // comment
+  ;[foo] = [1]
+}
+
+=====================================output=====================================
+let error = new Error(response.statusText);
+// comment
+[].response = response;
+
+x;
+
+/* comment */ [].response = response;
+
+x;
+
+[].response = response; /* comment */
+
+{
+  let foo;
+
+  // comment
+  [foo] = [1];
+}
+
+{
+  let foo = 42;
+
+  // comment
+  [foo] = [1];
+}
+
+================================================================================
+`;
+
+exports[`debugger-statement.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+debugger
+
+// 11
+;[]
+
+debugger
+
+// 21
+;foo
+
+// prettier-ignore
+debugger
+
+;[]
+
+debugger /* comment */ ;
+
+=====================================output=====================================
+debugger
+
+// 11
+;[]
+
+debugger
+
+// 21
+foo
+
+// prettier-ignore
+debugger
+
+;[]
+
+debugger /* comment */
+
+================================================================================
+`;
+
+exports[`debugger-statement.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+debugger
+
+// 11
+;[]
+
+debugger
+
+// 21
+;foo
+
+// prettier-ignore
+debugger
+
+;[]
+
+debugger /* comment */ ;
+
+=====================================output=====================================
+debugger;
+
+// 11
+[];
+
+debugger;
+
+// 21
+foo;
+
+// prettier-ignore
+debugger;
+
+[];
+
+debugger; /* comment */
+
+================================================================================
+`;
+
+exports[`do-while-statement.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+do;while(1)
+
+// 11
+;[]
+
+do;while(1)
+
+// 21
+;foo
+
+// prettier-ignore
+do;   while(   1)
+
+;[]
+
+do;while(1) /* comment */ ;
+
+=====================================output=====================================
+do;
+while (1)
+
+// 11
+;[]
+
+do;
+while (1)
+
+// 21
+foo
+
+// prettier-ignore
+do;   while(   1)
+
+;[]
+
+do;
+while (1) /* comment */
+
+================================================================================
+`;
+
+exports[`do-while-statement.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+do;while(1)
+
+// 11
+;[]
+
+do;while(1)
+
+// 21
+;foo
+
+// prettier-ignore
+do;   while(   1)
+
+;[]
+
+do;while(1) /* comment */ ;
+
+=====================================output=====================================
+do;
+while (1);
+
+// 11
+[];
+
+do;
+while (1);
+
+// 21
+foo;
+
+// prettier-ignore
+do;   while(   1);
+
+[];
+
+do;
+while (1); /* comment */
+
+================================================================================
+`;
+
+exports[`for-in-statement.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for (a in b) foo
+
+// 11
+;[]
+
+for (a in b) foo
+
+// 21
+;foo
+
+// prettier-ignore
+for (   a in   b)   foo (   )
+
+;[]
+
+for (a in b) foo /* comment */ ;
+
+=====================================output=====================================
+for (a in b) foo
+
+// 11
+;[]
+
+for (a in b) foo
+
+// 21
+foo
+
+// prettier-ignore
+for (   a in   b)   foo (   )
+
+;[]
+
+for (a in b) foo /* comment */
+
+================================================================================
+`;
+
+exports[`for-in-statement.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for (a in b) foo
+
+// 11
+;[]
+
+for (a in b) foo
+
+// 21
+;foo
+
+// prettier-ignore
+for (   a in   b)   foo (   )
+
+;[]
+
+for (a in b) foo /* comment */ ;
+
+=====================================output=====================================
+for (a in b) foo;
+
+// 11
+[];
+
+for (a in b) foo;
+
+// 21
+foo;
+
+// prettier-ignore
+for (   a in   b)   foo (   );
+
+[];
+
+for (a in b) foo; /* comment */
+
+================================================================================
+`;
+
+exports[`for-of-statement.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for (a of b) foo
+
+// 11
+;[]
+
+for (a of b) foo
+
+// 21
+;foo
+
+// prettier-ignore
+for (   a of   b)   foo (   )
+
+;[]
+
+for (a of b) foo /* comment */ ;
+
+// prettier-ignore
+for (   a of   b) while   (   1)   foo (   )
+
+;[]
+
+=====================================output=====================================
+for (a of b) foo
+
+// 11
+;[]
+
+for (a of b) foo
+
+// 21
+foo
+
+// prettier-ignore
+for (   a of   b)   foo (   )
+
+;[]
+
+for (a of b) foo /* comment */
+
+// prettier-ignore
+for (   a of   b) while   (   1)   foo (   )
+
+;[]
+
+================================================================================
+`;
+
+exports[`for-of-statement.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for (a of b) foo
+
+// 11
+;[]
+
+for (a of b) foo
+
+// 21
+;foo
+
+// prettier-ignore
+for (   a of   b)   foo (   )
+
+;[]
+
+for (a of b) foo /* comment */ ;
+
+// prettier-ignore
+for (   a of   b) while   (   1)   foo (   )
+
+;[]
+
+=====================================output=====================================
+for (a of b) foo;
+
+// 11
+[];
+
+for (a of b) foo;
+
+// 21
+foo;
+
+// prettier-ignore
+for (   a of   b)   foo (   );
+
+[];
+
+for (a of b) foo; /* comment */
+
+// prettier-ignore
+for (   a of   b) while   (   1)   foo (   );
+
+[];
+
+================================================================================
+`;
+
+exports[`for-statement.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for (;;) foo
+
+// 11
+;[]
+
+for (;;) foo
+
+// 21
+;foo
+
+// prettier-ignore
+for (   ;   ;)   foo (   )
+
+;[]
+
+for (;;) foo /* comment */ ;
+
+=====================================output=====================================
+for (;;) foo
+
+// 11
+;[]
+
+for (;;) foo
+
+// 21
+foo
+
+// prettier-ignore
+for (   ;   ;)   foo (   )
+
+;[]
+
+for (;;) foo /* comment */
+
+================================================================================
+`;
+
+exports[`for-statement.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for (;;) foo
+
+// 11
+;[]
+
+for (;;) foo
+
+// 21
+;foo
+
+// prettier-ignore
+for (   ;   ;)   foo (   )
+
+;[]
+
+for (;;) foo /* comment */ ;
+
+=====================================output=====================================
+for (;;) foo;
+
+// 11
+[];
+
+for (;;) foo;
+
+// 21
+foo;
+
+// prettier-ignore
+for (   ;   ;)   foo (   );
+
+[];
+
+for (;;) foo; /* comment */
+
+================================================================================
+`;
+
+exports[`if-statement.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (1) foo
+
+// 11
+;[]
+
+if (1) foo
+
+// 21
+;foo
+
+// prettier-ignore
+if (   1)    foo
+
+;[]
+
+if (1) foo /* comment */ ;
+
+if (1) ; else foo
+
+// 11
+;[]
+
+if (1) ; else foo
+
+// 21
+;foo
+
+// prettier-ignore
+if (   1) ; else    foo
+
+;[]
+
+if (1) ; else foo /* comment */ ;
+
+=====================================output=====================================
+if (1) foo
+
+// 11
+;[]
+
+if (1) foo
+
+// 21
+foo
+
+// prettier-ignore
+if (   1)    foo
+
+;[]
+
+if (1) foo /* comment */
+
+if (1);
+else foo
+
+// 11
+;[]
+
+if (1);
+else foo
+
+// 21
+foo
+
+// prettier-ignore
+if (   1) ; else    foo
+
+;[]
+
+if (1);
+else foo /* comment */
+
+================================================================================
+`;
+
+exports[`if-statement.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (1) foo
+
+// 11
+;[]
+
+if (1) foo
+
+// 21
+;foo
+
+// prettier-ignore
+if (   1)    foo
+
+;[]
+
+if (1) foo /* comment */ ;
+
+if (1) ; else foo
+
+// 11
+;[]
+
+if (1) ; else foo
+
+// 21
+;foo
+
+// prettier-ignore
+if (   1) ; else    foo
+
+;[]
+
+if (1) ; else foo /* comment */ ;
+
+=====================================output=====================================
+if (1) foo;
+
+// 11
+[];
+
+if (1) foo;
+
+// 21
+foo;
+
+// prettier-ignore
+if (   1)    foo;
+
+[];
+
+if (1) foo; /* comment */
+
+if (1);
+else foo;
+
+// 11
+[];
+
+if (1);
+else foo;
+
+// 21
+foo;
+
+// prettier-ignore
+if (   1) ; else    foo;
+
+[];
+
+if (1);
+else foo; /* comment */
+
+================================================================================
+`;
+
+exports[`imports.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// #10870
+import foo from "foo"
+
+;({}) /* Should preserve line before */
+
+////////////////////////////////////////
+export default {}
+
+;({}) /* Should preserve line before */
+
+////////////////////////////////////////
+export {foo}
+
+;({}) /* Should preserve line before */
+
+////////////////////////////////////////
+export * from 'foo'
+
+;({}) /* Should preserve line before */
+
+////////////////////////////////////////
+export {foo as bar} // 1
+// 2
+;/*3*/({})
+
+=====================================output=====================================
+// #10870
+import foo from "foo"
+
+;({}) /* Should preserve line before */
+
+////////////////////////////////////////
+export default {}
+
+;({}) /* Should preserve line before */
+
+////////////////////////////////////////
+export { foo }
+
+;({}) /* Should preserve line before */
+
+////////////////////////////////////////
+export * from "foo"
+
+;({}) /* Should preserve line before */
+
+////////////////////////////////////////
+export { foo as bar } // 1
+// 2
+/*3*/ ;({})
+
+================================================================================
+`;
+
+exports[`imports.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// #10870
+import foo from "foo"
+
+;({}) /* Should preserve line before */
+
+////////////////////////////////////////
+export default {}
+
+;({}) /* Should preserve line before */
+
+////////////////////////////////////////
+export {foo}
+
+;({}) /* Should preserve line before */
+
+////////////////////////////////////////
+export * from 'foo'
+
+;({}) /* Should preserve line before */
+
+////////////////////////////////////////
+export {foo as bar} // 1
+// 2
+;/*3*/({})
+
+=====================================output=====================================
+// #10870
+import foo from "foo";
+
+({}); /* Should preserve line before */
+
+////////////////////////////////////////
+export default {};
+
+({}); /* Should preserve line before */
+
+////////////////////////////////////////
+export { foo };
+
+({}); /* Should preserve line before */
+
+////////////////////////////////////////
+export * from "foo";
+
+({}); /* Should preserve line before */
+
+////////////////////////////////////////
+export { foo as bar }; // 1
+// 2
+/*3*/ ({});
+
+================================================================================
+`;
+
+exports[`issue-1510.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a;
+
+[].b();
+
+a; // comment
+
+[].b();
+
+a;
+
+// comment
+
+[].b();
+
+=====================================output=====================================
+a
+
+;[].b()
+
+a // comment
+
+;[].b()
+
+a
+
+// comment
+
+;[].b()
+
+================================================================================
+`;
+
+exports[`issue-1510.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a;
+
+[].b();
+
+a; // comment
+
+[].b();
+
+a;
+
+// comment
+
+[].b();
+
+=====================================output=====================================
+a;
+
+[].b();
+
+a; // comment
+
+[].b();
+
+a;
+
+// comment
+
+[].b();
+
+================================================================================
+`;
+
+exports[`issue2006.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+switch (n) {
+  case 11:
+    var c = a.e;
+    (i.a += Ga(c.e)), F(i, c.i, 0);
+}
+
+var c = a.e;
+(i.a += Ga(c.e)), F(i, c.i, 0);
+
+=====================================output=====================================
+switch (n) {
+  case 11:
+    var c = a.e
+    ;((i.a += Ga(c.e)), F(i, c.i, 0))
+}
+
+var c = a.e
+;((i.a += Ga(c.e)), F(i, c.i, 0))
+
+================================================================================
+`;
+
+exports[`issue2006.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+switch (n) {
+  case 11:
+    var c = a.e;
+    (i.a += Ga(c.e)), F(i, c.i, 0);
+}
+
+var c = a.e;
+(i.a += Ga(c.e)), F(i, c.i, 0);
+
+=====================================output=====================================
+switch (n) {
+  case 11:
+    var c = a.e;
+    ((i.a += Ga(c.e)), F(i, c.i, 0));
+}
+
+var c = a.e;
+((i.a += Ga(c.e)), F(i, c.i, 0));
+
+================================================================================
+`;
+
+exports[`labeled-statement.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+label: while(1) foo
+
+// 11
+;[]
+
+label: while(1) foo
+
+// 21
+;foo
+
+// prettier-ignore
+label: while   (   1)   foo (   )
+
+;[]
+
+label: while(1) foo /* comment */ ;
+
+=====================================output=====================================
+label: while (1) foo
+
+// 11
+;[]
+
+label: while (1) foo
+
+// 21
+foo
+
+// prettier-ignore
+label: while   (   1)   foo (   )
+
+;[]
+
+label: while (1) foo /* comment */
+
+================================================================================
+`;
+
+exports[`labeled-statement.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+label: while(1) foo
+
+// 11
+;[]
+
+label: while(1) foo
+
+// 21
+;foo
+
+// prettier-ignore
+label: while   (   1)   foo (   )
+
+;[]
+
+label: while(1) foo /* comment */ ;
+
+=====================================output=====================================
+label: while (1) foo;
+
+// 11
+[];
+
+label: while (1) foo;
+
+// 21
+foo;
+
+// prettier-ignore
+label: while   (   1)   foo (   );
+
+[];
+
+label: while (1) foo; /* comment */
+
+================================================================================
+`;
+
+exports[`no-semi.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+// with preexisting semi
+
+x; [1, 2, 3].forEach(fn)
+x; [a, b, ...c] = [1, 2]
+x; /r/i.test('r')
+x; +1
+x; - 1
+x; ('h' + 'i').repeat(10)
+x; (1, 2)
+x; (() => {})()
+x; ({ a: 1 }).entries()
+x; ({ a: 1 }).entries()
+x; <Hello />
+x; \`string\`
+x; (x, y) => x
+
+// doesn't have to be preceded by a semicolon
+
+class X {} [1, 2, 3].forEach(fn)
+
+
+// don't semicolon if it doesn't start statement
+
+if (true) (() => {})()
+
+
+// check indentation
+
+if (true) {
+  x; (() => {})()
+}
+
+// check statement clauses
+
+do break; while (false)
+if (true) do break; while (false)
+
+if (true) 1; else 2
+for (;;) ;
+for (x of y) ;
+
+debugger
+
+// check that it doesn't break non-ASI
+
+1
+- 1
+
+1
++ 1
+
+1
+/ 1
+
+arr
+[0]
+
+fn
+(x)
+
+!1
+
+1
+< 1
+
+tag
+\`string\`
+
+x; x => x
+
+x; (a || b).c++
+
+x; ++(a || b).c
+
+while (false)
+  (function(){}())
+
+aReallyLongLine012345678901234567890123456789012345678901234567890123456789 *
+  (b + c)
+
+=====================================output=====================================
+// with preexisting semi
+
+x
+;[1, 2, 3].forEach(fn)
+x
+;[a, b, ...c] = [1, 2]
+x
+;/r/i.test("r")
+x
+;+1
+x
+;-1
+x
+;("h" + "i").repeat(10)
+x
+;(1, 2)
+x
+;(() => {})()
+x
+;({ a: 1 }).entries()
+x
+;({ a: 1 }).entries()
+x
+;<Hello />
+x
+;\`string\`
+x
+;(x, y) => x
+
+// doesn't have to be preceded by a semicolon
+
+class X {}
+;[1, 2, 3].forEach(fn)
+
+// don't semicolon if it doesn't start statement
+
+if (true) (() => {})()
+
+// check indentation
+
+if (true) {
+  x
+  ;(() => {})()
+}
+
+// check statement clauses
+
+do break
+while (false)
+if (true)
+  do break
+  while (false)
+
+if (true) 1
+else 2
+for (;;);
+for (x of y);
+
+debugger
+
+// check that it doesn't break non-ASI
+
+1 - 1
+
+1 + 1
+
+1 / 1
+
+arr[0]
+
+fn(x)
+
+!1
+
+1 < 1
+
+tag\`string\`
+
+x
+;(x) => x
+
+x
+;(a || b).c++
+
+x
+++(a || b).c
+
+while (false) (function () {})()
+
+aReallyLongLine012345678901234567890123456789012345678901234567890123456789 *
+  (b + c)
+
+================================================================================
+`;
+
+exports[`no-semi.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+// with preexisting semi
+
+x; [1, 2, 3].forEach(fn)
+x; [a, b, ...c] = [1, 2]
+x; /r/i.test('r')
+x; +1
+x; - 1
+x; ('h' + 'i').repeat(10)
+x; (1, 2)
+x; (() => {})()
+x; ({ a: 1 }).entries()
+x; ({ a: 1 }).entries()
+x; <Hello />
+x; \`string\`
+x; (x, y) => x
+
+// doesn't have to be preceded by a semicolon
+
+class X {} [1, 2, 3].forEach(fn)
+
+
+// don't semicolon if it doesn't start statement
+
+if (true) (() => {})()
+
+
+// check indentation
+
+if (true) {
+  x; (() => {})()
+}
+
+// check statement clauses
+
+do break; while (false)
+if (true) do break; while (false)
+
+if (true) 1; else 2
+for (;;) ;
+for (x of y) ;
+
+debugger
+
+// check that it doesn't break non-ASI
+
+1
+- 1
+
+1
++ 1
+
+1
+/ 1
+
+arr
+[0]
+
+fn
+(x)
+
+!1
+
+1
+< 1
+
+tag
+\`string\`
+
+x; x => x
+
+x; (a || b).c++
+
+x; ++(a || b).c
+
+while (false)
+  (function(){}())
+
+aReallyLongLine012345678901234567890123456789012345678901234567890123456789 *
+  (b + c)
+
+=====================================output=====================================
+// with preexisting semi
+
+x;
+[1, 2, 3].forEach(fn);
+x;
+[a, b, ...c] = [1, 2];
+x;
+/r/i.test("r");
+x;
++1;
+x;
+-1;
+x;
+("h" + "i").repeat(10);
+x;
+(1, 2);
+x;
+(() => {})();
+x;
+({ a: 1 }).entries();
+x;
+({ a: 1 }).entries();
+x;
+<Hello />;
+x;
+\`string\`;
+x;
+(x, y) => x;
+
+// doesn't have to be preceded by a semicolon
+
+class X {}
+[1, 2, 3].forEach(fn);
+
+// don't semicolon if it doesn't start statement
+
+if (true) (() => {})();
+
+// check indentation
+
+if (true) {
+  x;
+  (() => {})();
+}
+
+// check statement clauses
+
+do break;
+while (false);
+if (true)
+  do break;
+  while (false);
+
+if (true) 1;
+else 2;
+for (;;);
+for (x of y);
+
+debugger;
+
+// check that it doesn't break non-ASI
+
+1 - 1;
+
+1 + 1;
+
+1 / 1;
+
+arr[0];
+
+fn(x);
+
+!1;
+
+1 < 1;
+
+tag\`string\`;
+
+x;
+(x) => x;
+
+x;
+(a || b).c++;
+
+x;
+++(a || b).c;
+
+while (false) (function () {})();
+
+aReallyLongLine012345678901234567890123456789012345678901234567890123456789 *
+  (b + c);
+
+================================================================================
+`;
+
+exports[`private-field.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class C {
+  #field = 'value';
+  ["method"]() {}
+}
+
+=====================================output=====================================
+class C {
+  #field = "value";
+  ["method"]() {}
+}
+
+================================================================================
+`;
+
+exports[`private-field.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class C {
+  #field = 'value';
+  ["method"]() {}
+}
+
+=====================================output=====================================
+class C {
+  #field = "value";
+  ["method"]() {}
+}
+
+================================================================================
+`;
+
+exports[`return-statement.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function a() {
+  return
+
+  // 11
+  ;[]
+
+  return
+
+  // 21
+  ;foo
+
+  // prettier-ignore
+  return
+
+  ;[]
+
+  return /* comment */ ;
+}
+
+=====================================output=====================================
+function a() {
+  return
+
+  // 11
+  ;[]
+
+  return
+
+  // 21
+  foo
+
+  // prettier-ignore
+  return
+
+  ;[]
+
+  return /* comment */
+}
+
+================================================================================
+`;
+
+exports[`return-statement.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function a() {
+  return
+
+  // 11
+  ;[]
+
+  return
+
+  // 21
+  ;foo
+
+  // prettier-ignore
+  return
+
+  ;[]
+
+  return /* comment */ ;
+}
+
+=====================================output=====================================
+function a() {
+  return;
+
+  // 11
+  [];
+
+  return;
+
+  // 21
+  foo;
+
+  // prettier-ignore
+  return;
+
+  [];
+
+  return; /* comment */
+}
+
+================================================================================
+`;
+
+exports[`while-statement.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+while(1) foo
+
+// 11
+;[]
+
+while(1) foo
+
+// 21
+;foo
+
+// prettier-ignore
+while   (   1)   foo (   )
+
+;[]
+
+while(1) foo /* comment */ ;
+
+=====================================output=====================================
+while (1) foo
+
+// 11
+;[]
+
+while (1) foo
+
+// 21
+foo
+
+// prettier-ignore
+while   (   1)   foo (   )
+
+;[]
+
+while (1) foo /* comment */
+
+================================================================================
+`;
+
+exports[`while-statement.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+while(1) foo
+
+// 11
+;[]
+
+while(1) foo
+
+// 21
+;foo
+
+// prettier-ignore
+while   (   1)   foo (   )
+
+;[]
+
+while(1) foo /* comment */ ;
+
+=====================================output=====================================
+while (1) foo;
+
+// 11
+[];
+
+while (1) foo;
+
+// 21
+foo;
+
+// prettier-ignore
+while   (   1)   foo (   );
+
+[];
+
+while (1) foo; /* comment */
+
+================================================================================
+`;
+
+exports[`with-statement.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+with(1) foo
+
+// 11
+;[]
+
+with(1) foo
+
+// 21
+;foo
+
+// prettier-ignore
+with   (   1)   foo (   )
+
+;[]
+
+with(1) foo /* comment */ ;
+
+=====================================output=====================================
+with (1) foo
+
+// 11
+;[]
+
+with (1) foo
+
+// 21
+foo
+
+// prettier-ignore
+with   (   1)   foo (   )
+
+;[]
+
+with (1) foo /* comment */
+
+================================================================================
+`;
+
+exports[`with-statement.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+with(1) foo
+
+// 11
+;[]
+
+with(1) foo
+
+// 21
+;foo
+
+// prettier-ignore
+with   (   1)   foo (   )
+
+;[]
+
+with(1) foo /* comment */ ;
+
+=====================================output=====================================
+with (1) foo;
+
+// 11
+[];
+
+with (1) foo;
+
+// 21
+foo;
+
+// prettier-ignore
+with   (   1)   foo (   );
+
+[];
+
+with (1) foo; /* comment */
+
+================================================================================
+`;

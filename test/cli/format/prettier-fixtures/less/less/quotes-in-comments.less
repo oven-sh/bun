@@ -1,0 +1,25 @@
+// Animation   
+// '
+.a { color: red }
+
+.aa:hover::after { content: "\""; } // "
+    
+    
+.b { background:url(http://example.com); }   .b::after { content: "a"; }
+
+.bb { background:url('http://example.com/(foo)bar'); }   .bb::after { content: "'a"; } // """
+
+// Animation   !
+.c { color:red    }
+
+.d { color: red /* // */ }  .d::after { content: "'"; }
+
+/*        fff
+   //   */     .d:hover::after {
+     // qw'erty 
+    content: "'''"; }
+   
+[href]:active  {
+  opacity:   // '!' "?"
+    1;
+}

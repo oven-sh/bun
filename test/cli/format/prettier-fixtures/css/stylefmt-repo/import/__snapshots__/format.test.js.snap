@@ -1,0 +1,25 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`import.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+        @import         "./settings"    ;
+
+
+@import      "./components" ;@import "./themes";
+.class{float: left;
+}
+
+=====================================output=====================================
+@import "./settings";
+
+@import "./components";
+@import "./themes";
+.class {
+  float: left;
+}
+
+================================================================================
+`;

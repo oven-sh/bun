@@ -1,0 +1,4 @@
+var msg =
+"hello world";
+
+module.exports.message = msg;

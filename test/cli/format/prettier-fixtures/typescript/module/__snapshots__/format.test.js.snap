@@ -1,0 +1,221 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`empty.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare module 'autoprefixer';
+
+=====================================output=====================================
+declare module "autoprefixer";
+
+================================================================================
+`;
+
+exports[`global.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+namespace global {}
+module global {}
+global {}
+declare global {}
+declare /* module */ global {}
+declare /* namespace */ global {}
+declare module  global {}
+declare namespace global {}
+
+=====================================output=====================================
+namespace global {}
+module global {}
+global {}
+declare global {}
+declare /* module */ global {}
+declare /* namespace */ global {}
+declare module global {}
+declare namespace global {}
+
+================================================================================
+`;
+
+exports[`keyword.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+module X {}
+
+module X {
+  const x = 1;
+}
+
+module X {
+  module X {}
+}
+
+module X {
+  module X {
+    const x = 1;
+  }
+}
+
+namespace X {}
+
+namespace X {
+  const x = 1;
+}
+
+namespace X {
+  namespace X {}
+}
+
+namespace X {
+  namespace X {
+    const x = 1;
+  }
+}
+
+namespace /* module */ X {}
+module /* namespace */ X {}
+module /* namespace */ "x" {}
+
+=====================================output=====================================
+module X {}
+
+module X {
+  const x = 1;
+}
+
+module X {
+  module X {}
+}
+
+module X {
+  module X {
+    const x = 1;
+  }
+}
+
+namespace X {}
+
+namespace X {
+  const x = 1;
+}
+
+namespace X {
+  namespace X {}
+}
+
+namespace X {
+  namespace X {
+    const x = 1;
+  }
+}
+
+namespace /* module */ X {}
+module /* namespace */ X {}
+module /* namespace */ "x" {}
+
+================================================================================
+`;
+
+exports[`module_nested.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare module abc1.def {}
+
+export declare module abc2.def {}
+
+export module abc3.def {}
+
+module abc4.def {}
+
+declare module abc5.def.ghi {}
+
+export declare module abc2.def.ghi {}
+
+export module abc3.def.ghi {}
+
+module abc4.def.ghi {}
+
+=====================================output=====================================
+declare module abc1.def {}
+
+export declare module abc2.def {}
+
+export module abc3.def {}
+
+module abc4.def {}
+
+declare module abc5.def.ghi {}
+
+export declare module abc2.def.ghi {}
+
+export module abc3.def.ghi {}
+
+module abc4.def.ghi {}
+
+================================================================================
+`;
+
+exports[`namespace_function.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+namespace X {
+    declare function f();
+}
+
+=====================================output=====================================
+namespace X {
+  declare function f();
+}
+
+================================================================================
+`;
+
+exports[`namespace_nested.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare namespace abc1.def {}
+
+export declare namespace abc2.def {}
+
+export namespace abc3.def {}
+
+namespace abc4.def {}
+
+declare namespace abc5.def.ghi {}
+
+export declare namespace abc2.def.ghi {}
+
+export namespace abc3.def.ghi {}
+
+namespace abc4.def.ghi {}
+
+=====================================output=====================================
+declare namespace abc1.def {}
+
+export declare namespace abc2.def {}
+
+export namespace abc3.def {}
+
+namespace abc4.def {}
+
+declare namespace abc5.def.ghi {}
+
+export declare namespace abc2.def.ghi {}
+
+export namespace abc3.def.ghi {}
+
+namespace abc4.def.ghi {}
+
+================================================================================
+`;

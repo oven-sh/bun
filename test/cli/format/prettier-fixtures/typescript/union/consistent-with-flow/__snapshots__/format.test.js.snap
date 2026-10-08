@@ -1,0 +1,863 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`81-characters.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export type ButtonColor =
+  | "primary"
+  | "danger"
+  | "warning"
+  | "muted"
+  | "success";
+export type Button__80 =
+  | "primary"
+  | "danger"
+  | "warning"
+  | "muted"
+  | "success";
+
+export type SupportOptionType =
+  | "int"
+  | "string"
+  | "boolean"
+  | "choice"
+  | "path";
+export type SupportOption_80 =
+  | "int"
+  | "string"
+  | "boolean"
+  | "choice"
+  | "path";
+
+export type RenderContextType =
+    | 'data'
+    | 'header'
+    | 'footer'
+    | 'columnsSelector';
+export type RenderContext_80 =
+    | 'data'
+    | 'header'
+    | 'footer'
+    | 'columnsSelector';
+
+export type PropertyNameNonComputed =
+  | Identifier
+  | NumberLiteral
+  | StringLiteral;
+export type PropertyNameNon_____80 =
+  | Identifier
+  | NumberLiteral
+  | StringLiteral;
+
+type ClassLikeDeclaration =
+  | TSESTree.ClassDeclaration
+  | TSESTree.ClassExpression;
+type ClassLike________80 =
+  | TSESTree.ClassDeclaration
+  | TSESTree.ClassExpression;
+
+=====================================output=====================================
+export type ButtonColor =
+  "primary" | "danger" | "warning" | "muted" | "success";
+export type Button__80 = "primary" | "danger" | "warning" | "muted" | "success";
+
+export type SupportOptionType =
+  "int" | "string" | "boolean" | "choice" | "path";
+export type SupportOption_80 = "int" | "string" | "boolean" | "choice" | "path";
+
+export type RenderContextType =
+  "data" | "header" | "footer" | "columnsSelector";
+export type RenderContext_80 = "data" | "header" | "footer" | "columnsSelector";
+
+export type PropertyNameNonComputed =
+  Identifier | NumberLiteral | StringLiteral;
+export type PropertyNameNon_____80 = Identifier | NumberLiteral | StringLiteral;
+
+type ClassLikeDeclaration =
+  TSESTree.ClassDeclaration | TSESTree.ClassExpression;
+type ClassLike________80 = TSESTree.ClassDeclaration | TSESTree.ClassExpression;
+
+================================================================================
+`;
+
+exports[`18647.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type T = any extends B
+  /**
+  * Comment
+  */
+    ? B | C
+    : D;
+type T2 = any extends B
+    ? B | C
+  /**
+  * Comment
+  */
+    : D;
+T = any instanceof B
+  /**
+  * Comment
+  */
+    ? B | C
+    : D;
+
+=====================================output=====================================
+type T = any extends B
+  ? /**
+     * Comment
+     */
+    B | C
+  : D;
+type T2 = any extends B
+  ? B | C
+  : /**
+     * Comment
+     */
+    D;
+T =
+  any instanceof B
+    ? /**
+       * Comment
+       */
+      B | C
+    : D;
+
+================================================================================
+`;
+
+exports[`18819.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+functionArg = a as
+  // comment
+  TSESTree.ArrowFunctionExpression | TSESTree.ArrowFunctionExpression | TSESTree.FunctionExpression | undefined;
+
+=====================================output=====================================
+functionArg = a as
+  // comment
+  | TSESTree.ArrowFunctionExpression
+  | TSESTree.ArrowFunctionExpression
+  | TSESTree.FunctionExpression
+  | undefined;
+
+================================================================================
+`;
+
+exports[`comment.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A1 = /* 4 */ (
+  | A
+  | B
+)[]
+
+type A2 = // dir, exp, arg, modifiers
+  | [string]
+  | [string, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode, ObjectExpression]
+
+type A3 = // dir, exp, arg, modifiers
+  & [string]
+  & [string, ExpressionNode]
+  & [string, ExpressionNode, ExpressionNode]
+  & [string, ExpressionNode, ExpressionNode, ObjectExpression]
+
+type SuperLongTypeNameLoremIpsumLoremIpsumBlaBlaBlaBlaBlaBlaBlaBlaBlaBlaBlaBla =
+  Fooo1000 | Baz2000 | BarLoooooooooooooooooooooooooooooooooooooooooooooooooLong;
+
+type SuperLongTypeNameLoremIpsumLoremIpsumBlaBlaBlaBlaBlaBlaBlaBlaBlaBlaBlaBl2 =
+  Fooo1000 & Baz2000 & BarLoooooooooooooooooooooooooooooooooooooooooooooooooLong;
+
+=====================================output=====================================
+type A1 = /* 4 */ (A | B)[];
+
+type A2 =
+  // dir, exp, arg, modifiers
+  | [string]
+  | [string, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode]
+  | [string, ExpressionNode, ExpressionNode, ObjectExpression];
+
+type A3 =
+  // dir, exp, arg, modifiers
+  [string] &
+    [string, ExpressionNode] &
+    [string, ExpressionNode, ExpressionNode] &
+    [string, ExpressionNode, ExpressionNode, ObjectExpression];
+
+type SuperLongTypeNameLoremIpsumLoremIpsumBlaBlaBlaBlaBlaBlaBlaBlaBlaBlaBlaBla =
+  | Fooo1000
+  | Baz2000
+  | BarLoooooooooooooooooooooooooooooooooooooooooooooooooLong;
+
+type SuperLongTypeNameLoremIpsumLoremIpsumBlaBlaBlaBlaBlaBlaBlaBlaBlaBlaBlaBl2 =
+  Fooo1000 &
+    Baz2000 &
+    BarLoooooooooooooooooooooooooooooooooooooooooooooooooLong;
+
+================================================================================
+`;
+
+exports[`comments.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A1 = a /* 1 */ | b;
+type A2 = a | /* 1 */ b;
+type A3 = (a /* 1 */) | b;
+type A4 = a | (/* 1 */ b);
+type A5 = (a) /* 1 */ | b;
+type A6 = a | /* 1 */ (b);
+
+type B1 = a /* 1 */ /* 2 */ | b;
+type B2 = a /* 1 */ | /* 2 */ b;
+type B3 = a | /* 1 */ /* 2 */ b;
+
+=====================================output=====================================
+type A1 = a /* 1 */ | b;
+type A2 = a | /* 1 */ b;
+type A3 = a /* 1 */ | b;
+type A4 = a | /* 1 */ b;
+type A5 = a /* 1 */ | b;
+type A6 = a | /* 1 */ b;
+
+type B1 = a /* 1 */ /* 2 */ | b;
+type B2 = a /* 1 */ | /* 2 */ b;
+type B3 = a | /* 1 */ /* 2 */ b;
+
+================================================================================
+`;
+
+exports[`conditional.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/excalidraw/excalidraw/blob/f12ae80ba1e1364952c6c6c440ac4212acd06eab/packages/excalidraw/tests/helpers/api.ts#L208C1-L210C15
+type A = T extends "arrow"
+    ? ExcalidrawArrowElement["startBinding"] | ExcalidrawElbowArrowElement["startBinding"]
+    : never;
+
+=====================================output=====================================
+// https://github.com/excalidraw/excalidraw/blob/f12ae80ba1e1364952c6c6c440ac4212acd06eab/packages/excalidraw/tests/helpers/api.ts#L208C1-L210C15
+type A = T extends "arrow"
+  ? | ExcalidrawArrowElement["startBinding"]
+    | ExcalidrawElbowArrowElement["startBinding"]
+  : never;
+
+================================================================================
+`;
+
+exports[`function-type-param.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type a1 = (
+  a:  | {//
+      }
+    | {//
+      },
+  ) => void
+
+type a2 = (
+a:
+// Comment
+    | {//
+      }
+    | {//
+      },
+  ) => void
+
+=====================================output=====================================
+type a1 = (
+  a:
+    | {
+        //
+      }
+    | {
+        //
+      },
+) => void;
+
+type a2 = (
+  a:
+    // Comment
+    | {
+        //
+      }
+    | {
+        //
+      },
+) => void;
+
+================================================================================
+`;
+
+exports[`in-tuple.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type ChildMessageInitialize = [
+  typeof CHILD_MESSAGE_INITIALIZE, // type
+  boolean, // processed
+  string, // file
+  Array<unknown> | void, // setupArgs
+  number | void, // workerId
+];
+
+type ChildMessageInitialize2 = [
+  number | void, // workerId
+];
+
+type ChildMessageInitialize3 = [
+  number | void | void | void | void | void | void | void | void | void | void | void, // workerId
+];
+
+type ChildMessageInitialize4 = [
+  string,
+  number | void | void | void | void | void | void | void | void | void | void | void, // workerId
+];
+
+=====================================output=====================================
+type ChildMessageInitialize = [
+  typeof CHILD_MESSAGE_INITIALIZE, // type
+  boolean, // processed
+  string, // file
+  Array<unknown> | void, // setupArgs
+  number | void, // workerId
+];
+
+type ChildMessageInitialize2 = [
+  number | void, // workerId
+];
+
+type ChildMessageInitialize3 = [
+  | number
+  | void
+  | void
+  | void
+  | void
+  | void
+  | void
+  | void
+  | void
+  | void
+  | void
+  | void, // workerId
+];
+
+type ChildMessageInitialize4 = [
+  string,
+  (
+    | number
+    | void
+    | void
+    | void
+    | void
+    | void
+    | void
+    | void
+    | void
+    | void
+    | void
+    | void
+  ), // workerId
+];
+
+================================================================================
+`;
+
+exports[`leading-comments.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type T1 =
+  /* comment */ A
+  | /* A comment long enough to make the union type break into multiple lines */ B;
+type T12 =
+  /* comment */ | A
+  | /* A comment long enough to make the union type break into multiple lines */ B;
+type T13 =
+  | /* comment */ A
+  | /* A comment long enough to make the union type break into multiple lines */ B;
+
+type T2 = /* comment */ 'A'
+  | /* A comment long enough to make the union type break into multiple lines */ B;
+
+type T3 = // comment
+  'A'
+  | /* A comment long enough to make the union type break into multiple lines */ B;
+
+type T4 =
+  // comment
+  'A'
+  | /* A comment long enough to make the union type break into multiple lines */ B;
+
+type T5 =
+  /**
+  comment
+  */ 'A'
+  | /* A comment long enough to make the union type break into multiple lines */ B;
+
+type T6 =
+  /**
+  comment
+  */
+  'A'
+  | /* A comment long enough to make the union type break into multiple lines */ B;
+
+=====================================output=====================================
+type T1 =
+  | /* comment */ A
+  | /* A comment long enough to make the union type break into multiple lines */ B;
+type T12 =
+  | /* comment */ A
+  | /* A comment long enough to make the union type break into multiple lines */ B;
+type T13 =
+  | /* comment */ A
+  | /* A comment long enough to make the union type break into multiple lines */ B;
+
+type T2 =
+  | /* comment */ "A"
+  | /* A comment long enough to make the union type break into multiple lines */ B;
+
+type T3 =
+  // comment
+  | "A"
+  | /* A comment long enough to make the union type break into multiple lines */ B;
+
+type T4 =
+  // comment
+  | "A"
+  | /* A comment long enough to make the union type break into multiple lines */ B;
+
+type T5 =
+  /**
+  comment
+  */ | "A"
+  | /* A comment long enough to make the union type break into multiple lines */ B;
+
+type T6 =
+  /**
+  comment
+  */
+  | "A"
+  | /* A comment long enough to make the union type break into multiple lines */ B;
+
+================================================================================
+`;
+
+exports[`prettier-ignore.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export type a =
+  // foo
+  | foo1&foo2
+  // bar
+  | bar1&bar2
+  // prettier-ignore
+  | qux1&qux2;
+
+export type b =
+  // foo
+  | foo1&foo2
+  // bar
+  | bar1&bar2
+  // prettier-ignore
+  | qux1&qux2
+  // baz
+  | baz1&baz2;
+
+export type c =
+  // prettier-ignore
+  | foo1&foo2
+  // bar
+  | bar1&bar2
+  // qux
+  | qux1&qux2;
+
+=====================================output=====================================
+export type a =
+  // foo
+  | (foo1 & foo2)
+  // bar
+  | (bar1 & bar2)
+  // prettier-ignore
+  | (qux1&qux2);
+
+export type b =
+  // foo
+  | (foo1 & foo2)
+  // bar
+  | (bar1 & bar2)
+  // prettier-ignore
+  | (qux1&qux2)
+  // baz
+  | (baz1 & baz2);
+
+export type c =
+  // prettier-ignore
+  | (foo1&foo2)
+  // bar
+  | (bar1 & bar2)
+  // qux
+  | (qux1 & qux2);
+
+================================================================================
+`;
+
+exports[`single-type.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A1 =
+  | (
+    | (
+      | (
+          | A
+          // A comment to force break
+          | B
+        )
+    )
+  );
+type A2 =
+  | (
+    | (
+          | A
+          // A comment to force break
+          | B
+        )
+    | (
+          | A
+          // A comment to force break
+          | B
+        )
+  );
+type A3 =
+  | ( | (
+          | A
+          // A comment to force break
+          | B
+        ) );
+type A4 =
+  | ( | ( | (
+          | A
+          // A comment to force break
+          | B
+        ) ) );
+type A5 =
+  | (
+    | (
+      | { key: string }
+      | { key: string }
+      | { key: string }
+      | { key: string }
+    )
+    | { key: string }
+    | { key: string }
+  );
+type A6 = | (
+  /*1*/ | (
+    | (
+          | A
+          // A comment to force break
+          | B
+        )
+  )
+  );
+
+type B1 =
+  | (
+    & (
+      (
+          | A
+          // A comment to force break
+          | B
+        )
+    )
+  );
+type B2 =
+  | (
+    & (
+      | (
+        & (
+          (
+          | A
+          // A comment to force break
+          | B
+        )
+        )
+      )
+    )
+  );
+
+=====================================output=====================================
+type A1 =
+  | A
+  // A comment to force break
+  | B;
+type A2 =
+  | (
+      | A
+      // A comment to force break
+      | B
+    )
+  | (
+      | A
+      // A comment to force break
+      | B
+    );
+type A3 =
+  | A
+  // A comment to force break
+  | B;
+type A4 =
+  | A
+  // A comment to force break
+  | B;
+type A5 =
+  | ({ key: string } | { key: string } | { key: string } | { key: string })
+  | { key: string }
+  | { key: string };
+type A6 =
+  /*1*/ | A
+  // A comment to force break
+  | B;
+
+type B1 =
+  | A
+  // A comment to force break
+  | B;
+type B2 =
+  | A
+  // A comment to force break
+  | B;
+
+================================================================================
+`;
+
+exports[`union-last-comment.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type Foo = (
+  | "thing1" // Comment1
+  | "thing2" // Comment2
+)[]; // Final comment1
+
+type Foo = (
+  | "thing1" // Comment1
+  | "thing2" // Comment2
+) & Bar; // Final comment2
+
+type Foo = (
+  | "thing1" // Comment1
+  | "thing2" // Comment2
+) | Bar; // Final comment2
+
+=====================================output=====================================
+type Foo = (
+  | "thing1" // Comment1
+  | "thing2" // Comment2
+)[]; // Final comment1
+
+type Foo = (
+  | "thing1" // Comment1
+  | "thing2" // Comment2
+) &
+  Bar; // Final comment2
+
+type Foo =
+  | (
+      | "thing1" // Comment1
+      | "thing2" // Comment2
+    )
+  | Bar; // Final comment2
+
+================================================================================
+`;
+
+exports[`within-tuple.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A = [AAAAAAAAAAAAAAAAAAAAAA | BBBBBBBBBBBBBBBBBBBBBB | CCCCCCCCCCCCCCCCCCCCCC | DDDDDDDDDDDDDDDDDDDDDD]
+
+type B = [
+  | AAAAAAAAAAAAAAAAAAAAAA
+  | BBBBBBBBBBBBBBBBBBBBBB
+  | CCCCCCCCCCCCCCCCCCCCCC
+  | DDDDDDDDDDDDDDDDDDDDDD
+]
+
+type B1 = [
+  (
+    | AAAAAAAAAAAAAAAAAAAAAA
+    | BBBBBBBBBBBBBBBBBBBBBB
+    | CCCCCCCCCCCCCCCCCCCCCC
+    | DDDDDDDDDDDDDDDDDDDDDD
+  )
+]
+
+type C = [
+  | [AAAAAAAAAAAAAAAAAAAAAA | BBBBBBBBBBBBBBBBBBBBBB | CCCCCCCCCCCCCCCCCCCCCC | DDDDDDDDDDDDDDDDDDDDDD]
+  | [AAAAAAAAAAAAAAAAAAAAAA | BBBBBBBBBBBBBBBBBBBBBB | CCCCCCCCCCCCCCCCCCCCCC | DDDDDDDDDDDDDDDDDDDDDD]
+]
+
+type D = [
+  (AAAAAAAAAAAAAAAAAAAAAA | BBBBBBBBBBBBBBBBBBBBBB | CCCCCCCCCCCCCCCCCCCCCC | DDDDDDDDDDDDDDDDDDDDDD),
+  (AAAAAAAAAAAAAAAAAAAAAA | BBBBBBBBBBBBBBBBBBBBBB | CCCCCCCCCCCCCCCCCCCCCC | DDDDDDDDDDDDDDDDDDDDDD)
+]
+
+type D1 = [
+  (
+    | AAAAAAAAAAAAAAAAAAAAAA
+    | BBBBBBBBBBBBBBBBBBBBBB
+    | CCCCCCCCCCCCCCCCCCCCCC
+    | DDDDDDDDDDDDDDDDDDDDDD
+  ),
+  (
+    | AAAAAAAAAAAAAAAAAAAAAA
+    | BBBBBBBBBBBBBBBBBBBBBB
+    | CCCCCCCCCCCCCCCCCCCCCC
+    | DDDDDDDDDDDDDDDDDDDDDD
+  )
+]
+
+type D2 = [
+  | AAAAAAAAAAAAAAAAAAAAAA
+  | BBBBBBBBBBBBBBBBBBBBBB
+  | CCCCCCCCCCCCCCCCCCCCCC
+  | DDDDDDDDDDDDDDDDDDDDDD,
+  | AAAAAAAAAAAAAAAAAAAAAA
+  | BBBBBBBBBBBBBBBBBBBBBB
+  | CCCCCCCCCCCCCCCCCCCCCC
+  | DDDDDDDDDDDDDDDDDDDDDD
+]
+
+type E = [ AA | BB, AA | BB ]
+
+type F = [
+  | AAAAAAAAAAAAAAAAAAAAAA
+  | BBBBBBBBBBBBBBBBBBBBBB
+  | CCCCCCCCCCCCCCCCCCCCCC
+  | DDDDDDDDDDDDDDDDDDDDDD,
+  | AAAAAAAAAAAAAAAAAAAAAA
+  | BBBBBBBBBBBBBBBBBBBBBB
+]
+
+=====================================output=====================================
+type A = [
+  | AAAAAAAAAAAAAAAAAAAAAA
+  | BBBBBBBBBBBBBBBBBBBBBB
+  | CCCCCCCCCCCCCCCCCCCCCC
+  | DDDDDDDDDDDDDDDDDDDDDD,
+];
+
+type B = [
+  | AAAAAAAAAAAAAAAAAAAAAA
+  | BBBBBBBBBBBBBBBBBBBBBB
+  | CCCCCCCCCCCCCCCCCCCCCC
+  | DDDDDDDDDDDDDDDDDDDDDD,
+];
+
+type B1 = [
+  | AAAAAAAAAAAAAAAAAAAAAA
+  | BBBBBBBBBBBBBBBBBBBBBB
+  | CCCCCCCCCCCCCCCCCCCCCC
+  | DDDDDDDDDDDDDDDDDDDDDD,
+];
+
+type C = [
+  | [
+      | AAAAAAAAAAAAAAAAAAAAAA
+      | BBBBBBBBBBBBBBBBBBBBBB
+      | CCCCCCCCCCCCCCCCCCCCCC
+      | DDDDDDDDDDDDDDDDDDDDDD,
+    ]
+  | [
+      | AAAAAAAAAAAAAAAAAAAAAA
+      | BBBBBBBBBBBBBBBBBBBBBB
+      | CCCCCCCCCCCCCCCCCCCCCC
+      | DDDDDDDDDDDDDDDDDDDDDD,
+    ],
+];
+
+type D = [
+  (
+    | AAAAAAAAAAAAAAAAAAAAAA
+    | BBBBBBBBBBBBBBBBBBBBBB
+    | CCCCCCCCCCCCCCCCCCCCCC
+    | DDDDDDDDDDDDDDDDDDDDDD
+  ),
+  (
+    | AAAAAAAAAAAAAAAAAAAAAA
+    | BBBBBBBBBBBBBBBBBBBBBB
+    | CCCCCCCCCCCCCCCCCCCCCC
+    | DDDDDDDDDDDDDDDDDDDDDD
+  ),
+];
+
+type D1 = [
+  (
+    | AAAAAAAAAAAAAAAAAAAAAA
+    | BBBBBBBBBBBBBBBBBBBBBB
+    | CCCCCCCCCCCCCCCCCCCCCC
+    | DDDDDDDDDDDDDDDDDDDDDD
+  ),
+  (
+    | AAAAAAAAAAAAAAAAAAAAAA
+    | BBBBBBBBBBBBBBBBBBBBBB
+    | CCCCCCCCCCCCCCCCCCCCCC
+    | DDDDDDDDDDDDDDDDDDDDDD
+  ),
+];
+
+type D2 = [
+  (
+    | AAAAAAAAAAAAAAAAAAAAAA
+    | BBBBBBBBBBBBBBBBBBBBBB
+    | CCCCCCCCCCCCCCCCCCCCCC
+    | DDDDDDDDDDDDDDDDDDDDDD
+  ),
+  (
+    | AAAAAAAAAAAAAAAAAAAAAA
+    | BBBBBBBBBBBBBBBBBBBBBB
+    | CCCCCCCCCCCCCCCCCCCCCC
+    | DDDDDDDDDDDDDDDDDDDDDD
+  ),
+];
+
+type E = [AA | BB, AA | BB];
+
+type F = [
+  (
+    | AAAAAAAAAAAAAAAAAAAAAA
+    | BBBBBBBBBBBBBBBBBBBBBB
+    | CCCCCCCCCCCCCCCCCCCCCC
+    | DDDDDDDDDDDDDDDDDDDDDD
+  ),
+  AAAAAAAAAAAAAAAAAAAAAA | BBBBBBBBBBBBBBBBBBBBBB,
+];
+
+================================================================================
+`;

@@ -1,0 +1,22 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`type-annotation.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+try {} catch (e: any)
+{}
+
+try {}
+catch (e: unknown) {}
+
+=====================================output=====================================
+try {
+} catch (e: any) {}
+
+try {
+} catch (e: unknown) {}
+
+================================================================================
+`;

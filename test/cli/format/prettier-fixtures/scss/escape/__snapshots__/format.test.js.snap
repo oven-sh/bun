@@ -1,0 +1,45 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`4149.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@media only screen and (max-width: 767px) {
+  @include widths(2 3 4, \\@small);
+}
+
+$widths-breakpoint-separator: \\@small;
+
+=====================================output=====================================
+@media only screen and (max-width: 767px) {
+  @include widths(2 3 4, \\@small);
+}
+
+$widths-breakpoint-separator: \\@small;
+
+================================================================================
+`;
+
+exports[`4149.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@media only screen and (max-width: 767px) {
+  @include widths(2 3 4, \\@small);
+}
+
+$widths-breakpoint-separator: \\@small;
+
+=====================================output=====================================
+@media only screen and (max-width: 767px) {
+  @include widths(2 3 4, \\@small);
+}
+
+$widths-breakpoint-separator: \\@small;
+
+================================================================================
+`;

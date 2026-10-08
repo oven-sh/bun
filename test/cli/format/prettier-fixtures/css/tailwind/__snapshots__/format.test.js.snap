@@ -1,0 +1,102 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`utility-directive.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@utility tab-* {
+  tab-size: --value(--tab-size-*);
+}
+
+@utility tab-* {
+  tab-size: --value(integer);
+}
+
+@utility tab-* {
+  tab-size: --value([integer]);
+  tab-size: --value(integer);
+  tab-size: --value(--tab-size-*);
+}
+
+@utility opacity-* {
+  opacity: --value([percentage]);
+  opacity: calc(--value(integer) * 1%);
+  opacity: --value(--opacity-*);
+}
+
+@utility tab-* {
+  tab-size: --value(--tab-size-*, integer, [integer]);
+}
+  
+@utility opacity-* {
+  opacity: calc(--value(integer) * 1%);
+  opacity: --value(--opacity-*, [percentage]);
+}
+
+@utility inset-* {
+  inset: calc(--var(--spacing) * --value([percentage], [length]));
+}
+  
+@utility -inset-* {
+  inset: calc(--var(--spacing) * --value([percentage], [length]) * -1);
+}
+
+@utility text-* {
+  font-size: --value(--font-size-*, [length]);
+  line-height: --modifier(--line-height-*, [length], [*]);
+}
+
+@utility aspect-* {
+  aspect-ratio: --value(--aspect-ratio-*, ratio, [ratio]);
+}
+
+=====================================output=====================================
+@utility tab-* {
+  tab-size: --value(--tab-size-*);
+}
+
+@utility tab-* {
+  tab-size: --value(integer);
+}
+
+@utility tab-* {
+  tab-size: --value([integer]);
+  tab-size: --value(integer);
+  tab-size: --value(--tab-size-*);
+}
+
+@utility opacity-* {
+  opacity: --value([percentage]);
+  opacity: calc(--value(integer) * 1%);
+  opacity: --value(--opacity-*);
+}
+
+@utility tab-* {
+  tab-size: --value(--tab-size-*, integer, [integer]);
+}
+
+@utility opacity-* {
+  opacity: calc(--value(integer) * 1%);
+  opacity: --value(--opacity-*, [percentage]);
+}
+
+@utility inset-* {
+  inset: calc(--var(--spacing) * --value([percentage], [length]));
+}
+
+@utility -inset-* {
+  inset: calc(--var(--spacing) * --value([percentage], [length]) * -1);
+}
+
+@utility text-* {
+  font-size: --value(--font-size-*, [length]);
+  line-height: --modifier(--line-height-*, [length], [*]);
+}
+
+@utility aspect-* {
+  aspect-ratio: --value(--aspect-ratio-*, ratio, [ratio]);
+}
+
+================================================================================
+`;

@@ -1,0 +1,21 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`test.css format 1`] = `
+====================================options=====================================
+cursorOffset: 19
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.blah {
+  /* hloow <|> */
+  background-color: white;
+}
+
+=====================================output=====================================
+.blah {
+  /* hloow <|> */
+  background-color: white;
+}
+
+================================================================================
+`;

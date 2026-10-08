@@ -1,0 +1,19 @@
+/* https://www.w3.org/TR/css-color-4 */
+foo {
+  color: rgb(0, 128, 255);
+  color: rgba(0, 128, 255, 0.5);
+  color: hsl(198, 28%, 50%);
+  color: hsla(198, 28%, 50%, 0.5);
+  color: lab(56.29% 019.93 16.58 / 50%);
+  color: lch(56.29% 19.86 236.62 / 50%);
+  /* color(sRGB 0 0.50 1 / 50%); */
+}
+
+bar {
+  color: rgb(0 128 255);
+  color: rgb(0 128 255 / 50%);
+  color: hsl(198deg 28% 50%);
+  color: hsl(198deg 28% 50% / 50%);
+  color: lab(56.29% 019.93 16.58 / 50%);
+  color: lch(56.29% 19.86 236.62deg / 50%);
+}

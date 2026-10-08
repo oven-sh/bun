@@ -1,0 +1,482 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`call.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (true)
+  if (true)
+    if (true)
+      if (true)
+        if (true)
+          longVariableName1 = // @ts-ignore
+          (variable01 + veryLongVariableNameNumber2).method();
+
+=====================================output=====================================
+if (true)
+  if (true)
+    if (true)
+      if (true)
+        if (true)
+          longVariableName1 = // @ts-ignore
+            (variable01 + veryLongVariableNameNumber2).method();
+
+================================================================================
+`;
+
+exports[`call2.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const kochabCooieGameOnOboleUnweave = // ???
+      rhubarbRhubarb(annularCooeedSplicesWalksWayWay);
+
+=====================================output=====================================
+const kochabCooieGameOnOboleUnweave = // ???
+  rhubarbRhubarb(annularCooeedSplicesWalksWayWay);
+
+================================================================================
+`;
+
+exports[`function.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+f1 = (
+  a =
+  //comment
+  b
+) => {};
+  
+f2 = (
+  a = //comment
+  b
+) => {};
+  
+f3 = (
+  a =
+  b //comment
+) => {};
+  
+f4 = // Comment
+  () => {};
+
+f5 =
+  
+  // Comment
+  
+ () => {}
+  
+f6 = /* comment */
+  
+  // Comment
+  
+  () => {}
+  
+let f1 = (
+  a =
+  //comment
+  b
+) => {};
+  
+let f2 = (
+  a = //comment
+  b
+) => {};
+  
+let f3 = (
+  a =
+  b //comment
+) => {};
+  
+let f4 = // Comment
+  () => {};
+  
+let f5 =
+  
+  // Comment
+  
+  () => {}
+  
+let f6 = /* comment */
+  
+  // Comment
+  
+  () => {}
+
+=====================================output=====================================
+f1 = (
+  //comment
+  a = b,
+) => {};
+
+f2 = (
+  a = b, //comment
+) => {};
+
+f3 = (
+  a = b, //comment
+) => {};
+
+f4 = // Comment
+  () => {};
+
+f5 =
+  // Comment
+
+  () => {};
+
+f6 =
+  /* comment */
+
+  // Comment
+
+  () => {};
+
+let f1 = (
+  //comment
+  a = b,
+) => {};
+
+let f2 = (
+  a = b, //comment
+) => {};
+
+let f3 = (
+  a = b, //comment
+) => {};
+
+let f4 = // Comment
+  () => {};
+
+let f5 =
+  // Comment
+
+  () => {};
+
+let f6 =
+  /* comment */
+
+  // Comment
+
+  () => {};
+
+================================================================================
+`;
+
+exports[`identifier.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const kochabCooieGameOnOboleUnweave = // ???
+      annularCooeedSplicesWalksWayWay;
+
+const bifornCringerMoshedPerplexSawder = // !!!
+  glimseGlyphsHazardNoopsTieTie +
+  averredBathersBoxroomBuggyNurl -
+  anodyneCondosMalateOverateRetinol;
+
+=====================================output=====================================
+const kochabCooieGameOnOboleUnweave = // ???
+  annularCooeedSplicesWalksWayWay;
+
+const bifornCringerMoshedPerplexSawder = // !!!
+  glimseGlyphsHazardNoopsTieTie +
+  averredBathersBoxroomBuggyNurl -
+  anodyneCondosMalateOverateRetinol;
+
+================================================================================
+`;
+
+exports[`indentable-block-comment.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+fnString = /**
+ * multi-line
+ */ value;
+
+var fnString = /**
+ * multi-line
+ */ value;
+
+=====================================output=====================================
+fnString =
+  /**
+   * multi-line
+   */ value;
+
+var fnString =
+  /**
+   * multi-line
+   */ value;
+
+================================================================================
+`;
+
+exports[`number.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+fnNumber =
+  // Comment
+  3;
+
+fnNumber =
+
+  // Comment
+
+  3;
+
+fnNumber =
+  // Comment0
+  // Comment1
+  3;
+
+fnNumber = /* comment */
+  3;
+
+fnNumber = /* comments0 */
+  /* comments1 */
+  3;
+
+fnNumber =
+  // Comment
+  3;
+
+var fnNumber =
+
+  // Comment
+
+  3;
+
+var fnNumber =
+  // Comment0
+  // Comment1
+  3;
+
+var fnNumber = /* comment */
+  3;
+
+var fnNumber = /* comments0 */
+  /* comments1 */
+  3;
+
+=====================================output=====================================
+fnNumber =
+  // Comment
+  3;
+
+fnNumber =
+  // Comment
+
+  3;
+
+fnNumber =
+  // Comment0
+  // Comment1
+  3;
+
+fnNumber = /* comment */ 3;
+
+fnNumber =
+  /* comments0 */
+  /* comments1 */
+  3;
+
+fnNumber =
+  // Comment
+  3;
+
+var fnNumber =
+  // Comment
+
+  3;
+
+var fnNumber =
+  // Comment0
+  // Comment1
+  3;
+
+var fnNumber = /* comment */ 3;
+
+var fnNumber =
+  /* comments0 */
+  /* comments1 */
+  3;
+
+================================================================================
+`;
+
+exports[`string.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+fnString =
+  // Comment
+  'some' + 'long' + 'string';
+
+fnString =
+  // Comment
+
+  'some' + 'long' + 'string';
+
+fnString =
+
+  // Comment
+
+  'some' + 'long' + 'string';
+
+fnString =
+  /* comment */
+  'some' + 'long' + 'string';
+
+fnString =
+  /**
+   * multi-line
+   */
+  'some' + 'long' + 'string';
+
+fnString =
+  /* inline */ 'some' + 'long' + 'string' + 'some' + 'long' + 'string' + 'some' + 'long' + 'string' + 'some' + 'long' + 'string';
+
+fnString = // Comment0
+  // Comment1
+  'some' + 'long' + 'string';
+
+fnString = // Comment
+  'some' + 'long' + 'string';
+
+fnString =
+  // Comment
+  'some' + 'long' + 'string';
+
+var fnString =
+  // Comment
+
+  'some' + 'long' + 'string';
+
+var fnString =
+
+  // Comment
+
+  'some' + 'long' + 'string';
+
+var fnString =
+  /* comment */
+  'some' + 'long' + 'string';
+
+var fnString =
+  /**
+   * multi-line
+   */
+  'some' + 'long' + 'string';
+
+var fnString =
+  /* inline */ 'some' + 'long' + 'string' + 'some' + 'long' + 'string' + 'some' + 'long' + 'string' + 'some' + 'long' + 'string';
+
+var fnString = // Comment0
+  // Comment1
+  'some' + 'long' + 'string';
+
+var fnString = // Comment
+  'some' + 'long' + 'string';
+
+=====================================output=====================================
+fnString =
+  // Comment
+  "some" + "long" + "string";
+
+fnString =
+  // Comment
+
+  "some" + "long" + "string";
+
+fnString =
+  // Comment
+
+  "some" + "long" + "string";
+
+fnString =
+  /* comment */
+  "some" + "long" + "string";
+
+fnString =
+  /**
+   * multi-line
+   */
+  "some" + "long" + "string";
+
+fnString =
+  /* inline */ "some" +
+  "long" +
+  "string" +
+  "some" +
+  "long" +
+  "string" +
+  "some" +
+  "long" +
+  "string" +
+  "some" +
+  "long" +
+  "string";
+
+fnString = // Comment0
+  // Comment1
+  "some" + "long" + "string";
+
+fnString = "some" + "long" + "string"; // Comment
+
+fnString =
+  // Comment
+  "some" + "long" + "string";
+
+var fnString =
+  // Comment
+
+  "some" + "long" + "string";
+
+var fnString =
+  // Comment
+
+  "some" + "long" + "string";
+
+var fnString =
+  /* comment */
+  "some" + "long" + "string";
+
+var fnString =
+  /**
+   * multi-line
+   */
+  "some" + "long" + "string";
+
+var fnString =
+  /* inline */ "some" +
+  "long" +
+  "string" +
+  "some" +
+  "long" +
+  "string" +
+  "some" +
+  "long" +
+  "string" +
+  "some" +
+  "long" +
+  "string";
+
+var fnString = // Comment0
+  // Comment1
+  "some" + "long" + "string";
+
+var fnString = "some" + "long" + "string"; // Comment
+
+================================================================================
+`;

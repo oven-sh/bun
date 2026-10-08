@@ -1,0 +1,85 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format[babel-ts] 1`] = `
+"'extends' list can only include identifiers or qualified-names with optional type arguments. (1:21)
+> 1 | interface A extends (typeof fs) { }
+    |                     ^
+Cause: 'extends' list can only include identifiers or qualified-names with optional type arguments. (1:20)"
+`;
+
+exports[`snippet: #0 format[typescript] 1`] = `
+"Interface declaration can only extend an identifier/qualified name with optional type arguments. (1:21)
+> 1 | interface A extends (typeof fs) { }
+    |                     ^^^^^^^^^^^
+Cause: Interface declaration can only extend an identifier/qualified name with optional type arguments."
+`;
+
+exports[`snippet: #1 format[babel-ts] 1`] = `
+"'extends' list can only include identifiers or qualified-names with optional type arguments. (1:21)
+> 1 | interface B extends C['D'] { }
+    |                     ^
+Cause: 'extends' list can only include identifiers or qualified-names with optional type arguments. (1:20)"
+`;
+
+exports[`snippet: #1 format[typescript] 1`] = `
+"Interface declaration can only extend an identifier/qualified name with optional type arguments. (1:21)
+> 1 | interface B extends C['D'] { }
+    |                     ^^^^^^
+Cause: Interface declaration can only extend an identifier/qualified name with optional type arguments."
+`;
+
+exports[`snippet: #2 format[babel-ts] 1`] = `
+"'extends' list can only include identifiers or qualified-names with optional type arguments. (1:21)
+> 1 | interface E extends F?.G { }
+    |                     ^
+Cause: 'extends' list can only include identifiers or qualified-names with optional type arguments. (1:20)"
+`;
+
+exports[`snippet: #2 format[typescript] 1`] = `
+"Interface declaration can only extend an identifier/qualified name with optional type arguments. (1:21)
+> 1 | interface E extends F?.G { }
+    |                     ^^^^
+Cause: Interface declaration can only extend an identifier/qualified name with optional type arguments."
+`;
+
+exports[`snippet: #3 format[babel-ts] 1`] = `
+"Unexpected token, expected "," (1:23)
+> 1 | interface H extends I extends J { }
+    |                       ^
+Cause: Unexpected token, expected "," (1:22)"
+`;
+
+exports[`snippet: #3 format[typescript] 1`] = `
+"'extends' clause already seen. (1:23)
+> 1 | interface H extends I extends J { }
+    |                       ^^^^^^^^^
+Cause: 'extends' clause already seen."
+`;
+
+exports[`snippet: #4 format[babel-ts] 1`] = `
+"'extends' list can only include identifiers or qualified-names with optional type arguments. (1:21)
+> 1 | interface K extends 2 { }
+    |                     ^
+Cause: 'extends' list can only include identifiers or qualified-names with optional type arguments. (1:20)"
+`;
+
+exports[`snippet: #4 format[typescript] 1`] = `
+"Interface declaration can only extend an identifier/qualified name with optional type arguments. (1:21)
+> 1 | interface K extends 2 { }
+    |                     ^
+Cause: Interface declaration can only extend an identifier/qualified name with optional type arguments."
+`;
+
+exports[`snippet: #5 format[babel-ts] 1`] = `
+"'extends' list can only include identifiers or qualified-names with optional type arguments. (1:21)
+> 1 | interface L extends M().N { }
+    |                     ^
+Cause: 'extends' list can only include identifiers or qualified-names with optional type arguments. (1:20)"
+`;
+
+exports[`snippet: #5 format[typescript] 1`] = `
+"Interface declaration can only extend an identifier/qualified name with optional type arguments. (1:21)
+> 1 | interface L extends M().N { }
+    |                     ^^^^^
+Cause: Interface declaration can only extend an identifier/qualified name with optional type arguments."
+`;

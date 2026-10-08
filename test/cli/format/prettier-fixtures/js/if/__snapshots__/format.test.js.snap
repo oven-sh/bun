@@ -1,0 +1,625 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`blank-lines.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// 11
+if (1) {
+  a();
+}
+
+// 12
+else if (2) {
+  a();
+}
+
+// 13
+else {
+  a();
+}
+
+/* 21 */
+if (1) {
+  a();
+}
+
+/* 22 */
+else if (2) {
+  a();
+}
+
+/* 23 */
+else {
+  a();
+}
+
+// 31
+if (1)
+  a();
+
+// 32
+else if (2)
+  a();
+
+// 33
+else
+  a();
+
+// 31
+if (1)
+  a();
+
+// 32
+else if (2)
+  a();
+
+// 33
+else
+  a();
+
+/* 41 */ if (1) {
+  a();
+}
+
+/* 42 */ else if (2) {
+  a();
+}
+
+/* 43 */ else {
+  a();
+}
+
+=====================================output=====================================
+// 11
+if (1) {
+  a();
+}
+
+// 12
+else if (2) {
+  a();
+}
+
+// 13
+else {
+  a();
+}
+
+/* 21 */
+if (1) {
+  a();
+}
+
+/* 22 */
+else if (2) {
+  a();
+}
+
+/* 23 */
+else {
+  a();
+}
+
+// 31
+if (1) a();
+
+// 32
+else if (2) a();
+
+// 33
+else a();
+
+// 31
+if (1) a();
+
+// 32
+else if (2) a();
+
+// 33
+else a();
+
+/* 41 */ if (1) {
+  a();
+}
+
+/* 42 */ else if (2) {
+  a();
+}
+
+/* 43 */ else {
+  a();
+}
+
+================================================================================
+`;
+
+exports[`comment_before_else.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (cond) {
+  stuff;
+} /* comment */ else if (cond) {
+  stuff;
+}
+// comment
+else {
+  stuff;
+}
+
+if (cond) stuff;
+// comment
+else stuff;
+
+=====================================output=====================================
+if (cond) {
+  stuff;
+} /* comment */ else if (cond) {
+  stuff;
+}
+// comment
+else {
+  stuff;
+}
+
+if (cond) stuff;
+// comment
+else stuff;
+
+================================================================================
+`;
+
+exports[`comment-between-condition-and-body.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (1) { // 11
+  doThing(foo);
+}
+if (1){}else { // 12
+  doThing(foo);
+}
+
+if (2)
+// 21
+{
+  doThing(foo);
+}
+if (2){}else
+// 22
+{
+  doThing(foo);
+}
+
+if (3)// 31
+{
+  doThing(foo);
+}
+if (3){}else// 32
+{
+  doThing(foo);
+}
+
+if (4)/* 41 */{
+  doThing(foo);
+}
+if (4){}else/* 42 */{
+  doThing(foo);
+}
+
+=====================================output=====================================
+if (1) {
+  // 11
+  doThing(foo);
+}
+if (1) {
+} else {
+  // 12
+  doThing(foo);
+}
+
+if (2)
+// 21
+{
+  doThing(foo);
+}
+if (2) {
+} else
+// 22
+{
+  doThing(foo);
+}
+
+if (3) // 31
+{
+  doThing(foo);
+}
+if (3) {
+} else // 32
+{
+  doThing(foo);
+}
+
+if (4) /* 41 */ {
+  doThing(foo);
+}
+if (4) {
+} else /* 42 */ {
+  doThing(foo);
+}
+
+================================================================================
+`;
+
+exports[`else.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Both functions below should be formatted exactly the same
+
+function f() {
+  if (position)
+    return {name: pair};
+  else
+    return {name: pair.substring(0, position), value: pair.substring(position + 1)};
+}
+
+function f() {
+  if (position)
+    return {name: pair};
+  else
+    return {
+      name: pair.substring(0, position),
+      value: pair.substring(position + 1)
+    };
+}
+
+=====================================output=====================================
+// Both functions below should be formatted exactly the same
+
+function f() {
+  if (position) return { name: pair };
+  else
+    return {
+      name: pair.substring(0, position),
+      value: pair.substring(position + 1),
+    };
+}
+
+function f() {
+  if (position) return { name: pair };
+  else
+    return {
+      name: pair.substring(0, position),
+      value: pair.substring(position + 1),
+    };
+}
+
+================================================================================
+`;
+
+exports[`expr_and_same_line_comments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+     if (a === 0) doSomething(); // comment A1
+else if (a === 1) doSomethingElse(); // comment B1
+else if (a === 2) doSomethingElse(); // comment C1
+
+     if (a === 0) doSomething(); /* comment A2 */
+else if (a === 1) doSomethingElse(); /* comment B2 */
+else if (a === 2) doSomethingElse(); /* comment C2 */
+
+     if (a === 0) expr; // comment A3
+else if (a === 1) expr; // comment B3
+else if (a === 2) expr; // comment C3
+
+     if (a === 0) expr; /* comment A4 */
+else if (a === 1) expr; /* comment B4 */
+else if (a === 2) expr; /* comment C4 */
+
+     if (a === 0) looooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong; // comment A5
+else if (a === 1) looooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong; // comment B5
+else if (a === 2) looooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong; // comment C5
+
+function a() {
+  if (a) return; /* comment 6a */
+  else return 2;
+
+  if (a) return 1; /* comment 6b */
+  else return 2;
+
+  if (a) throw e; /* comment 6d */
+  else return 2;
+
+  if (a) var a = 1; /* comment 6e */
+  else return 2;
+
+  if (a) if (b); /* comment 6f */
+  else return 2;
+}
+
+=====================================output=====================================
+if (a === 0)
+  doSomething(); // comment A1
+else if (a === 1)
+  doSomethingElse(); // comment B1
+else if (a === 2) doSomethingElse(); // comment C1
+
+if (a === 0) doSomething(); /* comment A2 */
+else if (a === 1) doSomethingElse(); /* comment B2 */
+else if (a === 2) doSomethingElse(); /* comment C2 */
+
+if (a === 0)
+  expr; // comment A3
+else if (a === 1)
+  expr; // comment B3
+else if (a === 2) expr; // comment C3
+
+if (a === 0) expr; /* comment A4 */
+else if (a === 1) expr; /* comment B4 */
+else if (a === 2) expr; /* comment C4 */
+
+if (a === 0)
+  looooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong; // comment A5
+else if (a === 1)
+  looooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong; // comment B5
+else if (a === 2)
+  looooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong; // comment C5
+
+function a() {
+  if (a) return; /* comment 6a */
+  else return 2;
+
+  if (a) return 1; /* comment 6b */
+  else return 2;
+
+  if (a) throw e; /* comment 6d */
+  else return 2;
+
+  if (a) var a = 1; /* comment 6e */
+  else return 2;
+
+  if (a)
+    if (b); /* comment 6f */
+    else return 2;
+}
+
+================================================================================
+`;
+
+exports[`if_comments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function f1() {
+  if (untrackedChoice === 0) /* Cancel */ {
+    return null;
+  } else if (untrackedChoice === 1) /* Add */ {
+    await repository.addAll(Array.from(untrackedChanges.keys()));
+    shouldAmend = true;
+  } else if (untrackedChoice === 2) /* Allow Untracked */ {
+    allowUntracked = true;
+  }
+}
+
+async function f2() {
+  if (untrackedChoice === 0) /* Cancel */
+    null;
+  else if (untrackedChoice === 1) /* Add */
+    shouldAmend = true;
+  else if (untrackedChoice === 2) /* Allow Untracked */
+    allowUntracked = true;
+}
+
+async function f3() {
+  if (untrackedChoice === 0) /* Cancel */ // Cancel
+    null;
+  else if (untrackedChoice === 1) /* Add */ // Add
+    shouldAmend = true;
+  else if (untrackedChoice === 2) /* Allow Untracked */ // Allow Untracked
+    allowUntracked = true;
+}
+
+async function f4() {
+  if (untrackedChoice === 0)
+    /* Cancel */ {
+      return null;
+    }
+  else if (untrackedChoice === 1)
+    /* Add */ {
+      await repository.addAll(Array.from(untrackedChanges.keys()));
+      shouldAmend = true;
+    }
+  else if (untrackedChoice === 2)
+    /* Allow Untracked */ {
+      allowUntracked = true;
+    }
+}
+
+async function f5() {
+  if (untrackedChoice === 0) {
+    /* Cancel */ return null;
+  } else if (untrackedChoice === 1) {
+    /* Add */ await repository.addAll(Array.from(untrackedChanges.keys()));
+    shouldAmend = true;
+  } else if (untrackedChoice === 2) {
+    /* Allow Untracked */ allowUntracked = true;
+  }
+}
+
+// https://github.com/prettier/prettier/issues/13079
+if (dotPos > this.pos) /** transition forward */;
+      else /** transition backward */;
+
+=====================================output=====================================
+async function f1() {
+  if (untrackedChoice === 0) /* Cancel */ {
+    return null;
+  } else if (untrackedChoice === 1) /* Add */ {
+    await repository.addAll(Array.from(untrackedChanges.keys()));
+    shouldAmend = true;
+  } else if (untrackedChoice === 2) /* Allow Untracked */ {
+    allowUntracked = true;
+  }
+}
+
+async function f2() {
+  if (untrackedChoice === 0) /* Cancel */ null;
+  else if (untrackedChoice === 1) /* Add */ shouldAmend = true;
+  else if (untrackedChoice === 2) /* Allow Untracked */ allowUntracked = true;
+}
+
+async function f3() {
+  if (untrackedChoice === 0)
+    /* Cancel */ // Cancel
+    null;
+  else if (untrackedChoice === 1)
+    /* Add */ // Add
+    shouldAmend = true;
+  else if (untrackedChoice === 2)
+    /* Allow Untracked */ // Allow Untracked
+    allowUntracked = true;
+}
+
+async function f4() {
+  if (untrackedChoice === 0)
+  /* Cancel */ {
+    return null;
+  } else if (untrackedChoice === 1)
+  /* Add */ {
+    await repository.addAll(Array.from(untrackedChanges.keys()));
+    shouldAmend = true;
+  } else if (untrackedChoice === 2)
+  /* Allow Untracked */ {
+    allowUntracked = true;
+  }
+}
+
+async function f5() {
+  if (untrackedChoice === 0) {
+    /* Cancel */ return null;
+  } else if (untrackedChoice === 1) {
+    /* Add */ await repository.addAll(Array.from(untrackedChanges.keys()));
+    shouldAmend = true;
+  } else if (untrackedChoice === 2) {
+    /* Allow Untracked */ allowUntracked = true;
+  }
+}
+
+// https://github.com/prettier/prettier/issues/13079
+if (dotPos > this.pos) /** transition forward */ ;
+else /** transition backward */ ;
+
+================================================================================
+`;
+
+exports[`issue-15168.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for (const division of collidingDivisions) {
+	if (!division.properties.canRemove) {
+		if (division.canContainSingleParagraph(startParagraph)) continue; // selection starting in r/o div: always OK to delete
+		else if (endParagraph !== division.endParagraph && division.canContainSingleParagraph(endParagraph)) continue; // selection ending in r/o div: OK to delete IF it is NOT last paragraph (which would get absorbed)
+		else { // selection over whole r/o div OR ending in last paragraph (which would get absorbed) -> FAIL
+			console.warn('deleteSelectedTextAndJoinRemainingNodes(): cannot delete because of must-keep division: ' + division.properties.name);
+		}
+	}
+}
+
+=====================================output=====================================
+for (const division of collidingDivisions) {
+  if (!division.properties.canRemove) {
+    if (division.canContainSingleParagraph(startParagraph))
+      continue; // selection starting in r/o div: always OK to delete
+    else if (
+      endParagraph !== division.endParagraph &&
+      division.canContainSingleParagraph(endParagraph)
+    )
+      continue; // selection ending in r/o div: OK to delete IF it is NOT last paragraph (which would get absorbed)
+    else {
+      // selection over whole r/o div OR ending in last paragraph (which would get absorbed) -> FAIL
+      console.warn(
+        "deleteSelectedTextAndJoinRemainingNodes(): cannot delete because of must-keep division: " +
+          division.properties.name,
+      );
+    }
+  }
+}
+
+================================================================================
+`;
+
+exports[`non-block.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (foo) for (i = 2; i > 0; i--) console.log(i); // foo
+else bar();
+
+if (foo) do { console.log(i) } while(i--) // foo
+else bar();
+
+=====================================output=====================================
+if (foo)
+  for (i = 2; i > 0; i--) console.log(i); // foo
+else bar();
+
+if (foo)
+  do {
+    console.log(i);
+  } while (i--); // foo
+else bar();
+
+================================================================================
+`;
+
+exports[`trailing_comment.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (code === 92 /* '\\' */) {}
+if (code === 92 /* '\\' */ /* '\\' */) {}
+
+if (code === 92) /* '\\' */ {}
+if (code === 92) { /* '\\' */ }
+
+if (
+  1
+  // Comment
+) {
+  a;
+}
+
+=====================================output=====================================
+if (code === 92 /* '\\' */) {
+}
+if (code === 92 /* '\\' */ /* '\\' */) {
+}
+
+if (code === 92) /* '\\' */ {
+}
+if (code === 92) {
+  /* '\\' */
+}
+
+if (
+  1
+  // Comment
+) {
+  a;
+}
+
+================================================================================
+`;

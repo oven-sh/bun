@@ -1,0 +1,149 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format[babel-ts] 1`] = `
+"Unexpected token (2:3)
+  1 | enum Foo {
+> 2 |   1 = 1
+    |   ^
+  3 | }
+Cause: Unexpected token (2:2)"
+`;
+
+exports[`snippet: #0 format[babel-ts] 2`] = `
+"Unexpected token (2:3)
+  1 | enum Foo {
+> 2 |   ['foo'] = 1
+    |   ^
+  3 | }
+Cause: Unexpected token (2:2)"
+`;
+
+exports[`snippet: #0 format[oxc-ts] 1`] = `
+"An enum member cannot have a numeric name. (2:3)
+  1 | enum Foo {
+> 2 |   1 = 1
+    |   ^
+  3 | }"
+`;
+
+exports[`snippet: #0 format[typescript] 1`] = `
+"An enum member cannot have a numeric name. (2:3)
+  1 | enum Foo {
+> 2 |   1 = 1
+    |   ^
+  3 | }
+Cause: An enum member cannot have a numeric name."
+`;
+
+exports[`snippet: #0 format[typescript] 2`] = `
+"Computed property names are not allowed in enums. (2:3)
+  1 | enum Foo {
+> 2 |   ['foo'] = 1
+    |   ^^^^^^^
+  3 | }
+Cause: Computed property names are not allowed in enums."
+`;
+
+exports[`snippet: #1 format[babel-ts] 1`] = `
+"Unexpected token (2:3)
+  1 | enum Foo {
+> 2 |   1n = 1
+    |   ^
+  3 | }
+Cause: Unexpected token (2:2)"
+`;
+
+exports[`snippet: #1 format[oxc-ts] 1`] = `
+"An enum member cannot have a numeric name. (2:3)
+  1 | enum Foo {
+> 2 |   1n = 1
+    |   ^^
+  3 | }"
+`;
+
+exports[`snippet: #1 format[typescript] 1`] = `
+"An enum member cannot have a numeric name. (2:3)
+  1 | enum Foo {
+> 2 |   1n = 1
+    |   ^^
+  3 | }
+Cause: An enum member cannot have a numeric name."
+`;
+
+exports[`snippet: #2 format[babel-ts] 1`] = `
+"Unexpected token (2:3)
+  1 | enum Foo {
+> 2 |   [1] = 1
+    |   ^
+  3 | }
+Cause: Unexpected token (2:2)"
+`;
+
+exports[`snippet: #2 format[oxc-ts] 1`] = `
+"An enum member cannot have a numeric name. (2:4)
+  1 | enum Foo {
+> 2 |   [1] = 1
+    |    ^
+  3 | }"
+`;
+
+exports[`snippet: #2 format[typescript] 1`] = `
+"Computed property names are not allowed in enums. (2:3)
+  1 | enum Foo {
+> 2 |   [1] = 1
+    |   ^^^
+  3 | }
+Cause: Computed property names are not allowed in enums."
+`;
+
+exports[`snippet: #3 format[babel-ts] 1`] = `
+"Unexpected token (2:3)
+  1 | enum Foo {
+> 2 |   [1n] = 1
+    |   ^
+  3 | }
+Cause: Unexpected token (2:2)"
+`;
+
+exports[`snippet: #3 format[oxc-ts] 1`] = `
+"Computed property names are not allowed in enums. (2:4)
+  1 | enum Foo {
+> 2 |   [1n] = 1
+    |    ^^
+  3 | }"
+`;
+
+exports[`snippet: #3 format[typescript] 1`] = `
+"Computed property names are not allowed in enums. (2:3)
+  1 | enum Foo {
+> 2 |   [1n] = 1
+    |   ^^^^
+  3 | }
+Cause: Computed property names are not allowed in enums."
+`;
+
+exports[`snippet: #4 format[babel-ts] 1`] = `
+"Unexpected token (2:3)
+  1 | enum Foo {
+> 2 |   [foo] = 1
+    |   ^
+  3 | }
+Cause: Unexpected token (2:2)"
+`;
+
+exports[`snippet: #4 format[oxc-ts] 1`] = `
+"Computed property names are not allowed in enums. (2:4)
+  1 | enum Foo {
+> 2 |   [foo] = 1
+    |    ^^^
+  3 | }"
+`;
+
+exports[`snippet: #4 format[typescript] 1`] = `
+"Computed property names are not allowed in enums. (2:3)
+  1 | enum Foo {
+> 2 |   [foo] = 1
+    |   ^^^^^
+  3 | }
+Cause: Computed property names are not allowed in enums."
+`;

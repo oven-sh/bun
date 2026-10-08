@@ -1,0 +1,177 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format[acorn] 1`] = `
+"Optional chaining cannot appear in the callee of new expressions (1:21)
+> 1 | const baz3 = new obj?.foo?.bar?.baz(); // baz instance
+    |                     ^
+Cause: Optional chaining cannot appear in the callee of new expressions (1:20)"
+`;
+
+exports[`snippet: #0 format[babel] 1`] = `
+"Constructors in/after an Optional Chain are not allowed. (1:21)
+> 1 | const baz3 = new obj?.foo?.bar?.baz(); // baz instance
+    |                     ^
+Cause: Constructors in/after an Optional Chain are not allowed. (1:20)"
+`;
+
+exports[`snippet: #0 format[espree] 1`] = `
+"Optional chaining cannot appear in the callee of new expressions (1:21)
+> 1 | const baz3 = new obj?.foo?.bar?.baz(); // baz instance
+    |                     ^
+Cause: Optional chaining cannot appear in the callee of new expressions"
+`;
+
+exports[`snippet: #0 format[meriyah] 1`] = `
+"Invalid optional chain from new expression (1:21)
+> 1 | const baz3 = new obj?.foo?.bar?.baz(); // baz instance
+    |                     ^^
+Cause: [1:20-1:22]: Invalid optional chain from new expression"
+`;
+
+exports[`snippet: #1 format[acorn] 1`] = `
+"Optional chaining cannot appear in the callee of new expressions (1:22)
+> 1 | const safe5 = new obj?.qux?.baz(); // undefined
+    |                      ^
+Cause: Optional chaining cannot appear in the callee of new expressions (1:21)"
+`;
+
+exports[`snippet: #1 format[babel] 1`] = `
+"Constructors in/after an Optional Chain are not allowed. (1:22)
+> 1 | const safe5 = new obj?.qux?.baz(); // undefined
+    |                      ^
+Cause: Constructors in/after an Optional Chain are not allowed. (1:21)"
+`;
+
+exports[`snippet: #1 format[espree] 1`] = `
+"Optional chaining cannot appear in the callee of new expressions (1:22)
+> 1 | const safe5 = new obj?.qux?.baz(); // undefined
+    |                      ^
+Cause: Optional chaining cannot appear in the callee of new expressions"
+`;
+
+exports[`snippet: #1 format[meriyah] 1`] = `
+"Invalid optional chain from new expression (1:22)
+> 1 | const safe5 = new obj?.qux?.baz(); // undefined
+    |                      ^^
+Cause: [1:21-1:23]: Invalid optional chain from new expression"
+`;
+
+exports[`snippet: #2 format[acorn] 1`] = `
+"Optional chaining cannot appear in the callee of new expressions (1:22)
+> 1 | const safe6 = new obj?.foo.bar.qux?.(); // undefined
+    |                      ^
+Cause: Optional chaining cannot appear in the callee of new expressions (1:21)"
+`;
+
+exports[`snippet: #2 format[babel] 1`] = `
+"Constructors in/after an Optional Chain are not allowed. (1:22)
+> 1 | const safe6 = new obj?.foo.bar.qux?.(); // undefined
+    |                      ^
+Cause: Constructors in/after an Optional Chain are not allowed. (1:21)"
+`;
+
+exports[`snippet: #2 format[espree] 1`] = `
+"Optional chaining cannot appear in the callee of new expressions (1:22)
+> 1 | const safe6 = new obj?.foo.bar.qux?.(); // undefined
+    |                      ^
+Cause: Optional chaining cannot appear in the callee of new expressions"
+`;
+
+exports[`snippet: #2 format[meriyah] 1`] = `
+"Invalid optional chain from new expression (1:22)
+> 1 | const safe6 = new obj?.foo.bar.qux?.(); // undefined
+    |                      ^^
+Cause: [1:21-1:23]: Invalid optional chain from new expression"
+`;
+
+exports[`snippet: #3 format[acorn] 1`] = `
+"Optional chaining cannot appear in the callee of new expressions (1:26)
+> 1 | const willThrow = new obj?.foo.bar.qux(); // Error: not a constructor
+    |                          ^
+Cause: Optional chaining cannot appear in the callee of new expressions (1:25)"
+`;
+
+exports[`snippet: #3 format[babel] 1`] = `
+"Constructors in/after an Optional Chain are not allowed. (1:26)
+> 1 | const willThrow = new obj?.foo.bar.qux(); // Error: not a constructor
+    |                          ^
+Cause: Constructors in/after an Optional Chain are not allowed. (1:25)"
+`;
+
+exports[`snippet: #3 format[espree] 1`] = `
+"Optional chaining cannot appear in the callee of new expressions (1:26)
+> 1 | const willThrow = new obj?.foo.bar.qux(); // Error: not a constructor
+    |                          ^
+Cause: Optional chaining cannot appear in the callee of new expressions"
+`;
+
+exports[`snippet: #3 format[meriyah] 1`] = `
+"Invalid optional chain from new expression (1:26)
+> 1 | const willThrow = new obj?.foo.bar.qux(); // Error: not a constructor
+    |                          ^^
+Cause: [1:25-1:27]: Invalid optional chain from new expression"
+`;
+
+exports[`snippet: #4 format[acorn] 1`] = `
+"Optional chaining cannot appear in the callee of new expressions (4:9)
+  2 | class Test {
+  3 | }
+> 4 | new Test?.(); // test instance
+    |         ^
+Cause: Optional chaining cannot appear in the callee of new expressions (4:8)"
+`;
+
+exports[`snippet: #4 format[babel] 1`] = `
+"Constructors in/after an Optional Chain are not allowed. (4:9)
+  2 | class Test {
+  3 | }
+> 4 | new Test?.(); // test instance
+    |         ^
+Cause: Constructors in/after an Optional Chain are not allowed. (4:8)"
+`;
+
+exports[`snippet: #4 format[espree] 1`] = `
+"Optional chaining cannot appear in the callee of new expressions (4:9)
+  2 | class Test {
+  3 | }
+> 4 | new Test?.(); // test instance
+    |         ^
+Cause: Optional chaining cannot appear in the callee of new expressions"
+`;
+
+exports[`snippet: #4 format[meriyah] 1`] = `
+"Invalid optional chain from new expression (4:9)
+  2 | class Test {
+  3 | }
+> 4 | new Test?.(); // test instance
+    |         ^^
+Cause: [4:8-4:10]: Invalid optional chain from new expression"
+`;
+
+exports[`snippet: #5 format[acorn] 1`] = `
+"Optional chaining cannot appear in the callee of new expressions (1:11)
+> 1 | new exists?.(); // undefined
+    |           ^
+Cause: Optional chaining cannot appear in the callee of new expressions (1:10)"
+`;
+
+exports[`snippet: #5 format[babel] 1`] = `
+"Constructors in/after an Optional Chain are not allowed. (1:11)
+> 1 | new exists?.(); // undefined
+    |           ^
+Cause: Constructors in/after an Optional Chain are not allowed. (1:10)"
+`;
+
+exports[`snippet: #5 format[espree] 1`] = `
+"Optional chaining cannot appear in the callee of new expressions (1:11)
+> 1 | new exists?.(); // undefined
+    |           ^
+Cause: Optional chaining cannot appear in the callee of new expressions"
+`;
+
+exports[`snippet: #5 format[meriyah] 1`] = `
+"Invalid optional chain from new expression (1:11)
+> 1 | new exists?.(); // undefined
+    |           ^^
+Cause: [1:10-1:12]: Invalid optional chain from new expression"
+`;

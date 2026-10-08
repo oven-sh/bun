@@ -1,0 +1,292 @@
+.parent {
+    @at-root {
+        .child1 {
+            width: 100px;
+        }
+        .child2 {
+            width: 200px;
+        }
+    }
+}
+.parent {
+@at-root {
+.child1 {
+width: 100px;
+}
+.child2 {
+width: 200px;
+}
+}
+}
+.parent {
+    @at-root  {
+        .child1 {
+            width: 100px;
+        }
+        .child2 {
+            width: 200px;
+        }
+    }
+}
+.parent  {
+    @at-root  {
+        .child1  {
+            width: 100px;
+        }
+        .child2  {
+            width: 200px;
+        }
+    }
+}
+.parent
+{
+@at-root
+{
+.child1
+{
+width
+:
+100px
+;
+}
+.child2
+{
+width
+:
+200px
+;
+}
+}
+}
+.parent
+
+{
+
+@at-root
+
+{
+
+.child1
+
+{
+
+width
+
+:
+
+100px
+
+;
+
+}
+.child2
+
+{
+
+width
+
+:
+
+200px
+
+;
+
+}
+
+}
+
+}
+.parent {
+    @at-root .child {
+        width: 100px;
+    }
+}
+.parent {
+@at-root .child {
+width: 100px;
+}
+}
+.parent{
+    @at-root .child{
+        width: 100px;
+    }
+}
+.parent  {
+    @at-root  .child  {
+        width: 100px;
+    }
+}
+.parent
+{
+@at-root
+.child
+{
+width
+:
+100px
+;
+}
+}
+.parent
+
+{
+
+@at-root
+
+.child
+
+{
+
+width
+
+:
+
+100px
+
+;
+
+}
+
+}
+.parent {
+@at-root
+input[
+type
+=
+'radio'
+]
+{
+color
+:
+red
+;
+}
+}
+@media print {
+    .page {
+        width: 8in;
+
+        @at-root (with: media) {
+            color: red;
+        }
+    }
+}
+@media print {
+.page {
+width: 8in;
+
+@at-root (with: media) {
+color: red;
+}
+}
+}
+@media print{
+    .page{
+        width: 8in;
+
+        @at-root (with:media){
+            color: red;
+        }
+    }
+}
+@media print {
+    .page {
+        width: 8in;
+
+        @at-root ( with : media ) {
+            color: red;
+        }
+    }
+}
+@media print  {
+    .page  {
+        width: 8in;
+
+        @at-root  (  with  :  media  ) {
+            color: red;
+        }
+    }
+}
+@media print  {
+    .page  {
+        width: 8in;
+
+    @at-root
+        (with: media) {
+            color: red;
+        }
+    }
+}
+@media print
+{
+.page
+{
+width
+:
+8in
+;
+@at-root
+(
+with
+:
+media
+)
+{
+color
+:
+red
+;
+}
+}
+}
+@media print
+
+{
+
+.page
+
+{
+
+width
+
+:
+
+8in
+
+;
+
+@at-root
+
+(
+
+with
+
+:
+
+media
+
+)
+
+{
+
+color
+:
+
+red
+
+;
+
+}
+
+}
+
+}
+@media print {
+    .page {
+        width: 8in;
+
+        @at-root (without: media) {
+            color: red;
+        }
+    }
+}

@@ -1,0 +1,26 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`newKeyword.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var x: { y: new <T, U> () => [T, U] };
+
+interface I {
+    new <T>(x: string);
+    new (x: string);
+    new (x: number): number;
+}
+
+=====================================output=====================================
+var x: { y: new <T, U>() => [T, U] };
+
+interface I {
+  new <T>(x: string);
+  new (x: string);
+  new (x: number): number;
+}
+
+================================================================================
+`;

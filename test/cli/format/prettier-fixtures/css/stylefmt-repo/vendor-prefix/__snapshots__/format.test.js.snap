@@ -1,0 +1,21 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`vendor-prefix.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.class
+{-webkit-box-sizing:border-box;box-sizing:border-box
+
+
+}
+
+=====================================output=====================================
+.class {
+  -webkit-box-sizing: border-box;
+  box-sizing: border-box;
+}
+
+================================================================================
+`;

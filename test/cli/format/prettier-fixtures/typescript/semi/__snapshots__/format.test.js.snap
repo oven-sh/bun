@@ -1,0 +1,31 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`no-semi.ts - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export class Mutation {
+  private set: NQuad[];
+  private delete: NQuad[];
+}
+
+class Foo {
+  prop1 = 0;
+  [key: string]: any;
+}
+
+=====================================output=====================================
+export class Mutation {
+  private set: NQuad[]
+  private delete: NQuad[]
+}
+
+class Foo {
+  prop1 = 0;
+  [key: string]: any
+}
+
+================================================================================
+`;

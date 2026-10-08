@@ -1,0 +1,548 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`issue-2322.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export const listAuthorizedSitesForDefaultHandler: ListAuthorizedSitesForHandler = aListAuthorizedSitesForResponse;
+
+=====================================output=====================================
+export const listAuthorizedSitesForDefaultHandler: ListAuthorizedSitesForHandler =
+  aListAuthorizedSitesForResponse;
+
+================================================================================
+`;
+
+exports[`issue-2482.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export function countriesReceived(countries: Array<Country>): CountryActionType {
+  return {
+    type: ActionTypes.COUNTRIES_RECEIVED,
+    countries: countries,
+  };
+}
+
+=====================================output=====================================
+export function countriesReceived(
+  countries: Array<Country>,
+): CountryActionType {
+  return {
+    type: ActionTypes.COUNTRIES_RECEIVED,
+    countries: countries,
+  };
+}
+
+================================================================================
+`;
+
+exports[`issue-2485.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class x {
+  private readonly rawConfigFromFile$: BehaviorSubject<
+    any
+  > = new BehaviorSubject(notRead);
+}
+
+=====================================output=====================================
+class x {
+  private readonly rawConfigFromFile$: BehaviorSubject<any> =
+    new BehaviorSubject(notRead);
+}
+
+================================================================================
+`;
+
+exports[`issue-3122.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export const findByDate: Resolver<void, Recipe[], { date: Date }> =
+  (_, { date }, { req } ) => {
+    const repo = req.getRepository(Recipe);
+    return repo.find({ createDate: date });
+  }
+
+export const findByDate: Resolver<void, Recipe[], { date: Date }> =
+  (_, { date }, { req } ) => Recipe.find({ createDate: date });
+
+=====================================output=====================================
+export const findByDate: Resolver<void, Recipe[], { date: Date }> = (
+  _,
+  { date },
+  { req },
+) => {
+  const repo = req.getRepository(Recipe);
+  return repo.find({ createDate: date });
+};
+
+export const findByDate: Resolver<void, Recipe[], { date: Date }> = (
+  _,
+  { date },
+  { req },
+) => Recipe.find({ createDate: date });
+
+================================================================================
+`;
+
+exports[`issue-5370.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const durabilityMetricsSelectable: Immutable.OrderedSet<
+  SomeReportingMetric,
+> = myExperienceSelectable.concat(otherDurabilityMetricsSelectable);
+
+=====================================output=====================================
+const durabilityMetricsSelectable: Immutable.OrderedSet<SomeReportingMetric> =
+  myExperienceSelectable.concat(otherDurabilityMetricsSelectable);
+
+================================================================================
+`;
+
+exports[`issue-6783.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export const enviromentProdValues: EnvironmentValues = assign<EnvironmentValues>(
+  {
+    apiURL: '/api',
+  },
+  enviromentBaseValues
+);
+
+=====================================output=====================================
+export const enviromentProdValues: EnvironmentValues =
+  assign<EnvironmentValues>(
+    {
+      apiURL: "/api",
+    },
+    enviromentBaseValues,
+  );
+
+================================================================================
+`;
+
+exports[`issue-8619.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+{
+    {
+        {
+            const myLongVariableName: MyLongTypeName | null = myLongFunctionCallHere();
+        }
+    }
+}
+
+=====================================output=====================================
+{
+  {
+    {
+      const myLongVariableName: MyLongTypeName | null =
+        myLongFunctionCallHere();
+    }
+  }
+}
+
+================================================================================
+`;
+
+exports[`issue-9172.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const firestorePersonallyIdentifiablePaths: Array<Collections.Users.Entity> = somefunc();
+
+=====================================output=====================================
+const firestorePersonallyIdentifiablePaths: Array<Collections.Users.Entity> =
+  somefunc();
+
+================================================================================
+`;
+
+exports[`issue-10846.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const foo = call<{
+  prop1: string;
+  prop2: string;
+  prop3: string;
+}>();
+
+export const CallRecorderContext =
+  createContext<{
+    deleteRecording: (id: string) => void;
+    deleteAll: () => void;
+  } | null>(null);
+
+export const CallRecorderContext =
+  createContext<{
+    deleteRecording: (id: string) => void;
+    deleteAll: () => void;
+  } | null>(null, "useless");
+
+const foo =
+  call<Foooooo, Foooooo, Foooooo, Foooooo, Foooooo, Foooooo, Foooooo>();
+
+const foo =
+  call<
+    | Foooooooooooo
+    | Foooooooooooo
+    | Foooooooooooo
+    | Foooooooooooo
+    | Foooooooooooo
+  >();
+
+const foo =
+  call<
+    Foooooooooooo &
+      Foooooooooooo &
+      Foooooooooooo &
+      Foooooooooooo &
+      Foooooooooooo
+  >();
+
+=====================================output=====================================
+const foo = call<{
+  prop1: string;
+  prop2: string;
+  prop3: string;
+}>();
+
+export const CallRecorderContext = createContext<{
+  deleteRecording: (id: string) => void;
+  deleteAll: () => void;
+} | null>(null);
+
+export const CallRecorderContext = createContext<{
+  deleteRecording: (id: string) => void;
+  deleteAll: () => void;
+} | null>(null, "useless");
+
+const foo = call<
+  Foooooo,
+  Foooooo,
+  Foooooo,
+  Foooooo,
+  Foooooo,
+  Foooooo,
+  Foooooo
+>();
+
+const foo = call<
+  Foooooooooooo | Foooooooooooo | Foooooooooooo | Foooooooooooo | Foooooooooooo
+>();
+
+const foo = call<
+  Foooooooooooo & Foooooooooooo & Foooooooooooo & Foooooooooooo & Foooooooooooo
+>();
+
+================================================================================
+`;
+
+exports[`issue-10848.tsx format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const MyComponent: React.VoidFunctionComponent<MyComponentProps> = ({ x }) => {
+  const a = useA()
+  return <div>x = {x}; a = {a}</div>
+}
+
+const MyComponent2: React.VoidFunctionComponent<MyComponent2Props> = ({ x, y }) => {
+  const a = useA()
+  return <div>x = {x}; y = {y}; a = {a}</div>
+}
+
+const MyComponentWithLongName1: React.VoidFunctionComponent<MyComponentWithLongNameProps> = ({ x, y }) => {
+  const a = useA()
+  return <div>x = {x}; y = {y}; a = {a}</div>
+}
+
+const MyComponentWithLongName2: React.VoidFunctionComponent<MyComponentWithLongNameProps> = ({ x, y, anotherPropWithLongName1, anotherPropWithLongName2, anotherPropWithLongName3, anotherPropWithLongName4 }) => {
+  const a = useA()
+  return <div>x = {x}; y = {y}; a = {a}</div>
+}
+
+const MyGenericComponent: React.VoidFunctionComponent<MyGenericComponentProps<number>> = ({ x, y }) => {
+  const a = useA()
+  return <div>x = {x}; y = {y}; a = {a}</div>
+}
+
+export const ExportToExcalidrawPlus: React.FC<{
+  elements: readonly NonDeletedExcalidrawElement[];
+  appState: AppState;
+  onError: (error: Error) => void;
+}> = ({ elements, appState, onError }) => {
+  return null;
+}
+
+const Query: FunctionComponent<QueryProps> = ({
+    children,
+    type,
+    resource,
+    payload,
+    // Provides an undefined onSuccess just so the key \`onSuccess\` is defined
+    // This is used to detect options in useDataProvider
+    options = { onSuccess: undefined },
+}) =>
+    children(
+        useQuery(
+            { type, resource, payload },
+            { ...options, withDeclarativeSideEffectsSupport: true }
+        )
+    );
+
+=====================================output=====================================
+const MyComponent: React.VoidFunctionComponent<MyComponentProps> = ({ x }) => {
+  const a = useA();
+  return (
+    <div>
+      x = {x}; a = {a}
+    </div>
+  );
+};
+
+const MyComponent2: React.VoidFunctionComponent<MyComponent2Props> = ({
+  x,
+  y,
+}) => {
+  const a = useA();
+  return (
+    <div>
+      x = {x}; y = {y}; a = {a}
+    </div>
+  );
+};
+
+const MyComponentWithLongName1: React.VoidFunctionComponent<
+  MyComponentWithLongNameProps
+> = ({ x, y }) => {
+  const a = useA();
+  return (
+    <div>
+      x = {x}; y = {y}; a = {a}
+    </div>
+  );
+};
+
+const MyComponentWithLongName2: React.VoidFunctionComponent<
+  MyComponentWithLongNameProps
+> = ({
+  x,
+  y,
+  anotherPropWithLongName1,
+  anotherPropWithLongName2,
+  anotherPropWithLongName3,
+  anotherPropWithLongName4,
+}) => {
+  const a = useA();
+  return (
+    <div>
+      x = {x}; y = {y}; a = {a}
+    </div>
+  );
+};
+
+const MyGenericComponent: React.VoidFunctionComponent<
+  MyGenericComponentProps<number>
+> = ({ x, y }) => {
+  const a = useA();
+  return (
+    <div>
+      x = {x}; y = {y}; a = {a}
+    </div>
+  );
+};
+
+export const ExportToExcalidrawPlus: React.FC<{
+  elements: readonly NonDeletedExcalidrawElement[];
+  appState: AppState;
+  onError: (error: Error) => void;
+}> = ({ elements, appState, onError }) => {
+  return null;
+};
+
+const Query: FunctionComponent<QueryProps> = ({
+  children,
+  type,
+  resource,
+  payload,
+  // Provides an undefined onSuccess just so the key \`onSuccess\` is defined
+  // This is used to detect options in useDataProvider
+  options = { onSuccess: undefined },
+}) =>
+  children(
+    useQuery(
+      { type, resource, payload },
+      { ...options, withDeclarativeSideEffectsSupport: true },
+    ),
+  );
+
+================================================================================
+`;
+
+exports[`issue-10850.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const map: Map<Function, Map<string | void, { value: UnloadedDescriptor }>> =
+  new Map();
+
+const map: Map<Function, Condition extends Foo ? FooFooFoo : BarBarBar> =
+  new Map();
+
+const map: Map<Function, FunctionFunctionFunctionFunctionffFunction> =
+  new Map();
+
+const map: Map<Function, Foo<S>> = new Map();
+
+=====================================output=====================================
+const map: Map<
+  Function,
+  Map<string | void, { value: UnloadedDescriptor }>
+> = new Map();
+
+const map: Map<
+  Function,
+  Condition extends Foo ? FooFooFoo : BarBarBar
+> = new Map();
+
+const map: Map<Function, FunctionFunctionFunctionFunctionffFunction> =
+  new Map();
+
+const map: Map<Function, Foo<S>> = new Map();
+
+================================================================================
+`;
+
+exports[`issue-12413.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let emit =
+  defineEmits<{ (event: "ready", canvas: HTMLCanvasElement): void; (event:"resize",canvas:HTMLCanvasElement):void; }>();
+
+let abc =
+  func<{a:2,b:3,d:78,e:9,f:8,g:7,h:6,i:5,j:4,k:3,l:2,m:1,n:0,o:9,p:8,q:7,r:6,s:5,t:4,u:3,v:2,w:1,x:0,y:9,z:8}>();
+
+=====================================output=====================================
+let emit = defineEmits<{
+  (event: "ready", canvas: HTMLCanvasElement): void;
+  (event: "resize", canvas: HTMLCanvasElement): void;
+}>();
+
+let abc = func<{
+  a: 2;
+  b: 3;
+  d: 78;
+  e: 9;
+  f: 8;
+  g: 7;
+  h: 6;
+  i: 5;
+  j: 4;
+  k: 3;
+  l: 2;
+  m: 1;
+  n: 0;
+  o: 9;
+  p: 8;
+  q: 7;
+  r: 6;
+  s: 5;
+  t: 4;
+  u: 3;
+  v: 2;
+  w: 1;
+  x: 0;
+  y: 9;
+  z: 8;
+}>();
+
+================================================================================
+`;
+
+exports[`lone-arg.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (true) {
+  if (condition) {
+    const secondType1 = sourceCode.getNodeByRangeIndex1234(second.range[0])!
+      .type;
+    const secondType2 = (sourceCode?.getNodeByRangeIndex1234(second.range[0]))
+      .type;
+    const secondType3 = (sourceCode?.getNodeByRangeIndex1234(second.range[0])!)
+      .type;
+    const secondType4 = (sourceCode?.getNodeByRangeIndex1234(second.range[0])!)!
+      .type;
+    const secondType5 = sourceCode.getNodeByRangeIndex1234(second.range[0])!!
+      .type;
+  }
+}
+
+=====================================output=====================================
+if (true) {
+  if (condition) {
+    const secondType1 = sourceCode.getNodeByRangeIndex1234(
+      second.range[0],
+    )!.type;
+    const secondType2 = (sourceCode?.getNodeByRangeIndex1234(
+      second.range[0],
+    )).type;
+    const secondType3 = (sourceCode?.getNodeByRangeIndex1234(
+      second.range[0],
+    )!).type;
+    const secondType4 = (sourceCode?.getNodeByRangeIndex1234(
+      second.range[0],
+    )!)!.type;
+    const secondType5 = sourceCode.getNodeByRangeIndex1234(
+      second.range[0],
+    )!!.type;
+  }
+}
+
+================================================================================
+`;
+
+exports[`parenthesized.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/babel/babel/pull/12933/files
+(<number>x) = null;
+(x!) = null;
+(a as any) = null;
+(a as number) = 42;
+((a as any) as string) = null;
+
+=====================================output=====================================
+// https://github.com/babel/babel/pull/12933/files
+(<number>x) = null;
+x! = null;
+(a as any) = null;
+(a as number) = 42;
+(a as any as string) = null;
+
+================================================================================
+`;

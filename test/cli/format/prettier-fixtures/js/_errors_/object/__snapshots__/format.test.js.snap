@@ -1,0 +1,145 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`getter-generator.js format[acorn] 1`] = `
+"Unexpected token (2:9)
+  1 | ({
+> 2 |     get *iterator() { },
+    |         ^
+  3 | });
+  4 |
+Cause: Unexpected token (2:8)"
+`;
+
+exports[`getter-generator.js format[babel] 1`] = `
+"A getter cannot be a generator. (2:10)
+  1 | ({
+> 2 |     get *iterator() { },
+    |          ^
+  3 | });
+  4 |
+Cause: A getter cannot be a generator. (2:9)"
+`;
+
+exports[`getter-generator.js format[espree] 1`] = `
+"Unexpected token * (2:9)
+  1 | ({
+> 2 |     get *iterator() { },
+    |         ^
+  3 | });
+  4 |
+Cause: Unexpected token *"
+`;
+
+exports[`getter-generator.js format[meriyah] 1`] = `
+"A getter cannot be a generator (2:9)
+  1 | ({
+> 2 |     get *iterator() { },
+    |         ^
+  3 | });
+  4 |
+Cause: [2:8-2:9]: A getter cannot be a generator"
+`;
+
+exports[`getter-with-parameter.js format[acorn] 1`] = `
+"getter should have no params (1:9)
+> 1 | ({ get x(a){} });
+    |         ^
+  2 |
+Cause: getter should have no params (1:8)"
+`;
+
+exports[`getter-with-parameter.js format[babel] 1`] = `
+"A 'get' accessor must not have any formal parameters. (1:4)
+> 1 | ({ get x(a){} });
+    |    ^
+  2 |
+Cause: A 'get' accessor must not have any formal parameters. (1:3)"
+`;
+
+exports[`getter-with-parameter.js format[espree] 1`] = `
+"getter should have no params (1:9)
+> 1 | ({ get x(a){} });
+    |         ^
+  2 |
+Cause: getter should have no params"
+`;
+
+exports[`getter-with-parameter.js format[meriyah] 1`] = `
+"Getter functions must have exactly no arguments (1:10)
+> 1 | ({ get x(a){} });
+    |          ^
+  2 |
+Cause: [1:9-1:10]: Getter functions must have exactly no arguments"
+`;
+
+exports[`setter-generator.js format[acorn] 1`] = `
+"Unexpected token (2:9)
+  1 | ({
+> 2 |     set *iterator(iter) { },
+    |         ^
+  3 | });
+  4 |
+Cause: Unexpected token (2:8)"
+`;
+
+exports[`setter-generator.js format[babel] 1`] = `
+"A setter cannot be a generator. (2:10)
+  1 | ({
+> 2 |     set *iterator(iter) { },
+    |          ^
+  3 | });
+  4 |
+Cause: A setter cannot be a generator. (2:9)"
+`;
+
+exports[`setter-generator.js format[espree] 1`] = `
+"Unexpected token * (2:9)
+  1 | ({
+> 2 |     set *iterator(iter) { },
+    |         ^
+  3 | });
+  4 |
+Cause: Unexpected token *"
+`;
+
+exports[`setter-generator.js format[meriyah] 1`] = `
+"A setter cannot be a generator (2:9)
+  1 | ({
+> 2 |     set *iterator(iter) { },
+    |         ^
+  3 | });
+  4 |
+Cause: [2:8-2:9]: A setter cannot be a generator"
+`;
+
+exports[`setter-without-parameter.js format[acorn] 1`] = `
+"setter should have exactly one param (1:9)
+> 1 | ({ set x(){} });
+    |         ^
+  2 |
+Cause: setter should have exactly one param (1:8)"
+`;
+
+exports[`setter-without-parameter.js format[babel] 1`] = `
+"A 'set' accessor must have exactly one formal parameter. (1:4)
+> 1 | ({ set x(){} });
+    |    ^
+  2 |
+Cause: A 'set' accessor must have exactly one formal parameter. (1:3)"
+`;
+
+exports[`setter-without-parameter.js format[espree] 1`] = `
+"setter should have exactly one param (1:9)
+> 1 | ({ set x(){} });
+    |         ^
+  2 |
+Cause: setter should have exactly one param"
+`;
+
+exports[`setter-without-parameter.js format[meriyah] 1`] = `
+"Setter functions must have exactly one argument (1:10)
+> 1 | ({ set x(){} });
+    |          ^
+  2 |
+Cause: [1:9-1:10]: Setter functions must have exactly one argument"
+`;

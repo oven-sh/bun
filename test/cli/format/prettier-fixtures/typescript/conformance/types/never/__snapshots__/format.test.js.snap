@@ -1,0 +1,16 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`never.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var x: never
+var x: never | string
+
+=====================================output=====================================
+var x: never;
+var x: never | string;
+
+================================================================================
+`;

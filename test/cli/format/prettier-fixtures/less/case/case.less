@@ -1,0 +1,147 @@
+// Convention in this test file:
+// - The case should be preserved for things prefixed with "Keep".
+// - The case should always be preserved for element names and attribute names
+//   in selectors, as well as function names and property keywords.
+// - Other things should mostly be lowercase.
+// - The `/*:*/` comments are just to bust the `isLikelySCSS` check.
+
+@IMPORT Keep;
+
+HTML#KeepId.KeepClass,
+a[HREF=KeepAttrValue]:HOVER::FIRST-letter,
+svg[viewBox] linearGradient,
+:Not(:NTH-child(2N+1)) {
+    COLOR: #AAbbCC;
+    BACKGROUND-image: URL("KeepString");
+    Margin: 5PX .2E10Em;
+    --Keep-custom-Prop: red;
+    background: Var(--Keep-custom-Prop);
+    animation-name: KeepAnimationName;
+    important: something !IMPORTANT;
+    font-family: INITIAL;
+    padding: UNSET;
+    border: INHERIT;
+    all: REVERT;
+    -WEBKIT-USER-SELECT: none;
+    -MOZ-USER-SELECT: none;
+    -MS-USER-SELECT: none;
+    USER-SELECT: none;
+}
+
+@keyframes KeepAnimationName {
+  FROM {
+    prop: val;
+  }
+
+  @{KeepInterpolationVar} {
+    prop: val;
+  }
+
+  TO {
+    prop: val;
+  }
+}
+
+@custom-media --KeepCustomMedia screen and (width >= 768px);
+@media (--KeepCustomMedia) {}
+
+@KeepDetachedRuleset: /*:*/ {
+  BACKGROUND: RED;
+}
+
+%KeepScssPlaceholderSelector {
+  prop: val;
+}
+
+@KeepTopLevelVar: val;
+$KeepScssVar: val;
+
+.Keep(@Keep: 12e03PX) when (@Keep=Case) /*:*/ {
+    @KeepVar: KeepName; /*:*/
+    @{KeepInterpolationVar}: val;
+    $KeepScssVar: val;
+    @extend %KeepScssPlaceholderSelector;
+
+    @{Keep}[@{Keep}][@{Keep}^=@{Keep-1A}]:@{Keep} {
+      prop: val;
+    }
+
+    &Keep & Element {
+      prop: val;
+    }
+
+    @KeepDetachedRuleset();
+
+    &:extend(.Keep ALL);
+    &:EXTEND(.Keep ALL);
+
+    .Keep;
+    .Keep();
+    .Keep(4PX)!IMPORTANT;
+    .Keep() when (@Keep=Keep);
+    .Keep() when (@Keep=12PX);
+    .Keep() when (@Keep="12px");
+    .Keep() when (@Keep="12PX");
+    .Keep() when (@Keep=Keep12PX);
+}
+
+.Keep (@Keep) when (lightness(@Keep) >= 12PX) and (@Keep > 0) {}
+.Keep (@Keep) when (lightness(@Keep) != '12PX') and (@Keep != "12PX") {}
+.Keep (@Keep) when (lightness(@Keep) >= Keep12PX) and (@Keep > @Keep12E5) {}
+
+.Keep(@Keep: 12PX; @Keep: @Keep12PX; ...) /*:*/ {}
+.Keep(@Keep: '12PX'; @Keep: "12PX"; ...) /*:*/ {}
+
+@MEDIA (MIN-WIDTH: 700PX) /*:*/ {}
+
+@MEDIA (@{Keep}: @{Keep}) {}
+
+@KEYFRAMES identifier {
+  FROM {
+    margin-top: 50px;
+  }
+  50%  {
+    margin-top: 150px;
+  }
+  TO {
+    margin-top: 100px;
+  }
+}
+
+@-WEBKIT-KEYFRAMES float-up {
+  FROM {
+    margin-top: 50px;
+  }
+  50%  {
+    margin-top: 150px;
+  }
+  TO {
+    margin-top: 100px;
+  }
+}
+
+.foo {
+  color: hsl(0.75TURN, 60%, 70%);
+}
+
+p:FIRST-CHILD {
+  color: lime;
+  background-color: black;
+  padding: 5px;
+}
+
+a::AFTER {
+  content: "→";
+}
+
+a:AFTER {
+  content: "→";
+}
+
+::-WEBKIT-PROGRESS-BAR {
+  background-color: orange;
+}
+
+TABLE {}
+
+.foo { &-KeepSelector {} &-KeepSelector & .KeepClassSelector {} &-100\.200 {} }

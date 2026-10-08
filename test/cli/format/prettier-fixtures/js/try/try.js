@@ -1,0 +1,4 @@
+try
+/* missing comment */
+{;}
+finally {}

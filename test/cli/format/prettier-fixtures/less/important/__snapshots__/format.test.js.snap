@@ -1,0 +1,26 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`important.less format 1`] = `
+====================================options=====================================
+parsers: ["less"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+div {
+  max-height: none !important;
+}
+
+.important {
+  .foo() !important;
+}
+
+=====================================output=====================================
+div {
+  max-height: none !important;
+}
+
+.important {
+  .foo() !important;
+}
+
+================================================================================
+`;

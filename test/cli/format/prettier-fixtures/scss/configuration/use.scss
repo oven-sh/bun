@@ -1,0 +1,17 @@
+@use "@fylgja/base" with (
+  $family-main: (
+  Rubik,
+    Roboto,
+    system-ui,
+    sans-serif,
+  ),
+  $font-weight: 350,
+  $h1-font-weight: 500,
+  $h2-font-weight: 500,
+  $h3-font-weight: 500
+);
+
+@use 'library' with (
+  $black: #222,
+  $border-radius: 0.1rem
+);

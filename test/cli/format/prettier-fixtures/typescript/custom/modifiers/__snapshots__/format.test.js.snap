@@ -1,0 +1,60 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`minustoken.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type MutableRequired<T> = { 
+-readonly [P in keyof T]-?:T[P] 
+};  // Remove readonly and ?
+
+type ReadonlyPartial<T> = {
++readonly [P in keyof T]+?:T[P] 
+};  // Add readonly and ?
+
+=====================================output=====================================
+type MutableRequired<T> = {
+  -readonly [P in keyof T]-?: T[P];
+}; // Remove readonly and ?
+
+type ReadonlyPartial<T> = {
+  +readonly [P in keyof T]+?: T[P];
+}; // Add readonly and ?
+
+================================================================================
+`;
+
+exports[`question.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var x: {
+    [A in keyof B]?: any;
+};
+
+=====================================output=====================================
+var x: {
+  [A in keyof B]?: any;
+};
+
+================================================================================
+`;
+
+exports[`readonly.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var x: {
+    readonly [A in keyof B]: any;
+};
+
+=====================================output=====================================
+var x: {
+  readonly [A in keyof B]: any;
+};
+
+================================================================================
+`;

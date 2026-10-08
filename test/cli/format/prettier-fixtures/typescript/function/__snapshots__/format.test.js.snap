@@ -1,0 +1,38 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`single_expand.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function onDidInsertSuggestion({
+  editor,
+  triggerPosition,
+  re
+}): Promise<void> {
+}
+
+class X {
+  async onDidInsertSuggestion({editor, triggerPosition, suggestion}): Promise<
+    void
+  > {
+  }
+}
+
+=====================================output=====================================
+function onDidInsertSuggestion({
+  editor,
+  triggerPosition,
+  re,
+}): Promise<void> {}
+
+class X {
+  async onDidInsertSuggestion({
+    editor,
+    triggerPosition,
+    suggestion,
+  }): Promise<void> {}
+}
+
+================================================================================
+`;

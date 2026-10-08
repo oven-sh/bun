@@ -1,0 +1,877 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`dynamic-import.js - {"trailingComma":"all"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "all"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import(
+  'myreallylongdynamicallyloadedmodulenamemyreallylongdynamicallyloadedmodulename'
+);
+
+=====================================output=====================================
+import("myreallylongdynamicallyloadedmodulenamemyreallylongdynamicallyloadedmodulename");
+
+================================================================================
+`;
+
+exports[`dynamic-import.js - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import(
+  'myreallylongdynamicallyloadedmodulenamemyreallylongdynamicallyloadedmodulename'
+);
+
+=====================================output=====================================
+import("myreallylongdynamicallyloadedmodulenamemyreallylongdynamicallyloadedmodulename");
+
+================================================================================
+`;
+
+exports[`dynamic-import.js - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import(
+  'myreallylongdynamicallyloadedmodulenamemyreallylongdynamicallyloadedmodulename'
+);
+
+=====================================output=====================================
+import("myreallylongdynamicallyloadedmodulenamemyreallylongdynamicallyloadedmodulename");
+
+================================================================================
+`;
+
+exports[`es5.js - {"trailingComma":"all"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "all"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function send_single_email(
+  app,
+  email_id,
+  email_address,
+  subject,
+  html,
+  reply_to
+) {
+  send_single_email_implementation(  app,
+  email_id,
+  email_address,
+  subject,
+  html,
+  reply_to);
+  return "nothing";
+}
+
+=====================================output=====================================
+function send_single_email(
+  app,
+  email_id,
+  email_address,
+  subject,
+  html,
+  reply_to,
+) {
+  send_single_email_implementation(
+    app,
+    email_id,
+    email_address,
+    subject,
+    html,
+    reply_to,
+  );
+  return "nothing";
+}
+
+================================================================================
+`;
+
+exports[`es5.js - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function send_single_email(
+  app,
+  email_id,
+  email_address,
+  subject,
+  html,
+  reply_to
+) {
+  send_single_email_implementation(  app,
+  email_id,
+  email_address,
+  subject,
+  html,
+  reply_to);
+  return "nothing";
+}
+
+=====================================output=====================================
+function send_single_email(
+  app,
+  email_id,
+  email_address,
+  subject,
+  html,
+  reply_to
+) {
+  send_single_email_implementation(
+    app,
+    email_id,
+    email_address,
+    subject,
+    html,
+    reply_to
+  );
+  return "nothing";
+}
+
+================================================================================
+`;
+
+exports[`es5.js - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function send_single_email(
+  app,
+  email_id,
+  email_address,
+  subject,
+  html,
+  reply_to
+) {
+  send_single_email_implementation(  app,
+  email_id,
+  email_address,
+  subject,
+  html,
+  reply_to);
+  return "nothing";
+}
+
+=====================================output=====================================
+function send_single_email(
+  app,
+  email_id,
+  email_address,
+  subject,
+  html,
+  reply_to
+) {
+  send_single_email_implementation(
+    app,
+    email_id,
+    email_address,
+    subject,
+    html,
+    reply_to
+  );
+  return "nothing";
+}
+
+================================================================================
+`;
+
+exports[`function-calls.js - {"trailingComma":"all"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "all"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const a = (param1, param2, param3) => {}
+
+a('value', 'value2', 'value3');
+
+a(
+  'a-long-value',
+  'a-really-really-long-value',
+  'a-really-really-really-long-value',
+);
+
+a('value', 'value2', a('long-nested-value', 'long-nested-value2', 'long-nested-value3'));
+
+a.b().c(
+  {
+    d,
+  },
+  () => {}
+);
+
+=====================================output=====================================
+const a = (param1, param2, param3) => {};
+
+a("value", "value2", "value3");
+
+a(
+  "a-long-value",
+  "a-really-really-long-value",
+  "a-really-really-really-long-value",
+);
+
+a(
+  "value",
+  "value2",
+  a("long-nested-value", "long-nested-value2", "long-nested-value3"),
+);
+
+a.b().c(
+  {
+    d,
+  },
+  () => {},
+);
+
+================================================================================
+`;
+
+exports[`function-calls.js - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const a = (param1, param2, param3) => {}
+
+a('value', 'value2', 'value3');
+
+a(
+  'a-long-value',
+  'a-really-really-long-value',
+  'a-really-really-really-long-value',
+);
+
+a('value', 'value2', a('long-nested-value', 'long-nested-value2', 'long-nested-value3'));
+
+a.b().c(
+  {
+    d,
+  },
+  () => {}
+);
+
+=====================================output=====================================
+const a = (param1, param2, param3) => {};
+
+a("value", "value2", "value3");
+
+a(
+  "a-long-value",
+  "a-really-really-long-value",
+  "a-really-really-really-long-value"
+);
+
+a(
+  "value",
+  "value2",
+  a("long-nested-value", "long-nested-value2", "long-nested-value3")
+);
+
+a.b().c(
+  {
+    d,
+  },
+  () => {}
+);
+
+================================================================================
+`;
+
+exports[`function-calls.js - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const a = (param1, param2, param3) => {}
+
+a('value', 'value2', 'value3');
+
+a(
+  'a-long-value',
+  'a-really-really-long-value',
+  'a-really-really-really-long-value',
+);
+
+a('value', 'value2', a('long-nested-value', 'long-nested-value2', 'long-nested-value3'));
+
+a.b().c(
+  {
+    d,
+  },
+  () => {}
+);
+
+=====================================output=====================================
+const a = (param1, param2, param3) => {};
+
+a("value", "value2", "value3");
+
+a(
+  "a-long-value",
+  "a-really-really-long-value",
+  "a-really-really-really-long-value"
+);
+
+a(
+  "value",
+  "value2",
+  a("long-nested-value", "long-nested-value2", "long-nested-value3")
+);
+
+a.b().c(
+  {
+    d
+  },
+  () => {}
+);
+
+================================================================================
+`;
+
+exports[`jsx.js - {"trailingComma":"all"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "all"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div
+  onClick={() =>
+    doSomething({
+      foo: bar
+    })
+  }
+/>;
+
+=====================================output=====================================
+<div
+  onClick={() =>
+    doSomething({
+      foo: bar,
+    })
+  }
+/>;
+
+================================================================================
+`;
+
+exports[`jsx.js - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div
+  onClick={() =>
+    doSomething({
+      foo: bar
+    })
+  }
+/>;
+
+=====================================output=====================================
+<div
+  onClick={() =>
+    doSomething({
+      foo: bar,
+    })
+  }
+/>;
+
+================================================================================
+`;
+
+exports[`jsx.js - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div
+  onClick={() =>
+    doSomething({
+      foo: bar
+    })
+  }
+/>;
+
+=====================================output=====================================
+<div
+  onClick={() =>
+    doSomething({
+      foo: bar
+    })
+  }
+/>;
+
+================================================================================
+`;
+
+exports[`object.js - {"trailingComma":"all"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "all"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const a = {
+  b: true,
+  c: {
+    c1: 'hello'
+  },
+  d: false
+};
+
+const aLong = {
+  bHasALongName: 'a-long-value',
+  cHasALongName: {
+    c1: 'a-really-long-value',
+    c2: 'a-really-really-long-value',
+  },
+  dHasALongName: 'a-long-value-too'
+};
+
+const bLong = {
+  dHasALongName: 'a-long-value-too',
+  eHasABooleanExpression: a === a,
+};
+
+=====================================output=====================================
+const a = {
+  b: true,
+  c: {
+    c1: "hello",
+  },
+  d: false,
+};
+
+const aLong = {
+  bHasALongName: "a-long-value",
+  cHasALongName: {
+    c1: "a-really-long-value",
+    c2: "a-really-really-long-value",
+  },
+  dHasALongName: "a-long-value-too",
+};
+
+const bLong = {
+  dHasALongName: "a-long-value-too",
+  eHasABooleanExpression: a === a,
+};
+
+================================================================================
+`;
+
+exports[`object.js - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const a = {
+  b: true,
+  c: {
+    c1: 'hello'
+  },
+  d: false
+};
+
+const aLong = {
+  bHasALongName: 'a-long-value',
+  cHasALongName: {
+    c1: 'a-really-long-value',
+    c2: 'a-really-really-long-value',
+  },
+  dHasALongName: 'a-long-value-too'
+};
+
+const bLong = {
+  dHasALongName: 'a-long-value-too',
+  eHasABooleanExpression: a === a,
+};
+
+=====================================output=====================================
+const a = {
+  b: true,
+  c: {
+    c1: "hello",
+  },
+  d: false,
+};
+
+const aLong = {
+  bHasALongName: "a-long-value",
+  cHasALongName: {
+    c1: "a-really-long-value",
+    c2: "a-really-really-long-value",
+  },
+  dHasALongName: "a-long-value-too",
+};
+
+const bLong = {
+  dHasALongName: "a-long-value-too",
+  eHasABooleanExpression: a === a,
+};
+
+================================================================================
+`;
+
+exports[`object.js - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const a = {
+  b: true,
+  c: {
+    c1: 'hello'
+  },
+  d: false
+};
+
+const aLong = {
+  bHasALongName: 'a-long-value',
+  cHasALongName: {
+    c1: 'a-really-long-value',
+    c2: 'a-really-really-long-value',
+  },
+  dHasALongName: 'a-long-value-too'
+};
+
+const bLong = {
+  dHasALongName: 'a-long-value-too',
+  eHasABooleanExpression: a === a,
+};
+
+=====================================output=====================================
+const a = {
+  b: true,
+  c: {
+    c1: "hello"
+  },
+  d: false
+};
+
+const aLong = {
+  bHasALongName: "a-long-value",
+  cHasALongName: {
+    c1: "a-really-long-value",
+    c2: "a-really-really-long-value"
+  },
+  dHasALongName: "a-long-value-too"
+};
+
+const bLong = {
+  dHasALongName: "a-long-value-too",
+  eHasABooleanExpression: a === a
+};
+
+================================================================================
+`;
+
+exports[`trailing_whitespace.js - {"trailingComma":"all"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "all"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let example = [
+  'FOO',
+  'BAR',
+  // Comment
+];
+
+foo({},
+  // Comment
+);
+
+o = {
+  state,
+  // Comment
+};
+
+o = {
+  state,
+
+  // Comment
+};
+
+function supersupersupersuperLongF(
+  supersupersupersuperLongA,
+  supersupersupersuperLongB
+  // Comment
+) {
+  a
+}
+function supersupersupersuperLongF(
+  supersupersupersuperLongA,
+  supersupersupersuperLongB,
+  // Comment
+) {
+  a
+}
+
+this.getAttribute(function(s)
+  /*string*/ {
+  console.log()
+});
+this.getAttribute(function(s) /*string*/ {
+  console.log()
+});
+
+=====================================output=====================================
+let example = [
+  "FOO",
+  "BAR",
+  // Comment
+];
+
+foo(
+  {},
+  // Comment
+);
+
+o = {
+  state,
+  // Comment
+};
+
+o = {
+  state,
+
+  // Comment
+};
+
+function supersupersupersuperLongF(
+  supersupersupersuperLongA,
+  supersupersupersuperLongB,
+  // Comment
+) {
+  a;
+}
+function supersupersupersuperLongF(
+  supersupersupersuperLongA,
+  supersupersupersuperLongB,
+  // Comment
+) {
+  a;
+}
+
+this.getAttribute(function (s) /*string*/ {
+  console.log();
+});
+this.getAttribute(function (s) /*string*/ {
+  console.log();
+});
+
+================================================================================
+`;
+
+exports[`trailing_whitespace.js - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let example = [
+  'FOO',
+  'BAR',
+  // Comment
+];
+
+foo({},
+  // Comment
+);
+
+o = {
+  state,
+  // Comment
+};
+
+o = {
+  state,
+
+  // Comment
+};
+
+function supersupersupersuperLongF(
+  supersupersupersuperLongA,
+  supersupersupersuperLongB
+  // Comment
+) {
+  a
+}
+function supersupersupersuperLongF(
+  supersupersupersuperLongA,
+  supersupersupersuperLongB,
+  // Comment
+) {
+  a
+}
+
+this.getAttribute(function(s)
+  /*string*/ {
+  console.log()
+});
+this.getAttribute(function(s) /*string*/ {
+  console.log()
+});
+
+=====================================output=====================================
+let example = [
+  "FOO",
+  "BAR",
+  // Comment
+];
+
+foo(
+  {}
+  // Comment
+);
+
+o = {
+  state,
+  // Comment
+};
+
+o = {
+  state,
+
+  // Comment
+};
+
+function supersupersupersuperLongF(
+  supersupersupersuperLongA,
+  supersupersupersuperLongB
+  // Comment
+) {
+  a;
+}
+function supersupersupersuperLongF(
+  supersupersupersuperLongA,
+  supersupersupersuperLongB
+  // Comment
+) {
+  a;
+}
+
+this.getAttribute(function (s) /*string*/ {
+  console.log();
+});
+this.getAttribute(function (s) /*string*/ {
+  console.log();
+});
+
+================================================================================
+`;
+
+exports[`trailing_whitespace.js - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let example = [
+  'FOO',
+  'BAR',
+  // Comment
+];
+
+foo({},
+  // Comment
+);
+
+o = {
+  state,
+  // Comment
+};
+
+o = {
+  state,
+
+  // Comment
+};
+
+function supersupersupersuperLongF(
+  supersupersupersuperLongA,
+  supersupersupersuperLongB
+  // Comment
+) {
+  a
+}
+function supersupersupersuperLongF(
+  supersupersupersuperLongA,
+  supersupersupersuperLongB,
+  // Comment
+) {
+  a
+}
+
+this.getAttribute(function(s)
+  /*string*/ {
+  console.log()
+});
+this.getAttribute(function(s) /*string*/ {
+  console.log()
+});
+
+=====================================output=====================================
+let example = [
+  "FOO",
+  "BAR"
+  // Comment
+];
+
+foo(
+  {}
+  // Comment
+);
+
+o = {
+  state
+  // Comment
+};
+
+o = {
+  state
+
+  // Comment
+};
+
+function supersupersupersuperLongF(
+  supersupersupersuperLongA,
+  supersupersupersuperLongB
+  // Comment
+) {
+  a;
+}
+function supersupersupersuperLongF(
+  supersupersupersuperLongA,
+  supersupersupersuperLongB
+  // Comment
+) {
+  a;
+}
+
+this.getAttribute(function (s) /*string*/ {
+  console.log();
+});
+this.getAttribute(function (s) /*string*/ {
+  console.log();
+});
+
+================================================================================
+`;

@@ -1,0 +1,164 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`issue-10352-consistency.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export interface Store {
+  getRecord(collectionName: string, documentPath: string): TaskEither<Error, Option<GenericRecord>>;
+}
+
+export default class StoreImpl extends Service implements Store {
+  getRecord(collectionName: string, documentPath: string): TaskEither<Error, Option<GenericRecord>> {
+    // Do some stuff.
+  }
+}
+
+export function loadPlugin(
+  name: string,
+  dirname: string,
+): { filepath: string, value: mixed } {
+  // ...
+}
+
+=====================================output=====================================
+export interface Store {
+  getRecord(
+    collectionName: string,
+    documentPath: string,
+  ): TaskEither<Error, Option<GenericRecord>>;
+}
+
+export default class StoreImpl extends Service implements Store {
+  getRecord(
+    collectionName: string,
+    documentPath: string,
+  ): TaskEither<Error, Option<GenericRecord>> {
+    // Do some stuff.
+  }
+}
+
+export function loadPlugin(
+  name: string,
+  dirname: string,
+): { filepath: string; value: mixed } {
+  // ...
+}
+
+================================================================================
+`;
+
+exports[`method-signature.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type Foo = {
+  get(key: "foo"): \`
+  \`;
+};
+type Foo = {
+  get(key: "foo"): \`\`;
+};
+
+type Bar = {
+  get(key: "bar"): {
+    bar: "bar"
+  };
+}
+type Bar = {
+  get(key: "bar"): { bar: "bar" };
+}
+
+=====================================output=====================================
+type Foo = {
+  get(key: "foo"): \`
+  \`;
+};
+type Foo = {
+  get(key: "foo"): \`\`;
+};
+
+type Bar = {
+  get(key: "bar"): {
+    bar: "bar";
+  };
+};
+type Bar = {
+  get(key: "bar"): { bar: "bar" };
+};
+
+================================================================================
+`;
+
+exports[`method-signature-with-wrapped-return-type.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type ReleaseToolConfig = {
+  get(key: "changelog"): {
+    get(key: "repo"): string;
+    get(key: "labels"): Map<string, string>;
+  };
+};
+
+type ReleaseToolConfig2 = {
+  get(key: "changelog"): \`
+  \`
+};
+
+=====================================output=====================================
+type ReleaseToolConfig = {
+  get(key: "changelog"): {
+    get(key: "repo"): string;
+    get(key: "labels"): Map<string, string>;
+  };
+};
+
+type ReleaseToolConfig2 = {
+  get(key: "changelog"): \`
+  \`;
+};
+
+================================================================================
+`;
+
+exports[`semi.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare module 'foo' {
+  function foo(namespace: string): void;
+  function bar(namespace: string): void;
+}
+
+function pickCard(x: {suit: string; card: number; }[]): number;
+function pickCard(x: number): {suit: string; card: number; };
+
+=====================================output=====================================
+declare module "foo" {
+  function foo(namespace: string): void;
+  function bar(namespace: string): void;
+}
+
+function pickCard(x: { suit: string; card: number }[]): number;
+function pickCard(x: number): { suit: string; card: number };
+
+================================================================================
+`;
+
+exports[`type_literal_optional_method.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var v: { e?(): number };
+
+=====================================output=====================================
+var v: { e?(): number };
+
+================================================================================
+`;

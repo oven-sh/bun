@@ -1,0 +1,22 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`predicate-types.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Foo {
+  isBar(): this is string {
+  }
+  isBaz = (): this is string => {
+  }
+}
+
+=====================================output=====================================
+class Foo {
+  isBar(): this is string {}
+  isBaz = (): this is string => {};
+}
+
+================================================================================
+`;

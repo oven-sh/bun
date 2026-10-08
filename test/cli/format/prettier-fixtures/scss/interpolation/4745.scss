@@ -1,0 +1,15 @@
+$foo-area: foo;
+$bar-area: bar;
+
+.grid-fails {
+  grid-template-areas:
+    "#{$foo-area} #{$foo-area}"
+    "#{$bar-area} #{$foo-area}";
+}
+
+.grid-works {
+  grid-template-areas:
+    " #{$foo-area} #{$foo-area}"
+    " #{$bar-area} #{$foo-area}";
+}
+

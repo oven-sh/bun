@@ -1,0 +1,413 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`brackets.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import {
+  runTaskForChanged,
+  description,
+  someOtherLabel,
+  thatMakes,
+  itGo,
+  multiLine,
+  andMore,
+  soWeCanGetItTo80Columns
+} from '.';
+import {fitsIn, oneLine} from '.';
+
+=====================================output=====================================
+import {
+  runTaskForChanged,
+  description,
+  someOtherLabel,
+  thatMakes,
+  itGo,
+  multiLine,
+  andMore,
+  soWeCanGetItTo80Columns,
+} from ".";
+import {fitsIn, oneLine} from ".";
+
+================================================================================
+`;
+
+exports[`brackets.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import {
+  runTaskForChanged,
+  description,
+  someOtherLabel,
+  thatMakes,
+  itGo,
+  multiLine,
+  andMore,
+  soWeCanGetItTo80Columns
+} from '.';
+import {fitsIn, oneLine} from '.';
+
+=====================================output=====================================
+import {
+  runTaskForChanged,
+  description,
+  someOtherLabel,
+  thatMakes,
+  itGo,
+  multiLine,
+  andMore,
+  soWeCanGetItTo80Columns,
+} from ".";
+import { fitsIn, oneLine } from ".";
+
+================================================================================
+`;
+
+exports[`comments.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import { a //comment1
+//comment2
+//comment3
+as b} from "";
+
+import {
+  a as //comment1
+  //comment2
+  //comment3
+  b1
+} from "";
+
+import {
+  a as //comment2 //comment1
+  //comment3
+  b2
+} from "";
+
+import {
+  a as //comment3 //comment2 //comment1
+  b3
+} from "";
+
+import {
+  // comment 1
+  FN1, // comment 2
+  /* comment 3 */ FN2,
+  // FN3,
+  FN4 /* comment 4 */
+  // FN4,
+  // FN5
+} from "./module";
+
+import {
+  ExecutionResult,
+  DocumentNode,
+  /* tslint:disable */
+  SelectionSetNode,
+  /* tslint:enable */
+} from 'graphql';
+
+import x, {
+  // comment
+  y
+} from 'z';
+
+=====================================output=====================================
+import {
+  //comment1
+  //comment2
+  //comment3
+  a as b,
+} from "";
+
+import {
+  //comment1
+  //comment2
+  //comment3
+  a as b1,
+} from "";
+
+import {
+  //comment2 //comment1
+  //comment3
+  a as b2,
+} from "";
+
+import {
+  //comment3 //comment2 //comment1
+  a as b3,
+} from "";
+
+import {
+  // comment 1
+  FN1, // comment 2
+  /* comment 3 */ FN2,
+  // FN3,
+  FN4 /* comment 4 */,
+  // FN4,
+  // FN5
+} from "./module";
+
+import {
+  ExecutionResult,
+  DocumentNode,
+  /* tslint:disable */
+  SelectionSetNode,
+  /* tslint:enable */
+} from "graphql";
+
+import x, {
+  // comment
+  y,
+} from "z";
+
+================================================================================
+`;
+
+exports[`comments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import { a //comment1
+//comment2
+//comment3
+as b} from "";
+
+import {
+  a as //comment1
+  //comment2
+  //comment3
+  b1
+} from "";
+
+import {
+  a as //comment2 //comment1
+  //comment3
+  b2
+} from "";
+
+import {
+  a as //comment3 //comment2 //comment1
+  b3
+} from "";
+
+import {
+  // comment 1
+  FN1, // comment 2
+  /* comment 3 */ FN2,
+  // FN3,
+  FN4 /* comment 4 */
+  // FN4,
+  // FN5
+} from "./module";
+
+import {
+  ExecutionResult,
+  DocumentNode,
+  /* tslint:disable */
+  SelectionSetNode,
+  /* tslint:enable */
+} from 'graphql';
+
+import x, {
+  // comment
+  y
+} from 'z';
+
+=====================================output=====================================
+import {
+  //comment1
+  //comment2
+  //comment3
+  a as b,
+} from "";
+
+import {
+  //comment1
+  //comment2
+  //comment3
+  a as b1,
+} from "";
+
+import {
+  //comment2 //comment1
+  //comment3
+  a as b2,
+} from "";
+
+import {
+  //comment3 //comment2 //comment1
+  a as b3,
+} from "";
+
+import {
+  // comment 1
+  FN1, // comment 2
+  /* comment 3 */ FN2,
+  // FN3,
+  FN4 /* comment 4 */,
+  // FN4,
+  // FN5
+} from "./module";
+
+import {
+  ExecutionResult,
+  DocumentNode,
+  /* tslint:disable */
+  SelectionSetNode,
+  /* tslint:enable */
+} from "graphql";
+
+import x, {
+  // comment
+  y,
+} from "z";
+
+================================================================================
+`;
+
+exports[`inline.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import somethingSuperLongsomethingSuperLong from 'somethingSuperLongsomethingSuperLongsomethingSuperLong'
+import {somethingSuperLongsomethingSuperLong1} from 'somethingSuperLongsomethingSuperLongsomethingSuperLong'
+import a, {somethingSuperLongsomethingSuperLong2} from 'somethingSuperLongsomethingSuperLongsomethingSuperLong'
+import {a2, somethingSuperLongsomethingSuperLong3} from 'somethingSuperLongsomethingSuperLongsomethingSuperLong'
+
+=====================================output=====================================
+import somethingSuperLongsomethingSuperLong from "somethingSuperLongsomethingSuperLongsomethingSuperLong";
+import {somethingSuperLongsomethingSuperLong1} from "somethingSuperLongsomethingSuperLongsomethingSuperLong";
+import a, {
+  somethingSuperLongsomethingSuperLong2,
+} from "somethingSuperLongsomethingSuperLongsomethingSuperLong";
+import {
+  a2,
+  somethingSuperLongsomethingSuperLong3,
+} from "somethingSuperLongsomethingSuperLongsomethingSuperLong";
+
+================================================================================
+`;
+
+exports[`inline.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import somethingSuperLongsomethingSuperLong from 'somethingSuperLongsomethingSuperLongsomethingSuperLong'
+import {somethingSuperLongsomethingSuperLong1} from 'somethingSuperLongsomethingSuperLongsomethingSuperLong'
+import a, {somethingSuperLongsomethingSuperLong2} from 'somethingSuperLongsomethingSuperLongsomethingSuperLong'
+import {a2, somethingSuperLongsomethingSuperLong3} from 'somethingSuperLongsomethingSuperLongsomethingSuperLong'
+
+=====================================output=====================================
+import somethingSuperLongsomethingSuperLong from "somethingSuperLongsomethingSuperLongsomethingSuperLong";
+import { somethingSuperLongsomethingSuperLong1 } from "somethingSuperLongsomethingSuperLongsomethingSuperLong";
+import a, {
+  somethingSuperLongsomethingSuperLong2,
+} from "somethingSuperLongsomethingSuperLongsomethingSuperLong";
+import {
+  a2,
+  somethingSuperLongsomethingSuperLong3,
+} from "somethingSuperLongsomethingSuperLongsomethingSuperLong";
+
+================================================================================
+`;
+
+exports[`long-line.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import someCoolUtilWithARatherLongName from '../../../../utils/someCoolUtilWithARatherLongName';
+
+=====================================output=====================================
+import someCoolUtilWithARatherLongName from "../../../../utils/someCoolUtilWithARatherLongName";
+
+================================================================================
+`;
+
+exports[`long-line.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import someCoolUtilWithARatherLongName from '../../../../utils/someCoolUtilWithARatherLongName';
+
+=====================================output=====================================
+import someCoolUtilWithARatherLongName from "../../../../utils/someCoolUtilWithARatherLongName";
+
+================================================================================
+`;
+
+exports[`multiple_standalones.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import a, * as b from 'a';
+
+=====================================output=====================================
+import a, * as b from "a";
+
+================================================================================
+`;
+
+exports[`multiple_standalones.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import a, * as b from 'a';
+
+=====================================output=====================================
+import a, * as b from "a";
+
+================================================================================
+`;
+
+exports[`same-local-and-imported.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import {a} from 'a';
+import {b as b} from 'b';
+import {c as /* comment */c} from 'c';
+
+=====================================output=====================================
+import {a} from "a";
+import {b as b} from "b";
+import {c as /* comment */ c} from "c";
+
+================================================================================
+`;
+
+exports[`same-local-and-imported.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import {a} from 'a';
+import {b as b} from 'b';
+import {c as /* comment */c} from 'c';
+
+=====================================output=====================================
+import { a } from "a";
+import { b as b } from "b";
+import { c as /* comment */ c } from "c";
+
+================================================================================
+`;

@@ -1,0 +1,2 @@
+.foo {margin:var(     --n-gutterSize) 0 var(   --gutterSize ) var( --n-gutterSize );
+}

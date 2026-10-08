@@ -1,0 +1,63 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`complex.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type TupleWithRest = [number, ...(1 extends 2 ? string[] : number[])];
+
+=====================================output=====================================
+type TupleWithRest = [number, ...(1 extends 2 ? string[] : number[])];
+
+================================================================================
+`;
+
+exports[`infer-type.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type Tail<T extends any[]> = T extends [infer U, ...infer R] ? R : never;
+
+// should remove parens from this, to avoid a type issue with TypeScript 4.0:
+type Tail2<T extends any[]> = T extends [infer U, ...(infer R)] ? R : never;
+
+// but not remove parens from this:
+type Tail3<T extends any[]> = T extends [infer U, ...(infer R)[]] ? R : never;
+
+type ReduceNextElement<
+  T extends readonly unknown[]
+> = T extends readonly [infer V, ...infer R] ? [V, R] : never
+
+=====================================output=====================================
+type Tail<T extends any[]> = T extends [infer U, ...infer R] ? R : never;
+
+// should remove parens from this, to avoid a type issue with TypeScript 4.0:
+type Tail2<T extends any[]> = T extends [infer U, ...infer R] ? R : never;
+
+// but not remove parens from this:
+type Tail3<T extends any[]> = T extends [infer U, ...(infer R)[]] ? R : never;
+
+type ReduceNextElement<T extends readonly unknown[]> = T extends readonly [
+  infer V,
+  ...infer R,
+]
+  ? [V, R]
+  : never;
+
+================================================================================
+`;
+
+exports[`simple.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type X = [...number[]];
+
+=====================================output=====================================
+type X = [...number[]];
+
+================================================================================
+`;

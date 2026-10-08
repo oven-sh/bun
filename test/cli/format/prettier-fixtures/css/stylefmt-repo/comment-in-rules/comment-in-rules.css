@@ -1,0 +1,13 @@
+.class
+{display: inline-block;
+/* comment */
+float: left;}
+
+#id {
+  font-size: 12px;
+
+  /* colors */
+
+  color: pink;
+  background: #fff;
+}

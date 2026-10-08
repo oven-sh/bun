@@ -1,0 +1,3 @@
+({
+    set *iterator(iter) { },
+});

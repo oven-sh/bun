@@ -1,0 +1,297 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`declare-class-fields.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class B {p: number;}
+class C extends B {declare p: 256 | 1000;}
+class D {
+  declare field = "field";
+}
+declare class D {
+  field = "field";
+}
+
+=====================================output=====================================
+class B {
+  p: number;
+}
+class C extends B {
+  declare p: 256 | 1000;
+}
+class D {
+  declare field = "field";
+}
+declare class D {
+  field = "field";
+}
+
+================================================================================
+`;
+
+exports[`declare-class-fields.ts format[babel-ts] 1`] = `
+"Initializers are not allowed in ambient contexts. (4:17)
+  2 | class C extends B {declare p: 256 | 1000;}
+  3 | class D {
+> 4 |   declare field = "field";
+    |                 ^
+  5 | }
+  6 | declare class D {
+  7 |   field = "field";
+Cause: Initializers are not allowed in ambient contexts. (4:16)"
+`;
+
+exports[`declare-class-fields.ts format[oxc-ts] 1`] = `
+"Initializers are not allowed in ambient contexts. (4:19)
+  2 | class C extends B {declare p: 256 | 1000;}
+  3 | class D {
+> 4 |   declare field = "field";
+    |                   ^^^^^^^
+  5 | }
+  6 | declare class D {
+  7 |   field = "field";"
+`;
+
+exports[`declare-enum.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare const enum Foo {}
+declare enum Bar {}
+
+=====================================output=====================================
+declare const enum Foo {}
+declare enum Bar {}
+
+================================================================================
+`;
+
+exports[`declare-function.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare function x();
+declare function y(): void;
+
+declare namespace A {
+    function x();
+    function y(): void;
+}
+
+declare function f([]?)
+
+=====================================output=====================================
+declare function x();
+declare function y(): void;
+
+declare namespace A {
+  function x();
+  function y(): void;
+}
+
+declare function f([]?);
+
+================================================================================
+`;
+
+exports[`declare-get-set-field.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class C {
+  declare get: string
+  declare set: string;
+}
+
+=====================================output=====================================
+class C {
+  declare get: string;
+  declare set: string;
+}
+
+================================================================================
+`;
+
+exports[`declare-interface.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare interface Dictionary<T> {
+  [index: string]: T
+}
+
+declare interface B {
+  foo([]?): void;
+  bar({}, []?): any;
+  baz(a: string, b: number, []?): void;
+}
+
+=====================================output=====================================
+declare interface Dictionary<T> {
+  [index: string]: T;
+}
+
+declare interface B {
+  foo([]?): void;
+  bar({}, []?): any;
+  baz(a: string, b: number, []?): void;
+}
+
+================================================================================
+`;
+
+exports[`declare-module.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare module m {
+  class C {
+    field = "field";
+  }
+}
+
+=====================================output=====================================
+declare module m {
+  class C {
+    field = "field";
+  }
+}
+
+================================================================================
+`;
+
+exports[`declare-module.ts format[babel-ts] 1`] = `
+"Initializers are not allowed in ambient contexts. (3:11)
+  1 | declare module m {
+  2 |   class C {
+> 3 |     field = "field";
+    |           ^
+  4 |   }
+  5 | }
+  6 |
+Cause: Initializers are not allowed in ambient contexts. (3:10)"
+`;
+
+exports[`declare-module.ts format[oxc-ts] 1`] = `
+"Initializers are not allowed in ambient contexts. (3:13)
+  1 | declare module m {
+  2 |   class C {
+> 3 |     field = "field";
+    |             ^^^^^^^
+  4 |   }
+  5 | }
+  6 |"
+`;
+
+exports[`declare-namespace.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare namespace m {
+  class C {
+    field = "field";
+  }
+}
+
+=====================================output=====================================
+declare namespace m {
+  class C {
+    field = "field";
+  }
+}
+
+================================================================================
+`;
+
+exports[`declare-namespace.ts format[babel-ts] 1`] = `
+"Initializers are not allowed in ambient contexts. (3:11)
+  1 | declare namespace m {
+  2 |   class C {
+> 3 |     field = "field";
+    |           ^
+  4 |   }
+  5 | }
+  6 |
+Cause: Initializers are not allowed in ambient contexts. (3:10)"
+`;
+
+exports[`declare-namespace.ts format[oxc-ts] 1`] = `
+"Initializers are not allowed in ambient contexts. (3:13)
+  1 | declare namespace m {
+  2 |   class C {
+> 3 |     field = "field";
+    |             ^^^^^^^
+  4 |   }
+  5 | }
+  6 |"
+`;
+
+exports[`declare-var.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// tslint:disable-next-line:no-use-before-declare
+const hello = 5;
+
+// tslint:disable-next-line:no-use-before-declare
+declare const hello2 = 5;
+
+=====================================output=====================================
+// tslint:disable-next-line:no-use-before-declare
+const hello = 5;
+
+// tslint:disable-next-line:no-use-before-declare
+declare const hello2 = 5;
+
+================================================================================
+`;
+
+exports[`object-type-in-declare-function.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare function foo(this: { a: boolean, b: string, c: number }):
+  Promise<Array<foo>>
+
+declare function bazFlip({ a: boolean, b: string, c: number }):
+  Promise<Array<foo>>
+
+declare function bar(...{ a: boolean, b: string, c: number }):
+  Promise<Array<foo>>
+
+declare function bar(...x: { a: boolean, b: string, c: number }):
+  Promise<Array<foo>>
+
+=====================================output=====================================
+declare function foo(this: {
+  a: boolean;
+  b: string;
+  c: number;
+}): Promise<Array<foo>>;
+
+declare function bazFlip({
+  a: boolean,
+  b: string,
+  c: number,
+}): Promise<Array<foo>>;
+
+declare function bar(
+  ...{ a: boolean, b: string, c: number }
+): Promise<Array<foo>>;
+
+declare function bar(
+  ...x: { a: boolean; b: string; c: number }
+): Promise<Array<foo>>;
+
+================================================================================
+`;

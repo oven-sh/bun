@@ -1,0 +1,64 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`global.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare global {
+    interface Event {
+	    persist: Function
+  	}
+}
+
+=====================================output=====================================
+declare global {
+  interface Event {
+    persist: Function;
+  }
+}
+
+================================================================================
+`;
+
+exports[`moduleNamespace.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare module "f" {}
+
+namespace f {}
+
+=====================================output=====================================
+declare module "f" {}
+
+namespace f {}
+
+================================================================================
+`;
+
+exports[`nestedNamespace.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+namespace X {
+    export namespace Y {
+
+    }
+}
+
+namespace X.Y {
+
+}
+
+=====================================output=====================================
+namespace X {
+  export namespace Y {}
+}
+
+namespace X.Y {}
+
+================================================================================
+`;

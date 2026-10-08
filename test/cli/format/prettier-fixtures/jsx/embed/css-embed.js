@@ -1,0 +1,1 @@
+<style {...spread}>{`.{}`}</style>;

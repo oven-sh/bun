@@ -1,0 +1,39 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`comment-in-rules.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.class
+{display: inline-block;
+/* comment */
+float: left;}
+
+#id {
+  font-size: 12px;
+
+  /* colors */
+
+  color: pink;
+  background: #fff;
+}
+
+=====================================output=====================================
+.class {
+  display: inline-block;
+  /* comment */
+  float: left;
+}
+
+#id {
+  font-size: 12px;
+
+  /* colors */
+
+  color: pink;
+  background: #fff;
+}
+
+================================================================================
+`;

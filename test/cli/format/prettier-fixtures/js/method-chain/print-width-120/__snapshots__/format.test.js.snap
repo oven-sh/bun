@@ -1,0 +1,65 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`constructor.js - {"printWidth":120} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+printWidth: 120
+                                                                                                       printWidth: 120 |
+=====================================input======================================
+const writer = new BufferStackItem(
+  new BinaryWriter()
+    .writeUInt8(StackItemType.ByteArray)
+    .writeVarBytesLE(Buffer.alloc(10, 1))
+    .toBuffer(),
+);
+
+const writer2 = new BufferStackItem(
+  new Extra.BinaryWriter()
+    .writeUInt8(StackItemType.ByteArray)
+    .writeVarBytesLE(Buffer.alloc(10, 1))
+    .toBuffer(),
+);
+
+=====================================output=====================================
+const writer = new BufferStackItem(
+  new BinaryWriter().writeUInt8(StackItemType.ByteArray).writeVarBytesLE(Buffer.alloc(10, 1)).toBuffer(),
+);
+
+const writer2 = new BufferStackItem(
+  new Extra.BinaryWriter().writeUInt8(StackItemType.ByteArray).writeVarBytesLE(Buffer.alloc(10, 1)).toBuffer(),
+);
+
+================================================================================
+`;
+
+exports[`issue-7884.js - {"printWidth":120} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+printWidth: 120
+                                                                                                       printWidth: 120 |
+=====================================input======================================
+    cy.get(".ready")
+      .should("have.text", "READY")
+      .should("have.css", "background-color", "rgb(136, 228, 229)");
+    cy.get(".pending")
+      .should("have.text", "PENDING")
+      .should("have.css", "background-color", "rgb(253, 212, 90)");
+    cy.get(".live")
+      .should("have.text", "LIVE")
+      .should("have.css", "background-color", "rgb(175, 221, 255)");
+    cy.get(".draft")
+      .should("have.text", "DRAFT")
+      .should("have.css", "background-color", "rgb(255, 181, 181)");
+    cy.get(".scheduled")
+      .should("have.text", "SCHEDULED")
+      .should("have.css", "background-color", "rgb(222, 222, 222)");
+
+=====================================output=====================================
+cy.get(".ready").should("have.text", "READY").should("have.css", "background-color", "rgb(136, 228, 229)");
+cy.get(".pending").should("have.text", "PENDING").should("have.css", "background-color", "rgb(253, 212, 90)");
+cy.get(".live").should("have.text", "LIVE").should("have.css", "background-color", "rgb(175, 221, 255)");
+cy.get(".draft").should("have.text", "DRAFT").should("have.css", "background-color", "rgb(255, 181, 181)");
+cy.get(".scheduled").should("have.text", "SCHEDULED").should("have.css", "background-color", "rgb(222, 222, 222)");
+
+================================================================================
+`;

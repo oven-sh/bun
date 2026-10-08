@@ -1,0 +1,46 @@
+.y-photo-grid
+{
+    display: flex;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+
+    &__row
+    {
+        display: flex;
+        width: 100%;
+        margin: 0;
+        padding: 0;
+        flex-direction: row;
+        align-items: center;
+        justify-content: flex-start;
+    }
+
+    &__item
+    {
+        display: block;
+        margin: 0;
+        background: #eee;
+
+        &:first-child
+        {
+            margin-left: 0;
+        }
+    }
+
+    &__link
+    {
+        display: block;
+        height: 100%;
+        width: 100%;
+    }
+
+    &__image
+    {
+        width: 100%;
+        height: 100%;
+    }
+}

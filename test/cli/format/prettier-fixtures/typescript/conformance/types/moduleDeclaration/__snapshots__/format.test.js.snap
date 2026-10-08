@@ -1,0 +1,41 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`kind-detection.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare /* module */ namespace A {}
+
+=====================================output=====================================
+declare namespace /* module */ A {}
+
+================================================================================
+`;
+
+exports[`moduleDeclaration.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+module A {
+    export class A {
+    }
+}
+
+declare module "B" {
+    export class B {
+    }
+}
+
+=====================================output=====================================
+module A {
+  export class A {}
+}
+
+declare module "B" {
+  export class B {}
+}
+
+================================================================================
+`;

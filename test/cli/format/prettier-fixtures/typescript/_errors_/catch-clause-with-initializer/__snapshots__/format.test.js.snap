@@ -1,0 +1,33 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`catch-clause-with-initializer.ts format[babel-ts] 1`] = `
+"Unexpected token, expected ")" (3:10)
+  1 | try {
+  2 | }
+> 3 | catch (e = 1) {
+    |          ^
+  4 | }
+  5 |
+Cause: Unexpected token, expected ")" (3:9)"
+`;
+
+exports[`catch-clause-with-initializer.ts format[oxc-ts] 1`] = `
+"Expected \`)\` but found \`=\` (3:10)
+  1 | try {
+  2 | }
+> 3 | catch (e = 1) {
+    |          ^
+  4 | }
+  5 |"
+`;
+
+exports[`catch-clause-with-initializer.ts format[typescript] 1`] = `
+"Catch clause variable cannot have an initializer. (3:12)
+  1 | try {
+  2 | }
+> 3 | catch (e = 1) {
+    |            ^
+  4 | }
+  5 |
+Cause: Catch clause variable cannot have an initializer."
+`;

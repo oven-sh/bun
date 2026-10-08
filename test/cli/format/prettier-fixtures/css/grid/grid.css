@@ -1,0 +1,114 @@
+/* quotes */
+div {
+  grid-template-areas:
+       'header header'
+       'main sidebar'
+       'footer footer';
+}
+
+/* numbers */
+div {
+  grid-template-columns:
+      [full-start] minmax(1.50em, 1fr)
+      [main-start] minmax(.40ch, 75ch)
+      [main-end] minmax(1em, 1.000fr)
+      [full-end];
+}
+
+/* casing */
+div {
+  GRID:
+    [top] 1fr
+    [middle] 1fr
+    bottom;
+
+  grid-TEMPLATE:
+        "a a a" 200px
+        "b b b" 200px
+        / 200px 200px auto;
+}
+
+/* break before first line if there are any breaks */
+div {
+  grid-template-columns:
+      1fr 100px 3em;
+  grid: [wide-start] "header header header" 200px [wide-end]
+      "footer footer footer" 25px
+      / auto 50px auto;
+}
+
+/**
+ * https://github.com/prettier/prettier/issues/2703#issuecomment-341188126
+ */
+.container {
+  display: grid;
+
+  /* basic template rows/columns */
+  grid-template-columns: 1fr 100px 3em;
+  grid-template-rows: 1fr 100px 3em;
+  /* template rows/columns with named grid lines */
+  grid-template-columns:
+    [wide-start] 1fr
+    [main-start] 500px
+    [main-end] 1fr
+    [wide-end];
+  grid-template-rows:
+    [top] 1fr
+    [middle] 1fr
+    [bottom];
+  /* template rows/columns with functions */
+  grid-template-columns: minmax(1em, 1fr) minmax(1em, 80ch) minmax(1em, 1fr);
+  /* getting really busy with named lines + functions */
+  grid-template-columns:
+    [full-start] minmax(1em, 1fr)
+    [main-start] minmax(1em, 80ch)
+    [main-end] minmax(1em, 1fr)
+    [full-end];
+
+  grid-template-areas:
+    "header header header"
+    "main   main   sidebar"
+    "main   main   sidebar2"
+    "footer footer footer";
+
+  /* Shorthand for grid-template-rows, grid-template-columns, and grid-template
+     areas. In one. This can get really crazy. */
+  grid-template:
+    [row1-start] "header header header" 25px [row1-end]
+    [row2-start] "footer footer footer" 25px [row2-end]
+    / auto 50px auto;
+
+  /* The. Worst. This one is shorthand for like everything here smashed into one. But rarely will you actually specify EVERYTHING. */
+  grid:
+    [row1-start] "header header header" 25px [row1-end]
+    [row2-start] "footer footer footer" 25px [row2-end]
+    / auto 50px auto;
+  /* simpler use case: */
+  grid: 200px auto / 1fr auto 1fr;
+
+  /* Okay, the the worst of it. The simpler syntaxes: */
+
+  grid-row-gap: 2em;
+  grid-column-gap: 1em;
+  /* shorthand for grid-row-gap + grid-column-gap: */
+  grid-gap: 2em 1em;
+
+  grid-auto-columns: 1fr;
+  grid-auto-rows: 1fr;
+}
+
+.container > .item {
+  grid-column-start: 1;
+  grid-column-end: 2;
+  grid-row-start: -2;
+  grid-row-end: -1;
+
+  /* shorthands for the above: */
+  grid-column: 1 / 2;
+  grid-column: main;
+  grid-row: -2 / span 1;
+  grid-row: footer;
+
+  grid-area: main;
+  grid-area: 1 / main-start / 3 / main-end;
+}

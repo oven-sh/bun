@@ -1,0 +1,3 @@
+{
+  for(using void of []);
+}

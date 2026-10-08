@@ -1,0 +1,29 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`import_comma.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@import "rounded-corners", "text-shadow";
+
+=====================================output=====================================
+@import "rounded-corners", "text-shadow";
+
+================================================================================
+`;
+
+exports[`import_comma.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@import "rounded-corners", "text-shadow";
+
+=====================================output=====================================
+@import "rounded-corners", "text-shadow";
+
+================================================================================
+`;

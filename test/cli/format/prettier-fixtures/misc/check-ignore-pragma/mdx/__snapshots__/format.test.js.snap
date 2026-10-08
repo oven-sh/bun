@@ -1,0 +1,51 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`with-noformat-pragma.md - {"checkIgnorePragma":true} format 1`] = `
+====================================options=====================================
+checkIgnorePragma: true
+parsers: ["mdx"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+{/* @noformat */}
+
+I     should   NOT   be      formatted       !!
+
+=====================================output=====================================
+{/* @noformat */}
+
+I     should   NOT   be      formatted       !!
+
+================================================================================
+`;
+
+exports[`with-noprettier-pragma.md - {"checkIgnorePragma":true} format 1`] = `
+====================================options=====================================
+checkIgnorePragma: true
+parsers: ["mdx"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+{/* @noprettier */}
+
+I     should   NOT   be      formatted       !!
+
+=====================================output=====================================
+{/* @noprettier */}
+
+I     should   NOT   be      formatted       !!
+
+================================================================================
+`;
+
+exports[`without-pragma.md - {"checkIgnorePragma":true} format 1`] = `
+====================================options=====================================
+checkIgnorePragma: true
+parsers: ["mdx"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+I     should      format   !!
+
+=====================================output=====================================
+I should format !!
+
+================================================================================
+`;

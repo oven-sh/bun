@@ -1,0 +1,3 @@
+didScheduleRenderPhaseUpdateDuringThisPassFoo =
+didScheduleRenderPhaseUpdate
+     = true

@@ -1,0 +1,61 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`await.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function a() {
+  for await((let) of foo);
+  for await((let).a of foo);
+  for await((let)[a] of foo);
+  for await((let)()[a] of foo);
+}
+
+=====================================output=====================================
+async function a() {
+  for await ((let) of foo);
+  for await ((let).a of foo);
+  for await ((let)[a] of foo);
+  for await ((let)()[a] of foo);
+}
+
+================================================================================
+`;
+
+exports[`let.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for ((let) of foo);
+for (foo of let);
+for (foo of let.a);
+for (foo of let[a]);
+for ((let.a) of foo);
+for ((let[a]) of foo);
+for ((let)().a of foo);
+for (letFoo of foo);
+
+for ((let.a) in foo);
+for ((let[a]) in foo);
+
+for (let of of let);
+
+=====================================output=====================================
+for ((let) of foo);
+for (foo of let);
+for (foo of let.a);
+for (foo of let[a]);
+for ((let).a of foo);
+for ((let)[a] of foo);
+for ((let)().a of foo);
+for (letFoo of foo);
+
+for ((let).a in foo);
+for ((let)[a] in foo);
+
+for (let of of let);
+
+================================================================================
+`;

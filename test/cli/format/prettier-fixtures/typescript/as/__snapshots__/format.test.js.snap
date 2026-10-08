@@ -1,0 +1,530 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`array-pattern.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+[x as any] = x;
+
+=====================================output=====================================
+[x as any] = x;
+
+================================================================================
+`;
+
+exports[`as.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const name = (description as DescriptionObject).name || (description as string);
+this.isTabActionBar((e.target || e.srcElement) as HTMLElement);
+(originalError ? wrappedError(errMsg, originalError) : Error(errMsg)) as InjectionError;
+'current' in (props.pagination as Object);
+('current' in props.pagination) as Object;
+start + (yearSelectTotal as number);
+(start + yearSelectTotal) as number;
+scrollTop > (visibilityHeight as number);
+(scrollTop > visibilityHeight) as number;
+export default class Column<T> extends (RcTable.Column as React.ComponentClass<ColumnProps<T>,ColumnProps<T>,ColumnProps<T>,ColumnProps<T>>) {}
+export const MobxTypedForm = class extends (Form as { new (): any }) {}
+export abstract class MobxTypedForm1 extends (Form as { new (): any }) {}
+({}) as {};
+function*g() {
+  const test = (yield 'foo') as number;
+}
+async function g1() {
+  const test = (await 'foo') as number;
+}
+({}) as X;
+() => ({}) as X;
+const state = JSON.stringify({
+  next: window.location.href,
+  nonce,
+} as State);
+
+(foo.bar as Baz) = [bar];
+(foo.bar as any)++;
+
+(bValue as boolean) ? 0 : -1;
+<boolean>bValue ? 0 : -1;
+
+const value1 = thisIsAReallyReallyReallyReallyReallyLongIdentifier as SomeInterface;
+const value2 = thisIsAnIdentifier as thisIsAReallyReallyReallyReallyReallyReallyReallyReallyReallyReallyReallyLongInterface;
+const value3 = thisIsAReallyLongIdentifier as (SomeInterface | SomeOtherInterface);
+const value4 = thisIsAReallyLongIdentifier as { prop1: string, prop2: number, prop3: number }[];
+const value5 = thisIsAReallyReallyReallyReallyReallyReallyReallyReallyReallyLongIdentifier as [string, number];
+
+const iter1 = createIterator(this.controller, child, this.tag as SyncFunctionComponent);
+const iter2 = createIterator(self.controller, child, self.tag as SyncFunctionComponent);
+
+=====================================output=====================================
+const name = (description as DescriptionObject).name || (description as string);
+this.isTabActionBar((e.target || e.srcElement) as HTMLElement);
+(originalError
+  ? wrappedError(errMsg, originalError)
+  : Error(errMsg)) as InjectionError;
+"current" in (props.pagination as Object);
+("current" in props.pagination) as Object;
+start + (yearSelectTotal as number);
+(start + yearSelectTotal) as number;
+scrollTop > (visibilityHeight as number);
+(scrollTop > visibilityHeight) as number;
+export default class Column<T> extends (RcTable.Column as React.ComponentClass<
+  ColumnProps<T>,
+  ColumnProps<T>,
+  ColumnProps<T>,
+  ColumnProps<T>
+>) {}
+export const MobxTypedForm = class extends (Form as { new (): any }) {};
+export abstract class MobxTypedForm1 extends (Form as { new (): any }) {}
+({}) as {};
+function* g() {
+  const test = (yield "foo") as number;
+}
+async function g1() {
+  const test = (await "foo") as number;
+}
+({}) as X;
+() => ({}) as X;
+const state = JSON.stringify({
+  next: window.location.href,
+  nonce,
+} as State);
+
+(foo.bar as Baz) = [bar];
+(foo.bar as any)++;
+
+(bValue as boolean) ? 0 : -1;
+<boolean>bValue ? 0 : -1;
+
+const value1 =
+  thisIsAReallyReallyReallyReallyReallyLongIdentifier as SomeInterface;
+const value2 =
+  thisIsAnIdentifier as thisIsAReallyReallyReallyReallyReallyReallyReallyReallyReallyReallyReallyLongInterface;
+const value3 = thisIsAReallyLongIdentifier as
+  SomeInterface | SomeOtherInterface;
+const value4 = thisIsAReallyLongIdentifier as {
+  prop1: string;
+  prop2: number;
+  prop3: number;
+}[];
+const value5 =
+  thisIsAReallyReallyReallyReallyReallyReallyReallyReallyReallyLongIdentifier as [
+    string,
+    number,
+  ];
+
+const iter1 = createIterator(
+  this.controller,
+  child,
+  this.tag as SyncFunctionComponent,
+);
+const iter2 = createIterator(
+  self.controller,
+  child,
+  self.tag as SyncFunctionComponent,
+);
+
+================================================================================
+`;
+
+exports[`as-const-embedded.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const GQL_QUERY_WITH_CONST = /* GraphQL */ \`
+  query S { shop }
+\` as const;
+
+const HTML_WITH_CONST = /* HTML */ \`
+<div>
+<h1>foo</h1>
+  <p>foo</p>
+</div>
+\` as const;
+
+=====================================output=====================================
+const GQL_QUERY_WITH_CONST = /* GraphQL */ \`
+  query S {
+    shop
+  }
+\` as const;
+
+const HTML_WITH_CONST = /* HTML */ \`
+  <div>
+    <h1>foo</h1>
+    <p>foo</p>
+  </div>
+\` as const;
+
+================================================================================
+`;
+
+exports[`assignment.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export const LOG_LEVEL = {
+    EMERGENCY: 0,
+    ALERT: 1,
+    CRITICAL: 2,
+    ERROR: 3,
+    WARNING: 4,
+    NOTICE: 5,
+    INFO: 6,
+    DEBUG: 7,
+} as const;
+
+const TYPE_MAP = {
+    'character device': 'special',
+    'character special file': 'special',
+    directory: 'directory',
+    'regular file': 'file',
+    socket: 'socket',
+    'symbolic link': 'link',
+} as Foo;
+
+this.previewPlayerHandle = (setInterval(async () => {
+  if (this.previewIsPlaying) {
+    await this.fetchNextPreviews();
+    this.currentPreviewIndex++;
+  }
+}, this.refreshDelay) as unknown) as number;
+
+this.intervalID = (setInterval(() => {
+  self.step();
+}, 30) as unknown) as number;
+
+=====================================output=====================================
+export const LOG_LEVEL = {
+  EMERGENCY: 0,
+  ALERT: 1,
+  CRITICAL: 2,
+  ERROR: 3,
+  WARNING: 4,
+  NOTICE: 5,
+  INFO: 6,
+  DEBUG: 7,
+} as const;
+
+const TYPE_MAP = {
+  "character device": "special",
+  "character special file": "special",
+  directory: "directory",
+  "regular file": "file",
+  socket: "socket",
+  "symbolic link": "link",
+} as Foo;
+
+this.previewPlayerHandle = setInterval(async () => {
+  if (this.previewIsPlaying) {
+    await this.fetchNextPreviews();
+    this.currentPreviewIndex++;
+  }
+}, this.refreshDelay) as unknown as number;
+
+this.intervalID = setInterval(() => {
+  self.step();
+}, 30) as unknown as number;
+
+================================================================================
+`;
+
+exports[`assignment2.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const defaultMaskGetter = $parse(attrs[directiveName]) as (
+  scope: ng.IScope
+) => Mask;
+
+(this.configuration as any) = (this.editor as any) = (this
+  .editorBody as any) = undefined;
+
+angular.module("foo").directive("formIsolator", () => {
+  return {
+    name: "form",
+    controller: class FormIsolatorController {
+      $addControl = angular.noop;
+    } as ng.IControllerConstructor,
+  };
+});
+
+(this.selectorElem as any) = this.multiselectWidget = this.initialValues = undefined;
+
+const extraRendererAttrs = ((attrs.rendererAttrs &&
+  this.utils.safeParseJsonString(attrs.rendererAttrs)) ||
+  Object.create(null)) as FieldService.RendererAttributes;
+
+const annotate = (angular.injector as any).$$annotate as (
+  fn: Function
+) => string[];
+
+const originalPrototype = originalConstructor.prototype as TComponent & InjectionTarget,
+  propertyToServiceName = originalPrototype._inject;
+
+=====================================output=====================================
+const defaultMaskGetter = $parse(attrs[directiveName]) as (
+  scope: ng.IScope,
+) => Mask;
+
+(this.configuration as any) =
+  (this.editor as any) =
+  (this.editorBody as any) =
+    undefined;
+
+angular.module("foo").directive("formIsolator", () => {
+  return {
+    name: "form",
+    controller: class FormIsolatorController {
+      $addControl = angular.noop;
+    } as ng.IControllerConstructor,
+  };
+});
+
+(this.selectorElem as any) =
+  this.multiselectWidget =
+  this.initialValues =
+    undefined;
+
+const extraRendererAttrs = ((attrs.rendererAttrs &&
+  this.utils.safeParseJsonString(attrs.rendererAttrs)) ||
+  Object.create(null)) as FieldService.RendererAttributes;
+
+const annotate = (angular.injector as any).$$annotate as (
+  fn: Function,
+) => string[];
+
+const originalPrototype = originalConstructor.prototype as TComponent &
+    InjectionTarget,
+  propertyToServiceName = originalPrototype._inject;
+
+================================================================================
+`;
+
+exports[`export_default_as.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export default (function log() {} as typeof console.log)
+
+=====================================output=====================================
+export default (function log() {} as typeof console.log);
+
+================================================================================
+`;
+
+exports[`expression-statement.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// expression statemnt of "as" expression hardly ever makes sense, but it's still valid.
+const [type, x] = [0, 0];
+(type) as unknown;
+x as unknown;
+
+=====================================output=====================================
+// expression statemnt of "as" expression hardly ever makes sense, but it's still valid.
+const [type, x] = [0, 0];
+(type) as unknown;
+x as unknown;
+
+================================================================================
+`;
+
+exports[`long-identifiers.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const bifornCringerMoshedPerplexSawder =
+  askTrovenaBeenaDependsRowans as glimseGlyphsHazardNoopsTieTie;
+
+averredBathersBoxroomBuggyNurl.anodyneCondosMalateOverateRetinol =
+  annularCooeedSplicesWalksWayWay as kochabCooieGameOnOboleUnweave;
+
+averredBathersBoxroomBuggyNurl = {
+  anodyneCondosMalateOverateRetinol:
+    annularCooeedSplicesWalksWayWay as kochabCooieGameOnOboleUnweave
+};
+
+averredBathersBoxroomBuggyNurl(
+  anodyneCondosMalateOverateRetinol.annularCooeedSplicesWalksWayWay as
+    kochabCooieGameOnOboleUnweave
+);
+
+=====================================output=====================================
+const bifornCringerMoshedPerplexSawder =
+  askTrovenaBeenaDependsRowans as glimseGlyphsHazardNoopsTieTie;
+
+averredBathersBoxroomBuggyNurl.anodyneCondosMalateOverateRetinol =
+  annularCooeedSplicesWalksWayWay as kochabCooieGameOnOboleUnweave;
+
+averredBathersBoxroomBuggyNurl = {
+  anodyneCondosMalateOverateRetinol:
+    annularCooeedSplicesWalksWayWay as kochabCooieGameOnOboleUnweave,
+};
+
+averredBathersBoxroomBuggyNurl(
+  anodyneCondosMalateOverateRetinol.annularCooeedSplicesWalksWayWay as kochabCooieGameOnOboleUnweave,
+);
+
+================================================================================
+`;
+
+exports[`nested-await-and-as.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const getAccountCount = async () =>
+  (await
+    ((await (
+      await focusOnSection(BOOKMARKED_PROJECTS_SECTION_NAME)
+    ).findItem("My bookmarks")) as TreeItem
+  ).getChildren()
+  ).length
+
+=====================================output=====================================
+const getAccountCount = async () =>
+  (
+    await (
+      (await (
+        await focusOnSection(BOOKMARKED_PROJECTS_SECTION_NAME)
+      ).findItem("My bookmarks")) as TreeItem
+    ).getChildren()
+  ).length;
+
+================================================================================
+`;
+
+exports[`return.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function foo() {
+  return {
+    foo: 1,
+    bar: 2,
+  } as Foo;
+}
+
+=====================================output=====================================
+function foo() {
+  return {
+    foo: 1,
+    bar: 2,
+  } as Foo;
+}
+
+================================================================================
+`;
+
+exports[`ternary.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo = (coooooooooooooooooooooooooooooooooooooooooooooooooooond
+    ? baaaaaaaaaaaaaaaaaaaaar
+    : baaaaaaaaaaaaaaaaaaaaaz) as Fooooooooooo;
+
+foo = (condition ? firstValue : secondValue) as SomeType;
+
+const foo = (coooooooooooooooooooooooooooooooooooooooooooooooooooond
+  ? baaaaaaaaaaaaaaaaaaaaar
+  : baaaaaaaaaaaaaaaaaaaaaz) as Fooooooooooo;
+
+function foo() {
+  return (coooooooooooooooooooooooooooooooooooooooooooooooooooond
+    ? baaaaaaaaaaaaaaaaaaaaar
+    : baaaaaaaaaaaaaaaaaaaaaz) as Fooooooooooo;
+}
+
+function foo() {
+  throw (coooooooooooooooooooooooooooooooooooooooooooooooooooond
+      ? baaaaaaaaaaaaaaaaaaaaar
+      : baaaaaaaaaaaaaaaaaaaaaz) as Fooooooooooo;
+}
+
+function foo() {
+  void ((coooooooooooooooooooooooooooooooooooooooooooooooooooond
+    ? baaaaaaaaaaaaaaaaaaaaar
+    : baaaaaaaaaaaaaaaaaaaaaz) as Fooooooooooo);
+}
+
+bifornCringerMoshedPerplexSawder =
+  askTrovenaBeenaDependsRowans +
+  ((glimseGlyphsHazardNoopsTieTie === 0
+    ? averredBathersBoxroomBuggyNurl
+    : anodyneCondosMalateOverateRetinol) as AnnularCooeedSplicesWalksWayWay);
+
+bifornCringerMoshedPerplexSawder =
+  askTrovenaBeenaDependsRowans +
+  ((glimseGlyphsHazardNoopsTieTie === 0 &&
+  kochabCooieGameOnOboleUnweave === Math.PI
+    ? averredBathersBoxroomBuggyNurl
+    : anodyneCondosMalateOverateRetinol) as AnnularCooeedSplicesWalksWayWay);
+
+=====================================output=====================================
+foo = (
+  coooooooooooooooooooooooooooooooooooooooooooooooooooond
+    ? baaaaaaaaaaaaaaaaaaaaar
+    : baaaaaaaaaaaaaaaaaaaaaz
+) as Fooooooooooo;
+
+foo = (condition ? firstValue : secondValue) as SomeType;
+
+const foo = (
+  coooooooooooooooooooooooooooooooooooooooooooooooooooond
+    ? baaaaaaaaaaaaaaaaaaaaar
+    : baaaaaaaaaaaaaaaaaaaaaz
+) as Fooooooooooo;
+
+function foo() {
+  return (
+    coooooooooooooooooooooooooooooooooooooooooooooooooooond
+      ? baaaaaaaaaaaaaaaaaaaaar
+      : baaaaaaaaaaaaaaaaaaaaaz
+  ) as Fooooooooooo;
+}
+
+function foo() {
+  throw (
+    coooooooooooooooooooooooooooooooooooooooooooooooooooond
+      ? baaaaaaaaaaaaaaaaaaaaar
+      : baaaaaaaaaaaaaaaaaaaaaz
+  ) as Fooooooooooo;
+}
+
+function foo() {
+  void ((
+    coooooooooooooooooooooooooooooooooooooooooooooooooooond
+      ? baaaaaaaaaaaaaaaaaaaaar
+      : baaaaaaaaaaaaaaaaaaaaaz
+  ) as Fooooooooooo);
+}
+
+bifornCringerMoshedPerplexSawder =
+  askTrovenaBeenaDependsRowans +
+  ((glimseGlyphsHazardNoopsTieTie === 0
+    ? averredBathersBoxroomBuggyNurl
+    : anodyneCondosMalateOverateRetinol) as AnnularCooeedSplicesWalksWayWay);
+
+bifornCringerMoshedPerplexSawder =
+  askTrovenaBeenaDependsRowans +
+  ((glimseGlyphsHazardNoopsTieTie === 0 &&
+  kochabCooieGameOnOboleUnweave === Math.PI
+    ? averredBathersBoxroomBuggyNurl
+    : anodyneCondosMalateOverateRetinol) as AnnularCooeedSplicesWalksWayWay);
+
+================================================================================
+`;

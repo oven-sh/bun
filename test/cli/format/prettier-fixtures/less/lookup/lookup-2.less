@@ -1,0 +1,17 @@
+/* https://lesscss.org/features/#detached-rulesets-feature-property-variable-accessors */
+
+@config: {
+  @dark: {
+    primary: darkblue;
+  }
+  @light: {
+    primary: lightblue;
+  }
+}
+
+.box {
+  @lookup: dark;
+  color: @config[@@lookup][primary];
+  color: @config   [   @@lookup   ][   primary   ];
+  color: @config   [   @@lookup   ]   [   primary   ];
+}

@@ -1,0 +1,29 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`at-rule-with-comments.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.ag-theme-balham {
+    @include ag-theme-balham(
+        (
+            foreground-color: $custom-foreground-color,
+            disabled-foreground-color: null, // TODO some comment
+        )
+    );
+}
+
+=====================================output=====================================
+.ag-theme-balham {
+  @include ag-theme-balham(
+    (
+      foreground-color: $custom-foreground-color,
+      disabled-foreground-color: null,
+      // TODO some comment
+    )
+  );
+}
+
+================================================================================
+`;

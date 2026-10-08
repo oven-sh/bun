@@ -1,0 +1,76 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`comment.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/**
+ * comment
+ */
+
+.class
+{
+  padding:10px; }
+/*comment*/
+
+
+.foo{color:red
+}
+
+
+/*
+  at rule
+ */
+
+
+@media only screen {
+  /* inner at rule comment */
+  .foo { display: none; }
+
+  /*
+   * another comment
+   */
+   /* in a row */
+
+.bar {
+  color:yellow;
+}
+}
+
+=====================================output=====================================
+/**
+ * comment
+ */
+
+.class {
+  padding: 10px;
+}
+/*comment*/
+
+.foo {
+  color: red;
+}
+
+/*
+  at rule
+ */
+
+@media only screen {
+  /* inner at rule comment */
+  .foo {
+    display: none;
+  }
+
+  /*
+   * another comment
+   */
+  /* in a row */
+
+  .bar {
+    color: yellow;
+  }
+}
+
+================================================================================
+`;

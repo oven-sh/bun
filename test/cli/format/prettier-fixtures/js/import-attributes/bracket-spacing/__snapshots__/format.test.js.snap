@@ -1,0 +1,56 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`dynamic-import.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import("./foo.json", { with: { type: "json" } });
+
+=====================================output=====================================
+import("./foo.json", {with: {type: "json"}});
+
+================================================================================
+`;
+
+exports[`empty.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export * as bar from "bar.json" with { }
+=====================================output=====================================
+export * as bar from "bar.json" with {};
+
+================================================================================
+`;
+
+exports[`re-export.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export { default as foo2 } from "foo.json" with { type: "json" };
+
+=====================================output=====================================
+export {default as foo2} from "foo.json" with {type: "json"};
+
+================================================================================
+`;
+
+exports[`static-import.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import json from "./foo.json" with { type: "json" };
+
+=====================================output=====================================
+import json from "./foo.json" with {type: "json"};
+
+================================================================================
+`;

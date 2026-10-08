@@ -1,0 +1,66 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`arrows-bind.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a => ({}::b()\`\`[''].c++ && 0 ? 0 : 0);
+(a => b)::c;
+a::(b => c);
+
+=====================================output=====================================
+(a) => ({})::b()\`\`[""].c++ && 0 ? 0 : 0;
+((a) => b)::c;
+a::((b) => c);
+
+================================================================================
+`;
+
+exports[`arrows-bind.js format[acorn] 1`] = `
+"Unexpected token (1:9)
+> 1 | a => ({}::b()\`\`[''].c++ && 0 ? 0 : 0);
+    |         ^
+  2 | (a => b)::c;
+  3 | a::(b => c);
+  4 |
+Cause: Unexpected token (1:8)"
+`;
+
+exports[`arrows-bind.js format[espree] 1`] = `
+"Unexpected token : (1:9)
+> 1 | a => ({}::b()\`\`[''].c++ && 0 ? 0 : 0);
+    |         ^
+  2 | (a => b)::c;
+  3 | a::(b => c);
+  4 |
+Cause: Unexpected token :"
+`;
+
+exports[`arrows-bind.js format[meriyah] 1`] = `
+"Expected ')' (1:9)
+> 1 | a => ({}::b()\`\`[''].c++ && 0 ? 0 : 0);
+    |         ^
+  2 | (a => b)::c;
+  3 | a::(b => c);
+  4 |
+Cause: [1:8-1:9]: Expected ')'"
+`;
+
+exports[`arrows-bind.js format[oxc] 1`] = `
+"Expected \`,\` or \`)\` but found \`:\` (1:9)
+> 1 | a => ({}::b()\`\`[''].c++ && 0 ? 0 : 0);
+    |         ^
+  2 | (a => b)::c;
+  3 | a::(b => c);
+  4 |"
+`;
+
+exports[`arrows-bind.js format[yuku] 1`] = `
+"Expected ',' or ')' in parenthesized expression, but found ':' (1:9)
+> 1 | a => ({}::b()\`\`[''].c++ && 0 ? 0 : 0);
+    |         ^
+  2 | (a => b)::c;
+  3 | a::(b => c);
+  4 |"
+`;

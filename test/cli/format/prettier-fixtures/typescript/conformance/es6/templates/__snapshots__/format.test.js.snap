@@ -1,0 +1,16 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`templateStringWithEmbeddedTypeAssertionOnAdditionES6.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+﻿// @target: ES6
+var x = \`abc\${ <any>(10 + 10) }def\`;
+
+=====================================output=====================================
+﻿// @target: ES6
+var x = \`abc\${<any>(10 + 10)}def\`;
+
+================================================================================
+`;

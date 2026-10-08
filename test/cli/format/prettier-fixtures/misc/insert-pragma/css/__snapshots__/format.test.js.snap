@@ -1,0 +1,71 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`front-matter.css - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---
+something
+---
+
+.class {    display: none;    }
+
+=====================================output=====================================
+---
+something
+---
+
+/** @format */
+
+.class {
+  display: none;
+}
+
+================================================================================
+`;
+
+exports[`simple.css - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.class {    display: none;    }
+
+=====================================output=====================================
+/** @format */
+
+.class {
+  display: none;
+}
+
+================================================================================
+`;
+
+exports[`start-with-comment.css - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/**
+ * hello world
+ */
+
+.class {    display: none;    }
+
+=====================================output=====================================
+/**
+ * hello world
+ *
+ * @format
+ */
+
+.class {
+  display: none;
+}
+
+================================================================================
+`;

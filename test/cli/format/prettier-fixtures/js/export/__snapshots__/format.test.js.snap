@@ -1,0 +1,395 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`blank-line-between-specifiers.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export {
+  // a
+  foo1,
+
+  // b
+  bar1,
+  baz1,
+} from "mod";
+
+const foo2 = 1;
+const bar2 = 1;
+const baz2 = 1;
+
+export {
+  // a
+  foo2,
+
+  // b
+  bar2,
+  baz2,
+};
+
+=====================================output=====================================
+export {
+  // a
+  foo1,
+
+  // b
+  bar1,
+  baz1,
+} from "mod";
+
+const foo2 = 1;
+const bar2 = 1;
+const baz2 = 1;
+
+export {
+  // a
+  foo2,
+
+  // b
+  bar2,
+  baz2,
+};
+
+================================================================================
+`;
+
+exports[`blank-line-between-specifiers.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export {
+  // a
+  foo1,
+
+  // b
+  bar1,
+  baz1,
+} from "mod";
+
+const foo2 = 1;
+const bar2 = 1;
+const baz2 = 1;
+
+export {
+  // a
+  foo2,
+
+  // b
+  bar2,
+  baz2,
+};
+
+=====================================output=====================================
+export {
+  // a
+  foo1,
+
+  // b
+  bar1,
+  baz1,
+} from "mod";
+
+const foo2 = 1;
+const bar2 = 1;
+const baz2 = 1;
+
+export {
+  // a
+  foo2,
+
+  // b
+  bar2,
+  baz2,
+};
+
+================================================================================
+`;
+
+exports[`bracket.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const {  runTaskForChanged,
+  description,
+  someOtherLabel,
+  thatMakes,
+  itGo,
+  multiLine,
+  andMore,
+  soWeCanGetItTo80Columns,fitsIn, oneLine} = {}
+export {
+  runTaskForChanged,
+  description,
+  someOtherLabel,
+  thatMakes,
+  itGo,
+  multiLine,
+  andMore,
+  soWeCanGetItTo80Columns
+};
+export {fitsIn, oneLine};
+
+=====================================output=====================================
+const {
+  runTaskForChanged,
+  description,
+  someOtherLabel,
+  thatMakes,
+  itGo,
+  multiLine,
+  andMore,
+  soWeCanGetItTo80Columns,
+  fitsIn,
+  oneLine,
+} = {};
+export {
+  runTaskForChanged,
+  description,
+  someOtherLabel,
+  thatMakes,
+  itGo,
+  multiLine,
+  andMore,
+  soWeCanGetItTo80Columns,
+};
+export {fitsIn, oneLine};
+
+================================================================================
+`;
+
+exports[`bracket.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const {  runTaskForChanged,
+  description,
+  someOtherLabel,
+  thatMakes,
+  itGo,
+  multiLine,
+  andMore,
+  soWeCanGetItTo80Columns,fitsIn, oneLine} = {}
+export {
+  runTaskForChanged,
+  description,
+  someOtherLabel,
+  thatMakes,
+  itGo,
+  multiLine,
+  andMore,
+  soWeCanGetItTo80Columns
+};
+export {fitsIn, oneLine};
+
+=====================================output=====================================
+const {
+  runTaskForChanged,
+  description,
+  someOtherLabel,
+  thatMakes,
+  itGo,
+  multiLine,
+  andMore,
+  soWeCanGetItTo80Columns,
+  fitsIn,
+  oneLine,
+} = {};
+export {
+  runTaskForChanged,
+  description,
+  someOtherLabel,
+  thatMakes,
+  itGo,
+  multiLine,
+  andMore,
+  soWeCanGetItTo80Columns,
+};
+export { fitsIn, oneLine };
+
+================================================================================
+`;
+
+exports[`empty.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export {};
+export {} from ".";
+
+=====================================output=====================================
+export {};
+export {} from ".";
+
+================================================================================
+`;
+
+exports[`empty.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export {};
+export {} from ".";
+
+=====================================output=====================================
+export {};
+export {} from ".";
+
+================================================================================
+`;
+
+exports[`same-local-and-exported.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export {a} from 'a';
+export {b as b} from 'b';
+export {c as /* comment */c} from 'c';
+
+=====================================output=====================================
+export {a} from "a";
+export {b as b} from "b";
+export {c as /* comment */ c} from "c";
+
+================================================================================
+`;
+
+exports[`same-local-and-exported.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export {a} from 'a';
+export {b as b} from 'b';
+export {c as /* comment */c} from 'c';
+
+=====================================output=====================================
+export { a } from "a";
+export { b as b } from "b";
+export { c as /* comment */ c } from "c";
+
+================================================================================
+`;
+
+exports[`test.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export { value1, value2 as value2_renamed, value3, value4 as value4_renamed, value5 } from "exports";
+
+export * as ns from "mod";
+
+export * as foo from "./baz";
+
+=====================================output=====================================
+export {
+  value1,
+  value2 as value2_renamed,
+  value3,
+  value4 as value4_renamed,
+  value5,
+} from "exports";
+
+export * as ns from "mod";
+
+export * as foo from "./baz";
+
+================================================================================
+`;
+
+exports[`test.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export { value1, value2 as value2_renamed, value3, value4 as value4_renamed, value5 } from "exports";
+
+export * as ns from "mod";
+
+export * as foo from "./baz";
+
+=====================================output=====================================
+export {
+  value1,
+  value2 as value2_renamed,
+  value3,
+  value4 as value4_renamed,
+  value5,
+} from "exports";
+
+export * as ns from "mod";
+
+export * as foo from "./baz";
+
+================================================================================
+`;
+
+exports[`undefined.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export { undefinedExport };
+
+=====================================output=====================================
+export {undefinedExport};
+
+================================================================================
+`;
+
+exports[`undefined.js - {"bracketSpacing":false} format[acorn] 1`] = `
+"Export 'undefinedExport' is not defined (1:10)
+> 1 | export { undefinedExport };
+    |          ^
+  2 |
+Cause: Export 'undefinedExport' is not defined (1:9)"
+`;
+
+exports[`undefined.js - {"bracketSpacing":false} format[espree] 1`] = `
+"Export 'undefinedExport' is not defined (1:10)
+> 1 | export { undefinedExport };
+    |          ^
+  2 |
+Cause: Export 'undefinedExport' is not defined"
+`;
+
+exports[`undefined.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export { undefinedExport };
+
+=====================================output=====================================
+export { undefinedExport };
+
+================================================================================
+`;
+
+exports[`undefined.js format[acorn] 1`] = `
+"Export 'undefinedExport' is not defined (1:10)
+> 1 | export { undefinedExport };
+    |          ^
+  2 |
+Cause: Export 'undefinedExport' is not defined (1:9)"
+`;
+
+exports[`undefined.js format[espree] 1`] = `
+"Export 'undefinedExport' is not defined (1:10)
+> 1 | export { undefinedExport };
+    |          ^
+  2 |
+Cause: Export 'undefinedExport' is not defined"
+`;

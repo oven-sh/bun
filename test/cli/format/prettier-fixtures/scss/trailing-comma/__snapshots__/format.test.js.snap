@@ -1,0 +1,765 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`at-rules.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a {
+@include section-type-1(
+$header:
+(
+margin: 0 0 $margin-base,
+text-align: left,
+),
+$decoration:
+(
+type: base,
+margin: 0 auto -1px 0,
+primary-color: $brand-primary,
+secondary-color: $gray-light,
+),
+$title:
+(
+margin: 0 0 $margin-small,
+color: false,
+font-size: $font-size-h3,
+font-weight: false,
+line-height: $line-height-h3,
+)
+);
+}
+
+a {
+@include item-spotlight-properties-transition(
+"-title",
+(
+box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15),
+)
+);
+}
+
+=====================================output=====================================
+a {
+  @include section-type-1(
+    $header: (
+      margin: 0 0 $margin-base,
+      text-align: left,
+    ),
+    $decoration: (
+      type: base,
+      margin: 0 auto -1px 0,
+      primary-color: $brand-primary,
+      secondary-color: $gray-light,
+    ),
+    $title: (
+      margin: 0 0 $margin-small,
+      color: false,
+      font-size: $font-size-h3,
+      font-weight: false,
+      line-height: $line-height-h3,
+    )
+  );
+}
+
+a {
+  @include item-spotlight-properties-transition(
+    "-title",
+    (
+      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15),
+    )
+  );
+}
+
+================================================================================
+`;
+
+exports[`at-rules.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a {
+@include section-type-1(
+$header:
+(
+margin: 0 0 $margin-base,
+text-align: left,
+),
+$decoration:
+(
+type: base,
+margin: 0 auto -1px 0,
+primary-color: $brand-primary,
+secondary-color: $gray-light,
+),
+$title:
+(
+margin: 0 0 $margin-small,
+color: false,
+font-size: $font-size-h3,
+font-weight: false,
+line-height: $line-height-h3,
+)
+);
+}
+
+a {
+@include item-spotlight-properties-transition(
+"-title",
+(
+box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15),
+)
+);
+}
+
+=====================================output=====================================
+a {
+  @include section-type-1(
+    $header: (
+      margin: 0 0 $margin-base,
+      text-align: left
+    ),
+    $decoration: (
+      type: base,
+      margin: 0 auto -1px 0,
+      primary-color: $brand-primary,
+      secondary-color: $gray-light
+    ),
+    $title: (
+      margin: 0 0 $margin-small,
+      color: false,
+      font-size: $font-size-h3,
+      font-weight: false,
+      line-height: $line-height-h3
+    )
+  );
+}
+
+a {
+  @include item-spotlight-properties-transition(
+    "-title",
+    (
+      box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15)
+    )
+  );
+}
+
+================================================================================
+`;
+
+exports[`comments.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.simplification {
+  foo: (
+    calc(), // It is a comment
+  );
+}
+
+.simplification {
+  foo: (
+    calc() // It is a comment
+  );
+}
+
+$z-indexes: (
+  header: 1035,
+  header: 1035,
+  overlay: 1202, // TODO
+  header: 1035,
+  header: 1035,
+);
+
+=====================================output=====================================
+.simplification {
+  foo: (
+    calc() // It is a comment
+  );
+}
+
+.simplification {
+  foo: (
+    calc() // It is a comment
+  );
+}
+
+$z-indexes: (
+  header: 1035,
+  header: 1035,
+  overlay: 1202,
+  // TODO
+  header: 1035,
+  header: 1035,
+);
+
+================================================================================
+`;
+
+exports[`comments.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.simplification {
+  foo: (
+    calc(), // It is a comment
+  );
+}
+
+.simplification {
+  foo: (
+    calc() // It is a comment
+  );
+}
+
+$z-indexes: (
+  header: 1035,
+  header: 1035,
+  overlay: 1202, // TODO
+  header: 1035,
+  header: 1035,
+);
+
+=====================================output=====================================
+.simplification {
+  foo: (
+    calc() // It is a comment
+  );
+}
+
+.simplification {
+  foo: (
+    calc() // It is a comment
+  );
+}
+
+$z-indexes: (
+  header: 1035,
+  header: 1035,
+  overlay: 1202,
+  // TODO
+  header: 1035,
+  header: 1035
+);
+
+================================================================================
+`;
+
+exports[`declaration.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a {
+    margin: $bar,;
+}
+
+=====================================output=====================================
+a {
+  margin: $bar;
+}
+
+================================================================================
+`;
+
+exports[`declaration.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a {
+    margin: $bar,;
+}
+
+=====================================output=====================================
+a {
+  margin: $bar;
+}
+
+================================================================================
+`;
+
+exports[`issue-6920.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$my-map: (
+  'foo': 1, // Comment
+  'bar': 2, // Comment
+);
+
+=====================================output=====================================
+$my-map: (
+  "foo": 1,
+  // Comment
+  "bar": 2, // Comment
+);
+
+================================================================================
+`;
+
+exports[`issue-6920.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$my-map: (
+  'foo': 1, // Comment
+  'bar': 2, // Comment
+);
+
+=====================================output=====================================
+$my-map: (
+  "foo": 1,
+  // Comment
+  "bar": 2 // Comment
+);
+
+================================================================================
+`;
+
+exports[`list.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$colors: hotpink deepskyblue firebrick,;
+$list: (a,);
+$list: ('Helvetica', 'Arial', sans-serif,);
+$colors: (
+  "red",
+  "blue"
+);
+$config: (
+  themes: (
+    mist: (
+      header: #dcfac0,
+      content: #00968b,
+      footer: #85c79c
+    ),
+    $spring: (
+      header: #f4fac7,
+      content: #c2454e,
+      footer: #ffb158
+    )
+  )
+);
+
+$breakpoint-map: (
+  small: (
+    min-width: null,
+    max-width: 479px,
+    base-font: 16px,
+    vertical-rhythm: 1.3
+  ),
+  medium: (
+    min-width: 480px,
+    max-width: 959px,
+    base-font: 18px,
+    vertical-rhythm: 1.414
+  ),
+  large: (
+    min-width: 960px,
+    max-width: 1099px,
+    base-font: 18px,
+    vertical-rhythm: 1.5
+  ),
+  xlarge: (
+    min-width: 1100px,
+    max-width: null,
+    base-font: 21px,
+    vertical-rhythm: 1.618
+  )
+);
+
+=====================================output=====================================
+$colors: hotpink deepskyblue firebrick;
+$list: (a);
+$list: ("Helvetica", "Arial", sans-serif);
+$colors: ("red", "blue");
+$config: (
+  themes: (
+    mist: (
+      header: #dcfac0,
+      content: #00968b,
+      footer: #85c79c,
+    ),
+    $spring: (
+      header: #f4fac7,
+      content: #c2454e,
+      footer: #ffb158,
+    ),
+  ),
+);
+
+$breakpoint-map: (
+  small: (
+    min-width: null,
+    max-width: 479px,
+    base-font: 16px,
+    vertical-rhythm: 1.3,
+  ),
+  medium: (
+    min-width: 480px,
+    max-width: 959px,
+    base-font: 18px,
+    vertical-rhythm: 1.414,
+  ),
+  large: (
+    min-width: 960px,
+    max-width: 1099px,
+    base-font: 18px,
+    vertical-rhythm: 1.5,
+  ),
+  xlarge: (
+    min-width: 1100px,
+    max-width: null,
+    base-font: 21px,
+    vertical-rhythm: 1.618,
+  ),
+);
+
+================================================================================
+`;
+
+exports[`list.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$colors: hotpink deepskyblue firebrick,;
+$list: (a,);
+$list: ('Helvetica', 'Arial', sans-serif,);
+$colors: (
+  "red",
+  "blue"
+);
+$config: (
+  themes: (
+    mist: (
+      header: #dcfac0,
+      content: #00968b,
+      footer: #85c79c
+    ),
+    $spring: (
+      header: #f4fac7,
+      content: #c2454e,
+      footer: #ffb158
+    )
+  )
+);
+
+$breakpoint-map: (
+  small: (
+    min-width: null,
+    max-width: 479px,
+    base-font: 16px,
+    vertical-rhythm: 1.3
+  ),
+  medium: (
+    min-width: 480px,
+    max-width: 959px,
+    base-font: 18px,
+    vertical-rhythm: 1.414
+  ),
+  large: (
+    min-width: 960px,
+    max-width: 1099px,
+    base-font: 18px,
+    vertical-rhythm: 1.5
+  ),
+  xlarge: (
+    min-width: 1100px,
+    max-width: null,
+    base-font: 21px,
+    vertical-rhythm: 1.618
+  )
+);
+
+=====================================output=====================================
+$colors: hotpink deepskyblue firebrick;
+$list: (a);
+$list: ("Helvetica", "Arial", sans-serif);
+$colors: ("red", "blue");
+$config: (
+  themes: (
+    mist: (
+      header: #dcfac0,
+      content: #00968b,
+      footer: #85c79c
+    ),
+    $spring: (
+      header: #f4fac7,
+      content: #c2454e,
+      footer: #ffb158
+    )
+  )
+);
+
+$breakpoint-map: (
+  small: (
+    min-width: null,
+    max-width: 479px,
+    base-font: 16px,
+    vertical-rhythm: 1.3
+  ),
+  medium: (
+    min-width: 480px,
+    max-width: 959px,
+    base-font: 18px,
+    vertical-rhythm: 1.414
+  ),
+  large: (
+    min-width: 960px,
+    max-width: 1099px,
+    base-font: 18px,
+    vertical-rhythm: 1.5
+  ),
+  xlarge: (
+    min-width: 1100px,
+    max-width: null,
+    base-font: 21px,
+    vertical-rhythm: 1.618
+  )
+);
+
+================================================================================
+`;
+
+exports[`map.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$map: (
+    small: 767px,
+    medium: 992px,
+    large: 1200px,
+);
+$map: (
+    'medium': (min-width: 800px),
+    'large': (min-width: 1000px),
+    'huge': (min-width: 1200px),
+);
+$map: ( small: 767px, medium: 992px, large: 1200px );
+
+=====================================output=====================================
+$map: (
+  small: 767px,
+  medium: 992px,
+  large: 1200px,
+);
+$map: (
+  "medium": (
+    min-width: 800px,
+  ),
+  "large": (
+    min-width: 1000px,
+  ),
+  "huge": (
+    min-width: 1200px,
+  ),
+);
+$map: (
+  small: 767px,
+  medium: 992px,
+  large: 1200px,
+);
+
+================================================================================
+`;
+
+exports[`map.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$map: (
+    small: 767px,
+    medium: 992px,
+    large: 1200px,
+);
+$map: (
+    'medium': (min-width: 800px),
+    'large': (min-width: 1000px),
+    'huge': (min-width: 1200px),
+);
+$map: ( small: 767px, medium: 992px, large: 1200px );
+
+=====================================output=====================================
+$map: (
+  small: 767px,
+  medium: 992px,
+  large: 1200px
+);
+$map: (
+  "medium": (
+    min-width: 800px
+  ),
+  "large": (
+    min-width: 1000px
+  ),
+  "huge": (
+    min-width: 1200px
+  )
+);
+$map: (
+  small: 767px,
+  medium: 992px,
+  large: 1200px
+);
+
+================================================================================
+`;
+
+exports[`selector_list.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkasdhkajsdhakjsdhkajsdhjkahskjdkjahsjkdjkakjsdm,
+asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkasdhkajsdhakjsdhkajsdhjkahskjdkjahsjkdjkakjsdm, {
+
+}
+
+.some-class, {
+&.another-class, {
+     color: red;
+ }
+}
+
+=====================================output=====================================
+asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkasdhkajsdhakjsdhkajsdhjkahskjdkjahsjkdjkakjsdm,
+asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkasdhkajsdhakjsdhkajsdhjkahskjdkjahsjkdjkakjsdm {
+}
+
+.some-class {
+  &.another-class {
+    color: red;
+  }
+}
+
+================================================================================
+`;
+
+exports[`selector_list.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkasdhkajsdhakjsdhkajsdhjkahskjdkjahsjkdjkakjsdm,
+asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkasdhkajsdhakjsdhkajsdhjkahskjdkjahsjkdjkakjsdm, {
+
+}
+
+.some-class, {
+&.another-class, {
+     color: red;
+ }
+}
+
+=====================================output=====================================
+asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkasdhkajsdhakjsdhkajsdhjkahskjdkjahsjkdjkakjsdm,
+asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkasdhkajsdhakjsdhkajsdhjkahskjdkjahsjkdjkakjsdm {
+}
+
+.some-class {
+  &.another-class {
+    color: red;
+  }
+}
+
+================================================================================
+`;
+
+exports[`trailing-comma.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$z-indexes: (
+    header: 1035,
+    overlay: 1202 // The comma shoud be printed before the comment when trailing-comma = es5
+);
+
+=====================================output=====================================
+$z-indexes: (
+  header: 1035,
+  overlay: 1202, // The comma shoud be printed before the comment when trailing-comma = es5
+);
+
+================================================================================
+`;
+
+exports[`trailing-comma.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$z-indexes: (
+    header: 1035,
+    overlay: 1202 // The comma shoud be printed before the comment when trailing-comma = es5
+);
+
+=====================================output=====================================
+$z-indexes: (
+  header: 1035,
+  overlay: 1202 // The comma shoud be printed before the comment when trailing-comma = es5
+);
+
+================================================================================
+`;
+
+exports[`variable.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$test: 1,;
+$margin: 0, 2em, 0, 1.5em,;
+
+
+=====================================output=====================================
+$test: 1;
+$margin: 0, 2em, 0, 1.5em;
+
+================================================================================
+`;
+
+exports[`variable.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$test: 1,;
+$margin: 0, 2em, 0, 1.5em,;
+
+
+=====================================output=====================================
+$test: 1;
+$margin: 0, 2em, 0, 1.5em;
+
+================================================================================
+`;

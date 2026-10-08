@@ -1,0 +1,158 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`apply-rule.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/* http://tabatkins.github.io/specs/css-apply-rule/#defining */
+
+:root {
+  --toolbar-theme: {
+    background-color: hsl(120, 70%, 95%);
+    border-radius: 4px;
+    border: 1px solid var(--theme-color late);
+  };
+  --toolbar-title-theme: {
+    color: green;
+  };
+}
+
+:root {
+  --without-semi: {color:red;}
+}
+
+:root {
+  --like-a-apply-rule: {
+  color:red;} /* no semi here*/
+  --another-prop: blue;
+}
+
+:root {
+  --like-a-apply-rule: {
+  color:red;} /* no semi here*/
+  --another-one-like-a-apply-rule: {
+    color:red;
+  };
+}
+
+=====================================output=====================================
+/* http://tabatkins.github.io/specs/css-apply-rule/#defining */
+
+:root {
+  --toolbar-theme: {
+    background-color: hsl(120, 70%, 95%);
+    border-radius: 4px;
+    border: 1px solid var(--theme-color late);
+  };
+  --toolbar-title-theme: {
+    color: green;
+  };
+}
+
+:root {
+  --without-semi: {
+    color: red;
+  };
+}
+
+:root {
+  --like-a-apply-rule: {
+  color:red;} /* no semi here*/
+  --another-prop: blue;
+}
+
+:root {
+  --like-a-apply-rule: {
+  color:red;} /* no semi here*/
+  --another-one-like-a-apply-rule: {
+    color:red;
+  };
+}
+
+================================================================================
+`;
+
+exports[`postcss-8-improment.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/*
+This test is copied from \`postcss@8\` release note
+
+https://github.com/postcss/postcss/releases/tag/8.0.0
+*/
+
+:root {
+  --empty: ;
+  --JSON: [1, "2", {"three": {"a":1}}, [4]];
+  --javascript: function(rule) { console.log(rule) };
+}
+
+@supports (--element(".minwidth", { "minWidth": 300 })) {
+  [--self] {
+    background: greenyellow;
+  }
+}
+
+=====================================output=====================================
+/*
+This test is copied from \`postcss@8\` release note
+
+https://github.com/postcss/postcss/releases/tag/8.0.0
+*/
+
+:root {
+  --empty: ;
+  --JSON: [1, "2", {"three": {"a": 1}}, [4]];
+  --javascript: function(rule) {console.log(rule)};
+}
+
+@supports (--element(".minwidth", {"minWidth": 300})) {
+  [--self] {
+    background: greenyellow;
+  }
+}
+
+================================================================================
+`;
+
+exports[`variables.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.foo {
+  --#{$prop}: 10px;
+  #{$prop}: 10px;
+  prop1: var(--#{$var});
+  prop2: var(#{$var}, --my-#{$var}, pink);
+  prop3: calc(var(--#{$var}) * 1px);
+  prop4: var(--spacer#{(1) + 2});
+}
+
+@supports (--#{$prop}: green) {
+  body {
+    color: var(--#{$var});
+  }
+}
+
+=====================================output=====================================
+.foo {
+  --#{$prop}: 10px;
+  #{$prop}: 10px;
+  prop1: var(--#{$var});
+  prop2: var(#{$var}, --my-#{$var}, pink);
+  prop3: calc(var(--#{$var}) * 1px);
+  prop4: var(--spacer#{(1) + 2});
+}
+
+@supports (--#{$prop}: green) {
+  body {
+    color: var(--#{$var});
+  }
+}
+
+================================================================================
+`;

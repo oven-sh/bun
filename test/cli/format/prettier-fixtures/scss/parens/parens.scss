@@ -1,0 +1,294 @@
+a {
+    prop1: func(1px,1px,1px,func(1px,1px,1px,func(1px,1px,1px)));
+    prop2: func( 1px ,1px ,1px ,func( 1px ,1px ,1px ,func( 1px ,1px ,1px ) ) );
+    prop3: func(1px, 1px, 1px, func(1px, 1px, 1px, func(1px, 1px, 1px)));
+    prop4: func( 1px , 1px , 1px , func( 1px , 1px , 1px , func( 1px , 1px , 1px ) ) );
+    prop5: func(  1px  ,  1px  ,  1px  ,  func(  1px  ,  1px  ,  1px  ,  func(  1px  ,  1px  ,  1px  )  )  );
+    prop6: func(
+        1px
+        ,
+        1px
+        ,
+        1px
+        ,
+        func(
+            1px
+            ,
+            1px
+            ,
+            1px
+            ,
+            func(
+                1px
+                ,
+                1px
+                ,
+                1px
+            )
+        )
+    );
+    prop7:
+        func(
+            1px
+            ,
+            1px
+            ,
+            1px
+            ,
+            func(
+                1px
+                ,
+                1px
+                ,
+                1px
+                ,
+                func(
+                    1px
+                    ,
+                    1px
+                    ,
+                    1px
+                )
+            )
+        );
+    prop8: very-very-very-very-very-very-vey-very-very-long-func(1px,1px,1px,very-very-very-very-very-very-vey-very-very-long-func(1px,1px,1px,very-very-very-very-very-very-vey-very-very-long-func(1px,1px,1px)));
+    prop9: very-very-very-very-very-very-vey-very-very-long-func(  1px  ,  1px  ,  1px  ,  very-very-very-very-very-very-vey-very-very-long-func(  1px  ,  1px  ,  1px  ,  very-very-very-very-very-very-vey-very-very-long-func(  1px  ,  1px  ,  1px  )  )  );
+    prop10:
+        very-very-very-very-very-very-vey-very-very-long-func(
+            1px
+            ,
+            1px
+            ,
+            1px
+            ,
+            very-very-very-very-very-very-vey-very-very-long-func(
+                1px
+                ,
+                1px
+                ,
+                1px,
+                very-very-very-very-very-very-vey-very-very-long-func(
+                    1px
+                    ,
+                    1px
+                    ,
+                    1px
+                )
+            )
+        );
+    prop11: very-very-very-very-very-very-vey-very-very-long-func(
+        1px
+        ,
+        1px
+        ,
+        1px
+        ,
+        very-very-very-very-very-very-vey-very-very-long-func(
+            1px
+            ,
+            1px
+            ,
+            1px,
+            very-very-very-very-very-very-vey-very-very-long-func(
+                1px
+                ,
+                1px
+                ,
+                1px
+            )
+        )
+    );
+}
+
+a {
+  box-shadow: inset 0 $size $size (-$size) black;
+  width: calc(100% - (#{var(--g-spacing)} - #{$iframe-x-padding}) * 2);
+  padding-right: (100% * $info-width / (1 - $image-width));
+  padding-bottom:
+    (
+      100% *
+      $image-height / ($image-width-responsive + $image-margin-responsive * 2)
+    );
+}
+
+.foo {
+  --paddingC: calc(  var(  --widthB  )  /  2  );
+  content: attr(  data-title  );
+  color: var(  --main-bg-color  );
+  background-color: rgb(  255,  0,  0  );
+  background: element(  #css-source  );
+  width: calc(  100%  -  (  #{var(--g-spacing)}  -  #{$iframe-x-padding}  )  *  2  );
+  padding-bottom:
+      (
+          100% *
+          $image-height  /  (  $image-width-responsive  +  $image-margin-responsive  *  2  )
+      );
+  padding-top: var(  --paddingC  );
+  margin: 1*1 (1)*1 1*(1) (1)*(1);
+  prop: -1*-1 -(-1)*-1 -1*-(-1) -(-1)*-(-1);
+  prop1: #{($m)*(10)};
+  prop2: #{$m * 10};
+  prop3: #{-(-$m)*-(-10)};
+  prop4: +1;
+  prop5: -1;
+  prop6: word + 1; /* word1 */
+  prop7: word - 1; /* word-1 */
+  prop8: +1 +1 +1 +1; /* +1 +1 +1 +1 */
+  prop9: -1 -1 -1 -1; /* -1 -1 -1 -1 */
+  prop10: (-1);
+  prop11: (+1);
+  prop12: 10px/8px;
+  prop13: round(1.5)/2 round(1.5) /2 round(1.5)/ 2 round(1.5) / 2;
+  prop14: 2/round(1.5) 2 /round(1.5) 2/ round(1.5) 2 / round(1.5);
+  prop15: (round(1.5)/2) (round(1.5) /2) (round(1.5)/ 2) (round(1.5) / 2);
+  prop16: (2/round(1.5)) (2 /round(1.5)) (2/ round(1.5)) (2 / round(1.5));
+  prop17: $width/2 $width /2 $width/ 2 $width / 2;
+  prop18: 2/$width 2 /$width 2/ $width 2 / $width;
+  prop19: ($width/2) ($width /2) ($width/ 2) ($width / 2);
+  prop20: (2/$width) (2 /$width) (2/ $width) (2 / $width);
+  prop21: @width/2 @width /2 @width/ 2 @width / 2;
+  prop22: 2/@width 2 /@width 2/ @width 2 / @width;
+  prop23: (@width/2) (@width /2) (@width/ 2) (@width / 2);
+  prop24: (2/@width) (2 /@width) (2/ @width) (2 / @width);
+  prop25-1: #{$width}/#{$width} #{$width} /#{$width} #{$width}/ #{$width} #{$width} / #{$width};
+  prop25-2: #{$width}*#{$width} #{$width} *#{$width} #{$width}* #{$width} #{$width} * #{$width};
+  prop25-3: #{$width}+#{$width} #{$width} +#{$width} #{$width}+ #{$width} #{$width} + #{$width};
+  prop25-4: #{$width}-#{$width} #{$width} -#{$width} #{$width}- #{$width} #{$width} - #{$width};
+  prop26: 8px/2px 8px /1 1/ 2px 1 / 2;
+  prop27: 8px/2px 8px/1 1/2px 1/2;
+  prop28: 8px / 2px 8px / 1 1 / 2px 1 / 2;
+  prop29: (8px/2px) (8px/1) (1/2px) (1/2);
+  prop30: (8px / 2px) (8px / 1) (1 / 2px) (1 / 2);
+  prop31: (#{$width}/2px) (8px/#{$width}) (#{$width} / 2px) (8px / #{$width});
+  prop32: func(8px/2);
+  prop33: 5px + 8px/2px;
+  prop34: func(+20px, + 20px);
+  prop35: 1+1+1+1;
+  prop36: 1 + 1 + 1 + 1;
+  prop37: 1 +1 1 +1;
+  prop38: ++1;
+  prop39: ++(1);
+  prop40: --1;
+  prop41: --(1);
+  prop42: 1px+1px+1px+1px;
+  prop43: 1px + 1px + 1px + 1px;
+  prop44: -1+-1 -(-1)+-1 -1+-(-1) -(-1)+-(-1);
+  prop45: round(1.5)*2 round(1.5) *2 round(1.5)* 2 round(1.5) * 2;
+  prop46: 2*round(1.5) 2 *round(1.5) 2* round(1.5) 2 * round(1.5);
+  prop47: (round(1.5)*2) (round(1.5) *2) (round(1.5)* 2) (round(1.5) * 2);
+  prop48: (2*round(1.5)) (2 *round(1.5)) (2* round(1.5)) (2 * round(1.5));
+  prop49: $width*2 $width *2 $width* 2 $width * 2;
+  prop50: 2*$width 2 *$width 2* $width 2 * $width;
+  prop51: ($width*2) ($width *2) ($width* 2) ($width * 2);
+  prop52: (2*$width) (2 *$width) (2* $width) (2 * $width);
+  prop57: round(1.5)+2 round(1.5) +2 round(1.5)+ 2 round(1.5) + 2;
+  prop58: 2+round(1.5) 2 +round(1.5) 2+ round(1.5) 2 + round(1.5);
+  prop59: (round(1.5)+2) (round(1.5) +2) (round(1.5)+ 2) (round(1.5) + 2);
+  prop60: (2+round(1.5)) (2 +round(1.5)) (2+ round(1.5)) (2 + round(1.5));
+  prop61: $width+2 $width +2 $width+ 2 $width + 2;
+  prop62: 2+$width 2 +$width 2+ $width 2 + $width;
+  prop63: ($width+2) ($width +2) ($width+ 2) ($width + 2);
+  prop64: (2+$width) (2 +$width) (2+ $width) (2 + $width);
+  prop69: "test"+1 "test" +1 "test"+ 1 "test" + 1;
+  prop70: 1+"test" 1 +"test" 1+ "test" 1 + "test";
+  prop71: "test"-1 "test" -1 "test"- 1 "test" - 1;
+  prop72: 1-"test" 1 -"test" 1- "test" 1 - "test";
+  prop73: calc(100%*2px) calc(100% *2px) calc(100%* 2px) calc(100% * 2px);
+  prop74: calc(100%/2px) calc(100% /2px) calc(100%/ 2px) calc(100% / 2px);
+  prop75: calc(100%+2px) calc(100% +2px) calc(100%+ 2px) calc(100% + 2px);
+  prop76: calc(100%-2px) calc(100% -2px) calc(100%- 2px) calc(100% - 2px);
+  prop77: calc(-5px);
+  prop78: calc(+5px);
+  prop79: calc(-100px + 100px);
+  prop80: calc(+100px + 100px);
+  prop81: calc(100px  -  100px);
+  prop82: calc(100px  +  100px);
+}
+
+.bar {
+    prop1: attr(data-foo);
+    prop2: attr( data-foo );
+    prop3: attr(  data-foo  );
+    prop4: attr(
+        data-foo
+    );
+    prop5: attr(
+        data-foo
+    );
+    prop6:
+        attr(data-foo);
+    prop7:
+        attr(
+            data-foo
+        );
+    prop8:
+    attr(
+    data-foo
+    )
+    ;
+    prop9:"("attr(title)")";
+    prop10: "(" attr( title ) ")";
+    prop11:  "("  attr(  title  )  ")";
+    prop12: "("
+        attr(title)
+    ")";
+    prop13:
+        "("
+        attr(title)
+        ")";
+    prop14:
+        "("
+        attr(
+            title
+        )
+        ")";
+    prop15:
+    "("
+    attr(
+    title
+    )
+    ")"
+    ;
+    prop16: attr(length em);
+    prop17: attr(length  em);
+    prop18: attr(length   em);
+    prop19: attr(
+        length
+        em
+    );
+    prop20:attr(data-size em,20);
+    prop21: attr( data-size em , 20 );
+    prop22:  attr(  data-size  em  ,  20  );
+    prop23: attr(
+        data-size em,
+        20
+    );
+    prop24:
+        attr(
+            data-size em,
+            20
+        );
+    prop25:
+    attr(
+    data-size
+    em,
+    20
+    )
+    ;
+}
+
+.bar {
+    filter: progid:DXImageTransform.Microsoft.gradient(enabled='false',startColorstr='#fff',endColorstr='#000');
+    filter: progid:DXImageTransform.Microsoft.Shadow(color='#042b47', Direction=45, Strength=6) progid:DXImageTransform.Microsoft.Shadow(color='#042b47', Direction=135, Strength=6);
+    -ms-filter: "progid:DXImageTransform.Microsoft.gradient(startColorstr=#fad59f, endColorstr=#fa9907)";
+}
+
+.unicode-ranges
+{
+    /* <unicode-range> values */
+    unicode-range: U+26;               /* single codepoint */
+    unicode-range: U+0-7F;
+    unicode-range: U+0025-00FF;        /* codepoint range */
+    unicode-range: U+4??;              /* wildcard range */
+    unicode-range: U+0025-00FF, U+4??; /* multiple values */
+}

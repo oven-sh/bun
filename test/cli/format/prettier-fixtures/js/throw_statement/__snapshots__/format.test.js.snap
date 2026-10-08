@@ -1,0 +1,170 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`binaryish.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function f() {
+  throw (
+    property.isIdentifier() &&
+     FUNCTIONS[property.node.name] &&
+     (object.isIdentifier(JEST_GLOBAL) ||
+       (callee.isMemberExpression() && shouldHoistExpression(object))) &&
+    FUNCTIONS[property.node.name](expr.get('arguments'))
+  );
+
+  throw (
+    chalk.bold(
+      'No tests found related to files changed since last commit.\\n',
+    ) +
+    chalk.dim(
+      patternInfo.watch ?
+        'Press \`a\` to run all tests, or run Jest with \`--watchAll\`.' :
+        'Run Jest without \`-o\` to run all tests.',
+    )
+  );
+
+  throw !filePath.includes(coverageDirectory) &&
+    !filePath.endsWith(\`.\${SNAPSHOT_EXTENSION}\`);
+}
+
+=====================================output=====================================
+function f() {
+  throw (
+    property.isIdentifier() &&
+    FUNCTIONS[property.node.name] &&
+    (object.isIdentifier(JEST_GLOBAL) ||
+      (callee.isMemberExpression() && shouldHoistExpression(object))) &&
+    FUNCTIONS[property.node.name](expr.get("arguments"))
+  );
+
+  throw (
+    chalk.bold("No tests found related to files changed since last commit.\\n") +
+    chalk.dim(
+      patternInfo.watch
+        ? "Press \`a\` to run all tests, or run Jest with \`--watchAll\`."
+        : "Run Jest without \`-o\` to run all tests.",
+    )
+  );
+
+  throw (
+    !filePath.includes(coverageDirectory) &&
+    !filePath.endsWith(\`.\${SNAPSHOT_EXTENSION}\`)
+  );
+}
+
+================================================================================
+`;
+
+exports[`comment.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function x() {
+  throw func2
+      //comment
+      .bar();
+}
+ 
+function f() {
+  throw (
+    foo
+      // comment
+      .bar()
+  );
+}
+ 
+fn(function f() {
+  throw (
+    foo
+      // comment
+      .bar()
+  );
+});
+
+=====================================output=====================================
+function x() {
+  throw (
+    func2
+      //comment
+      .bar()
+  );
+}
+
+function f() {
+  throw (
+    foo
+      // comment
+      .bar()
+  );
+}
+
+fn(function f() {
+  throw (
+    foo
+      // comment
+      .bar()
+  );
+});
+
+================================================================================
+`;
+
+exports[`jsx.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function foo() {
+  throw <Bar />;
+}
+
+function foo() {
+  throw <Bar>baz</Bar>;
+}
+
+function foo() {
+  throw <Bar baz={baz} />;
+}
+
+function foo() {
+  throw <Bar baz={baz}>foo</Bar>;
+}
+
+function foo() {
+  throw <></>;
+}
+
+function foo() {
+  throw <>foo</>;
+}
+
+=====================================output=====================================
+function foo() {
+  throw <Bar />;
+}
+
+function foo() {
+  throw <Bar>baz</Bar>;
+}
+
+function foo() {
+  throw <Bar baz={baz} />;
+}
+
+function foo() {
+  throw <Bar baz={baz}>foo</Bar>;
+}
+
+function foo() {
+  throw <></>;
+}
+
+function foo() {
+  throw <>foo</>;
+}
+
+================================================================================
+`;

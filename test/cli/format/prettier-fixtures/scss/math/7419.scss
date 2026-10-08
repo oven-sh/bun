@@ -1,0 +1,15 @@
+@include container($foo: 2);
+@include container($foo: 2 * ($bar));
+@include container($foo: 2 * ($bar + $baz));
+
+@include container($foo: 1, $bar: 2);
+
+@include container($foo: (
+  $bar,
+  $baz
+));
+
+@include container($foo: (
+  $bar + $baz,
+  $qux * 2
+));

@@ -1,0 +1,115 @@
+[lang] {}
+[ lang] {}
+[lang ] {}
+[ lang ] {}
+[  lang  ] {}
+[
+lang
+] {}
+span[lang] {}
+span[ lang] {}
+span[lang ] {}
+span[ lang ] {}
+span[  lang  ] {}
+span[lang='pt'] {}
+span[lang ='pt'] {}
+span[lang= 'pt'] {}
+span[lang = 'pt'] {}
+span[lang  =  'pt'] {}
+span[lang='pt' ] {}
+span[lang='pt'  ] {}
+span[
+lang
+=
+'pt'
+] {}
+span[ lang ~= 'en-us' ] {}
+span[  lang  ~=  'en-us'  ] {}
+span[ lang |='zh' ] {}
+span[
+lang
+~=
+'en-us'
+] {}
+a[ href ^= '#' ] {}
+a[ href $= '.cn' ] {}
+a[ href *= 'example' ] {}
+a[
+href
+*=
+'example'
+] {}
+input[ type = 'radio' i ] {}
+input[  type  =  'radio'  i  ] {}
+input[ type ~= 'radio' i ] {}
+input[  type  ~=  'radio'  i  ] {}
+input[
+type
+~=
+'radio'
+i
+] {}
+img[ alt = 'person' ][ src = 'lorem' ] {}
+img[ alt  =  'person' ][ src  =  'lorem' ] {}
+img[ alt ~= 'person' ][ src *= 'lorem' ] {}
+img[  alt  ~=  'person'  ][  src  *=  'lorem'  ] {}
+img[
+alt
+~=
+'person'
+][
+src
+*=
+'lorem'
+] {}
+section:has(:not([type='radio'], [type='checkbox'])) {}
+section:has(:not([type='radio' i], [type='checkbox' i])) {}
+section:has(:not([ type = 'radio' ], [ type = 'checkbox' ])) {}
+section:has(:not([ type = 'radio' i ], [ type = 'checkbox' i ])) {}
+section:has(:not([  type  =  'radio'  ], [  type  =  'checkbox'  ])) {}
+section:has(:not([  type  =  'radio'  i  ], [  type  =  'checkbox'  i  ])) {}
+section:has(:not([
+type
+=
+'radio'
+], [
+type
+=
+'checkbox'
+])) {}
+section:has(:not([
+type
+=
+'radio'
+i
+], [
+type
+=
+'checkbox'
+i
+])) {}
+[foo|att=val] {}
+[ foo | att = val ] {}
+[  foo  |  att  =  val  ] {}
+[
+foo
+|
+att
+=
+val
+] {}
+[*|att] {}
+[ * | att ] {}
+[  *  |  att  ] {}
+[
+*
+|
+att
+] {}
+[|att] {}
+[ | att ] {}
+[  |  att  ] {}
+[
+|
+att
+] {}

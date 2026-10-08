@@ -1,0 +1,6 @@
+[{a:
+{ "b": <<<PRETTIER_RANGE_START>>>2, "c": 3 },
+b: {d:<<<PRETTIER_RANGE_END>>>4},
+c: {d:     6}
+},
+{a:           1}]

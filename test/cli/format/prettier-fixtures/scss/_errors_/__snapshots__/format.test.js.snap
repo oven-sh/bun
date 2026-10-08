@@ -1,0 +1,9 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`less-syntax.unknown format 1`] = `
+"CssSyntaxError: Unknown word .bordered (1:4)
+> 1 | a {.bordered();}
+    |    ^
+  2 |
+Cause: <css input>:1:4: Unknown word .bordered"
+`;

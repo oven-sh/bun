@@ -1,0 +1,18 @@
+// http://lesscss.org/functions/#list-functions-each
+
+@selectors: blue, green, red;
+
+each(@selectors, {
+  .sel-@{value} {
+    a: b;
+  }
+});
+
+
+// TODO: fix this
+each(@selectors, 
+{
+  .sel-@{value} {
+a: b;
+  }
+});

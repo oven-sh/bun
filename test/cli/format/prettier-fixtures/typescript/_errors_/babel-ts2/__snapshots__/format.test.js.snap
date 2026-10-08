@@ -1,0 +1,86 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`export-declare.ts format 1`] = `
+"'export declare' must be followed by an ambient declaration. (1:16)
+> 1 | export declare foo;
+    |                ^
+  2 |
+Cause: 'export declare' must be followed by an ambient declaration. (1:15)"
+`;
+
+exports[`multiline-declaration-abstract-class.ts format 1`] = `
+"Missing semicolon. (1:8)
+> 1 | declare abstract
+    |        ^
+  2 | class A {}
+  3 |
+Cause: Missing semicolon. (1:7)"
+`;
+
+exports[`multiline-declaration-interface.ts format 1`] = `
+"Missing semicolon. (1:8)
+> 1 | declare interface
+    |        ^
+  2 | I
+  3 | {}
+  4 |
+Cause: Missing semicolon. (1:7)"
+`;
+
+exports[`multiline-declaration-module.ts format 1`] = `
+"Missing semicolon. (1:8)
+> 1 | declare module
+    |        ^
+  2 | 'bar'
+  3 | {}
+  4 |
+Cause: Missing semicolon. (1:7)"
+`;
+
+exports[`multiline-declaration-type.ts format 1`] = `
+"Missing semicolon. (1:8)
+> 1 | declare type
+    |        ^
+  2 | T = number
+  3 |
+Cause: Missing semicolon. (1:7)"
+`;
+
+exports[`parenthesized-decorators-tagged-template.ts format 1`] = `
+"Unexpected token (2:7)
+  1 | class Test {
+> 2 |   @foo\`bar\`
+    |       ^
+  3 |   text: string = "text"
+  4 | }
+  5 |
+Cause: Unexpected token (2:6)"
+`;
+
+exports[`type-annotation-expr-statement.ts format 1`] = `
+"Did not expect a type annotation here. (1:3)
+> 1 | (a: T);
+    |   ^
+  2 |
+Cause: Did not expect a type annotation here. (1:2)"
+`;
+
+exports[`type-annotation-func.ts format 1`] = `
+"Did not expect a type annotation here. (1:10)
+> 1 | func<T>(a: T);
+    |          ^
+  2 |
+Cause: Did not expect a type annotation here. (1:9)"
+`;
+
+exports[`type-annotation-in-jsx.tsx format 1`] = `
+"Did not expect a type annotation here. (3:22)
+  1 | function Foo() {
+  2 |   return (
+> 3 |     <div propA={[ key: value ]} propsB={(a: b)} />
+    |                      ^
+  4 |   );
+  5 | }
+  6 |
+Cause: Did not expect a type annotation here. (3:21)"
+`;

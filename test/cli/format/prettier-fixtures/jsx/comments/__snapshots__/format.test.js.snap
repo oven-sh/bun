@@ -1,0 +1,330 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`eslint-disable.js - {"bracketSameLine":true} format 1`] = `
+====================================options=====================================
+bracketSameLine: true
+parsers: ["flow", "babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const render = items => (
+  <div>{ /* eslint-disable */
+    	 items.map(item => null)
+      /* eslint-enable */    }</div>
+)
+
+=====================================output=====================================
+const render = (items) => (
+  <div>
+    {
+      /* eslint-disable */
+      items.map((item) => null)
+      /* eslint-enable */
+    }
+  </div>
+);
+
+================================================================================
+`;
+
+exports[`in-attributes.js - {"bracketSameLine":true} format 1`] = `
+====================================options=====================================
+bracketSameLine: true
+parsers: ["flow", "babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div
+  attr=/* comment */"foo"
+></div>;
+
+<div
+  attr=
+  /* comment */
+  "foo"
+></div>;
+
+<div
+  attr= /* comment */
+  "foo"
+></div>;
+
+<div
+  attr=
+  /* comment */ "foo"
+></div>;
+
+<div
+  attr=
+  // comment
+  "foo"
+></div>;
+
+<div
+  attr= // comment
+  "foo"
+></div>;
+
+=====================================output=====================================
+<div attr=/* comment */ "foo"></div>;
+
+<div attr=/* comment */
+"foo"></div>;
+
+<div attr /* comment */="foo"></div>;
+
+<div attr=/* comment */ "foo"></div>;
+
+<div attr=// comment
+"foo"></div>;
+
+<div attr="foo"></div>; // comment
+
+================================================================================
+`;
+
+exports[`in-end-tag.js - {"bracketSameLine":true} format 1`] = `
+====================================options=====================================
+bracketSameLine: true
+parsers: ["flow", "babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/* =========== before slash =========== */
+<a><// line
+/a>;
+<a></* block */
+/a>;
+
+<><// line
+/>;
+<></* block */
+/>;
+
+/* =========== after slash =========== */
+<a></ // line
+a>;
+<a></ /* block */
+a>;
+
+<></ // line
+>;
+<></ /* block */
+>;
+
+/* =========== after name =========== */
+<a></a // line
+>;
+<a></a /* block */
+>;
+
+
+/* =========== block =========== */
+<a></a /* block */>;
+<></ /* block */>;
+
+/* =========== multiple ===========  */
+<a><// line 1
+// line 2
+/a>;
+<a></* block1 */ /* block2 */
+/a>;
+<a></* block */ // line
+/a>;
+
+<><// line 1
+// line 2
+/>;
+<></* block1 */ /* block2 */
+/>;
+<></* block */ // line
+/>;
+=====================================output=====================================
+/* =========== before slash =========== */
+<a></
+  // line
+  a
+>;
+<a></ /* block */
+a>;
+
+<></
+  // line
+>;
+<></ /* block */>;
+
+/* =========== after slash =========== */
+<a></
+  // line
+  a
+>;
+<a></ /* block */
+a>;
+
+<></
+  // line
+>;
+<></ /* block */>;
+
+/* =========== after name =========== */
+<a></a>; // line
+<a></a /* block */>;
+
+/* =========== block =========== */
+<a></a /* block */>;
+<></ /* block */>;
+
+/* =========== multiple ===========  */
+<a></
+  // line 1
+  // line 2
+  a
+>;
+<a></ /* block1 */ /* block2 */
+a>;
+<a></
+  /* block */ // line
+  a
+>;
+
+<></
+  // line 1
+  // line 2
+>;
+<></ /* block1 */
+  /* block2 */>;
+<></
+  /* block */
+  // line
+>;
+
+================================================================================
+`;
+
+exports[`in-end-tag.js - {"bracketSameLine":true} format[typescript] 1`] = `
+"Identifier expected. (2:6)
+  1 | /* =========== before slash =========== */
+> 2 | <a><// line
+    |      ^
+  3 | /a>;
+  4 | <a></* block */
+  5 | /a>;
+Cause: Identifier expected."
+`;
+
+exports[`in-tags.js - {"bracketSameLine":true} format 1`] = `
+====================================options=====================================
+bracketSameLine: true
+parsers: ["flow", "babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div
+  // comment
+>
+  {foo}
+</div>;
+
+<div
+  // comment
+  attr="foo"
+>
+  {foo}
+</div>;
+
+<div
+  attr="foo" // comment
+>
+  {foo}
+</div>;
+
+<div
+  attr="foo"
+  // comment
+>
+  {foo}
+</div>;
+
+<br // comment
+/>;
+
+=====================================output=====================================
+<div
+// comment
+>
+  {foo}
+</div>;
+
+<div
+  // comment
+  attr="foo">
+  {foo}
+</div>;
+
+<div
+  attr="foo" // comment
+>
+  {foo}
+</div>;
+
+<div
+  attr="foo"
+  // comment
+>
+  {foo}
+</div>;
+
+<br // comment
+/>;
+
+================================================================================
+`;
+
+exports[`jsx-tag-comment-after-prop.js - {"bracketSameLine":true} format 1`] = `
+====================================options=====================================
+bracketSameLine: true
+parsers: ["flow", "babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/typescript-eslint/typescript-eslint/pull/703
+
+const pure = () => {
+  return (
+      <Foo
+        // one
+        foo={123}
+        // two
+        bar="woof"
+      />
+  );
+}
+=====================================output=====================================
+// https://github.com/typescript-eslint/typescript-eslint/pull/703
+
+const pure = () => {
+  return (
+    <Foo
+      // one
+      foo={123}
+      // two
+      bar="woof"
+    />
+  );
+};
+
+================================================================================
+`;
+
+exports[`like-a-comment-in-jsx-text.js - {"bracketSameLine":true} format 1`] = `
+====================================options=====================================
+bracketSameLine: true
+parsers: ["flow", "babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<Foo
+>
+  text
+  // comment
+  text
+</Foo>
+=====================================output=====================================
+<Foo>text // comment text</Foo>;
+
+================================================================================
+`;

@@ -1,0 +1,436 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`18406.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+new (require("./webpack/plugins/next-trace-entrypoints-plugin")
+  .TraceEntryPointsPlugin as P)({
+  rootDir: dir,
+});
+
+(require("./webpack/plugins/next-trace-entrypoints-plugin")
+  .TraceEntryPointsPlugin as P)({
+  rootDir: dir,
+});
+
+(require("./webpack/plugins/next-trace-entrypoints-plugin")
+  ?.TraceEntryPointsPlugin as P)?.({
+  rootDir: dir,
+});
+
+=====================================output=====================================
+new (
+  require("./webpack/plugins/next-trace-entrypoints-plugin")
+    .TraceEntryPointsPlugin as P
+)({
+  rootDir: dir,
+});
+
+(
+  require("./webpack/plugins/next-trace-entrypoints-plugin")
+    .TraceEntryPointsPlugin as P
+)({
+  rootDir: dir,
+});
+
+(
+  require("./webpack/plugins/next-trace-entrypoints-plugin")
+    ?.TraceEntryPointsPlugin as P
+)?.({
+  rootDir: dir,
+});
+
+================================================================================
+`;
+
+exports[`array-and-object.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+breakAfterCast = <PermissionsChecker<any> | undefined>(<any>permissions)[receiverType];
+
+testObjLiteral =  <PermissionsChecker<any> | undefined>{ prop1: "myPropVal" };
+
+=====================================output=====================================
+breakAfterCast = <PermissionsChecker<any> | undefined>(
+  (<any>permissions)[receiverType]
+);
+
+testObjLiteral = <PermissionsChecker<any> | undefined>{ prop1: "myPropVal" };
+
+================================================================================
+`;
+
+exports[`as-const.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let x = '123' as const;
+
+// https://github.com/babel/babel/pull/11912
+x as boolean <= y; // (x as boolean) <= y;
+x as boolean ?? y; // (x as boolean) ?? y;
+
+=====================================output=====================================
+let x = "123" as const;
+
+// https://github.com/babel/babel/pull/11912
+(x as boolean) <= y; // (x as boolean) <= y;
+(x as boolean) ?? y; // (x as boolean) ?? y;
+
+================================================================================
+`;
+
+exports[`assert-and-assign.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(a as number) = 42;
+({ a: (b as any) = 2000 } = x);
+=====================================output=====================================
+(a as number) = 42;
+({ a: (b as any) = 2000 } = x);
+
+================================================================================
+`;
+
+exports[`generic-cast.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/prettier/prettier/issues/4171
+function y() {
+
+  const fits = <Immutable.Map<string, any>>fits();
+  const fitsObjLiteral = <Immutable.Map<string, any>>{ a: "test" };
+  const fitsArrayLiteral = <Immutable.Map<string, any>>["test", "test2"]
+
+  const breakAfterCast = <Immutable.Map<string, any>>someExistingConfigMap.mergeDeep(fallbackOpts);
+
+  const stillTooLong = <Immutable.Map<string, boolean, number, object, null, undefined, any, void, never>>someExistingConfigMap.mergeDeep(fallbackOptions);
+
+  const stillTooLong2 = <Immutable.Map<string, boolean, number, object, null, undefined, any, void, never> | undefined>someExistingConfigMap.mergeDeep(fallbackOptions);
+
+  const stillTooLong3 = <Immutable.Map<string>>someExistingConfigMap.mergeDeep(fallbackOptions.someMethodWithLongName(param1, param2));
+
+  const stillTooLong4 = <Immutable.Map<string, boolean, number, object, null, undefined, any, void, never> | undefined>someExistingConfigMap.mergeDeep(fallbackOptions.someMethodWithLongName(param1, param2));
+  
+  const testObjLiteral = <Immutable.Map<string, any>>{ property1: "myPropertyVal" };
+
+  const testObjLiteral2 = <Immutable.Map<string, any, number, boolean, object, null, undefined, never, "extra long">>{ property1: "myPropertyVal" };
+
+  const testArrayLiteral = <Immutable.Map<string, any>>["first", "second", "third"];
+
+  const testArrayLiteral2 = <Immutable.Map<string, any, number, boolean, object, null, undefined, never, "extra long">>["first", "second", "third"];
+
+  const insideFuncCall = myFunc(param1, <Immutable.Map<string, any>>param2, param3)
+}
+
+// https://github.com/prettier/prettier/issues/4168
+function x() {
+  const fits = <PermissionsChecker<any> | undefined>(<any>permissions)[type];
+  const fitsObjLiteral = <PermissionsChecker<any> | undefined>{ a: "test" };
+  const fitsArrayLiteral = <PermissionsChecker<any> | undefined>["t1", "t2"];
+
+  const breakAfterCast = <PermissionsChecker<any> | undefined>(<any>permissions)[receiverType];
+
+  const stillTooLong = <PermissionsChecker<object> | undefined | number | string | boolean>(<any>permissions)[receiverType];
+
+  const stillTooLong2 = <PermissionsChecker<object> | undefined | number | string | boolean | null | never>(<any>permissions)[receiverType];
+
+  const stillTooLong3 = <PermissionsChecker<object> | undefined>(<any>permissions.someMethodWithLongName(parameter1, parameter2))[receiverTypeLongName];
+
+  const stillTooLong4 = <PermissionsChecker<object> | undefined | number | string | boolean | null | never>(<any>permissions.someMethodWithLongName(parameter1, parameter2))[receiverTypeLongName];
+
+  const testObjLiteral =  <PermissionsChecker<any> | undefined>{ prop1: "myPropVal" };
+
+  const testObjLiteral2 = <PermissionsChecker<object> | undefined | number | string | boolean | null | never | object>{ prop1: "myPropVal" };
+
+  const testArrayLiteral = <PermissionsChecker<any> | undefined>["first", "second", "third"];
+
+  const testArrayLiteral2 = <PermissionsChecker<object> | undefined | number | string | boolean | null | never | object>["first", "second", "third"];
+
+  const insideFuncCall = myFunc(param1, <PermissionsChecker<any> | undefined>param2, param3)
+}
+
+=====================================output=====================================
+// https://github.com/prettier/prettier/issues/4171
+function y() {
+  const fits = <Immutable.Map<string, any>>fits();
+  const fitsObjLiteral = <Immutable.Map<string, any>>{ a: "test" };
+  const fitsArrayLiteral = <Immutable.Map<string, any>>["test", "test2"];
+
+  const breakAfterCast = <Immutable.Map<string, any>>(
+    someExistingConfigMap.mergeDeep(fallbackOpts)
+  );
+
+  const stillTooLong = <
+    Immutable.Map<
+      string,
+      boolean,
+      number,
+      object,
+      null,
+      undefined,
+      any,
+      void,
+      never
+    >
+  >someExistingConfigMap.mergeDeep(fallbackOptions);
+
+  const stillTooLong2 = <
+    | Immutable.Map<
+        string,
+        boolean,
+        number,
+        object,
+        null,
+        undefined,
+        any,
+        void,
+        never
+      >
+    | undefined
+  >someExistingConfigMap.mergeDeep(fallbackOptions);
+
+  const stillTooLong3 = <Immutable.Map<string>>(
+    someExistingConfigMap.mergeDeep(
+      fallbackOptions.someMethodWithLongName(param1, param2),
+    )
+  );
+
+  const stillTooLong4 = <
+    | Immutable.Map<
+        string,
+        boolean,
+        number,
+        object,
+        null,
+        undefined,
+        any,
+        void,
+        never
+      >
+    | undefined
+  >someExistingConfigMap.mergeDeep(
+    fallbackOptions.someMethodWithLongName(param1, param2),
+  );
+
+  const testObjLiteral = <Immutable.Map<string, any>>{
+    property1: "myPropertyVal",
+  };
+
+  const testObjLiteral2 = <
+    Immutable.Map<
+      string,
+      any,
+      number,
+      boolean,
+      object,
+      null,
+      undefined,
+      never,
+      "extra long"
+    >
+  >{ property1: "myPropertyVal" };
+
+  const testArrayLiteral = <Immutable.Map<string, any>>[
+    "first",
+    "second",
+    "third",
+  ];
+
+  const testArrayLiteral2 = <
+    Immutable.Map<
+      string,
+      any,
+      number,
+      boolean,
+      object,
+      null,
+      undefined,
+      never,
+      "extra long"
+    >
+  >["first", "second", "third"];
+
+  const insideFuncCall = myFunc(
+    param1,
+    <Immutable.Map<string, any>>param2,
+    param3,
+  );
+}
+
+// https://github.com/prettier/prettier/issues/4168
+function x() {
+  const fits = <PermissionsChecker<any> | undefined>(<any>permissions)[type];
+  const fitsObjLiteral = <PermissionsChecker<any> | undefined>{ a: "test" };
+  const fitsArrayLiteral = <PermissionsChecker<any> | undefined>["t1", "t2"];
+
+  const breakAfterCast = <PermissionsChecker<any> | undefined>(
+    (<any>permissions)[receiverType]
+  );
+
+  const stillTooLong = <
+    PermissionsChecker<object> | undefined | number | string | boolean
+  >(<any>permissions)[receiverType];
+
+  const stillTooLong2 = <
+    | PermissionsChecker<object>
+    | undefined
+    | number
+    | string
+    | boolean
+    | null
+    | never
+  >(<any>permissions)[receiverType];
+
+  const stillTooLong3 = <PermissionsChecker<object> | undefined>(
+    (<any>permissions.someMethodWithLongName(parameter1, parameter2))[
+      receiverTypeLongName
+    ]
+  );
+
+  const stillTooLong4 = <
+    | PermissionsChecker<object>
+    | undefined
+    | number
+    | string
+    | boolean
+    | null
+    | never
+  >(<any>permissions.someMethodWithLongName(parameter1, parameter2))[
+    receiverTypeLongName
+  ];
+
+  const testObjLiteral = <PermissionsChecker<any> | undefined>{
+    prop1: "myPropVal",
+  };
+
+  const testObjLiteral2 = <
+    | PermissionsChecker<object>
+    | undefined
+    | number
+    | string
+    | boolean
+    | null
+    | never
+    | object
+  >{ prop1: "myPropVal" };
+
+  const testArrayLiteral = <PermissionsChecker<any> | undefined>[
+    "first",
+    "second",
+    "third",
+  ];
+
+  const testArrayLiteral2 = <
+    | PermissionsChecker<object>
+    | undefined
+    | number
+    | string
+    | boolean
+    | null
+    | never
+    | object
+  >["first", "second", "third"];
+
+  const insideFuncCall = myFunc(
+    param1,
+    <PermissionsChecker<any> | undefined>param2,
+    param3,
+  );
+}
+
+================================================================================
+`;
+
+exports[`hug-args.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+postMessage(
+  <IActionMessage>{
+    context: item.context,
+    topic: item.topic
+  }
+);
+
+window.postMessage(
+  {
+    context: item.context,
+    topic: item.topic
+  } as IActionMessage
+);
+
+postMessages(
+  <IActionMessage[]>[
+    {
+      context: item.context,
+      topic: item.topic
+    }
+  ]
+);
+
+=====================================output=====================================
+postMessage(<IActionMessage>{
+  context: item.context,
+  topic: item.topic,
+});
+
+window.postMessage({
+  context: item.context,
+  topic: item.topic,
+} as IActionMessage);
+
+postMessages(<IActionMessage[]>[
+  {
+    context: item.context,
+    topic: item.topic,
+  },
+]);
+
+================================================================================
+`;
+
+exports[`parenthesis.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<DocumentHighlightKind>(a ? b : c);
+<any>(() => {});
+
+<x>a || {};
+<x>a && [];
+true || <x>a;
+<x>a + <x>b;
+(<x>a) = 1;
+
+function * g() {
+  const a = <T>(yield b);
+}
+
+=====================================output=====================================
+<DocumentHighlightKind>(a ? b : c);
+<any>(() => {});
+
+<x>a || {};
+<x>a && [];
+true || <x>a;
+<x>a + <x>b;
+(<x>a) = 1;
+
+function* g() {
+  const a = <T>(yield b);
+}
+
+================================================================================
+`;

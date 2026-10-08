@@ -1,0 +1,34 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`inline-javascript.less format 1`] = `
+====================================options=====================================
+parsers: ["less"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Deprecated feature https://lesscss.org/usage/#less-options-enable-inline-javascript-deprecated-
+
+.calcPxMixin() {
+  @functions: ~\`(function() {
+    const designWidth = 3840
+    const actualWidth = 5760
+    this.calcPx = function(_) {
+      return _ * actualWidth / designWidth + 'px'
+    }
+  })()\`
+}
+
+=====================================output=====================================
+// Deprecated feature https://lesscss.org/usage/#less-options-enable-inline-javascript-deprecated-
+
+.calcPxMixin() {
+  @functions: ~\`(function() {
+    const designWidth = 3840
+    const actualWidth = 5760
+    this.calcPx = function(_) {
+      return _ * actualWidth / designWidth + 'px'
+    }
+  })()\`;
+}
+
+================================================================================
+`;

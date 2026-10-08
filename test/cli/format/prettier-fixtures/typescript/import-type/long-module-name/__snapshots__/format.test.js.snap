@@ -1,0 +1,156 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`long-module-name.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const plugin = {}
+export default plugin as typeof import("@babel/plugin-transform-react-jsx").default;
+
+=====================================output=====================================
+const plugin = {};
+export default plugin as typeof import("@babel/plugin-transform-react-jsx").default;
+
+================================================================================
+`;
+
+exports[`long-module-name2.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const plugin = {}
+export default plugin as typeof import(
+// Comment
+"@babel/plugin-transform-react-jsx").default;
+
+=====================================output=====================================
+const plugin = {};
+export default plugin as typeof import(
+  // Comment
+  "@babel/plugin-transform-react-jsx"
+).default;
+
+================================================================================
+`;
+
+exports[`long-module-name3.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare const bit: import("../../../../scripts/babel-plugin-bit-decorator/types.d.ts").BitDecorator<State>;
+
+=====================================output=====================================
+declare const bit: import("../../../../scripts/babel-plugin-bit-decorator/types.d.ts").BitDecorator<State>;
+
+================================================================================
+`;
+
+exports[`long-module-name4.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+interface RuleMap {
+  'arrow-parens': typeof import('./long/long/long/long/long/path/to/rules/arrow-parens');
+  'consistent-return': typeof import('./long/long/long/long/long/path/to/rules/consistent-return');
+  'dot-notation': typeof import('./long/long/long/long/long/path/to/rules/dot-notation');
+  'init-declarations': typeof import('./long/long/long/long/long/path/to/rules/init-declarations');
+  'max-params': typeof import('./long/long/long/long/long/path/to/rules/max-params');
+  'no-dupe-args': typeof import('./long/long/long/long/long/path/to/rules/no-dupe-args');
+  'no-dupe-class-members': typeof import('./long/long/long/long/long/path/to/rules/no-dupe-class-members');
+  'no-empty-function': typeof import('./long/long/long/long/long/path/to/rules/no-empty-function');
+  'no-implicit-globals': typeof import('./long/long/long/long/long/path/to/rules/no-implicit-globals');
+  'no-invalid-this': typeof import('./long/long/long/long/long/path/to/rules/no-invalid-this');
+  'no-loop-func': typeof import('./long/long/long/long/long/path/to/rules/no-loop-func');
+  'no-loss-of-precision': typeof import('./long/long/long/long/long/path/to/rules/no-loss-of-precision');
+  'no-magic-numbers': typeof import('./long/long/long/long/long/path/to/rules/no-magic-numbers');
+  'no-restricted-globals': typeof import('./long/long/long/long/long/path/to/rules/no-restricted-globals');
+  'no-restricted-imports': typeof import('./long/long/long/long/long/path/to/rules/no-restricted-imports');
+  'no-undef': typeof import('./long/long/long/long/long/path/to/rules/no-undef');
+  'no-unused-expressions': typeof import('./long/long/long/long/long/path/to/rules/no-unused-expressions');
+  'no-useless-constructor': typeof import('./long/long/long/long/long/path/to/rules/no-useless-constructor');
+  'prefer-const': typeof import('./long/long/long/long/long/path/to/rules/prefer-const');
+  'prefer-destructuring': typeof import('./long/long/long/long/long/path/to/rules/prefer-destructuring');
+  'prefer-destructuring2': typeof import(
+// comment
+'./long/long/long/long/long/path/to/rules/prefer-destructuring');
+  'prefer-destructuring3':
+// comment
+typeof import(
+'./long/long/long/long/long/path/to/rules/prefer-destructuring');
+  strict: typeof import('./long/long/long/long/long/path/to/rules/strict');
+}
+
+=====================================output=====================================
+interface RuleMap {
+  "arrow-parens": typeof import("./long/long/long/long/long/path/to/rules/arrow-parens");
+  "consistent-return": typeof import("./long/long/long/long/long/path/to/rules/consistent-return");
+  "dot-notation": typeof import("./long/long/long/long/long/path/to/rules/dot-notation");
+  "init-declarations": typeof import("./long/long/long/long/long/path/to/rules/init-declarations");
+  "max-params": typeof import("./long/long/long/long/long/path/to/rules/max-params");
+  "no-dupe-args": typeof import("./long/long/long/long/long/path/to/rules/no-dupe-args");
+  "no-dupe-class-members": typeof import("./long/long/long/long/long/path/to/rules/no-dupe-class-members");
+  "no-empty-function": typeof import("./long/long/long/long/long/path/to/rules/no-empty-function");
+  "no-implicit-globals": typeof import("./long/long/long/long/long/path/to/rules/no-implicit-globals");
+  "no-invalid-this": typeof import("./long/long/long/long/long/path/to/rules/no-invalid-this");
+  "no-loop-func": typeof import("./long/long/long/long/long/path/to/rules/no-loop-func");
+  "no-loss-of-precision": typeof import("./long/long/long/long/long/path/to/rules/no-loss-of-precision");
+  "no-magic-numbers": typeof import("./long/long/long/long/long/path/to/rules/no-magic-numbers");
+  "no-restricted-globals": typeof import("./long/long/long/long/long/path/to/rules/no-restricted-globals");
+  "no-restricted-imports": typeof import("./long/long/long/long/long/path/to/rules/no-restricted-imports");
+  "no-undef": typeof import("./long/long/long/long/long/path/to/rules/no-undef");
+  "no-unused-expressions": typeof import("./long/long/long/long/long/path/to/rules/no-unused-expressions");
+  "no-useless-constructor": typeof import("./long/long/long/long/long/path/to/rules/no-useless-constructor");
+  "prefer-const": typeof import("./long/long/long/long/long/path/to/rules/prefer-const");
+  "prefer-destructuring": typeof import("./long/long/long/long/long/path/to/rules/prefer-destructuring");
+  "prefer-destructuring2": typeof import(
+    // comment
+    "./long/long/long/long/long/path/to/rules/prefer-destructuring"
+  );
+  "prefer-destructuring3": // comment
+  typeof import("./long/long/long/long/long/path/to/rules/prefer-destructuring");
+  strict: typeof import("./long/long/long/long/long/path/to/rules/strict");
+}
+
+================================================================================
+`;
+
+exports[`long-module-name5.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A = import("./long/long/long/long/long/long/long/long/long/long/path/to/module")
+type B = import("./long/long/long/long/long/long/long/long/long/long/path/to/module",{with:{type:'json'}})
+type C = import("./long/long/long/long/long/long/long/long/long/long/path/to/module",{with:{
+type:'json'}})
+type D = import("./long/long/long/long/long/long/long/long/long/long/path/to/module",{
+with:{type:'json'}})
+
+=====================================output=====================================
+type A =
+  import("./long/long/long/long/long/long/long/long/long/long/path/to/module");
+type B = import(
+  "./long/long/long/long/long/long/long/long/long/long/path/to/module",
+  { with: { type: "json" } }
+);
+type C = import(
+  "./long/long/long/long/long/long/long/long/long/long/path/to/module",
+  {
+    with: {
+      type: "json",
+    },
+  }
+);
+type D = import(
+  "./long/long/long/long/long/long/long/long/long/long/path/to/module",
+  {
+    with: { type: "json" },
+  }
+);
+
+================================================================================
+`;

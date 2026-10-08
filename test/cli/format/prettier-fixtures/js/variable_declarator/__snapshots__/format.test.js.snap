@@ -1,0 +1,73 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`multiple.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var assert = require('assert'),
+  lookup = require('../lookup');
+
+const eloBar     = require("elo-bar")
+  , foo        = require("foo")
+  , otherThing = require("other-thing");
+
+var a, b, c;
+
+let superSuperSuperLong1, superSuperSuperLong2, superSuperSuperLong3, superSuperSuperLong4;
+
+for (var i = 0, len = arr.length; i < len; i++) {}
+
+var templateTagsMapping = {
+    '%{itemIndex}': 'index',
+    '%{itemContentMetaTextViews}': 'views'
+  },
+  separator = '<span class="item__content__meta__separator">•</span>',
+  templateTagsList = $.map(templateTagsMapping, function(value, key) {
+    return key;
+  }),
+  data;
+
+=====================================output=====================================
+var assert = require("assert"),
+  lookup = require("../lookup");
+
+const eloBar = require("elo-bar"),
+  foo = require("foo"),
+  otherThing = require("other-thing");
+
+var a, b, c;
+
+let superSuperSuperLong1,
+  superSuperSuperLong2,
+  superSuperSuperLong3,
+  superSuperSuperLong4;
+
+for (var i = 0, len = arr.length; i < len; i++) {}
+
+var templateTagsMapping = {
+    "%{itemIndex}": "index",
+    "%{itemContentMetaTextViews}": "views",
+  },
+  separator = '<span class="item__content__meta__separator">•</span>',
+  templateTagsList = $.map(templateTagsMapping, function (value, key) {
+    return key;
+  }),
+  data;
+
+================================================================================
+`;
+
+exports[`string.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+elements[0].innerHTML = '<div></div><div></div><div></div><div></div><div></div><div></div>';
+
+=====================================output=====================================
+elements[0].innerHTML =
+  "<div></div><div></div><div></div><div></div><div></div><div></div>";
+
+================================================================================
+`;

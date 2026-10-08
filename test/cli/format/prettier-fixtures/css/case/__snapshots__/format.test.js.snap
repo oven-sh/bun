@@ -1,0 +1,158 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`case.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@custom-media --KeepName (MIN-WIDTH: 500PX);
+
+.foo {
+    color: hsl(0.75TURN, 60%, 70%);
+}
+
+p:FIRST-CHILD {
+    color: lime;
+    background-color: black;
+    padding: 5px;
+}
+
+a::AFTER {
+    content: "→";
+}
+
+a:AFTER {
+    content: "→";
+}
+
+::-WEBKIT-PROGRESS-BAR {
+    background-color: orange;
+}
+
+TABLE {}
+
+/* apply a dashed border to all unresolved elements */
+:unresolved {
+    border: 1px dashed red;
+    display: inline-block;
+}
+
+/* x-panel's that are unresolved are red */
+x-panel:unresolved {
+    color: red;
+}
+
+/* once the definition of x-panel is registered, it becomes green */
+x-panel {
+    color: green;
+    display: block;
+    padding: 5px;
+    display: block;
+}
+
+:host {
+    all: initial;
+    display: block;
+    contain: content;
+    text-align: center;
+    background: linear-gradient(to left, hotpink, transparent);
+    max-width: 500px;
+    margin: 0 auto;
+    border-radius: 8px;
+    transition: transform .2s ease-out;
+}
+:host([hidden]) {
+    display: none;
+}
+:host(:hover) {
+    transform: scale(1.1);
+}
+
+=====================================output=====================================
+@custom-media --KeepName (min-width: 500px);
+
+.foo {
+  color: hsl(0.75turn, 60%, 70%);
+}
+
+p:first-child {
+  color: lime;
+  background-color: black;
+  padding: 5px;
+}
+
+a::after {
+  content: "→";
+}
+
+a:after {
+  content: "→";
+}
+
+::-webkit-progress-bar {
+  background-color: orange;
+}
+
+TABLE {
+}
+
+/* apply a dashed border to all unresolved elements */
+:unresolved {
+  border: 1px dashed red;
+  display: inline-block;
+}
+
+/* x-panel's that are unresolved are red */
+x-panel:unresolved {
+  color: red;
+}
+
+/* once the definition of x-panel is registered, it becomes green */
+x-panel {
+  color: green;
+  display: block;
+  padding: 5px;
+  display: block;
+}
+
+:host {
+  all: initial;
+  display: block;
+  contain: content;
+  text-align: center;
+  background: linear-gradient(to left, hotpink, transparent);
+  max-width: 500px;
+  margin: 0 auto;
+  border-radius: 8px;
+  transition: transform 0.2s ease-out;
+}
+:host([hidden]) {
+  display: none;
+}
+:host(:hover) {
+  transform: scale(1.1);
+}
+
+================================================================================
+`;
+
+exports[`custom-selectors.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@custom-selector :--camelCase .my-css-selector;
+
+:--camelCase {
+  content: red;
+}
+
+=====================================output=====================================
+@custom-selector :--camelCase .my-css-selector;
+
+:--camelCase {
+  content: red;
+}
+
+================================================================================
+`;

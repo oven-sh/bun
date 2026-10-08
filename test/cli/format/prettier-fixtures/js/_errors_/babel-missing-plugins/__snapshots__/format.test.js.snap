@@ -1,0 +1,21 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format 1`] = `
+"Unexpected token. (1:8)
+> 1 | export type Foo = number;
+    |        ^"
+`;
+
+exports[`snippet: #1 format 1`] = `
+"Identifier directly after number. (1:4)
+> 1 | 100m;
+    |    ^
+Cause: Identifier directly after number. (1:3)"
+`;
+
+exports[`snippet: #2 format 1`] = `
+"Unexpected token, expected "from" (1:15)
+> 1 | import module foo from "./module.wasm";
+    |               ^
+Cause: Unexpected token, expected "from" (1:14)"
+`;

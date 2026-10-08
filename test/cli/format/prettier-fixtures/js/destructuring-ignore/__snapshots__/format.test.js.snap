@@ -1,0 +1,289 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`ignore.js - {"trailingComma":"all"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "all"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const {
+  // prettier-ignore
+  bar =           1,
+} = foo
+
+const {
+  _,
+  // prettier-ignore
+  bar2 =           1,
+} = foo
+
+/* comments */
+const {
+  // prettier-ignore
+  bar3 =           1,         // comment
+} = foo
+
+const {
+  // prettier-ignore
+  bar4 =           1,         /* comment */
+} = foo
+
+const {
+  // prettier-ignore
+  bar5 =           /* comment */          1,
+} = foo
+
+/* RestElement */
+const {
+  // prettier-ignore
+  ...bar6
+} = foo
+
+// Nested
+const {
+  baz: {
+  // prettier-ignore
+  foo2 = [1, 2,    3]
+},
+  // prettier-ignore
+  bar7 =            1,
+} = foo
+
+=====================================output=====================================
+const {
+  // prettier-ignore
+  bar =           1,
+} = foo;
+
+const {
+  _,
+  // prettier-ignore
+  bar2 =           1,
+} = foo;
+
+/* comments */
+const {
+  // prettier-ignore
+  bar3 =           1, // comment
+} = foo;
+
+const {
+  // prettier-ignore
+  bar4 =           1 /* comment */,
+} = foo;
+
+const {
+  // prettier-ignore
+  bar5 =           /* comment */          1,
+} = foo;
+
+/* RestElement */
+const {
+  // prettier-ignore
+  ...bar6
+} = foo;
+
+// Nested
+const {
+  baz: {
+    // prettier-ignore
+    foo2 = [1, 2,    3],
+  },
+  // prettier-ignore
+  bar7 =            1,
+} = foo;
+
+================================================================================
+`;
+
+exports[`ignore.js - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const {
+  // prettier-ignore
+  bar =           1,
+} = foo
+
+const {
+  _,
+  // prettier-ignore
+  bar2 =           1,
+} = foo
+
+/* comments */
+const {
+  // prettier-ignore
+  bar3 =           1,         // comment
+} = foo
+
+const {
+  // prettier-ignore
+  bar4 =           1,         /* comment */
+} = foo
+
+const {
+  // prettier-ignore
+  bar5 =           /* comment */          1,
+} = foo
+
+/* RestElement */
+const {
+  // prettier-ignore
+  ...bar6
+} = foo
+
+// Nested
+const {
+  baz: {
+  // prettier-ignore
+  foo2 = [1, 2,    3]
+},
+  // prettier-ignore
+  bar7 =            1,
+} = foo
+
+=====================================output=====================================
+const {
+  // prettier-ignore
+  bar =           1,
+} = foo;
+
+const {
+  _,
+  // prettier-ignore
+  bar2 =           1,
+} = foo;
+
+/* comments */
+const {
+  // prettier-ignore
+  bar3 =           1, // comment
+} = foo;
+
+const {
+  // prettier-ignore
+  bar4 =           1 /* comment */,
+} = foo;
+
+const {
+  // prettier-ignore
+  bar5 =           /* comment */          1,
+} = foo;
+
+/* RestElement */
+const {
+  // prettier-ignore
+  ...bar6
+} = foo;
+
+// Nested
+const {
+  baz: {
+    // prettier-ignore
+    foo2 = [1, 2,    3],
+  },
+  // prettier-ignore
+  bar7 =            1,
+} = foo;
+
+================================================================================
+`;
+
+exports[`ignore.js - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const {
+  // prettier-ignore
+  bar =           1,
+} = foo
+
+const {
+  _,
+  // prettier-ignore
+  bar2 =           1,
+} = foo
+
+/* comments */
+const {
+  // prettier-ignore
+  bar3 =           1,         // comment
+} = foo
+
+const {
+  // prettier-ignore
+  bar4 =           1,         /* comment */
+} = foo
+
+const {
+  // prettier-ignore
+  bar5 =           /* comment */          1,
+} = foo
+
+/* RestElement */
+const {
+  // prettier-ignore
+  ...bar6
+} = foo
+
+// Nested
+const {
+  baz: {
+  // prettier-ignore
+  foo2 = [1, 2,    3]
+},
+  // prettier-ignore
+  bar7 =            1,
+} = foo
+
+=====================================output=====================================
+const {
+  // prettier-ignore
+  bar =           1
+} = foo;
+
+const {
+  _,
+  // prettier-ignore
+  bar2 =           1
+} = foo;
+
+/* comments */
+const {
+  // prettier-ignore
+  bar3 =           1 // comment
+} = foo;
+
+const {
+  // prettier-ignore
+  bar4 =           1 /* comment */
+} = foo;
+
+const {
+  // prettier-ignore
+  bar5 =           /* comment */          1
+} = foo;
+
+/* RestElement */
+const {
+  // prettier-ignore
+  ...bar6
+} = foo;
+
+// Nested
+const {
+  baz: {
+    // prettier-ignore
+    foo2 = [1, 2,    3]
+  },
+  // prettier-ignore
+  bar7 =            1
+} = foo;
+
+================================================================================
+`;

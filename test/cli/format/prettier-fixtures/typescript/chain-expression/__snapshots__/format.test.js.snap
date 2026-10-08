@@ -1,0 +1,815 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`call-expression.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Member expressions
+(a?.b)!   ();
+(a?.b!)   ();
+(a!?.b)   ();
+(a.b?.c)!   ();
+(a.b?.c!)   ();
+(a.b!?.c)   ();
+(a!.b?.c)   ();
+(a?.b.c)!   ();
+(a?.b.c!)   ();
+(a?.b!.c)   ();
+(a!?.b.c)   ();
+(a[b?.c])!   ();
+(a[b?.c]!)   ();
+(a[b?.c!])   ();
+(a[b!?.c])   ();
+((a?.b).c)!   ();
+((a?.b).c!)   ();
+((a?.b!).c)   ();
+((a!?.b).c)   ();
+(a[b?.()])!   ();
+(a[b?.()]!)   ();
+(a[b?.()!])   ();
+(a[b!?.()])   ();
+(a![b?.()])   ();
+((a?.b).c)!   ();
+((a?.b).c!)   ();
+((a?.b)!.c)   ();
+((a?.b!).c)   ();
+((a!?.b).c)   ();
+((a?.()).b)!   ();
+((a?.()).b!)   ();
+((a?.())!.b)   ();
+((a?.()!).b)   ();
+((a!?.()).b)   ();
+
+// Call expressions
+(a?.())!   ();
+(a?.()!)   ();
+(a!?.())   ();
+(a.b.c?.())!   ();
+(a.b.c?.()!)   ();
+(a.b.c!?.())   ();
+(a.b?.c())!   ();
+(a.b?.c()!)   ();
+(a.b!?.c())   ();
+(a?.b.c())!   ();
+(a?.b.c()!)   ();
+(a?.b!.c())   ();
+(a(b?.c))!   ();
+(a(b?.c)!)   ();
+(a(b?.c!))   ();
+((a?.b)())!   ();
+((a?.b)()!)   ();
+((a?.b)!())   ();
+((a?.b!)())   ();
+((a?.())())!   ();
+((a?.())()!)   ();
+((a?.())!())   ();
+((a?.()!)())   ();
+((a!?.())())   ();
+
+// Not \`.callee\`
+foo((a?.b)!);
+
+// In optional chaining
+(a?.b()!)?.();
+(a?.b())!?.();
+(a?.b!()).c?.();
+(a?.b())!.c?.();
+
+=====================================output=====================================
+// Member expressions
+(a?.b)!();
+(a?.b!)();
+(a!?.b)();
+(a.b?.c)!();
+(a.b?.c!)();
+(a.b!?.c)();
+(a!.b?.c)();
+(a?.b.c)!();
+(a?.b.c!)();
+(a?.b!.c)();
+(a!?.b.c)();
+a[b?.c]!();
+a[b?.c]!();
+a[b?.c!]();
+a[b!?.c]();
+(a?.b).c!();
+(a?.b).c!();
+(a?.b!).c();
+(a!?.b).c();
+a[b?.()]!();
+a[b?.()]!();
+a[b?.()!]();
+a[b!?.()]();
+a![b?.()]();
+(a?.b).c!();
+(a?.b).c!();
+(a?.b)!.c();
+(a?.b!).c();
+(a!?.b).c();
+(a?.()).b!();
+(a?.()).b!();
+(a?.())!.b();
+(a?.()!).b();
+(a!?.()).b();
+
+// Call expressions
+(a?.())!();
+(a?.()!)();
+(a!?.())();
+(a.b.c?.())!();
+(a.b.c?.()!)();
+(a.b.c!?.())();
+(a.b?.c())!();
+(a.b?.c()!)();
+(a.b!?.c())();
+(a?.b.c())!();
+(a?.b.c()!)();
+(a?.b!.c())();
+a(b?.c)!();
+a(b?.c)!();
+a(b?.c!)();
+(a?.b)()!();
+(a?.b)()!();
+(a?.b)!()();
+(a?.b!)()();
+(a?.())()!();
+(a?.())()!();
+(a?.())!()();
+(a?.()!)()();
+(a!?.())()();
+
+// Not \`.callee\`
+foo((a?.b)!);
+
+// In optional chaining
+a?.b()!?.();
+(a?.b())!?.();
+(a?.b!()).c?.();
+(a?.b())!.c?.();
+
+================================================================================
+`;
+
+exports[`issue-15785-1.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function someFunctionName(
+) {
+  return isEqual(a?.map(([t, _]) => t?.id), b?.map(([t, _]) => t?.id));
+  return isEqual(a?.map(([t, _]) => t?.id)!, b?.map(([t, _]) => t?.id)!);
+  return isEqual(a.map(([t, _]) => t?.id), b.map(([t, _]) => t?.id));
+  return isEqual(a.map(([t, _]) => t?.id)!, b.map(([t, _]) => t?.id)!);
+}
+
+=====================================output=====================================
+function someFunctionName() {
+  return isEqual(
+    a?.map(([t, _]) => t?.id),
+    b?.map(([t, _]) => t?.id),
+  );
+  return isEqual(
+    a?.map(([t, _]) => t?.id)!,
+    b?.map(([t, _]) => t?.id)!,
+  );
+  return isEqual(
+    a.map(([t, _]) => t?.id),
+    b.map(([t, _]) => t?.id),
+  );
+  return isEqual(
+    a.map(([t, _]) => t?.id)!,
+    b.map(([t, _]) => t?.id)!,
+  );
+}
+
+================================================================================
+`;
+
+exports[`issue-15785-2.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const theValue = Object.entries(someLongObjectName).filter(
+  ([listingId]) => someListToCompareToHere?.includes(listingId),
+);
+const theValue2 = Object.entries(someLongObjectName).filter(
+  ([listingId]) => someListToCompareToHere.includes(listingId),
+);
+const theValue3 = Object.entries(someLongObjectName).filter(
+  ([listingId]) => someListToCompareToHere.includes(listingId)!,
+);
+
+=====================================output=====================================
+const theValue = Object.entries(someLongObjectName).filter(([listingId]) =>
+  someListToCompareToHere?.includes(listingId),
+);
+const theValue2 = Object.entries(someLongObjectName).filter(([listingId]) =>
+  someListToCompareToHere.includes(listingId),
+);
+const theValue3 = Object.entries(someLongObjectName).filter(([listingId]) =>
+  someListToCompareToHere.includes(listingId)!,
+);
+
+================================================================================
+`;
+
+exports[`member-chain.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+bifornCringerMoshedPerplexSawder = (
+    glimseGlyphsHazardNoopsTieTie
+    ?. averredBathersBoxroomBuggyNurl
+    ?.anodyneCondosMalateOverateRetinol!
+  )
+  .annularCooeedSplicesWalksWayWay
+  .annularCooeedSplicesWalksWayWay(annularCooeedSplicesWalksWayWay)
+  .annularCooeedSplicesWalksWayWay();
+bifornCringerMoshedPerplexSawder = (
+    glimseGlyphsHazardNoopsTieTie
+    ?. averredBathersBoxroomBuggyNurl
+    ?.anodyneCondosMalateOverateRetinol
+  )!
+  .annularCooeedSplicesWalksWayWay
+  .annularCooeedSplicesWalksWayWay(annularCooeedSplicesWalksWayWay)
+  .annularCooeedSplicesWalksWayWay();
+bifornCringerMoshedPerplexSawder = (
+    glimseGlyphsHazardNoopsTieTie
+    ?. averredBathersBoxroomBuggyNurl
+    ?.anodyneCondosMalateOverateRetinol
+  )
+  .annularCooeedSplicesWalksWayWay
+  .annularCooeedSplicesWalksWayWay(annularCooeedSplicesWalksWayWay)
+  .annularCooeedSplicesWalksWayWay()!;
+
+bifornCringerMoshedPerplexSawder = (
+    glimseGlyphsHazardNoopsTieTie
+    ?. averredBathersBoxroomBuggyNurl
+    ?.anodyneCondosMalateOverateRetinol!
+  )
+  ?.annularCooeedSplicesWalksWayWay
+  .annularCooeedSplicesWalksWayWay(annularCooeedSplicesWalksWayWay)
+  .annularCooeedSplicesWalksWayWay();
+
+bifornCringerMoshedPerplexSawder = (
+    glimseGlyphsHazardNoopsTieTie
+    ?. averredBathersBoxroomBuggyNurl
+    ?.anodyneCondosMalateOverateRetinol
+  )!
+  ?.annularCooeedSplicesWalksWayWay
+  .annularCooeedSplicesWalksWayWay(annularCooeedSplicesWalksWayWay)
+  .annularCooeedSplicesWalksWayWay();
+
+bifornCringerMoshedPerplexSawder = (
+    glimseGlyphsHazardNoopsTieTie
+    ?. averredBathersBoxroomBuggyNurl
+    ?.anodyneCondosMalateOverateRetinol
+  )
+  ?.annularCooeedSplicesWalksWayWay
+  .annularCooeedSplicesWalksWayWay(annularCooeedSplicesWalksWayWay)
+  .annularCooeedSplicesWalksWayWay()!;
+
+=====================================output=====================================
+bifornCringerMoshedPerplexSawder = (glimseGlyphsHazardNoopsTieTie
+  ?.averredBathersBoxroomBuggyNurl
+  ?.anodyneCondosMalateOverateRetinol!).annularCooeedSplicesWalksWayWay
+  .annularCooeedSplicesWalksWayWay(annularCooeedSplicesWalksWayWay)
+  .annularCooeedSplicesWalksWayWay();
+bifornCringerMoshedPerplexSawder = (glimseGlyphsHazardNoopsTieTie
+  ?.averredBathersBoxroomBuggyNurl
+  ?.anodyneCondosMalateOverateRetinol)!.annularCooeedSplicesWalksWayWay
+  .annularCooeedSplicesWalksWayWay(annularCooeedSplicesWalksWayWay)
+  .annularCooeedSplicesWalksWayWay();
+bifornCringerMoshedPerplexSawder = (glimseGlyphsHazardNoopsTieTie
+  ?.averredBathersBoxroomBuggyNurl
+  ?.anodyneCondosMalateOverateRetinol).annularCooeedSplicesWalksWayWay
+  .annularCooeedSplicesWalksWayWay(annularCooeedSplicesWalksWayWay)
+  .annularCooeedSplicesWalksWayWay()!;
+
+bifornCringerMoshedPerplexSawder =
+  glimseGlyphsHazardNoopsTieTie?.averredBathersBoxroomBuggyNurl
+    ?.anodyneCondosMalateOverateRetinol!?.annularCooeedSplicesWalksWayWay.annularCooeedSplicesWalksWayWay(
+      annularCooeedSplicesWalksWayWay,
+    )
+    .annularCooeedSplicesWalksWayWay();
+
+bifornCringerMoshedPerplexSawder = (glimseGlyphsHazardNoopsTieTie
+  ?.averredBathersBoxroomBuggyNurl
+  ?.anodyneCondosMalateOverateRetinol)!?.annularCooeedSplicesWalksWayWay
+  .annularCooeedSplicesWalksWayWay(annularCooeedSplicesWalksWayWay)
+  .annularCooeedSplicesWalksWayWay();
+
+bifornCringerMoshedPerplexSawder =
+  glimseGlyphsHazardNoopsTieTie?.averredBathersBoxroomBuggyNurl?.anodyneCondosMalateOverateRetinol?.annularCooeedSplicesWalksWayWay
+    .annularCooeedSplicesWalksWayWay(annularCooeedSplicesWalksWayWay)
+    .annularCooeedSplicesWalksWayWay()!;
+
+================================================================================
+`;
+
+exports[`member-expression.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Member expressions
+(a?.b)!   .foo;
+(a?.b!)   .foo;
+(a!?.b)   .foo;
+(a.b?.c)!   .foo;
+(a.b?.c!)   .foo;
+(a.b!?.c)   .foo;
+(a!.b?.c)   .foo;
+(a?.b.c)!   .foo;
+(a?.b.c!)   .foo;
+(a?.b!.c)   .foo;
+(a!?.b.c)   .foo;
+(a[b?.c])!   .foo;
+(a[b?.c]!)   .foo;
+(a[b?.c!])   .foo;
+(a[b!?.c])   .foo;
+((a?.b).c)!   .foo;
+((a?.b).c!)   .foo;
+((a?.b!).c)   .foo;
+((a!?.b).c)   .foo;
+(a[b?.()])!   .foo;
+(a[b?.()]!)   .foo;
+(a[b?.()!])   .foo;
+(a[b!?.()])   .foo;
+(a![b?.()])   .foo;
+((a?.b).c)!   .foo;
+((a?.b).c!)   .foo;
+((a?.b)!.c)   .foo;
+((a?.b!).c)   .foo;
+((a!?.b).c)   .foo;
+((a?.()).b)!   .foo;
+((a?.()).b!)   .foo;
+((a?.())!.b)   .foo;
+((a?.()!).b)   .foo;
+((a!?.()).b)   .foo;
+
+// Call expressions
+(a?.())!   .foo;
+(a?.()!)   .foo;
+(a!?.())   .foo;
+(a.b.c?.())!   .foo;
+(a.b.c?.()!)   .foo;
+(a.b.c!?.())   .foo;
+(a.b?.c())!   .foo;
+(a.b?.c()!)   .foo;
+(a.b!?.c())   .foo;
+(a?.b.c())!   .foo;
+(a?.b.c()!)   .foo;
+(a?.b!.c())   .foo;
+(a(b?.c))!   .foo;
+(a(b?.c)!)   .foo;
+(a(b?.c!))   .foo;
+((a?.b)())!   .foo;
+((a?.b)()!)   .foo;
+((a?.b)!())   .foo;
+((a?.b!)())   .foo;
+((a?.())())!   .foo;
+((a?.())()!)   .foo;
+((a?.())!())   .foo;
+((a?.()!)())   .foo;
+((a!?.())())   .foo;
+
+
+// Not \`.object\`
+_[a?.b!];
+
+// Computed
+(a?.b!)   [foo];
+
+// In optional chaining
+(a?.b!)?.c;
+(a?.b)!?.c;
+(a?.b!).c?.d;
+(a?.b)!.c?.d;
+
+=====================================output=====================================
+// Member expressions
+(a?.b)!.foo;
+(a?.b!).foo;
+(a!?.b).foo;
+(a.b?.c)!.foo;
+(a.b?.c!).foo;
+(a.b!?.c).foo;
+(a!.b?.c).foo;
+(a?.b.c)!.foo;
+(a?.b.c!).foo;
+(a?.b!.c).foo;
+(a!?.b.c).foo;
+a[b?.c]!.foo;
+a[b?.c]!.foo;
+a[b?.c!].foo;
+a[b!?.c].foo;
+(a?.b).c!.foo;
+(a?.b).c!.foo;
+(a?.b!).c.foo;
+(a!?.b).c.foo;
+a[b?.()]!.foo;
+a[b?.()]!.foo;
+a[b?.()!].foo;
+a[b!?.()].foo;
+a![b?.()].foo;
+(a?.b).c!.foo;
+(a?.b).c!.foo;
+(a?.b)!.c.foo;
+(a?.b!).c.foo;
+(a!?.b).c.foo;
+(a?.()).b!.foo;
+(a?.()).b!.foo;
+(a?.())!.b.foo;
+(a?.()!).b.foo;
+(a!?.()).b.foo;
+
+// Call expressions
+(a?.())!.foo;
+(a?.()!).foo;
+(a!?.()).foo;
+(a.b.c?.())!.foo;
+(a.b.c?.()!).foo;
+(a.b.c!?.()).foo;
+(a.b?.c())!.foo;
+(a.b?.c()!).foo;
+(a.b!?.c()).foo;
+(a?.b.c())!.foo;
+(a?.b.c()!).foo;
+(a?.b!.c()).foo;
+a(b?.c)!.foo;
+a(b?.c)!.foo;
+a(b?.c!).foo;
+(a?.b)()!.foo;
+(a?.b)()!.foo;
+(a?.b)!().foo;
+(a?.b!)().foo;
+(a?.())()!.foo;
+(a?.())()!.foo;
+(a?.())!().foo;
+(a?.()!)().foo;
+(a!?.())().foo;
+
+// Not \`.object\`
+_[a?.b!];
+
+// Computed
+(a?.b!)[foo];
+
+// In optional chaining
+a?.b!?.c;
+(a?.b)!?.c;
+(a?.b!).c?.d;
+(a?.b)!.c?.d;
+
+================================================================================
+`;
+
+exports[`new-expression.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Member expressions
+new   (a?.b)!   ();
+new   (a?.b!)   ();
+new   (a!?.b)   ();
+new   (a.b?.c)!   ();
+new   (a.b?.c!)   ();
+new   (a.b!?.c)   ();
+new   (a!.b?.c)   ();
+new   (a?.b.c)!   ();
+new   (a?.b.c!)   ();
+new   (a?.b!.c)   ();
+new   (a!?.b.c)   ();
+new   (a[b?.c])!   ();
+new   (a[b?.c]!)   ();
+new   (a[b?.c!])   ();
+new   (a[b!?.c])   ();
+new   ((a?.b).c)!   ();
+new   ((a?.b).c!)   ();
+new   ((a?.b!).c)   ();
+new   ((a!?.b).c)   ();
+new   (a[b?.()])!   ();
+new   (a[b?.()]!)   ();
+new   (a[b?.()!])   ();
+new   (a[b!?.()])   ();
+new   (a![b?.()])   ();
+new   ((a?.b).c)!   ();
+new   ((a?.b).c!)   ();
+new   ((a?.b)!.c)   ();
+new   ((a?.b!).c)   ();
+new   ((a!?.b).c)   ();
+new   ((a?.()).b)!   ();
+new   ((a?.()).b!)   ();
+new   ((a?.())!.b)   ();
+new   ((a?.()!).b)   ();
+new   ((a!?.()).b)   ();
+
+// Call expressions
+new   (a?.())!   ();
+new   (a?.()!)   ();
+new   (a!?.())   ();
+new   (a.b.c?.())!   ();
+new   (a.b.c?.()!)   ();
+new   (a.b.c!?.())   ();
+new   (a.b?.c())!   ();
+new   (a.b?.c()!)   ();
+new   (a.b!?.c())   ();
+new   (a?.b.c())!   ();
+new   (a?.b.c()!)   ();
+new   (a?.b!.c())   ();
+new   (a(b?.c))!   ();
+new   (a(b?.c)!)   ();
+new   (a(b?.c!))   ();
+new   ((a?.b)())!   ();
+new   ((a?.b)()!)   ();
+new   ((a?.b)!())   ();
+new   ((a?.b!)())   ();
+new   ((a?.())())!   ();
+new   ((a?.())()!)   ();
+new   ((a?.())!())   ();
+new   ((a?.()!)())   ();
+new   ((a!?.())())   ();
+
+// Not \`.callee\`
+new Foo(a?.b!);
+
+// In optional chaining
+new ((a?.b!)?.c)();
+new ((a?.b)!?.c)();
+
+=====================================output=====================================
+// Member expressions
+new (a?.b)!();
+new (a?.b!)();
+new (a!?.b)();
+new (a.b?.c)!();
+new (a.b?.c!)();
+new (a.b!?.c)();
+new (a!.b?.c)();
+new (a?.b.c)!();
+new (a?.b.c!)();
+new (a?.b!.c)();
+new (a!?.b.c)();
+new a[b?.c]!();
+new a[b?.c]!();
+new a[b?.c!]();
+new a[b!?.c]();
+new (a?.b).c!();
+new (a?.b).c!();
+new (a?.b!).c();
+new (a!?.b).c();
+new a[b?.()]!();
+new a[b?.()]!();
+new a[b?.()!]();
+new a[b!?.()]();
+new a![b?.()]();
+new (a?.b).c!();
+new (a?.b).c!();
+new (a?.b)!.c();
+new (a?.b!).c();
+new (a!?.b).c();
+new (a?.()).b!();
+new (a?.()).b!();
+new (a?.())!.b();
+new (a?.()!).b();
+new (a!?.()).b();
+
+// Call expressions
+new (a?.())!();
+new (a?.()!)();
+new (a!?.())();
+new (a.b.c?.())!();
+new (a.b.c?.()!)();
+new (a.b.c!?.())();
+new (a.b?.c())!();
+new (a.b?.c()!)();
+new (a.b!?.c())();
+new (a?.b.c())!();
+new (a?.b.c()!)();
+new (a?.b!.c())();
+new (a(b?.c)!)();
+new (a(b?.c)!)();
+new (a(b?.c!))();
+new ((a?.b)()!)();
+new ((a?.b)()!)();
+new ((a?.b)!())();
+new ((a?.b!)())();
+new ((a?.())()!)();
+new ((a?.())()!)();
+new ((a?.())!())();
+new ((a?.()!)())();
+new ((a!?.())())();
+
+// Not \`.callee\`
+new Foo(a?.b!);
+
+// In optional chaining
+new (a?.b!?.c)();
+new ((a?.b)!?.c)();
+
+================================================================================
+`;
+
+exports[`tagged-template-literals.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Member expressions
+(a?.b)!   \`\`;
+(a?.b!)   \`\`;
+(a!?.b)   \`\`;
+(a.b?.c)!   \`\`;
+(a.b?.c!)   \`\`;
+(a.b!?.c)   \`\`;
+(a!.b?.c)   \`\`;
+(a?.b.c)!   \`\`;
+(a?.b.c!)   \`\`;
+(a?.b!.c)   \`\`;
+(a!?.b.c)   \`\`;
+(a[b?.c])!   \`\`;
+(a[b?.c]!)   \`\`;
+(a[b?.c!])   \`\`;
+(a[b!?.c])   \`\`;
+((a?.b).c)!   \`\`;
+((a?.b).c!)   \`\`;
+((a?.b!).c)   \`\`;
+((a!?.b).c)   \`\`;
+(a[b?.()])!   \`\`;
+(a[b?.()]!)   \`\`;
+(a[b?.()!])   \`\`;
+(a[b!?.()])   \`\`;
+(a![b?.()])   \`\`;
+((a?.b).c)!   \`\`;
+((a?.b).c!)   \`\`;
+((a?.b)!.c)   \`\`;
+((a?.b!).c)   \`\`;
+((a!?.b).c)   \`\`;
+((a?.()).b)!   \`\`;
+((a?.()).b!)   \`\`;
+((a?.())!.b)   \`\`;
+((a?.()!).b)   \`\`;
+((a!?.()).b)   \`\`;
+
+// Call expressions
+(a?.())!   \`\`;
+(a?.()!)   \`\`;
+(a!?.())   \`\`;
+(a.b.c?.())!   \`\`;
+(a.b.c?.()!)   \`\`;
+(a.b.c!?.())   \`\`;
+(a.b?.c())!   \`\`;
+(a.b?.c()!)   \`\`;
+(a.b!?.c())   \`\`;
+(a?.b.c())!   \`\`;
+(a?.b.c()!)   \`\`;
+(a?.b!.c())   \`\`;
+(a(b?.c))!   \`\`;
+(a(b?.c)!)   \`\`;
+(a(b?.c!))   \`\`;
+((a?.b)())!   \`\`;
+((a?.b)()!)   \`\`;
+((a?.b)!())   \`\`;
+((a?.b!)())   \`\`;
+((a?.())())!   \`\`;
+((a?.())()!)   \`\`;
+((a?.())!())   \`\`;
+((a?.()!)())   \`\`;
+((a!?.())())   \`\`;
+
+// In optional chaining
+((a?.b!)?.c)\`\`;
+((a?.b)!?.c)\`\`;
+
+=====================================output=====================================
+// Member expressions
+(a?.b)!\`\`;
+(a?.b!)\`\`;
+(a!?.b)\`\`;
+(a.b?.c)!\`\`;
+(a.b?.c!)\`\`;
+(a.b!?.c)\`\`;
+(a!.b?.c)\`\`;
+(a?.b.c)!\`\`;
+(a?.b.c!)\`\`;
+(a?.b!.c)\`\`;
+(a!?.b.c)\`\`;
+a[b?.c]!\`\`;
+a[b?.c]!\`\`;
+a[b?.c!]\`\`;
+a[b!?.c]\`\`;
+(a?.b).c!\`\`;
+(a?.b).c!\`\`;
+(a?.b!).c\`\`;
+(a!?.b).c\`\`;
+a[b?.()]!\`\`;
+a[b?.()]!\`\`;
+a[b?.()!]\`\`;
+a[b!?.()]\`\`;
+a![b?.()]\`\`;
+(a?.b).c!\`\`;
+(a?.b).c!\`\`;
+(a?.b)!.c\`\`;
+(a?.b!).c\`\`;
+(a!?.b).c\`\`;
+(a?.()).b!\`\`;
+(a?.()).b!\`\`;
+(a?.())!.b\`\`;
+(a?.()!).b\`\`;
+(a!?.()).b\`\`;
+
+// Call expressions
+(a?.())!\`\`;
+(a?.()!)\`\`;
+(a!?.())\`\`;
+(a.b.c?.())!\`\`;
+(a.b.c?.()!)\`\`;
+(a.b.c!?.())\`\`;
+(a.b?.c())!\`\`;
+(a.b?.c()!)\`\`;
+(a.b!?.c())\`\`;
+(a?.b.c())!\`\`;
+(a?.b.c()!)\`\`;
+(a?.b!.c())\`\`;
+a(b?.c)!\`\`;
+a(b?.c)!\`\`;
+a(b?.c!)\`\`;
+(a?.b)()!\`\`;
+(a?.b)()!\`\`;
+(a?.b)!()\`\`;
+(a?.b!)()\`\`;
+(a?.())()!\`\`;
+(a?.())()!\`\`;
+(a?.())!()\`\`;
+(a?.()!)()\`\`;
+(a!?.())()\`\`;
+
+// In optional chaining
+(a?.b!?.c)\`\`;
+((a?.b)!?.c)\`\`;
+
+================================================================================
+`;
+
+exports[`test.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(a?.b!).c;
+(a?.()!).b;
+(a?.b)!.c;
+(a?.())!.b;
+
+=====================================output=====================================
+(a?.b!).c;
+(a?.()!).b;
+(a?.b)!.c;
+(a?.())!.b;
+
+================================================================================
+`;
+
+exports[`test2.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+{{
+    const rotation1 = getTransformHandles(arrow, h.state.zoom, 'mouse')
+      .rotation!;
+    const rotation2 = getTransformHandles(arrow, h.state.zoom, 'mouse')
+      .rotation;
+    const rotation3 = getTransformHandles(arrow, h.state.zoom, 'mouse')
+      ?.rotation;
+}}
+
+=====================================output=====================================
+{
+  {
+    const rotation1 = getTransformHandles(
+      arrow,
+      h.state.zoom,
+      "mouse",
+    ).rotation!;
+    const rotation2 = getTransformHandles(
+      arrow,
+      h.state.zoom,
+      "mouse",
+    ).rotation;
+    const rotation3 = getTransformHandles(
+      arrow,
+      h.state.zoom,
+      "mouse",
+    )?.rotation;
+  }
+}
+
+================================================================================
+`;

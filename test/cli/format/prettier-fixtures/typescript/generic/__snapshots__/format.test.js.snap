@@ -1,0 +1,219 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`arrow-return-type.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export const getVehicleDescriptor = async (
+  vehicleId: string
+): Promise<Descriptor> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string
+): Promise<
+  Collections.Parts.PrintedCircuitBoardAssemblyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
+> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string
+): Promise<Descriptor | undefined> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string
+): Promise<
+  Collections.Parts.PrintedCircuitBoardAssembly["attributes"] | undefined
+> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string
+): Promise<Descriptor & undefined> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string
+): Promise<
+  Collections.Parts.PrintedCircuitBoardAssembly["attributes"] & undefined
+> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string
+): Promise<Descriptor["attributes"]> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string
+): Promise<
+  Collections.Parts.PrintedCircuitBoardAssembly["attributessssssssssssssssssssssss"]
+> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string
+): Promise<keyof Descriptor> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string
+): Promise<
+  keyof Collections.Parts.PrintedCircuitBoardAssemblyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
+> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string
+): Promise<Descriptor[]> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string
+): Promise<
+  Collections.Parts.PrintedCircuitBoardAssemblyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy[]
+> => {};
+
+=====================================output=====================================
+export const getVehicleDescriptor = async (
+  vehicleId: string,
+): Promise<Descriptor> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string,
+): Promise<Collections.Parts.PrintedCircuitBoardAssemblyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string,
+): Promise<Descriptor | undefined> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string,
+): Promise<
+  Collections.Parts.PrintedCircuitBoardAssembly["attributes"] | undefined
+> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string,
+): Promise<Descriptor & undefined> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string,
+): Promise<
+  Collections.Parts.PrintedCircuitBoardAssembly["attributes"] & undefined
+> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string,
+): Promise<Descriptor["attributes"]> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string,
+): Promise<
+  Collections.Parts.PrintedCircuitBoardAssembly["attributessssssssssssssssssssssss"]
+> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string,
+): Promise<keyof Descriptor> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string,
+): Promise<
+  keyof Collections.Parts.PrintedCircuitBoardAssemblyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy
+> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string,
+): Promise<Descriptor[]> => {};
+
+export const getVehicleDescriptor = async (
+  vehicleId: string,
+): Promise<
+  Collections.Parts.PrintedCircuitBoardAssemblyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy[]
+> => {};
+
+================================================================================
+`;
+
+exports[`issue-6899.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const getUnusedAuthorizationHoldDocuments = async (): Promise<DocumentData[]> => {}
+
+const firestorePersonallyIdentifiablePaths: Array<
+  keyof Collections.Users.Entity
+> = []
+
+export const SUPPORTED_VEHICLE_TYPES: Array<
+  Collections.VehiclesStates.Entity['type']
+> = Object.values(Collections.VehiclesStates.Type);
+
+=====================================output=====================================
+const getUnusedAuthorizationHoldDocuments = async (): Promise<
+  DocumentData[]
+> => {};
+
+const firestorePersonallyIdentifiablePaths: Array<
+  keyof Collections.Users.Entity
+> = [];
+
+export const SUPPORTED_VEHICLE_TYPES: Array<
+  Collections.VehiclesStates.Entity["type"]
+> = Object.values(Collections.VehiclesStates.Type);
+
+================================================================================
+`;
+
+exports[`object-method.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export default {
+  load<K, T>(k: K, t: T) {
+    return {k, t};
+  }
+}
+
+=====================================output=====================================
+export default {
+  load<K, T>(k: K, t: T) {
+    return { k, t };
+  },
+};
+
+================================================================================
+`;
+
+exports[`ungrouped-parameters.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function filterTooltipWithFoo<F extends Field>(oldEncoding: Encoding<F>): {
+  customTooltipWithoutAggregatedField?:
+    | StringFieldDefWithCondition<F>
+    | StringValueDefWithCondition<F>
+    | StringFieldDef<F>[];
+  filteredEncoding: Encoding<F>;
+} {
+  const {tooltip, ...filteredEncoding} = oldEncoding;
+  if (!tooltip) {
+    return {filteredEncoding};
+  }
+  // ...
+}
+
+=====================================output=====================================
+function filterTooltipWithFoo<F extends Field>(
+  oldEncoding: Encoding<F>,
+): {
+  customTooltipWithoutAggregatedField?:
+    | StringFieldDefWithCondition<F>
+    | StringValueDefWithCondition<F>
+    | StringFieldDef<F>[];
+  filteredEncoding: Encoding<F>;
+} {
+  const { tooltip, ...filteredEncoding } = oldEncoding;
+  if (!tooltip) {
+    return { filteredEncoding };
+  }
+  // ...
+}
+
+================================================================================
+`;

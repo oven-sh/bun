@@ -1,0 +1,37 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`as-const.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+1 /* comment */ as const;
+1 as /* comment */ const;
+1 as const /* comment */;
+1 as const; /* comment */
+
+(1 // comment
+) as const;
+1 as // comment
+const;
+1 as const // comment
+;
+1 as const; // comment
+
+1 as /* comment */ not_const;
+
+=====================================output=====================================
+1 /* comment */ as const;
+1 /* comment */ as const;
+1 as const; /* comment */
+1 as const; /* comment */
+
+1 as const; // comment
+1 as const; // comment
+1 as const; // comment
+1 as const; // comment
+
+1 as /* comment */ not_const;
+
+================================================================================
+`;

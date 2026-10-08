@@ -1,0 +1,1608 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`13018.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo(_a).bar().leet();
+foo(-a).bar().leet();
+foo(+a).bar().leet();
+foo(~a).bar().leet();
+foo(++a).bar().leet();
+foo(--a).bar().leet();
+foo(a++).bar().leet();
+foo(a--).bar().leet();
+
+=====================================output=====================================
+foo(_a).bar().leet();
+foo(-a).bar().leet();
+foo(+a).bar().leet();
+foo(~a).bar().leet();
+foo(++a).bar().leet();
+foo(--a).bar().leet();
+foo(a++).bar().leet();
+foo(a--).bar().leet();
+
+================================================================================
+`;
+
+exports[`18171.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+callExprssion(
+  instance.capabilities.get(TerminalCapability?.PromptTypeDetection)
+    ?.promptType,
+);
+
+optionalCallExprssion?.(
+  instance.capabilities.get(TerminalCapability?.PromptTypeDetection)
+    ?.promptType,
+);
+
+new NewExpression(
+  instance.capabilities.get(TerminalCapability?.PromptTypeDetection)
+    ?.promptType,
+);
+
+=====================================output=====================================
+callExprssion(
+  instance.capabilities.get(TerminalCapability?.PromptTypeDetection)
+    ?.promptType,
+);
+
+optionalCallExprssion?.(
+  instance.capabilities.get(TerminalCapability?.PromptTypeDetection)
+    ?.promptType,
+);
+
+new NewExpression(
+  instance.capabilities.get(TerminalCapability?.PromptTypeDetection)
+    ?.promptType,
+);
+
+================================================================================
+`;
+
+exports[`array-and-object.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo.a().b().c([n, o])
+
+foo.a().b().c({n, o})
+
+=====================================output=====================================
+foo.a().b().c([n, o]);
+
+foo.a().b().c({ n, o });
+
+================================================================================
+`;
+
+exports[`assignment-lhs.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+document.querySelector("#output-abcdef").textContent = \`metaKey pressed? \${e.metaKey}\`;
+
+document.querySelector("p").textContent = \`Shader program did not link successfully. Error log: \${linkErrLog}\`;
+
+=====================================output=====================================
+document.querySelector("#output-abcdef").textContent =
+  \`metaKey pressed? \${e.metaKey}\`;
+
+document.querySelector("p").textContent =
+  \`Shader program did not link successfully. Error log: \${linkErrLog}\`;
+
+================================================================================
+`;
+
+exports[`bracket_0.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function a() {
+  function b() {
+	queryThenMutateDOM(
+      () => {
+        title = SomeThing.call(root, 'someLongStringThatPushesThisTextReallyFar')[0];
+      }
+    );
+  }
+}
+
+=====================================output=====================================
+function a() {
+  function b() {
+    queryThenMutateDOM(() => {
+      title = SomeThing.call(
+        root,
+        "someLongStringThatPushesThisTextReallyFar",
+      )[0];
+    });
+  }
+}
+
+================================================================================
+`;
+
+exports[`bracket_0-1.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const thingamabobMetaAlias =
+path.scope.getProgramParent().path.get("body")[0].node;
+
+=====================================output=====================================
+const thingamabobMetaAlias = path.scope
+  .getProgramParent()
+  .path.get("body")[0].node;
+
+================================================================================
+`;
+
+exports[`break-last-call.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export default store => {
+  return callApi(endpoint, schema).then(
+    response => next(actionWith({
+      response,
+      type: successType
+    })),
+    error => next(actionWith({
+      type: failureType,
+      error: error.message || 'Something bad happened'
+    }))
+  )
+}
+
+it('should group messages with same created time', () => {
+  expect(
+    groupMessages(messages).toJS(),
+  ).toEqual({
+    '11/01/2017 13:36': [
+      {message: 'test', messageType: 'SMS', status: 'Unknown', created: '11/01/2017 13:36'},
+      {message: 'test', messageType: 'Email', status: 'Unknown', created: '11/01/2017 13:36'},
+    ],
+    '09/01/2017 17:25': [
+      {message: 'te', messageType: 'SMS', status: 'Unknown', created: '09/01/2017 17:25'},
+      {message: 'te', messageType: 'Email', status: 'Unknown', created: '09/01/2017 17:25'},
+    ],
+    '11/01/2017 13:33': [
+      {message: 'test', messageType: 'SMS', status: 'Unknown', created: '11/01/2017 13:33'},
+      {message: 'test', messageType: 'Email', status: 'Unknown', created: '11/01/2017 13:33'},
+    ],
+    '11/01/2017 13:37': [
+      {message: 'test', messageType: 'SMS', status: 'Unknown', created: '11/01/2017 13:37'},
+      {message: 'test', messageType: 'Email', status: 'Unknown', created: '11/01/2017 13:37'},
+    ],
+  });
+});
+
+=====================================output=====================================
+export default (store) => {
+  return callApi(endpoint, schema).then(
+    (response) =>
+      next(
+        actionWith({
+          response,
+          type: successType,
+        }),
+      ),
+    (error) =>
+      next(
+        actionWith({
+          type: failureType,
+          error: error.message || "Something bad happened",
+        }),
+      ),
+  );
+};
+
+it("should group messages with same created time", () => {
+  expect(groupMessages(messages).toJS()).toEqual({
+    "11/01/2017 13:36": [
+      {
+        message: "test",
+        messageType: "SMS",
+        status: "Unknown",
+        created: "11/01/2017 13:36",
+      },
+      {
+        message: "test",
+        messageType: "Email",
+        status: "Unknown",
+        created: "11/01/2017 13:36",
+      },
+    ],
+    "09/01/2017 17:25": [
+      {
+        message: "te",
+        messageType: "SMS",
+        status: "Unknown",
+        created: "09/01/2017 17:25",
+      },
+      {
+        message: "te",
+        messageType: "Email",
+        status: "Unknown",
+        created: "09/01/2017 17:25",
+      },
+    ],
+    "11/01/2017 13:33": [
+      {
+        message: "test",
+        messageType: "SMS",
+        status: "Unknown",
+        created: "11/01/2017 13:33",
+      },
+      {
+        message: "test",
+        messageType: "Email",
+        status: "Unknown",
+        created: "11/01/2017 13:33",
+      },
+    ],
+    "11/01/2017 13:37": [
+      {
+        message: "test",
+        messageType: "SMS",
+        status: "Unknown",
+        created: "11/01/2017 13:37",
+      },
+      {
+        message: "test",
+        messageType: "Email",
+        status: "Unknown",
+        created: "11/01/2017 13:37",
+      },
+    ],
+  });
+});
+
+================================================================================
+`;
+
+exports[`break-last-member.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+SomeVeryLongUpperCaseConstant.someVeryLongCallExpression().some_very_long_member_expression
+weNeedToReachTheEightyCharacterLimitXXXXXXXXXXXXXXXXX.someNode
+  .childrenInAnArray[0];
+superSupersuperSupersuperSupersuperSupersuperSuperLong.exampleOfOrderOfGetterAndSetterReordered;
+superSupersuperSupersuperSupersuperSupersuperSuperLong.exampleOfOrderOfGetterAndSetterReordered[0];
+
+expect(
+  findDOMNode(component.instance()).getElementsByClassName(styles.inner)[0].style.paddingRight
+).toBe('1000px');
+
+const { course, conflicts = [], index, scheduleId, studentId, something } = a.this.props;
+
+const { course2, conflicts2 = [], index2, scheduleId2, studentId2, something2 } = this.props;
+
+const {
+  updated,
+  author: { identifier: ownerId },
+  location,
+  category: categories,
+} = rawAd.entry;
+
+=====================================output=====================================
+SomeVeryLongUpperCaseConstant.someVeryLongCallExpression()
+  .some_very_long_member_expression;
+weNeedToReachTheEightyCharacterLimitXXXXXXXXXXXXXXXXX.someNode
+  .childrenInAnArray[0];
+superSupersuperSupersuperSupersuperSupersuperSuperLong.exampleOfOrderOfGetterAndSetterReordered;
+superSupersuperSupersuperSupersuperSupersuperSuperLong
+  .exampleOfOrderOfGetterAndSetterReordered[0];
+
+expect(
+  findDOMNode(component.instance()).getElementsByClassName(styles.inner)[0]
+    .style.paddingRight,
+).toBe("1000px");
+
+const {
+  course,
+  conflicts = [],
+  index,
+  scheduleId,
+  studentId,
+  something,
+} = a.this.props;
+
+const {
+  course2,
+  conflicts2 = [],
+  index2,
+  scheduleId2,
+  studentId2,
+  something2,
+} = this.props;
+
+const {
+  updated,
+  author: { identifier: ownerId },
+  location,
+  category: categories,
+} = rawAd.entry;
+
+================================================================================
+`;
+
+exports[`break-multiple.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+object.foo().bar().baz();
+
+foo().bar().baz();
+
+foo().bar.baz();
+
+=====================================output=====================================
+object.foo().bar().baz();
+
+foo().bar().baz();
+
+foo().bar.baz();
+
+================================================================================
+`;
+
+exports[`comment.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function f() {
+  return observableFromSubscribeFunction()
+    // Debounce manually rather than using editor.onDidStopChanging so that the debounce time is
+    // configurable.
+    .debounceTime(debounceInterval);
+}
+
+_.a(a)
+  /* very very very very very very very long such that it is longer than 80 columns */
+  .a()
+
+_.a(
+  a
+)/* very very very very very very very long such that it is longer than 80 columns */
+.a();
+
+_.a(
+  a
+) /* very very very very very very very long such that it is longer than 80 columns */.a();
+
+Something
+  // $FlowFixMe(>=0.41.0)
+  .getInstance(this.props.dao)
+  .getters()
+
+// Warm-up first
+measure()
+  .then(() => {
+    SomethingLong();
+  });
+
+measure() // Warm-up first
+  .then(() => {
+    SomethingLong();
+  });
+
+const configModel = this.baseConfigurationService.getCache().consolidated		// global/default values (do NOT modify)
+  .merge(this.cachedWorkspaceConfig);
+
+this.doWriteConfiguration(target, value, options) // queue up writes to prevent race conditions
+  .then(() => null,
+  error => {
+    return options.donotNotifyError ? TPromise.wrapError(error) : this.onError(error, target, value);
+  });
+
+ret = __DEV__ ?
+  // $FlowFixMe: this type differs according to the env
+vm.runInContext(source, ctx)
+: a
+
+angular.module('AngularAppModule')
+  // Hello, I am comment.
+  .constant('API_URL', 'http://localhost:8080/api');
+
+=====================================output=====================================
+function f() {
+  return (
+    observableFromSubscribeFunction()
+      // Debounce manually rather than using editor.onDidStopChanging so that the debounce time is
+      // configurable.
+      .debounceTime(debounceInterval)
+  );
+}
+
+_.a(a)
+  /* very very very very very very very long such that it is longer than 80 columns */
+  .a();
+
+_.a(
+  a,
+) /* very very very very very very very long such that it is longer than 80 columns */
+  .a();
+
+_.a(
+  a,
+) /* very very very very very very very long such that it is longer than 80 columns */
+  .a();
+
+Something
+  // $FlowFixMe(>=0.41.0)
+  .getInstance(this.props.dao)
+  .getters();
+
+// Warm-up first
+measure().then(() => {
+  SomethingLong();
+});
+
+measure() // Warm-up first
+  .then(() => {
+    SomethingLong();
+  });
+
+const configModel = this.baseConfigurationService
+  .getCache()
+  .consolidated // global/default values (do NOT modify)
+  .merge(this.cachedWorkspaceConfig);
+
+this.doWriteConfiguration(target, value, options) // queue up writes to prevent race conditions
+  .then(
+    () => null,
+    (error) => {
+      return options.donotNotifyError
+        ? TPromise.wrapError(error)
+        : this.onError(error, target, value);
+    },
+  );
+
+ret = __DEV__
+  ? // $FlowFixMe: this type differs according to the env
+    vm.runInContext(source, ctx)
+  : a;
+
+angular
+  .module("AngularAppModule")
+  // Hello, I am comment.
+  .constant("API_URL", "http://localhost:8080/api");
+
+================================================================================
+`;
+
+exports[`complex-args.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+client.execute(
+  Post.selectAll()
+    .where(Post.id.eq(42))
+    .where(Post.published.eq(true))
+);
+
+=====================================output=====================================
+client.execute(
+  Post.selectAll().where(Post.id.eq(42)).where(Post.published.eq(true)),
+);
+
+================================================================================
+`;
+
+exports[`computed.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+nock(/test/)
+  .matchHeader('Accept', 'application/json')
+  [httpMethodNock(method)]('/foo')
+  .reply(200, {
+    foo: 'bar',
+  });
+
+=====================================output=====================================
+nock(/test/)
+  .matchHeader("Accept", "application/json")
+  [httpMethodNock(method)]("/foo")
+  .reply(200, {
+    foo: "bar",
+  });
+
+================================================================================
+`;
+
+exports[`computed-merge.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+[].forEach(key => {
+  data[key]('foo')
+    .then(() => console.log('bar'))
+    .catch(() => console.log('baz'));
+});
+
+[].forEach(key => {
+  data('foo')
+    [key]('bar')
+    .then(() => console.log('bar'))
+    .catch(() => console.log('baz'));
+});
+
+window.Data[key]("foo")
+  .then(() => a)
+  .catch(() => b);
+
+=====================================output=====================================
+[].forEach((key) => {
+  data[key]("foo")
+    .then(() => console.log("bar"))
+    .catch(() => console.log("baz"));
+});
+
+[].forEach((key) => {
+  data("foo")
+    [key]("bar")
+    .then(() => console.log("bar"))
+    .catch(() => console.log("baz"));
+});
+
+window.Data[key]("foo")
+  .then(() => a)
+  .catch(() => b);
+
+================================================================================
+`;
+
+exports[`conditional.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(a ? b : c).d();
+
+(a ? b : c).d().e();
+
+(a ? b : c).d().e().f();
+
+(valid
+  ? helper.responseBody(this.currentUser)
+  : helper.responseBody(this.defaultUser))
+.map();
+
+(valid
+  ? helper.responseBody(this.currentUser)
+  : helper.responseBody(this.defaultUser))
+.map().filter();
+
+(valid
+  ? helper.responseBody(this.currentUser)
+  : helper.responseBody(defaultUser))
+.map();
+
+object[valid
+  ? helper.responseBody(this.currentUser)
+  : helper.responseBody(defaultUser)]
+.map();
+
+=====================================output=====================================
+(a ? b : c).d();
+
+(a ? b : c).d().e();
+
+(a ? b : c).d().e().f();
+
+(valid
+  ? helper.responseBody(this.currentUser)
+  : helper.responseBody(this.defaultUser)
+).map();
+
+(valid
+  ? helper.responseBody(this.currentUser)
+  : helper.responseBody(this.defaultUser)
+)
+  .map()
+  .filter();
+
+(valid
+  ? helper.responseBody(this.currentUser)
+  : helper.responseBody(defaultUser)
+).map();
+
+object[
+  valid
+    ? helper.responseBody(this.currentUser)
+    : helper.responseBody(defaultUser)
+].map();
+
+================================================================================
+`;
+
+exports[`cypress.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+cy.get('option:first')
+  .should('be.selected')
+  .and('have.value', 'Metallica')
+
+cy.get(".ready")
+  .should("have.text", "FOO")
+  .should("have.css", "color", "#aaa");
+
+=====================================output=====================================
+cy.get("option:first").should("be.selected").and("have.value", "Metallica");
+
+cy.get(".ready").should("have.text", "FOO").should("have.css", "color", "#aaa");
+
+================================================================================
+`;
+
+exports[`d3.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+d3.select('body')
+  .append('circle')
+  .at({ width: 30, fill: '#f0f' })
+  .st({ fontWeight: 600 })
+
+const myScale = d3.scaleLinear()
+  .domain([1950, 1980])
+  .range([0, width])
+
+not.d3.select('body')
+  .append('circle')
+  .at({ width: 30, fill: '#f0f' })
+  .st({ fontWeight: 600 })
+
+not.d3.scaleLinear()
+  .domain([1950, 1980])
+  .range([0, width])
+
+=====================================output=====================================
+d3.select("body")
+  .append("circle")
+  .at({ width: 30, fill: "#f0f" })
+  .st({ fontWeight: 600 });
+
+const myScale = d3.scaleLinear().domain([1950, 1980]).range([0, width]);
+
+not.d3
+  .select("body")
+  .append("circle")
+  .at({ width: 30, fill: "#f0f" })
+  .st({ fontWeight: 600 });
+
+not.d3.scaleLinear().domain([1950, 1980]).range([0, width]);
+
+================================================================================
+`;
+
+exports[`first_long.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export default function theFunction(action$, store) {
+  return action$.ofType(THE_ACTION).switchMap(action => Observable
+    .webSocket({
+      url: THE_URL,
+      more: stuff(),
+      evenMore: stuff({
+        value1: true,
+        value2: false,
+        value3: false
+      })
+    })
+    .filter(data => theFilter(data))
+    .map(({ theType, ...data }) => theMap(theType, data))
+    .retryWhen(errors => errors));
+}
+
+function f() {
+  return this._getWorker(workerOptions)({
+    filePath,
+    hasteImplModulePath: this._options.hasteImplModulePath,
+  }).then(
+    metadata => {
+      // \`1\` for truthy values instead of \`true\` to save cache space.
+      fileMetadata[H.VISITED] = 1;
+      const metadataId = metadata.id;
+      const metadataModule = metadata.module;
+      if (metadataId && metadataModule) {
+        fileMetadata[H.ID] = metadataId;
+        setModule(metadataId, metadataModule);
+      }
+      fileMetadata[H.DEPENDENCIES] = metadata.dependencies || [];
+    }
+  );
+}
+
+=====================================output=====================================
+export default function theFunction(action$, store) {
+  return action$.ofType(THE_ACTION).switchMap((action) =>
+    Observable.webSocket({
+      url: THE_URL,
+      more: stuff(),
+      evenMore: stuff({
+        value1: true,
+        value2: false,
+        value3: false,
+      }),
+    })
+      .filter((data) => theFilter(data))
+      .map(({ theType, ...data }) => theMap(theType, data))
+      .retryWhen((errors) => errors),
+  );
+}
+
+function f() {
+  return this._getWorker(workerOptions)({
+    filePath,
+    hasteImplModulePath: this._options.hasteImplModulePath,
+  }).then((metadata) => {
+    // \`1\` for truthy values instead of \`true\` to save cache space.
+    fileMetadata[H.VISITED] = 1;
+    const metadataId = metadata.id;
+    const metadataModule = metadata.module;
+    if (metadataId && metadataModule) {
+      fileMetadata[H.ID] = metadataId;
+      setModule(metadataId, metadataModule);
+    }
+    fileMetadata[H.DEPENDENCIES] = metadata.dependencies || [];
+  });
+}
+
+================================================================================
+`;
+
+exports[`fluent-configuration.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+domain
+    .concept('Page')
+    .val('title', 'string')
+    .vals('widgets', 'Widget')
+domain
+    .concept('Widget')
+    .val('title', 'string')
+    .val('color', 'Color')
+    .val('foo', 'Foo')
+    .val('bar', 'Bar')
+domain
+    .concept('Widget')
+    .val('title', 'string')
+    .val('color', 'Color')
+domain
+    .concept(CONCEPT_NAME)
+    .val('title')
+    .vals()
+
+=====================================output=====================================
+domain.concept("Page").val("title", "string").vals("widgets", "Widget");
+domain
+  .concept("Widget")
+  .val("title", "string")
+  .val("color", "Color")
+  .val("foo", "Foo")
+  .val("bar", "Bar");
+domain.concept("Widget").val("title", "string").val("color", "Color");
+domain.concept(CONCEPT_NAME).val("title").vals();
+
+================================================================================
+`;
+
+exports[`inline_merge.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+Object.keys(
+  availableLocales({
+    test: true
+  })
+)
+.forEach(locale => {
+  // ...
+});
+
+this.layoutPartsToHide = this.utils.hashset(
+	_.flatMap(this.visibilityHandlers, fn => fn())
+		.concat(this.record.resolved_legacy_visrules)
+		.filter(Boolean)
+);
+
+var jqxhr = $.ajax("example.php")
+  .done(doneFn)
+  .fail(failFn);
+
+=====================================output=====================================
+Object.keys(
+  availableLocales({
+    test: true,
+  }),
+).forEach((locale) => {
+  // ...
+});
+
+this.layoutPartsToHide = this.utils.hashset(
+  _.flatMap(this.visibilityHandlers, (fn) => fn())
+    .concat(this.record.resolved_legacy_visrules)
+    .filter(Boolean),
+);
+
+var jqxhr = $.ajax("example.php").done(doneFn).fail(failFn);
+
+================================================================================
+`;
+
+exports[`issue-3594.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const fetched = fetch("/foo");
+fetched
+	.then(response => response.json())
+	.then(json => processThings(json.data.things));
+
+let column = new Column(null, conn)
+    .table(data.table)
+    .json(data.column);
+
+=====================================output=====================================
+const fetched = fetch("/foo");
+fetched
+  .then((response) => response.json())
+  .then((json) => processThings(json.data.things));
+
+let column = new Column(null, conn).table(data.table).json(data.column);
+
+================================================================================
+`;
+
+exports[`issue-3621.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const palindrome = str => {
+  const s = str.toLowerCase().replace(/[\\W_]/g, '');
+  return s === s.split('').reverse().join('');
+};
+
+const apiCurrencies = api().currencies().all()
+
+expect(cells.at(1).render().text()).toBe('link text1')
+expect(cells.at(2).render().text()).toBe('link text2')
+expect(cells.at(3).render().text()).toBe('link text3')
+expect(cells.at(4).render().text()).toBe('link text4')
+
+=====================================output=====================================
+const palindrome = (str) => {
+  const s = str.toLowerCase().replace(/[\\W_]/g, "");
+  return s === s.split("").reverse().join("");
+};
+
+const apiCurrencies = api().currencies().all();
+
+expect(cells.at(1).render().text()).toBe("link text1");
+expect(cells.at(2).render().text()).toBe("link text2");
+expect(cells.at(3).render().text()).toBe("link text3");
+expect(cells.at(4).render().text()).toBe("link text4");
+
+================================================================================
+`;
+
+exports[`issue-4125.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// examples from https://github.com/prettier/prettier/issues/4125
+
+const sha256 = (data) => crypto.createHash("sha256").update(data).digest("hex");
+
+req.checkBody('id').isInt().optional();
+req.checkBody('name').notEmpty().optional();
+
+const x = moment().add(1, 'day').valueOf()
+
+// should stay on one line:
+const y = obj.foo(1).foo(2).foo(3);
+const z = obj.foo(-1).foo(import('2')).foo(!x).check(/[A-Z]/);
+
+// better on multiple lines:
+somePromise.then(format).then((val)=>doSomething(val)).catch((err)=>handleError(err))
+
+// you can still force multi-line chaining with a comment:
+const sha256_2 = (data) =>
+  crypto // breakme
+    .createHash("sha256")
+    .update(data)
+    .digest("hex");
+
+// examples from https://github.com/prettier/prettier/pull/4765
+
+if ($(el).attr("href").includes("/wiki/")) {
+}
+
+if ($(el).attr("href").includes("/wiki/")) {
+  if ($(el).attr("xyz").includes("/whatever/")) {
+    if ($(el).attr("hello").includes("/world/")) {
+    }
+  }
+}
+
+const parseNumbers = s => s.split('').map(Number).sort()
+
+function palindrome(a, b) {
+  return a.slice().reverse().join(',') === b.slice().sort().join(',');
+}
+
+// examples from https://github.com/prettier/prettier/issues/1565
+
+d3.select("body").selectAll("p").data([1, 2, 3]).enter().style("color", "white");
+
+Object.keys(props).filter(key => key in own === false).reduce((a, key) => {
+  a[key] = props[key];
+  return a;
+}, {})
+
+point().x(4).y(3).z(6).plot();
+
+assert.equal(this.$().text().trim(), '1000');
+
+something().then(() => doSomethingElse()).then(result => dontForgetThisAsWell(result))
+
+db.branch(
+  db.table('users').filter({ email }).count(),
+  db.table('users').filter({ email: 'a@b.com' }).count(),
+  db.table('users').insert({ email }),
+  db.table('users').filter({ email }),
+)
+
+sandbox.stub(config, 'get').withArgs('env').returns('dev')
+
+const date = moment.utc(userInput).hour(0).minute(0).second(0)
+
+fetchUser(id)
+  .then(fetchAccountForUser)
+  .catch(handleFetchError)
+
+fetchUser(id) //
+  .then(fetchAccountForUser)
+  .catch(handleFetchError)
+
+// examples from https://github.com/prettier/prettier/issues/3107
+
+function HelloWorld() {
+  window.FooClient.setVars({
+    locale: getFooLocale({ page }),
+    authorizationToken: data.token,
+  }).initVerify('foo_container');
+
+  fejax.ajax({
+    url: '/verification/',
+    dataType: 'json',
+  }).then(
+    (data) => {
+      this.setState({ isLoading: false });
+      this.initWidget(data);
+    },
+    (data) => {
+      this.logImpression('foo_fetch_error', data);
+      Flash.error(I18n.t('offline_identity.foo_issue'));
+    },
+  );
+}
+
+action$.ofType(ActionTypes.SEARCHED_USERS)
+  .map(action => action.payload.query)
+  .filter(q => !!q)
+  .switchMap(q =>
+    Observable.timer(800) // debounce
+      .takeUntil(action$.ofType(ActionTypes.CLEARED_SEARCH_RESULTS))
+      .mergeMap(() =>
+        Observable.merge(
+          Observable.of(replace(\`?q=\${q}\`)),
+          ajax
+            .getJSON(\`https://api.github.com/search/users?q=\${q}\`)
+            .map(res => res.items)
+            .map(receiveUsers)
+        )
+      )
+  );
+
+window.FooClient
+  .setVars({
+    locale: getFooLocale({ page }),
+    authorizationToken: data.token,
+  })
+  .initVerify('foo_container');
+
+it('gets triggered by mouseenter', () => {
+  const wrapper = shallow(<CalendarDay />);
+  wrapper.dive().find(Button).prop();
+});
+
+const a1 = x.a(true).b(null).c(123)
+const a2 = x.d('').e(\`\`).f(g)
+const a3 = x.d('').e(\`\${123}\`).f(g)
+const a4 = x.h(i.j).k(l()).m([n, o])
+class X {
+  y() {
+    const j = x.a(this).b(super.cde()).f(/g/).h(new i()).j();
+  }
+}
+
+// should break when call expressions get complex
+x.a().b([c, [d, [e]]]).f()
+x.a().b(c(d(e()))).f()
+x.a().b(\`\${c(d())}\`).f()
+
+xyz.a().b().c(a(a(b(c(d().p).p).p).p))
+
+var l = base
+    .replace(/^\\w*:\\/\\//, '')
+    .replace(/\\/$/, '')
+    .split('/').length
+
+
+=====================================output=====================================
+// examples from https://github.com/prettier/prettier/issues/4125
+
+const sha256 = (data) => crypto.createHash("sha256").update(data).digest("hex");
+
+req.checkBody("id").isInt().optional();
+req.checkBody("name").notEmpty().optional();
+
+const x = moment().add(1, "day").valueOf();
+
+// should stay on one line:
+const y = obj.foo(1).foo(2).foo(3);
+const z = obj.foo(-1).foo(import("2")).foo(!x).check(/[A-Z]/);
+
+// better on multiple lines:
+somePromise
+  .then(format)
+  .then((val) => doSomething(val))
+  .catch((err) => handleError(err));
+
+// you can still force multi-line chaining with a comment:
+const sha256_2 = (data) =>
+  crypto // breakme
+    .createHash("sha256")
+    .update(data)
+    .digest("hex");
+
+// examples from https://github.com/prettier/prettier/pull/4765
+
+if ($(el).attr("href").includes("/wiki/")) {
+}
+
+if ($(el).attr("href").includes("/wiki/")) {
+  if ($(el).attr("xyz").includes("/whatever/")) {
+    if ($(el).attr("hello").includes("/world/")) {
+    }
+  }
+}
+
+const parseNumbers = (s) => s.split("").map(Number).sort();
+
+function palindrome(a, b) {
+  return a.slice().reverse().join(",") === b.slice().sort().join(",");
+}
+
+// examples from https://github.com/prettier/prettier/issues/1565
+
+d3.select("body")
+  .selectAll("p")
+  .data([1, 2, 3])
+  .enter()
+  .style("color", "white");
+
+Object.keys(props)
+  .filter((key) => key in own === false)
+  .reduce((a, key) => {
+    a[key] = props[key];
+    return a;
+  }, {});
+
+point().x(4).y(3).z(6).plot();
+
+assert.equal(this.$().text().trim(), "1000");
+
+something()
+  .then(() => doSomethingElse())
+  .then((result) => dontForgetThisAsWell(result));
+
+db.branch(
+  db.table("users").filter({ email }).count(),
+  db.table("users").filter({ email: "a@b.com" }).count(),
+  db.table("users").insert({ email }),
+  db.table("users").filter({ email }),
+);
+
+sandbox.stub(config, "get").withArgs("env").returns("dev");
+
+const date = moment.utc(userInput).hour(0).minute(0).second(0);
+
+fetchUser(id).then(fetchAccountForUser).catch(handleFetchError);
+
+fetchUser(id) //
+  .then(fetchAccountForUser)
+  .catch(handleFetchError);
+
+// examples from https://github.com/prettier/prettier/issues/3107
+
+function HelloWorld() {
+  window.FooClient.setVars({
+    locale: getFooLocale({ page }),
+    authorizationToken: data.token,
+  }).initVerify("foo_container");
+
+  fejax
+    .ajax({
+      url: "/verification/",
+      dataType: "json",
+    })
+    .then(
+      (data) => {
+        this.setState({ isLoading: false });
+        this.initWidget(data);
+      },
+      (data) => {
+        this.logImpression("foo_fetch_error", data);
+        Flash.error(I18n.t("offline_identity.foo_issue"));
+      },
+    );
+}
+
+action$
+  .ofType(ActionTypes.SEARCHED_USERS)
+  .map((action) => action.payload.query)
+  .filter((q) => !!q)
+  .switchMap((q) =>
+    Observable.timer(800) // debounce
+      .takeUntil(action$.ofType(ActionTypes.CLEARED_SEARCH_RESULTS))
+      .mergeMap(() =>
+        Observable.merge(
+          Observable.of(replace(\`?q=\${q}\`)),
+          ajax
+            .getJSON(\`https://api.github.com/search/users?q=\${q}\`)
+            .map((res) => res.items)
+            .map(receiveUsers),
+        ),
+      ),
+  );
+
+window.FooClient.setVars({
+  locale: getFooLocale({ page }),
+  authorizationToken: data.token,
+}).initVerify("foo_container");
+
+it("gets triggered by mouseenter", () => {
+  const wrapper = shallow(<CalendarDay />);
+  wrapper.dive().find(Button).prop();
+});
+
+const a1 = x.a(true).b(null).c(123);
+const a2 = x.d("").e(\`\`).f(g);
+const a3 = x.d("").e(\`\${123}\`).f(g);
+const a4 = x.h(i.j).k(l()).m([n, o]);
+class X {
+  y() {
+    const j = x.a(this).b(super.cde()).f(/g/).h(new i()).j();
+  }
+}
+
+// should break when call expressions get complex
+x.a()
+  .b([c, [d, [e]]])
+  .f();
+x.a()
+  .b(c(d(e())))
+  .f();
+x.a()
+  .b(\`\${c(d())}\`)
+  .f();
+
+xyz
+  .a()
+  .b()
+  .c(a(a(b(c(d().p).p).p).p));
+
+var l = base
+  .replace(/^\\w*:\\/\\//, "")
+  .replace(/\\/$/, "")
+  .split("/").length;
+
+================================================================================
+`;
+
+exports[`issue-11298.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo1(/𠮟𠮟𠮟/).foo2(bar).foo3(baz);
+
+foo1(/叱叱叱/).foo2(bar).foo3(baz);
+
+=====================================output=====================================
+foo1(/𠮟𠮟𠮟/)
+  .foo2(bar)
+  .foo3(baz);
+
+foo1(/叱叱叱/)
+  .foo2(bar)
+  .foo3(baz);
+
+================================================================================
+`;
+
+exports[`issue-17457.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+s.get(u)?.trigger({ triggerKind:   y.SignatureHelpTriggerKind.InvokeFooBarBaz123 });
+
+=====================================output=====================================
+s.get(u)?.trigger({
+  triggerKind: y.SignatureHelpTriggerKind.InvokeFooBarBaz123,
+});
+
+================================================================================
+`;
+
+exports[`logical.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const someLongVariableName = (idx(
+  this.props,
+  props => props.someLongPropertyName
+) || []
+).map(edge => edge.node);
+
+(veryLongVeryLongVeryLong || e).map(tickets =>
+  TicketRecord.createFromSomeLongString());
+
+(veryLongVeryLongVeryLong || e).map(tickets =>
+  TicketRecord.createFromSomeLongString()).filter(obj => !!obj);
+
+(veryLongVeryLongVeryLong || anotherVeryLongVeryLongVeryLong || veryVeryVeryLongError).map(tickets =>
+  TicketRecord.createFromSomeLongString());
+
+(veryLongVeryLongVeryLong || anotherVeryLongVeryLongVeryLong || veryVeryVeryLongError).map(tickets =>
+  TicketRecord.createFromSomeLongString()).filter(obj => !!obj);
+
+=====================================output=====================================
+const someLongVariableName = (
+  idx(this.props, (props) => props.someLongPropertyName) || []
+).map((edge) => edge.node);
+
+(veryLongVeryLongVeryLong || e).map((tickets) =>
+  TicketRecord.createFromSomeLongString(),
+);
+
+(veryLongVeryLongVeryLong || e)
+  .map((tickets) => TicketRecord.createFromSomeLongString())
+  .filter((obj) => !!obj);
+
+(
+  veryLongVeryLongVeryLong ||
+  anotherVeryLongVeryLongVeryLong ||
+  veryVeryVeryLongError
+).map((tickets) => TicketRecord.createFromSomeLongString());
+
+(
+  veryLongVeryLongVeryLong ||
+  anotherVeryLongVeryLongVeryLong ||
+  veryVeryVeryLongError
+)
+  .map((tickets) => TicketRecord.createFromSomeLongString())
+  .filter((obj) => !!obj);
+
+================================================================================
+`;
+
+exports[`multiple-members.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (testConfig.ENABLE_ONLINE_TESTS === "true") {
+  describe("POST /users/me/pet", function() {
+    it("saves pet", function() {
+      function assert(pet) {
+        expect(pet).to.have.property("OwnerAddress").that.deep.equals({
+          AddressLine1: "Alexanderstrasse",
+          AddressLine2: "",
+          PostalCode: "10999",
+          Region: "Berlin",
+          City: "Berlin",
+          Country: "DE"
+        });
+      }
+    });
+  });
+}
+
+wrapper.find('SomewhatLongNodeName').prop('longPropFunctionName')().then(function() {
+  doSomething();
+});
+
+wrapper.find('SomewhatLongNodeName').prop('longPropFunctionName')('argument').then(function() {
+  doSomething();
+});
+
+wrapper.find('SomewhatLongNodeName').prop('longPropFunctionName', 'second argument that pushes this group past 80 characters')('argument').then(function() {
+  doSomething();
+});
+
+wrapper.find('SomewhatLongNodeName').prop('longPropFunctionName')('argument', 'second argument that pushes this group past 80 characters').then(function() {
+  doSomething();
+});
+
+=====================================output=====================================
+if (testConfig.ENABLE_ONLINE_TESTS === "true") {
+  describe("POST /users/me/pet", function () {
+    it("saves pet", function () {
+      function assert(pet) {
+        expect(pet).to.have.property("OwnerAddress").that.deep.equals({
+          AddressLine1: "Alexanderstrasse",
+          AddressLine2: "",
+          PostalCode: "10999",
+          Region: "Berlin",
+          City: "Berlin",
+          Country: "DE",
+        });
+      }
+    });
+  });
+}
+
+wrapper
+  .find("SomewhatLongNodeName")
+  .prop("longPropFunctionName")()
+  .then(function () {
+    doSomething();
+  });
+
+wrapper
+  .find("SomewhatLongNodeName")
+  .prop("longPropFunctionName")("argument")
+  .then(function () {
+    doSomething();
+  });
+
+wrapper
+  .find("SomewhatLongNodeName")
+  .prop(
+    "longPropFunctionName",
+    "second argument that pushes this group past 80 characters",
+  )("argument")
+  .then(function () {
+    doSomething();
+  });
+
+wrapper
+  .find("SomewhatLongNodeName")
+  .prop("longPropFunctionName")(
+    "argument",
+    "second argument that pushes this group past 80 characters",
+  )
+  .then(function () {
+    doSomething();
+  });
+
+================================================================================
+`;
+
+exports[`object-literal.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+of("test")
+  .pipe(throwIfEmpty())
+  .subscribe({
+    error(err) {
+      thrown = err;
+    }
+  });
+
+of("test")
+  .pipe(throwIfEmpty())
+  .subscribe({
+    get foo() {
+      bar();
+    }
+  });
+
+=====================================output=====================================
+of("test")
+  .pipe(throwIfEmpty())
+  .subscribe({
+    error(err) {
+      thrown = err;
+    },
+  });
+
+of("test")
+  .pipe(throwIfEmpty())
+  .subscribe({
+    get foo() {
+      bar();
+    },
+  });
+
+================================================================================
+`;
+
+exports[`pr-7889.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const Profile = view.with({ name: (state) => state.name }).as((props) => (
+  <div>
+    <h1>Hello, {props.name}</h1>
+  </div>
+))
+
+const Profile2 = view.with({ name }).as((props) => (
+  <div>
+    <h1>Hello, {props.name}</h1>
+  </div>
+))
+
+=====================================output=====================================
+const Profile = view.with({ name: (state) => state.name }).as((props) => (
+  <div>
+    <h1>Hello, {props.name}</h1>
+  </div>
+));
+
+const Profile2 = view.with({ name }).as((props) => (
+  <div>
+    <h1>Hello, {props.name}</h1>
+  </div>
+));
+
+================================================================================
+`;
+
+exports[`short-names.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const svgJsFiles = fs
+  .readdirSync(svgDir)
+  .filter(f => svgJsFileExtRegex.test(f))
+  .map(f => path.join(svgDir, f));
+
+=====================================output=====================================
+const svgJsFiles = fs
+  .readdirSync(svgDir)
+  .filter((f) => svgJsFileExtRegex.test(f))
+  .map((f) => path.join(svgDir, f));
+
+================================================================================
+`;
+
+exports[`simple-args.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const fieldsToSend = _(["id", extra]).without("transition").uniq();
+
+console.log(values.filter(isValid).map(extractId).slice(-5, -1));
+
+=====================================output=====================================
+const fieldsToSend = _(["id", extra]).without("transition").uniq();
+
+console.log(values.filter(isValid).map(extractId).slice(-5, -1));
+
+================================================================================
+`;
+
+exports[`square_0.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const version = someLongString
+  .split('jest version =')
+  .pop()
+  .split(EOL)[0]
+  .trim();
+
+const component = find('.org-lclp-edit-copy-url-banner__link')[0]
+  .getAttribute('href')
+  .indexOf(this.landingPageLink);
+
+=====================================output=====================================
+const version = someLongString
+  .split("jest version =")
+  .pop()
+  .split(EOL)[0]
+  .trim();
+
+const component = find(".org-lclp-edit-copy-url-banner__link")[0]
+  .getAttribute("href")
+  .indexOf(this.landingPageLink);
+
+================================================================================
+`;
+
+exports[`test.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+method().then(x => x)
+  ["abc"](x => x)
+  [abc](x => x);
+
+({}.a().b());
+({}).a().b();
+
+=====================================output=====================================
+method()
+  .then((x) => x)
+  ["abc"]((x) => x)
+  [abc]((x) => x);
+
+({}).a().b();
+({}).a().b();
+
+================================================================================
+`;
+
+exports[`this.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const sel = this.connections
+  .concat(this.activities.concat(this.operators))
+  .filter(x => x.selected);
+
+=====================================output=====================================
+const sel = this.connections
+  .concat(this.activities.concat(this.operators))
+  .filter((x) => x.selected);
+
+================================================================================
+`;

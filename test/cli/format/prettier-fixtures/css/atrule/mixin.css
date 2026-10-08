@@ -1,0 +1,109 @@
+@mixin clearfix {}
+@mixin clearfix{}
+@mixin  clearfix  {}
+@mixin clearfix
+  {}
+@mixin
+  clearfix
+  {}
+@mixin
+clearfix
+{
+}
+@mixin
+
+clearfix
+
+{
+
+}
+
+@mixin mix($arg, $arg1, $arg2: 10, $args...) {}
+@mixin mix($arg,$arg1,$arg2:10,$args...){}
+@mixin mix ( $arg , $arg1 , $arg2 : 10 , $args ... ) {}
+@mixin  mix  (  $arg  ,  $arg1  ,  $arg2  :  10  ,  $args  ...  )  {}
+@mixin mix(
+    $arg,
+    $arg1,
+    $arg2: 10,
+    $args...
+) {}
+@mixin
+mix(
+    $arg,
+    $arg1,
+    $arg2: 10,
+    $args...
+    ) {}
+@mixin
+mix
+(
+$arg
+,
+$arg1
+,
+$arg2
+:
+10
+,
+$args
+...
+)
+{
+}
+@mixin
+
+mix
+
+(
+
+$arg
+
+,
+
+$arg1
+
+,
+
+$arg2
+
+:
+
+10
+
+,
+
+$args
+
+...
+
+)
+
+{
+}
+@mixin mix($very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-arg, $very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-arg1, $very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-arg2: 10, $very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-args...) {}
+@mixin component($conf: ()) {}
+@mixin component($conf: ( )) {}
+@mixin button-variant($hover-background: darken($background, 7.5%)) {}
+@mixin button-variant( $hover-background : darken( $background , 7.5% ) ) {}
+@mixin button-variant($hover-background:darken($background,7.5%)) {}
+@mixin button-variant(
+    $hover-background: darken($background, 7.5%)
+) {}
+@mixin
+button-variant(
+$hover-background
+:
+darken(
+$background
+,
+7.5%
+)
+)
+{}
+@mixin button-variant($foo: "...") {}
+@mixin button-variant($foo: " ... ") {}
+@mixin button-variant($foo: "  ...  ") {}
+@mixin sexy-border($color, $width, $foo: (color: red)) {}
+
+@mixin selector($param: "value") {}

@@ -1,0 +1,18 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`not-language-comment.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const html /* HTML */ = \`<DIV>
+
+</DIV>\`;
+
+=====================================output=====================================
+const html /* HTML */ = \`<DIV>
+
+</DIV>\`;
+
+================================================================================
+`;

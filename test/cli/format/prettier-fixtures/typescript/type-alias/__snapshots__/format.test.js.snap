@@ -1,0 +1,200 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`conditional.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type FallbackFlags<F extends Flags | undefined> =
+  Equals<NonNullableFlag<F>["flags"], {}>    extends   true
+    ? Dict<any>
+    : NonNullableFlag<F>["flags"];
+
+export type UnPromise<Type extends Promise<unknown>> =
+  Type extends Promise<infer Generic>
+    ? Generic
+    : never;
+
+export type Equals<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends
+  (<T>() => T extends Y ? 1 : 2)
+    ? true
+    : false;
+
+export type _Repeat<A extends any, N extends number, L extends List = []> =
+  __Repeat<N, A, L> extends infer X
+  ? Cast<X, List>
+  : never
+
+export type Repeat<A extends any, N extends number, L extends List = []> =
+  N extends unknown
+  ? L extends unknown
+    ? _Repeat<A, N, L>
+    : never
+  : never
+
+export type Intersect<U1 extends any, U2 extends any> =
+  U1 extends unknown
+  ? U2 extends unknown
+    ? {1: U1, 0: never}[Equals<U1, U2>]
+    : never
+  : never
+
+=====================================output=====================================
+type FallbackFlags<F extends Flags | undefined> =
+  Equals<NonNullableFlag<F>["flags"], {}> extends true
+    ? Dict<any>
+    : NonNullableFlag<F>["flags"];
+
+export type UnPromise<Type extends Promise<unknown>> =
+  Type extends Promise<infer Generic> ? Generic : never;
+
+export type Equals<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends <T>() => T extends Y ? 1 : 2
+    ? true
+    : false;
+
+export type _Repeat<A extends any, N extends number, L extends List = []> =
+  __Repeat<N, A, L> extends infer X ? Cast<X, List> : never;
+
+export type Repeat<
+  A extends any,
+  N extends number,
+  L extends List = [],
+> = N extends unknown ? (L extends unknown ? _Repeat<A, N, L> : never) : never;
+
+export type Intersect<U1 extends any, U2 extends any> = U1 extends unknown
+  ? U2 extends unknown
+    ? { 1: U1; 0: never }[Equals<U1, U2>]
+    : never
+  : never;
+
+================================================================================
+`;
+
+exports[`issue-9874.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export type RequestNextDealAction = BaseAction<DealsActionTypes.REQUEST_NEXT_DEAL>;
+
+=====================================output=====================================
+export type RequestNextDealAction =
+  BaseAction<DealsActionTypes.REQUEST_NEXT_DEAL>;
+
+================================================================================
+`;
+
+exports[`issue-100857.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type FieldLayoutWith<
+  T extends string,
+  S extends unknown = { width: string }
+> = {
+  type: T;
+  code: string;
+  size: S;
+};
+
+type FieldLayoutWith<
+  T extends string,
+  S extends unknown,
+> = {
+  type: T;
+  code: string;
+  size: S;
+};
+
+type FieldLayoutWith<
+  S extends unknown = { width: string }
+> = {
+  type: T;
+  code: string;
+  size: S;
+};
+
+type FieldLayoutWith<
+  T extends stringggggggggggg,
+  T extends stringggggggggggg
+> = {
+  type: T;
+  code: string;
+  size: S;
+};
+
+type FieldLayoutWith<
+  T extends stringggggggggggg,
+  S = stringggggggggggggggggg
+> = {
+  type: T;
+  code: string;
+  size: S;
+};
+
+=====================================output=====================================
+type FieldLayoutWith<
+  T extends string,
+  S extends unknown = { width: string },
+> = {
+  type: T;
+  code: string;
+  size: S;
+};
+
+type FieldLayoutWith<T extends string, S extends unknown> = {
+  type: T;
+  code: string;
+  size: S;
+};
+
+type FieldLayoutWith<S extends unknown = { width: string }> = {
+  type: T;
+  code: string;
+  size: S;
+};
+
+type FieldLayoutWith<
+  T extends stringggggggggggg,
+  T extends stringggggggggggg,
+> = {
+  type: T;
+  code: string;
+  size: S;
+};
+
+type FieldLayoutWith<
+  T extends stringggggggggggg,
+  S = stringggggggggggggggggg,
+> = {
+  type: T;
+  code: string;
+  size: S;
+};
+
+================================================================================
+`;
+
+exports[`pattern-parameter.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type C = {
+  foo([]?): void;
+  bar({}, []?): any;
+  baz(a: string, b: number, []?): void;
+};
+
+=====================================output=====================================
+type C = {
+  foo([]?): void;
+  bar({}, []?): any;
+  baz(a: string, b: number, []?): void;
+};
+
+================================================================================
+`;

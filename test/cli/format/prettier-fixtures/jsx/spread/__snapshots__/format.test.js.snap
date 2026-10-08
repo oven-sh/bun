@@ -1,0 +1,157 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`attribute.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div {...a}/>;
+
+<div {...(a || {})} />;
+
+<div {...(cond ? foo : bar)} />;
+
+<div {...a /* comment */}/>;
+
+<div {/* comment */...a}/>;
+
+<div {...a //comment
+}/>;
+
+<div {...a
+  //comment
+}/>;
+
+<div {
+  //comment
+  ...a
+}/>;
+
+<div {//comment
+  ...a // comment
+}/>;
+
+=====================================output=====================================
+<div {...a} />;
+
+<div {...(a || {})} />;
+
+<div {...(cond ? foo : bar)} />;
+
+<div {...a /* comment */} />;
+
+<div {/* comment */ ...a} />;
+
+<div
+  {
+    ...a //comment
+  }
+/>;
+
+<div
+  {
+    ...a
+    //comment
+  }
+/>;
+
+<div
+  {
+    //comment
+    ...a
+  }
+/>;
+
+<div
+  {
+    //comment
+    ...a // comment
+  }
+/>;
+
+================================================================================
+`;
+
+exports[`child.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div>{...a}</div>;
+
+<div>{...a /* comment */}</div>;
+
+<div>{/* comment */...a}</div>;
+
+<div>{...a //comment
+}</div>;
+
+<div>{...a
+  //comment
+}</div>;
+
+<div>{
+  //comment
+  ...a
+}</div>;
+
+<div>{//comment
+  ...a // comment
+}</div>;
+
+=====================================output=====================================
+<div>{...a}</div>;
+
+<div>{...a /* comment */}</div>;
+
+<div>{/* comment */ ...a}</div>;
+
+<div>
+  {
+    ...a //comment
+  }
+</div>;
+
+<div>
+  {
+    ...a
+    //comment
+  }
+</div>;
+
+<div>
+  {
+    //comment
+    ...a
+  }
+</div>;
+
+<div>
+  {
+    //comment
+    ...a // comment
+  }
+</div>;
+
+================================================================================
+`;
+
+exports[`child.js format[acorn] 1`] = `
+"Unexpected token (1:7)
+> 1 | <div>{...a}</div>;
+    |       ^
+  2 |
+  3 | <div>{...a /* comment */}</div>;
+  4 |
+Cause: Unexpected token (1:6)"
+`;
+
+exports[`child.js format[espree] 1`] = `
+"Unexpected token ... (1:7)
+> 1 | <div>{...a}</div>;
+    |       ^
+  2 |
+  3 | <div>{...a /* comment */}</div>;
+  4 |
+Cause: Unexpected token ..."
+`;

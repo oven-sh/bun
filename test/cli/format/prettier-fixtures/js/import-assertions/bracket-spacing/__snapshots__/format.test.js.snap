@@ -1,0 +1,108 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`dynamic-import.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["oxc", "typescript", "hermes"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import("./foo.json", { assert: { type: "json" } });
+
+=====================================output=====================================
+import("./foo.json", {assert: {type: "json"}});
+
+================================================================================
+`;
+
+exports[`empty.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["oxc", "typescript", "hermes"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export * as bar from "bar.json" assert { }
+=====================================output=====================================
+export * as bar from "bar.json" assert {};
+
+================================================================================
+`;
+
+exports[`empty.js - {"bracketSpacing":false} format[babel-ts] 1`] = `
+"Missing semicolon. (1:32)
+> 1 | export * as bar from "bar.json" assert { }
+    |                                ^
+Cause: Missing semicolon. (1:31)"
+`;
+
+exports[`empty.js - {"bracketSpacing":false} format[hermes] 1`] = `
+"';' expected (1:33)
+> 1 | export * as bar from "bar.json" assert { }
+    |                                 ^
+Cause: ';' expected (1:32)
+export * as bar from "bar.json" assert { }
+                                ^"
+`;
+
+exports[`re-export.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["oxc", "typescript", "hermes"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export { default as foo2 } from "foo.json" assert { type: "json" };
+
+=====================================output=====================================
+export {default as foo2} from "foo.json" assert {type: "json"};
+
+================================================================================
+`;
+
+exports[`re-export.js - {"bracketSpacing":false} format[babel-ts] 1`] = `
+"Missing semicolon. (1:43)
+> 1 | export { default as foo2 } from "foo.json" assert { type: "json" };
+    |                                           ^
+  2 |
+Cause: Missing semicolon. (1:42)"
+`;
+
+exports[`re-export.js - {"bracketSpacing":false} format[hermes] 1`] = `
+"';' expected (1:44)
+> 1 | export { default as foo2 } from "foo.json" assert { type: "json" };
+    |                                            ^
+  2 |
+Cause: ';' expected (1:43)
+export { default as foo2 } from "foo.json" assert { type: "json" };
+                                           ^"
+`;
+
+exports[`static-import.js - {"bracketSpacing":false} format 1`] = `
+====================================options=====================================
+bracketSpacing: false
+parsers: ["oxc", "typescript", "hermes"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import json from "./foo.json" assert { type: "json" };
+
+=====================================output=====================================
+import json from "./foo.json" assert {type: "json"};
+
+================================================================================
+`;
+
+exports[`static-import.js - {"bracketSpacing":false} format[babel-ts] 1`] = `
+"Missing semicolon. (1:30)
+> 1 | import json from "./foo.json" assert { type: "json" };
+    |                              ^
+  2 |
+Cause: Missing semicolon. (1:29)"
+`;
+
+exports[`static-import.js - {"bracketSpacing":false} format[hermes] 1`] = `
+"';' expected (1:31)
+> 1 | import json from "./foo.json" assert { type: "json" };
+    |                               ^
+  2 |
+Cause: ';' expected (1:30)
+import json from "./foo.json" assert { type: "json" };
+                              ^"
+`;

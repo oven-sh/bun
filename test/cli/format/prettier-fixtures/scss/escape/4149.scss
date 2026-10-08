@@ -1,0 +1,5 @@
+@media only screen and (max-width: 767px) {
+  @include widths(2 3 4, \@small);
+}
+
+$widths-breakpoint-separator: \@small;

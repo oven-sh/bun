@@ -1,0 +1,197 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`decorator-auto-accessors-abstract-class.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+abstract class Foo {
+  declare accessor prop7: number;
+  private accessor #p: any;
+
+  abstract accessor #s;
+  accessor #d?;
+  abstract accessor f;
+  readonly accessor g;
+}
+
+=====================================output=====================================
+abstract class Foo {
+  declare accessor prop7: number;
+  private accessor #p: any;
+
+  abstract accessor #s;
+  accessor #d?;
+  abstract accessor f;
+  readonly accessor g;
+}
+
+================================================================================
+`;
+
+exports[`decorator-auto-accessors-abstract-class.ts format[babel-ts] 1`] = `
+"An 'accessor' property cannot be declared optional. (6:3)
+  4 |
+  5 |   abstract accessor #s;
+> 6 |   accessor #d?;
+    |   ^
+  7 |   abstract accessor f;
+  8 |   readonly accessor g;
+  9 | }
+Cause: An 'accessor' property cannot be declared optional. (6:2)"
+`;
+
+exports[`decorator-auto-accessors-abstract-class.ts format[oxc-ts] 1`] = `
+"'accessor' modifier cannot be used with 'declare' modifier. (2:3)
+  1 | abstract class Foo {
+> 2 |   declare accessor prop7: number;
+    |   ^^^^^^^
+  3 |   private accessor #p: any;
+  4 |
+  5 |   abstract accessor #s;"
+`;
+
+exports[`decorator-auto-accessors-declare-class.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare class C {
+  accessor x = 1;
+  #y = 1;
+}
+
+=====================================output=====================================
+declare class C {
+  accessor x = 1;
+  #y = 1;
+}
+
+================================================================================
+`;
+
+exports[`decorator-auto-accessors-declare-class.ts format[oxc-ts] 1`] = `
+"Initializers are not allowed in ambient contexts. (3:8)
+  1 | declare class C {
+  2 |   accessor x = 1;
+> 3 |   #y = 1;
+    |        ^
+  4 | }
+  5 |"
+`;
+
+exports[`decorator-auto-accessors-mixed-modifiers.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+abstract class Foo {
+  accessor prop: number = 1;
+  static accessor prop2: number = 1;
+  accessor #prop3: number = 1;
+  accessor [prop4]: number = 1;
+  private accessor prop5: number = 1;
+  abstract accessor prop6: number;
+  private accessor #p: any;
+
+  accessor a!: any;
+  accessor aa!: any;
+  abstract accessor #s;
+  readonly accessor g;
+}
+
+=====================================output=====================================
+abstract class Foo {
+  accessor prop: number = 1;
+  static accessor prop2: number = 1;
+  accessor #prop3: number = 1;
+  accessor [prop4]: number = 1;
+  private accessor prop5: number = 1;
+  abstract accessor prop6: number;
+  private accessor #p: any;
+
+  accessor a!: any;
+  accessor aa!: any;
+  abstract accessor #s;
+  readonly accessor g;
+}
+
+================================================================================
+`;
+
+exports[`decorator-auto-accessors-mixed-modifiers.ts format[oxc-ts] 1`] = `
+"An accessibility modifier cannot be used with a private identifier. (8:3)
+   6 |   private accessor prop5: number = 1;
+   7 |   abstract accessor prop6: number;
+>  8 |   private accessor #p: any;
+     |   ^^^^^^^
+   9 |
+  10 |   accessor a!: any;
+  11 |   accessor aa!: any;"
+`;
+
+exports[`decorator-auto-accessors-new-line.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Foo {
+  accessor
+  ["bar"];
+}
+
+class Foo {
+  static accessor
+  bar;
+}
+
+class Foo {
+  accessor
+  bar;
+}
+
+=====================================output=====================================
+class Foo {
+  accessor;
+  ["bar"];
+}
+
+class Foo {
+  static accessor;
+  bar;
+}
+
+class Foo {
+  accessor;
+  bar;
+}
+
+================================================================================
+`;
+
+exports[`decorator-auto-accessors-type-annotations.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+abstract class Foo {
+  accessor prop: number = 1;
+  static accessor prop2: number = 1;
+  accessor #prop3: number = 1;
+  accessor [prop4]: number = 1;
+  private accessor prop5: number = 1;
+  abstract accessor prop6: number;
+}
+
+=====================================output=====================================
+abstract class Foo {
+  accessor prop: number = 1;
+  static accessor prop2: number = 1;
+  accessor #prop3: number = 1;
+  accessor [prop4]: number = 1;
+  private accessor prop5: number = 1;
+  abstract accessor prop6: number;
+}
+
+================================================================================
+`;

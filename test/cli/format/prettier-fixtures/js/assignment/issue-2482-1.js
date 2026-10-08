@@ -1,0 +1,15 @@
+aParticularlyLongAndObnoxiousNameForIllustrativePurposes =
+  anotherVeryLongNameForIllustrativePurposes;
+
+aParticularlyLongAndObnoxiousNameForIllustrativePurposes =
+  'a very long string for illustrative purposes'.length;
+
+aParticularlyLongAndObnoxiousNameForIllustrativePurposes =
+  anotherVeryLongNameForIllustrativePurposes();
+
+aParticularlyLongAndObnoxiousNameForIllustrativePurposes =
+  anotherVeryLongNameForIllustrativePurposes.length;
+
+aParticularlyLongAndObnoxiousNameForIllustrativePurposes =
+  anotherVeryLongNameForIllustrativePurposes + 1;
+

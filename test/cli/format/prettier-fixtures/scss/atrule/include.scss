@@ -1,0 +1,119 @@
+@include mix(1px, 2px, $arg2: 10, 2px 4px 6px);
+@include mix(1px,2px,$arg2:10,2px 4px 6px);
+@include mix ( 1px , 2px , $arg2 : 10 , 2px 4px 6px );
+@include mix  (  1px  ,  2px  , $arg2  :  10  ,  2px  4px  6px  );
+@include mix(
+    1px,
+    2px,
+    $arg2: 10,
+    2px  4px  6px
+);
+@include
+mix(
+    1px,
+    2px,
+    $arg2: 10,
+    2px  4px  6px
+);
+@include
+mix
+(
+1px
+,
+2px
+,
+$arg2
+:
+10
+,
+2px
+4px
+6px
+)
+;
+@include
+
+mix
+
+(
+
+1px
+
+,
+
+2px
+
+,
+
+$arg2
+
+:
+
+10
+
+,
+
+2px
+
+4px
+
+6px
+
+)
+
+;
+@include mix($very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-arg: 1px, $very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-arg1: 2px, $very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-arg2: 10, 2px 4px 6px);
+a {
+    @include global-variable-overriding;
+    @include mix($very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-arg: 1px, $very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-arg1: 2px, $very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-arg2: 10, 2px 4px 6px);
+    @include apply-to-ie6-only {}
+    @include apply-to-ie6-only{}
+    @include apply-to-ie6-only
+        {}
+    @include
+        apply-to-ie6-only
+        {
+        }
+    @include
+
+        apply-to-ie6-only
+
+        {
+
+        }
+}
+
+a {
+@include section-type-1(
+$header: (margin: 0 0 $margin-base, text-align: left),
+$decoration: (type: base, margin: 0 auto -1px 0, primary-color: $brand-primary, secondary-color: $gray-light),
+$title: (margin: 0 0 $margin-small, color: false, font-size: $font-size-h3, font-weight: false, line-height: $line-height-h3)
+);
+}
+
+a {
+@include item-spotlight-properties-transition(
+"-title",
+(box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15))
+);
+}
+
+a {
+@include item-spotlight-properties-transition(
+"-title",
+(
+box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15),
+border-color: $brand-primary
+)
+);
+}
+
+a {
+@include item-spotlight-properties-transition(
+"-title",
+(
+box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15),
+border-color: $very-very-very-very-very-very-very-very-very-very-very-very-very-long-value
+)
+);
+}

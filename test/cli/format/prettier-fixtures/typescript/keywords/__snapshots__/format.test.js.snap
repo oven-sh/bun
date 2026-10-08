@@ -1,0 +1,172 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`keywords.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+module Y4 {
+    enum Color { Blue, Red }
+}
+
+module YY3 {
+    module Module {
+        class A { s: string }
+    }
+}
+
+module YY4 {
+    enum Color { Blue, Red }
+}
+
+module YYY3 {
+    module Module {
+        class A { s: string }
+    }
+}
+
+module YYY4 {
+    enum Color { Blue, Red }
+}
+
+=====================================output=====================================
+module Y4 {
+  enum Color {
+    Blue,
+    Red,
+  }
+}
+
+module YY3 {
+  module Module {
+    class A {
+      s: string;
+    }
+  }
+}
+
+module YY4 {
+  enum Color {
+    Blue,
+    Red,
+  }
+}
+
+module YYY3 {
+  module Module {
+    class A {
+      s: string;
+    }
+  }
+}
+
+module YYY4 {
+  enum Color {
+    Blue,
+    Red,
+  }
+}
+
+================================================================================
+`;
+
+exports[`keywords-2.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/babel/babel/pull/12356
+
+class C {
+  private *a() {}
+  public *b() {}
+  static *c() {}
+  protected *g() {}
+}
+
+class D {
+  declare<T>() {}
+  readonly<T>() {}
+  abstract<T>() {}
+  static<T>() {}
+  private<T>() {}
+  public<T>() {}
+  protected<T>() {}
+}
+
+class E {
+  public
+  private() {}
+}
+
+class Foo {
+  constructor(private, public, static) {
+  }
+}
+
+=====================================output=====================================
+// https://github.com/babel/babel/pull/12356
+
+class C {
+  private *a() {}
+  public *b() {}
+  static *c() {}
+  protected *g() {}
+}
+
+class D {
+  declare<T>() {}
+  readonly<T>() {}
+  abstract<T>() {}
+  static<T>() {}
+  private<T>() {}
+  public<T>() {}
+  protected<T>() {}
+}
+
+class E {
+  public;
+  private() {}
+}
+
+class Foo {
+  constructor(private, public, static) {}
+}
+
+================================================================================
+`;
+
+exports[`module.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+module Y3 {
+  module Module {
+      class A { s: string }
+  }
+
+  export enum X { }
+
+  interface x {
+      readonly [x: any]: any;
+  }
+}
+
+=====================================output=====================================
+module Y3 {
+  module Module {
+    class A {
+      s: string;
+    }
+  }
+
+  export enum X {}
+
+  interface x {
+    readonly [x: any]: any;
+  }
+}
+
+================================================================================
+`;

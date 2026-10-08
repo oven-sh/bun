@@ -1,0 +1,94 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`comment.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = (x: any): asserts x is string/* comment */ => {}
+a = (x: any): asserts x is /* comment */string => {}
+a = (x: any): asserts x is/* comment */ string => {}
+a = (x: any): asserts x /* comment */is string => {}
+a = (x: any): asserts x/* comment */ is string => {}
+a = (x: any): asserts /* comment */x is string => {}
+a = (x: any): asserts/* comment */ x is string => {}
+a = (x: any): /* comment */asserts x is string => {}
+
+=====================================output=====================================
+a = (x: any): asserts x is string /* comment */ => {};
+a = (x: any): asserts x is /* comment */ string => {};
+a = (x: any): asserts x is /* comment */ string => {};
+a = (x: any): asserts x /* comment */ is string => {};
+a = (x: any): asserts x /* comment */ is string => {};
+a = (x: any): asserts /* comment */ x is string => {};
+a = (x: any): asserts /* comment */ x is string => {};
+a = (x: any): /* comment */ asserts x is string => {};
+
+================================================================================
+`;
+
+exports[`index.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const assertString = (x: any): asserts x => {
+  console.assert(typeof x === 'string');
+}
+
+function assertsString(x: any): asserts x {
+  console.assert(typeof x === 'string');
+}
+
+const assertStringWithGuard = (x: any): asserts x is string => {
+  console.assert(typeof x === 'string');
+}
+
+function assertsStringWithGuard(x: any): asserts x is string {
+  console.assert(typeof x === 'string');
+}
+
+interface AssertFoo {
+  isString(node: any): asserts node;
+}
+
+class AssertsFoo {
+  isBar(): asserts this {
+    return;
+  }
+  isBaz = (): asserts this => {
+    return;
+  }
+}
+=====================================output=====================================
+const assertString = (x: any): asserts x => {
+  console.assert(typeof x === "string");
+};
+
+function assertsString(x: any): asserts x {
+  console.assert(typeof x === "string");
+}
+
+const assertStringWithGuard = (x: any): asserts x is string => {
+  console.assert(typeof x === "string");
+};
+
+function assertsStringWithGuard(x: any): asserts x is string {
+  console.assert(typeof x === "string");
+}
+
+interface AssertFoo {
+  isString(node: any): asserts node;
+}
+
+class AssertsFoo {
+  isBar(): asserts this {
+    return;
+  }
+  isBaz = (): asserts this => {
+    return;
+  };
+}
+
+================================================================================
+`;

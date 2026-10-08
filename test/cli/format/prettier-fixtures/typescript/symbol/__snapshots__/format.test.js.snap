@@ -1,0 +1,14 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`symbol.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function test(abc: Map<symbol, string>) {}
+
+=====================================output=====================================
+function test(abc: Map<symbol, string>) {}
+
+================================================================================
+`;

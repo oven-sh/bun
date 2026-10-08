@@ -1,0 +1,22 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`parameterProperty.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+  constructor(public arg: number = 10) {
+    // fails because of comment
+  }
+}
+
+=====================================output=====================================
+class A {
+  constructor(public arg: number = 10) {
+    // fails because of comment
+  }
+}
+
+================================================================================
+`;

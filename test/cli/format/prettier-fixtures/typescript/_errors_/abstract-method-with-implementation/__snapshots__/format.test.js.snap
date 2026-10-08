@@ -1,0 +1,27 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format[babel-ts] 1`] = `
+"Method 'method' cannot have an implementation because it is marked abstract. (2:3)
+  1 | abstract class Foo  {
+> 2 |   abstract method() { }
+    |   ^
+  3 | }
+Cause: Method 'method' cannot have an implementation because it is marked abstract. (2:2)"
+`;
+
+exports[`snippet: #0 format[oxc-ts] 1`] = `
+"Method 'method' cannot have an implementation because it is marked abstract. (2:12)
+  1 | abstract class Foo  {
+> 2 |   abstract method() { }
+    |            ^^^^^^
+  3 | }"
+`;
+
+exports[`snippet: #0 format[typescript] 1`] = `
+"Method 'method' cannot have an implementation because it is marked abstract. (2:12)
+  1 | abstract class Foo  {
+> 2 |   abstract method() { }
+    |            ^^^^^^
+  3 | }
+Cause: Method 'method' cannot have an implementation because it is marked abstract."
+`;

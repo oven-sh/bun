@@ -529,8 +529,12 @@ pub(super) fn run(args: &Args) {
     }
 
     let mut summary = String::new();
-    let version = std::fs::read_to_string(root.join("../../package.json")).unwrap_or_default();
-    let version = version.split_once("\"version\": \"").and_then(|it| it.1.split_once('"')).map_or("?", |it| it.0);
+    // A copy of the fixtures, or a checkout of Prettier.
+    let version = std::fs::read_to_string(root.join("VERSION")).unwrap_or_else(|_| {
+        let package = std::fs::read_to_string(root.join("../../package.json")).unwrap_or_default();
+        package.split_once("\"version\": \"").and_then(|it| it.1.split_once('"')).map_or("?", |it| it.0).to_owned()
+    });
+    let version = version.trim();
     let _ = writeln!(summary, "# Conformance with Prettier {version}\n");
     let _ = writeln!(summary, "| directory | format | of the rest: syntax errors | panics | rejected | second format | CRLF | CR | BOM |");
     let _ = writeln!(summary, "| --- | --- | --- | --- | --- | --- | --- | --- | --- |");

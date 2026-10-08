@@ -1,0 +1,21 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`18136.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const defaultColorDecoratorsEnablement = accessor.get(IConfigurationService)
+  .getValue<"auto" | "always" | "never">(
+    "longlonglonglonglonglonglonglonglong",
+  );
+
+=====================================output=====================================
+const defaultColorDecoratorsEnablement = accessor
+  .get(IConfigurationService)
+  .getValue<"auto" | "always" | "never">(
+    "longlonglonglonglonglonglonglonglong",
+  );
+
+================================================================================
+`;

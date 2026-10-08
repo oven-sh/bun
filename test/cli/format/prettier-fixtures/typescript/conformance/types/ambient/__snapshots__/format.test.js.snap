@@ -1,0 +1,32 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`ambientDeclarations.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare type a = true;
+declare function b(): 'hello';
+declare const foo = 'bar';
+declare var qux: boolean;
+declare enum YO {}
+declare interface c {}
+declare class d {}
+declare module e {}
+declare module "g" {}
+declare namespace f {}
+
+=====================================output=====================================
+declare type a = true;
+declare function b(): "hello";
+declare const foo = "bar";
+declare var qux: boolean;
+declare enum YO {}
+declare interface c {}
+declare class d {}
+declare module e {}
+declare module "g" {}
+declare namespace f {}
+
+================================================================================
+`;

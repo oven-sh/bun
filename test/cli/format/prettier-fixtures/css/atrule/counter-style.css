@@ -1,0 +1,69 @@
+@counter-style identifier {
+    system: cyclic;
+    symbols: "\1F44D";
+    suffix: " ";
+}
+@counter-style identifier {
+system: cyclic;
+symbols: "\1F44D";
+suffix: " ";
+}
+@counter-style identifier{
+    system: cyclic;
+    symbols: "\1F44D";
+    suffix: " ";
+}
+@counter-style  identifier  {
+    system: cyclic;
+    symbols: "\1F44D";
+    suffix: " ";
+}
+@counter-style
+identifier
+{
+system
+:
+cyclic
+;
+symbols
+:
+"\1F44D"
+;
+suffix
+:
+" "
+;
+}
+
+@counter-style
+
+identifier
+
+{
+
+system
+
+:
+
+cyclic
+
+;
+
+symbols
+
+
+:
+
+"\1F44D"
+
+;
+
+suffix
+
+:
+
+" "
+
+;
+
+}

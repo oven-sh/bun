@@ -1,0 +1,81 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format[babel-ts] 1`] = `
+"'implements' list can only include identifiers or qualified-names with optional type arguments. (1:22)
+> 1 | class Foo implements A?.B {}
+    |                      ^
+Cause: 'implements' list can only include identifiers or qualified-names with optional type arguments. (1:21)"
+`;
+
+exports[`snippet: #0 format[oxc-ts] 1`] = `
+"Expected \`{\` but found \`?.\` (1:23)
+> 1 | class Foo implements A?.B {}
+    |                       ^^"
+`;
+
+exports[`snippet: #0 format[typescript] 1`] = `
+"A class can only implement an identifier/qualified-name with optional type arguments. (1:22)
+> 1 | class Foo implements A?.B {}
+    |                      ^^^^
+Cause: A class can only implement an identifier/qualified-name with optional type arguments."
+`;
+
+exports[`snippet: #1 format[babel-ts] 1`] = `
+"'implements' list can only include identifiers or qualified-names with optional type arguments. (1:23)
+> 1 | (class Foo implements A?.B {})
+    |                       ^
+Cause: 'implements' list can only include identifiers or qualified-names with optional type arguments. (1:22)"
+`;
+
+exports[`snippet: #1 format[oxc-ts] 1`] = `
+"Expected \`{\` but found \`?.\` (1:24)
+> 1 | (class Foo implements A?.B {})
+    |                        ^^"
+`;
+
+exports[`snippet: #1 format[typescript] 1`] = `
+"A class can only implement an identifier/qualified-name with optional type arguments. (1:23)
+> 1 | (class Foo implements A?.B {})
+    |                       ^^^^
+Cause: A class can only implement an identifier/qualified-name with optional type arguments."
+`;
+
+exports[`snippet: #2 format[babel-ts] 1`] = `
+"'implements' list can only include identifiers or qualified-names with optional type arguments. (1:22)
+> 1 | class Foo implements "thing" {}
+    |                      ^
+Cause: 'implements' list can only include identifiers or qualified-names with optional type arguments. (1:21)"
+`;
+
+exports[`snippet: #2 format[oxc-ts] 1`] = `
+"Unexpected token (1:22)
+> 1 | class Foo implements "thing" {}
+    |                      ^^^^^^^"
+`;
+
+exports[`snippet: #2 format[typescript] 1`] = `
+"A class can only implement an identifier/qualified-name with optional type arguments. (1:22)
+> 1 | class Foo implements "thing" {}
+    |                      ^^^^^^^
+Cause: A class can only implement an identifier/qualified-name with optional type arguments."
+`;
+
+exports[`snippet: #3 format[babel-ts] 1`] = `
+"'implements' list can only include identifiers or qualified-names with optional type arguments. (1:23)
+> 1 | (class Foo implements "thing" {})
+    |                       ^
+Cause: 'implements' list can only include identifiers or qualified-names with optional type arguments. (1:22)"
+`;
+
+exports[`snippet: #3 format[oxc-ts] 1`] = `
+"Unexpected token (1:23)
+> 1 | (class Foo implements "thing" {})
+    |                       ^^^^^^^"
+`;
+
+exports[`snippet: #3 format[typescript] 1`] = `
+"A class can only implement an identifier/qualified-name with optional type arguments. (1:23)
+> 1 | (class Foo implements "thing" {})
+    |                       ^^^^^^^
+Cause: A class can only implement an identifier/qualified-name with optional type arguments."
+`;

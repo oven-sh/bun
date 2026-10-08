@@ -1,0 +1,271 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`14040.ts - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+interface A1 {
+  foo;
+  <T>(): T;
+}
+type A2 = {
+  foo;
+  <T>(): T;
+}
+type A3 = {foo;
+  <T>(): T;
+}
+
+interface B1 {
+  foo;
+  (): X
+}
+type B2 = {
+  foo;
+  (): X
+}
+type B3 = {foo;
+  (): X
+}
+
+interface C1 {
+  get;
+  foo(): X
+}
+type C2 = {
+  get;
+  foo(): X
+}
+type C3 = {get;
+  foo(): X
+}
+
+interface D1 {
+  set;
+  foo(): X
+}
+type D2 = {
+  set;
+  foo(): X
+}
+type D3 = {set;
+  foo(): X
+}
+
+interface E1 {
+  static;
+  foo(): X
+}
+type E2 = {
+  static;
+  foo(): X
+}
+type E3 = {static;
+  foo(): X
+}
+
+interface F1 {
+  [get];
+  foo(): X
+}
+type F2 = {
+  [get];
+  foo(): X
+}
+type F3 = {[get];
+  foo(): X
+}
+
+interface G1 {
+  get: X;
+  foo(): X
+}
+type G2 = {
+  get: X;
+  foo(): X
+}
+type G3 = {get: X;
+  foo(): X
+}
+
+interface H1 {
+  foo: X;
+  <T>(): T;
+}
+type H2 = {
+  foo: X;
+  <T>(): T;
+}
+type H3 = {foo: X;
+  <T>(): T;
+}
+
+=====================================output=====================================
+interface A1 {
+  foo;
+  <T>(): T
+}
+type A2 = {
+  foo;
+  <T>(): T
+}
+type A3 = { foo; <T>(): T }
+
+interface B1 {
+  foo;
+  (): X
+}
+type B2 = {
+  foo;
+  (): X
+}
+type B3 = { foo; (): X }
+
+interface C1 {
+  get;
+  foo(): X
+}
+type C2 = {
+  get;
+  foo(): X
+}
+type C3 = { get; foo(): X }
+
+interface D1 {
+  set;
+  foo(): X
+}
+type D2 = {
+  set;
+  foo(): X
+}
+type D3 = { set; foo(): X }
+
+interface E1 {
+  static;
+  foo(): X
+}
+type E2 = {
+  static;
+  foo(): X
+}
+type E3 = { static; foo(): X }
+
+interface F1 {
+  [get]
+  foo(): X
+}
+type F2 = {
+  [get]
+  foo(): X
+}
+type F3 = { [get]; foo(): X }
+
+interface G1 {
+  get: X
+  foo(): X
+}
+type G2 = {
+  get: X
+  foo(): X
+}
+type G3 = { get: X; foo(): X }
+
+interface H1 {
+  foo: X
+  <T>(): T
+}
+type H2 = {
+  foo: X
+  <T>(): T
+}
+type H3 = { foo: X; <T>(): T }
+
+================================================================================
+`;
+
+exports[`18858.ts - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export interface MyInterface {
+  someMethod: (a: number) => Promise<number>
+  (a: string): Promise<string>
+}
+
+export type MyType = {
+  someMethod: (a: number) => Promise<number>
+  (a: string): Promise<string>
+}
+
+interface I1 {
+  prop: string;
+  ():string
+}
+type T1 ={
+  prop: string;
+  ():string
+}
+
+interface I2 {
+  prop;
+  ():string
+}
+type T2 ={
+  prop;
+  ():string
+}
+
+interface I3 {
+  prop: Foo;
+  <T>():string
+}
+type T3 ={
+  prop: Foo;
+  <T>():string
+}
+
+=====================================output=====================================
+export interface MyInterface {
+  someMethod: (a: number) => Promise<number>
+  (a: string): Promise<string>
+}
+
+export type MyType = {
+  someMethod: (a: number) => Promise<number>
+  (a: string): Promise<string>
+}
+
+interface I1 {
+  prop: string
+  (): string
+}
+type T1 = {
+  prop: string
+  (): string
+}
+
+interface I2 {
+  prop;
+  (): string
+}
+type T2 = {
+  prop;
+  (): string
+}
+
+interface I3 {
+  prop: Foo
+  <T>(): string
+}
+type T3 = {
+  prop: Foo
+  <T>(): string
+}
+
+================================================================================
+`;

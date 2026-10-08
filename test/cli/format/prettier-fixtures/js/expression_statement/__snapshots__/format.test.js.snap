@@ -1,0 +1,31 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`no_regression.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Ensure no regression.
+"use strict";
+
+=====================================output=====================================
+// Ensure no regression.
+"use strict";
+
+================================================================================
+`;
+
+exports[`use_strict.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Parentheses around expression statement should be preserved in this case.
+("use strict");
+
+=====================================output=====================================
+// Parentheses around expression statement should be preserved in this case.
+("use strict");
+
+================================================================================
+`;

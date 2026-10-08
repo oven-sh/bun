@@ -1,0 +1,32 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`keyof.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A = keyof (T | U);
+type B = keyof (X & Y);
+type C = keyof T | U;
+type D = keyof X & Y;
+type E = (keyof T)[];
+type F = ((keyof T))[];
+type G = (keyof T1)["foo"];
+type H = ((keyof T1))["foo"];
+type I = (((keyof T1)))["foo"];
+type J = ((((keyof T1))))["foo"];
+
+=====================================output=====================================
+type A = keyof (T | U);
+type B = keyof (X & Y);
+type C = keyof T | U;
+type D = keyof X & Y;
+type E = (keyof T)[];
+type F = (keyof T)[];
+type G = (keyof T1)["foo"];
+type H = (keyof T1)["foo"];
+type I = (keyof T1)["foo"];
+type J = (keyof T1)["foo"];
+
+================================================================================
+`;

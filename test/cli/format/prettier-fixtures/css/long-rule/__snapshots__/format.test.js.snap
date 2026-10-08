@@ -1,0 +1,20 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`long_rule.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.nuclide-resize-sensitive-container-sensor,
+.nuclide-resize-sensitive-container-expand,
+.nuclide-resize-sensitive-container-shrink {
+}
+
+=====================================output=====================================
+.nuclide-resize-sensitive-container-sensor,
+.nuclide-resize-sensitive-container-expand,
+.nuclide-resize-sensitive-container-shrink {
+}
+
+================================================================================
+`;

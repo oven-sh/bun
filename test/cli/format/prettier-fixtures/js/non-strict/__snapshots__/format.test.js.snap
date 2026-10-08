@@ -1,0 +1,64 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`argument-name-clash.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function f(a,a){return a}
+
+=====================================output=====================================
+function f(a, a) {
+  return a;
+}
+
+================================================================================
+`;
+
+exports[`keywords.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var package = require('../package');
+
+/**
+ * My amazing comment
+ */
+function myFunction() {
+	return 'StringGainz';
+}
+
+=====================================output=====================================
+var package = require("../package");
+
+/**
+ * My amazing comment
+ */
+function myFunction() {
+  return "StringGainz";
+}
+
+================================================================================
+`;
+
+exports[`octal-number.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+0777
+
+=====================================output=====================================
+0777;
+
+================================================================================
+`;
+
+exports[`octal-number.js format[typescript] 1`] = `
+"Octal literals are not allowed. Use the syntax '0o777'. (1:1)
+> 1 | 0777
+    | ^
+  2 |
+Cause: Octal literals are not allowed. Use the syntax '0o777'."
+`;

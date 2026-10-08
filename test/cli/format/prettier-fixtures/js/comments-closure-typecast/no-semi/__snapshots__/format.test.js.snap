@@ -1,0 +1,165 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`comments.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/prettier/prettier/issues/18307
+class C {
+  typeCastS() {
+    /** @type {string} */ (this.s).length // 7
+  }
+}
+
+// https://github.com/prettier/prettier/issues/12794
+;(/** @type {(token: Token)=>void} */ (onToken))(token) // 1
+;/** @type {(token: Token)=>void} */ (onToken)(token) // 2
+
+// unparenthesized
+;/** @type {(token: Token)=>void} */ [onToken](token) // 3
+;/** @type {(token: Token)=>void} */ onToken(token) // 4
+
+;/* not a type cast comment */ ([])(token) // 5
+
+;/* don't need leading semicolon */ (foo)(token) // 5
+
+=====================================output=====================================
+// https://github.com/prettier/prettier/issues/18307
+class C {
+  typeCastS() {
+    ;/** @type {string} */ (this.s).length // 7
+  }
+}
+
+// https://github.com/prettier/prettier/issues/12794
+;/** @type {(token: Token)=>void} */ (onToken)(token) // 1
+;/** @type {(token: Token)=>void} */ (onToken)(token) // 2
+
+// unparenthesized
+;/** @type {(token: Token)=>void} */ [onToken](token) // 3
+/** @type {(token: Token)=>void} */ onToken(token) // 4
+
+/* not a type cast comment */ ;[](token) // 5
+
+/* don't need leading semicolon */ foo(token) // 5
+
+================================================================================
+`;
+
+exports[`multiline.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/**
+@type {{
+  bar: string[]
+}}
+*/ (foo).bar.forEach(doStuff)
+
+=====================================output=====================================
+;/**
+@type {{
+  bar: string[]
+}}
+*/ (foo).bar.forEach(doStuff)
+
+================================================================================
+`;
+
+exports[`not-on-same-line.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/**
+@type {{
+  bar: string[]
+}}
+*/
+({}).bar.forEach(doStuff);
+
+// 1
+
+/**
+@type {{
+  bar: string[]
+}}
+*/
+
+({}).bar.forEach(doStuff);
+
+/**
+@type {{
+  bar: string[]
+}}
+*/
+
+(foo.bar.forEach(doStuff));
+
+/**
+@type {{
+  bar: string[]
+}}
+*/
+
+// 2
+({}).bar.forEach(doStuff);
+
+=====================================output=====================================
+;/**
+@type {{
+  bar: string[]
+}}
+*/
+({}).bar.forEach(doStuff)
+
+// 1
+
+;/**
+@type {{
+  bar: string[]
+}}
+*/
+
+({}).bar.forEach(doStuff)
+
+;/**
+@type {{
+  bar: string[]
+}}
+*/
+
+(foo.bar.forEach(doStuff))
+
+/**
+@type {{
+  bar: string[]
+}}
+*/
+
+// 2
+;({}).bar.forEach(doStuff)
+
+================================================================================
+`;
+
+exports[`with-other-comments.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+;/* 2 */ /** @type {{bar: string[]}} */ ({}).bar.forEach(doStuff)
+;/** @type {{bar: string[]}} */ /* 2 */ ({}).bar.forEach(doStuff)
+
+=====================================output=====================================
+/* 2 */ ;/** @type {{bar: string[]}} */ ({}).bar.forEach(doStuff)
+/** @type {{bar: string[]}} */ /* 2 */ ;({}).bar.forEach(doStuff)
+
+================================================================================
+`;

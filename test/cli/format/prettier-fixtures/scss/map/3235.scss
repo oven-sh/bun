@@ -1,0 +1,61 @@
+a {
+  transition-timing-function: func1(
+      func2(
+          func3(
+              "veryVeryVeryVeryVeryLongValue",
+              "veryVeryVeryVeryVeryLongValue",
+              "veryVeryVeryVeryVeryLongValue",
+              "veryVeryVeryVeryVeryLongValue",
+          ),
+          "veryVeryVeryVeryVeryLongValue",
+          "veryVeryVeryVeryVeryLongValue",
+          "veryVeryVeryVeryVeryLongValue",
+      ),
+      "veryVeryVeryVeryVeryLongValue",
+      "veryVeryVeryVeryVeryLongValue",
+      func3(
+          "veryVeryVeryVeryVeryLongValue",
+          "veryVeryVeryVeryVeryLongValue",
+          "veryVeryVeryVeryVeryLongValue",
+          "veryVeryVeryVeryVeryLongValue"
+      )
+  );
+}
+
+$empty-map: ();
+$empty-nested-map: (
+nested-key: (empty-key: (color: red)),
+empty-key: (),
+empty-key: (),
+empty-key: ()
+);
+
+$o-grid-default-config: (
+columns: 12,
+gutter: 10px,
+min-width: 240px,
+max-width: 1330px,
+layouts: (
+S:  370px,
+M:  610px,
+L:  850px,
+XL: 1090px
+),
+fluid: true,
+debug: false,
+fixed-layout: M,
+enhanced-experience: true
+);
+
+$a: ();
+$b: unquote('');
+$c: null;
+$d: (null);
+
+$threads-properties: map-merge($threads-properties,  ($border-label: ()));
+$o-grid-default-config: (layouts: (S:  370px));
+
+$map: (
+key: (value),
+other-key: (key: other-other-value)
+);

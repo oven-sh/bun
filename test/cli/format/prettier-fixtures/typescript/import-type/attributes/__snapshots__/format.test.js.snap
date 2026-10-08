@@ -1,0 +1,14 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`import-type-attributes.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A = import("foo", {with: {type: "json"}})
+
+=====================================output=====================================
+type A = import("foo", { with: { type: "json" } });
+
+================================================================================
+`;

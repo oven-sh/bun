@@ -1,0 +1,418 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`decorator.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// prettier-ignore
+@decorator
+class A {}
+
+=====================================output=====================================
+// prettier-ignore
+@decorator
+class A {}
+
+================================================================================
+`;
+
+exports[`decorator.js format[acorn] 1`] = `
+"Unexpected character '@' (2:1)
+  1 | // prettier-ignore
+> 2 | @decorator
+    | ^
+  3 | class A {}
+  4 |
+Cause: Unexpected character '@' (2:0)"
+`;
+
+exports[`decorator.js format[espree] 1`] = `
+"Unexpected character '@' (2:1)
+  1 | // prettier-ignore
+> 2 | @decorator
+    | ^
+  3 | class A {}
+  4 |
+Cause: Unexpected character '@'"
+`;
+
+exports[`ignore.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function a() {
+  // prettier-ignore
+  var fnString =
+    '"' + this.USE + ' ' + this.STRICT + '";\\n' +
+    this.filterPrefix() +
+    'var fn=' + this.generateFunction('fn', 's,l,a,i') +
+    extra +
+    this.watchFns() +
+    'return fn;';
+
+  // prettier-ignore
+  const identity = Matrix.create(
+    1, 0, 0,
+    0, 1, 0,
+    0, 0, 0
+  );
+
+  // Let's make sure that this comment doesn't interfere
+
+  // prettier-ignore
+  const commentsWithPrettierIgnore =   {
+    "ewww":
+            "gross-formatting",
+  };
+
+  function giveMeSome() {
+    a(  a  ); // prettier-ignore
+    // shouldn't I return something?  :shrug:
+  }
+
+  // prettier-ignore
+  console.error(
+    'In order to use ' + prompt + ', you need to configure a ' +
+    'few environment variables to be able to commit to the ' +
+    'repository. Follow those steps to get you setup:\\n' +
+    '\\n' +
+    'Go to https://github.com/settings/tokens/new\\n' +
+    ' - Fill "Token description" with "' + prompt + ' for ' +
+      repoSlug + '"\\n' +
+    ' - Check "public_repo"\\n' +
+    ' - Press "Generate Token"\\n' +
+    '\\n' +
+    'In a different tab, go to https://travis-ci.org/' +
+      repoSlug + '/settings\\n' +
+    ' - Make sure "Build only if .travis.yml is present" is ON\\n' +
+    ' - Fill "Name" with "GITHUB_USER" and "Value" with the name of the ' +
+      'account you generated the token with. Press "Add"\\n' +
+    '\\n' +
+    'Once this is done, commit anything to the repository to restart ' +
+      'Travis and it should work :)'
+  );
+}
+
+const response = {
+  // prettier-ignore
+  '_text': 'Turn on the lights',
+  intent: 'lights',
+};
+
+=====================================output=====================================
+function a() {
+  // prettier-ignore
+  var fnString =
+    '"' + this.USE + ' ' + this.STRICT + '";\\n' +
+    this.filterPrefix() +
+    'var fn=' + this.generateFunction('fn', 's,l,a,i') +
+    extra +
+    this.watchFns() +
+    'return fn;';
+
+  // prettier-ignore
+  const identity = Matrix.create(
+    1, 0, 0,
+    0, 1, 0,
+    0, 0, 0
+  );
+
+  // Let's make sure that this comment doesn't interfere
+
+  // prettier-ignore
+  const commentsWithPrettierIgnore =   {
+    "ewww":
+            "gross-formatting",
+  };
+
+  function giveMeSome() {
+    a(  a  ); // prettier-ignore
+    // shouldn't I return something?  :shrug:
+  }
+
+  // prettier-ignore
+  console.error(
+    'In order to use ' + prompt + ', you need to configure a ' +
+    'few environment variables to be able to commit to the ' +
+    'repository. Follow those steps to get you setup:\\n' +
+    '\\n' +
+    'Go to https://github.com/settings/tokens/new\\n' +
+    ' - Fill "Token description" with "' + prompt + ' for ' +
+      repoSlug + '"\\n' +
+    ' - Check "public_repo"\\n' +
+    ' - Press "Generate Token"\\n' +
+    '\\n' +
+    'In a different tab, go to https://travis-ci.org/' +
+      repoSlug + '/settings\\n' +
+    ' - Make sure "Build only if .travis.yml is present" is ON\\n' +
+    ' - Fill "Name" with "GITHUB_USER" and "Value" with the name of the ' +
+      'account you generated the token with. Press "Add"\\n' +
+    '\\n' +
+    'Once this is done, commit anything to the repository to restart ' +
+      'Travis and it should work :)'
+  );
+}
+
+const response = {
+  // prettier-ignore
+  '_text': 'Turn on the lights',
+  intent: "lights",
+};
+
+================================================================================
+`;
+
+exports[`issue-9335.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class foo extends
+  // prettier-ignore
+  f {}
+
+=====================================output=====================================
+class foo
+  // prettier-ignore
+  extends f {}
+
+================================================================================
+`;
+
+exports[`issue-9877.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export default function test() {
+  return {
+    matrix: // prettier-ignore
+      new Float32Array([
+      0, 0,
+      1, 0,
+      1, 1,
+      0, 1
+    ]),
+  };
+}
+
+=====================================output=====================================
+export default function test() {
+  return {
+    matrix: // prettier-ignore
+      new Float32Array([
+      0, 0,
+      1, 0,
+      1, 1,
+      0, 1
+    ]),
+  };
+}
+
+================================================================================
+`;
+
+exports[`issue-10661.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+verylongidentifierthatwillwrap123123123123123(
+  a.b
+    // prettier-ignore
+    // Some other comment here
+    .c
+);
+
+call(
+  // comment
+  a.
+    // prettier-ignore
+    b
+)
+
+call(
+  a(
+/*
+this won't get formatted too,
+because the prettier-ignore comment is attached as MemberExpression leading comment
+*/
+1,
+2.0000, 3
+)
+    // prettier-ignore
+    .c
+)
+
+=====================================output=====================================
+verylongidentifierthatwillwrap123123123123123(
+  a.b
+    // prettier-ignore
+    // Some other comment here
+    .c,
+);
+
+call(
+  // comment
+  a.
+    // prettier-ignore
+    b,
+);
+
+call(
+  a(
+/*
+this won't get formatted too,
+because the prettier-ignore comment is attached as MemberExpression leading comment
+*/
+1,
+2.0000, 3
+)
+    // prettier-ignore
+    .c,
+);
+
+================================================================================
+`;
+
+exports[`issue-11077.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function HelloWorld(x) {
+
+  (
+    // prettier-ignore
+    // eslint-disable-next-line
+    x.a |
+    x.b
+  ).call(null)
+
+}
+
+function HelloWorld(x) {
+  // prettier-ignore
+  (
+    // eslint-disable-next-line
+    x.a |
+    x.b
+  ).call(null)
+
+}
+
+=====================================output=====================================
+function HelloWorld(x) {
+  // prettier-ignore
+  // eslint-disable-next-line
+  (x.a |
+    x.b).call(null);
+}
+
+function HelloWorld(x) {
+  // prettier-ignore
+  (
+    // eslint-disable-next-line
+    x.a |
+    x.b
+  ).call(null)
+}
+
+================================================================================
+`;
+
+exports[`issue-13737.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+oneArgument(
+ // prettier-ignore
+ (0, 1)
+)
+
+a=(
+ // prettier-ignore
+ (0, 1)
+)
+
+=====================================output=====================================
+oneArgument(
+  // prettier-ignore
+  (0, 1),
+);
+
+a =
+  // prettier-ignore
+  (0, 1);
+
+================================================================================
+`;
+
+exports[`issue-14404.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function foo() {
+(
+  	// prettier-ignore
+  	// b
+	await thing()
+).blah
+}
+
+=====================================output=====================================
+async function foo() {
+  // prettier-ignore
+  // b
+  (await thing()).blah;
+}
+
+================================================================================
+`;
+
+exports[`issue-18303.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let x =
+    1
+    +
+    1
+;
+// prettier-ignore
+let y =
+    1
+    +
+    1
+;
+
+=====================================output=====================================
+let x = 1 + 1;
+// prettier-ignore
+let y =
+    1
+    +
+    1;
+
+================================================================================
+`;
+
+exports[`parenthesized-expression.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// prettier-ignore
+(a = 1);
+
+=====================================output=====================================
+// prettier-ignore
+(a = 1);
+
+================================================================================
+`;

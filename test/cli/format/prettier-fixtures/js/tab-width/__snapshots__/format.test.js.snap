@@ -1,0 +1,131 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`class.js - {"tabWidth":4} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+tabWidth: 4
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+  method() {
+    var x = 1;
+    while(typeof x == "number" || typeof x == "string") {
+        x = x + 1;
+        if (true) x = "";
+    }
+    var z = x;
+  }
+}
+
+=====================================output=====================================
+class A {
+    method() {
+        var x = 1;
+        while (typeof x == "number" || typeof x == "string") {
+            x = x + 1;
+            if (true) x = "";
+        }
+        var z = x;
+    }
+}
+
+================================================================================
+`;
+
+exports[`class.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+  method() {
+    var x = 1;
+    while(typeof x == "number" || typeof x == "string") {
+        x = x + 1;
+        if (true) x = "";
+    }
+    var z = x;
+  }
+}
+
+=====================================output=====================================
+class A {
+  method() {
+    var x = 1;
+    while (typeof x == "number" || typeof x == "string") {
+      x = x + 1;
+      if (true) x = "";
+    }
+    var z = x;
+  }
+}
+
+================================================================================
+`;
+
+exports[`nested-functions.spec.js - {"tabWidth":4} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+tabWidth: 4
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const c = () => {};
+
+function a() {
+  return function b() {
+    return () => {
+      return function() {
+        return c;
+      }
+    }
+  }
+}
+
+=====================================output=====================================
+const c = () => {};
+
+function a() {
+    return function b() {
+        return () => {
+            return function () {
+                return c;
+            };
+        };
+    };
+}
+
+================================================================================
+`;
+
+exports[`nested-functions.spec.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const c = () => {};
+
+function a() {
+  return function b() {
+    return () => {
+      return function() {
+        return c;
+      }
+    }
+  }
+}
+
+=====================================output=====================================
+const c = () => {};
+
+function a() {
+  return function b() {
+    return () => {
+      return function () {
+        return c;
+      };
+    };
+  };
+}
+
+================================================================================
+`;

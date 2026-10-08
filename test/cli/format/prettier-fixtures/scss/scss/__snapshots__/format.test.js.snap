@@ -1,0 +1,1735 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`3757.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$buttonConfig: "save" 50px, 'cancel' 50px, "help" 100PX;
+
+$locale: "en_us";
+html[lang=#{$locale}] {
+  font-size: 10px;
+}
+$alertClass: "error";
+p.message-#{$alertClass} {
+  color: red;
+}
+$mediumBreakpoint: 768px;
+@media (max-width: #{$mediumBreakpoint}) {
+  a {
+    font-size: 18px;
+  }
+}
+
+p {
+  @media (max-width: 768px) {
+    font-size: 150%;
+
+    @media (orientation: landscape) {
+        line-height: 75%;
+    }
+  }
+}
+
+.popularAnimal {
+    background: gray;
+}
+.GoodBoy {
+    color: green;
+}
+.dog {
+  @extend .popularAnimal;
+  @extend .GoodBoy;
+  color: white;
+}
+
+%animal {
+  background: gray;
+}
+.cat {
+  @extend %animal;
+  color: white;
+}
+.dog {
+  @extend %animal;
+  color: black;
+}
+
+%mfw-standing-out {
+  font-size: 150%;
+  font-style: italic;
+  padding: 25px;
+}
+%mfwSlightlyShadowed {
+  @include box-shadow(black 2px 2px 10px); // from Compass
+}
+%MFWRounded {
+  @include border-radius(25px); // from Compass
+}
+#join-button {
+  @extend %mfw-standing-out;
+  @extend %mfwSlightlyShadowed;
+  @extend %MFWRounded;
+  background: green;
+  color: white;
+}
+
+a {
+  &:hover {
+    color: red;
+  }
+}
+p {
+  body.no-touch & {
+    display: none;
+  }
+}
+.foo.bar .baz.bang, .bip.qux {
+  $selector: &;
+}
+@mixin does-parent-exist {
+  @if & {
+    &:hover {
+      color: red;
+    }
+  } @else {
+    a {
+      color: red;
+    }
+  }
+}
+
+p {
+  @if 1 + 1 == 2 {
+    border: 1px solid;
+  }
+  @if 5 < 3 {
+    border: 2px dotted;
+  }
+  @if null {
+    border: 3px double;
+  }
+}
+
+$mosterType: monster;
+p {
+  @if $mosterType == ocean {
+    color: blue;
+  } @else if $mosterType == matador {
+    color: red;
+  } @else if $mosterType == monster {
+    color: green;
+  } @else if $mosterType == nightKing {
+    color: green;
+  } @else if $mosterType == VeryWickedWolf {
+    color: green;
+  } @else {
+    color: black;
+  }
+}
+
+@for $i from 1 through 3 {
+  .item-#{$i} {
+    width: 2em * $i;
+  }
+}
+
+@each $animal in puma, sea-slug, cheerfulDog, BigSalamander, "string", 'another-string', "camelCaseString", "PascalCaseString" {
+  .#{$animal}-icon {
+    background-image: url('/images/#{$animal}.png');
+  }
+}
+
+$i: 6;
+@while $i > 0 {
+  .item-#{$i} {
+    width: 2em * $i;
+  }
+  $i: $i - 2;
+}
+
+@mixin cool-border($width: 10px, $coolStyle: 'solid', $AwesomeColor: "black") {
+  border: $width $coolStyle $AwesomeColor;
+}
+
+p {
+  @include cool-border(1px, "solid", $fff);
+}
+p {
+  @include cool-border($width: 1px, $coolStyle: 'solid', $AwesomeColor: #fff);
+}
+p {
+  @include coolBorder();
+}
+
+@mixin coolBorder() {
+  border: 10px solid #fff;
+}
+p {
+  @include coolBorder(1px, "solid", $fff);
+}
+
+@mixin CoolBorder() {
+  border: 10px solid #fff;
+}
+p {
+  @include CoolBorder(1px, "solid", $fff);
+}
+
+@mixin box-shadow($shadows...) {
+  -moz-box-shadow: $shadows;
+  -webkit-box-shadow: $shadows;
+  box-shadow: $shadows;
+}
+.shadows {
+  @include box-shadow(0px 4px 5px #666, 2px 6px 10px #999);
+}
+
+@mixin apply-to-ie6-only {
+  * html {
+    @content;
+  }
+}
+@include apply-to-ie6-only {
+  #logo {
+    background-image: url(/logo.gif);
+  }
+}
+
+@mixin applyToIe6Only {
+  * html {
+    @content;
+  }
+}
+@include applyToIe6Only {
+  #logo {
+    background-image: url(/logo.gif);
+  }
+}
+
+@mixin ApplyToIe6Only {
+  * html {
+    @content;
+  }
+}
+@include ApplyToIe6Only {
+  #logo {
+    background-image: url(/logo.gif);
+  }
+}
+
+@mixin config-icon-colors($prefix, $colors...) {
+  @each $i in $colors {
+    .#{$prefix}#{nth($i, 1)} {
+      color: nth($i, 2);
+    }
+  }
+}
+@include config-icon-colors(
+  "icon-",
+  "save" green,
+  "cancel" gray,
+  "delete" red,
+  'wait' blue
+);
+
+@function my-calculation-function($some-number, $anotherNumber, $BigNumber){
+  @return $some-number + $anotherNumber + $BigNumber;
+}
+@function myCalculationFunction($some-number, $anotherNumber, $BigNumber){
+  @return $some-number + $anotherNumber + $BigNumber;
+}
+@function AnotherMyCalculationFunction($some-number, $anotherNumber, $BigNumber: 100px){
+  @return $some-number + $anotherNumber + $BigNumber;
+}
+@function border($borders...) {
+  @return $borders;
+}
+.foo {
+  padding: my-calculation-function(10px, 5px, 100px);
+  margin: myCalculationFunction($some-number: 10px, $anotherNumber: 5px, $BigNumber: 100px);
+  width: AnotherMyCalculationFunction(10px, 5px);
+  border: border(25px, 35px);
+}
+
+=====================================output=====================================
+$buttonConfig:
+  "save" 50px,
+  "cancel" 50px,
+  "help" 100px;
+
+$locale: "en_us";
+html[lang="#{$locale}"] {
+  font-size: 10px;
+}
+$alertClass: "error";
+p.message-#{$alertClass} {
+  color: red;
+}
+$mediumBreakpoint: 768px;
+@media (max-width: #{$mediumBreakpoint}) {
+  a {
+    font-size: 18px;
+  }
+}
+
+p {
+  @media (max-width: 768px) {
+    font-size: 150%;
+
+    @media (orientation: landscape) {
+      line-height: 75%;
+    }
+  }
+}
+
+.popularAnimal {
+  background: gray;
+}
+.GoodBoy {
+  color: green;
+}
+.dog {
+  @extend .popularAnimal;
+  @extend .GoodBoy;
+  color: white;
+}
+
+%animal {
+  background: gray;
+}
+.cat {
+  @extend %animal;
+  color: white;
+}
+.dog {
+  @extend %animal;
+  color: black;
+}
+
+%mfw-standing-out {
+  font-size: 150%;
+  font-style: italic;
+  padding: 25px;
+}
+%mfwSlightlyShadowed {
+  @include box-shadow(black 2px 2px 10px); // from Compass
+}
+%MFWRounded {
+  @include border-radius(25px); // from Compass
+}
+#join-button {
+  @extend %mfw-standing-out;
+  @extend %mfwSlightlyShadowed;
+  @extend %MFWRounded;
+  background: green;
+  color: white;
+}
+
+a {
+  &:hover {
+    color: red;
+  }
+}
+p {
+  body.no-touch & {
+    display: none;
+  }
+}
+.foo.bar .baz.bang,
+.bip.qux {
+  $selector: &;
+}
+@mixin does-parent-exist {
+  @if & {
+    &:hover {
+      color: red;
+    }
+  } @else {
+    a {
+      color: red;
+    }
+  }
+}
+
+p {
+  @if 1 + 1 == 2 {
+    border: 1px solid;
+  }
+  @if 5 < 3 {
+    border: 2px dotted;
+  }
+  @if null {
+    border: 3px double;
+  }
+}
+
+$mosterType: monster;
+p {
+  @if $mosterType == ocean {
+    color: blue;
+  } @else if $mosterType == matador {
+    color: red;
+  } @else if $mosterType == monster {
+    color: green;
+  } @else if $mosterType == nightKing {
+    color: green;
+  } @else if $mosterType == VeryWickedWolf {
+    color: green;
+  } @else {
+    color: black;
+  }
+}
+
+@for $i from 1 through 3 {
+  .item-#{$i} {
+    width: 2em * $i;
+  }
+}
+
+@each $animal in puma, sea-slug, cheerfulDog, BigSalamander, "string",
+  "another-string", "camelCaseString", "PascalCaseString"
+{
+  .#{$animal}-icon {
+    background-image: url("/images/#{$animal}.png");
+  }
+}
+
+$i: 6;
+@while $i > 0 {
+  .item-#{$i} {
+    width: 2em * $i;
+  }
+  $i: $i - 2;
+}
+
+@mixin cool-border($width: 10px, $coolStyle: "solid", $AwesomeColor: "black") {
+  border: $width $coolStyle $AwesomeColor;
+}
+
+p {
+  @include cool-border(1px, "solid", $fff);
+}
+p {
+  @include cool-border($width: 1px, $coolStyle: "solid", $AwesomeColor: #fff);
+}
+p {
+  @include coolBorder();
+}
+
+@mixin coolBorder() {
+  border: 10px solid #fff;
+}
+p {
+  @include coolBorder(1px, "solid", $fff);
+}
+
+@mixin CoolBorder() {
+  border: 10px solid #fff;
+}
+p {
+  @include CoolBorder(1px, "solid", $fff);
+}
+
+@mixin box-shadow($shadows...) {
+  -moz-box-shadow: $shadows;
+  -webkit-box-shadow: $shadows;
+  box-shadow: $shadows;
+}
+.shadows {
+  @include box-shadow(0px 4px 5px #666, 2px 6px 10px #999);
+}
+
+@mixin apply-to-ie6-only {
+  * html {
+    @content;
+  }
+}
+@include apply-to-ie6-only {
+  #logo {
+    background-image: url(/logo.gif);
+  }
+}
+
+@mixin applyToIe6Only {
+  * html {
+    @content;
+  }
+}
+@include applyToIe6Only {
+  #logo {
+    background-image: url(/logo.gif);
+  }
+}
+
+@mixin ApplyToIe6Only {
+  * html {
+    @content;
+  }
+}
+@include ApplyToIe6Only {
+  #logo {
+    background-image: url(/logo.gif);
+  }
+}
+
+@mixin config-icon-colors($prefix, $colors...) {
+  @each $i in $colors {
+    .#{$prefix}#{nth($i, 1)} {
+      color: nth($i, 2);
+    }
+  }
+}
+@include config-icon-colors(
+  "icon-",
+  "save" green,
+  "cancel" gray,
+  "delete" red,
+  "wait" blue
+);
+
+@function my-calculation-function($some-number, $anotherNumber, $BigNumber) {
+  @return $some-number + $anotherNumber + $BigNumber;
+}
+@function myCalculationFunction($some-number, $anotherNumber, $BigNumber) {
+  @return $some-number + $anotherNumber + $BigNumber;
+}
+@function AnotherMyCalculationFunction(
+  $some-number,
+  $anotherNumber,
+  $BigNumber: 100px
+) {
+  @return $some-number + $anotherNumber + $BigNumber;
+}
+@function border($borders...) {
+  @return $borders;
+}
+.foo {
+  padding: my-calculation-function(10px, 5px, 100px);
+  margin: myCalculationFunction(
+    $some-number: 10px,
+    $anotherNumber: 5px,
+    $BigNumber: 100px
+  );
+  width: AnotherMyCalculationFunction(10px, 5px);
+  border: border(25px, 35px);
+}
+
+================================================================================
+`;
+
+exports[`3757.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$buttonConfig: "save" 50px, 'cancel' 50px, "help" 100PX;
+
+$locale: "en_us";
+html[lang=#{$locale}] {
+  font-size: 10px;
+}
+$alertClass: "error";
+p.message-#{$alertClass} {
+  color: red;
+}
+$mediumBreakpoint: 768px;
+@media (max-width: #{$mediumBreakpoint}) {
+  a {
+    font-size: 18px;
+  }
+}
+
+p {
+  @media (max-width: 768px) {
+    font-size: 150%;
+
+    @media (orientation: landscape) {
+        line-height: 75%;
+    }
+  }
+}
+
+.popularAnimal {
+    background: gray;
+}
+.GoodBoy {
+    color: green;
+}
+.dog {
+  @extend .popularAnimal;
+  @extend .GoodBoy;
+  color: white;
+}
+
+%animal {
+  background: gray;
+}
+.cat {
+  @extend %animal;
+  color: white;
+}
+.dog {
+  @extend %animal;
+  color: black;
+}
+
+%mfw-standing-out {
+  font-size: 150%;
+  font-style: italic;
+  padding: 25px;
+}
+%mfwSlightlyShadowed {
+  @include box-shadow(black 2px 2px 10px); // from Compass
+}
+%MFWRounded {
+  @include border-radius(25px); // from Compass
+}
+#join-button {
+  @extend %mfw-standing-out;
+  @extend %mfwSlightlyShadowed;
+  @extend %MFWRounded;
+  background: green;
+  color: white;
+}
+
+a {
+  &:hover {
+    color: red;
+  }
+}
+p {
+  body.no-touch & {
+    display: none;
+  }
+}
+.foo.bar .baz.bang, .bip.qux {
+  $selector: &;
+}
+@mixin does-parent-exist {
+  @if & {
+    &:hover {
+      color: red;
+    }
+  } @else {
+    a {
+      color: red;
+    }
+  }
+}
+
+p {
+  @if 1 + 1 == 2 {
+    border: 1px solid;
+  }
+  @if 5 < 3 {
+    border: 2px dotted;
+  }
+  @if null {
+    border: 3px double;
+  }
+}
+
+$mosterType: monster;
+p {
+  @if $mosterType == ocean {
+    color: blue;
+  } @else if $mosterType == matador {
+    color: red;
+  } @else if $mosterType == monster {
+    color: green;
+  } @else if $mosterType == nightKing {
+    color: green;
+  } @else if $mosterType == VeryWickedWolf {
+    color: green;
+  } @else {
+    color: black;
+  }
+}
+
+@for $i from 1 through 3 {
+  .item-#{$i} {
+    width: 2em * $i;
+  }
+}
+
+@each $animal in puma, sea-slug, cheerfulDog, BigSalamander, "string", 'another-string', "camelCaseString", "PascalCaseString" {
+  .#{$animal}-icon {
+    background-image: url('/images/#{$animal}.png');
+  }
+}
+
+$i: 6;
+@while $i > 0 {
+  .item-#{$i} {
+    width: 2em * $i;
+  }
+  $i: $i - 2;
+}
+
+@mixin cool-border($width: 10px, $coolStyle: 'solid', $AwesomeColor: "black") {
+  border: $width $coolStyle $AwesomeColor;
+}
+
+p {
+  @include cool-border(1px, "solid", $fff);
+}
+p {
+  @include cool-border($width: 1px, $coolStyle: 'solid', $AwesomeColor: #fff);
+}
+p {
+  @include coolBorder();
+}
+
+@mixin coolBorder() {
+  border: 10px solid #fff;
+}
+p {
+  @include coolBorder(1px, "solid", $fff);
+}
+
+@mixin CoolBorder() {
+  border: 10px solid #fff;
+}
+p {
+  @include CoolBorder(1px, "solid", $fff);
+}
+
+@mixin box-shadow($shadows...) {
+  -moz-box-shadow: $shadows;
+  -webkit-box-shadow: $shadows;
+  box-shadow: $shadows;
+}
+.shadows {
+  @include box-shadow(0px 4px 5px #666, 2px 6px 10px #999);
+}
+
+@mixin apply-to-ie6-only {
+  * html {
+    @content;
+  }
+}
+@include apply-to-ie6-only {
+  #logo {
+    background-image: url(/logo.gif);
+  }
+}
+
+@mixin applyToIe6Only {
+  * html {
+    @content;
+  }
+}
+@include applyToIe6Only {
+  #logo {
+    background-image: url(/logo.gif);
+  }
+}
+
+@mixin ApplyToIe6Only {
+  * html {
+    @content;
+  }
+}
+@include ApplyToIe6Only {
+  #logo {
+    background-image: url(/logo.gif);
+  }
+}
+
+@mixin config-icon-colors($prefix, $colors...) {
+  @each $i in $colors {
+    .#{$prefix}#{nth($i, 1)} {
+      color: nth($i, 2);
+    }
+  }
+}
+@include config-icon-colors(
+  "icon-",
+  "save" green,
+  "cancel" gray,
+  "delete" red,
+  'wait' blue
+);
+
+@function my-calculation-function($some-number, $anotherNumber, $BigNumber){
+  @return $some-number + $anotherNumber + $BigNumber;
+}
+@function myCalculationFunction($some-number, $anotherNumber, $BigNumber){
+  @return $some-number + $anotherNumber + $BigNumber;
+}
+@function AnotherMyCalculationFunction($some-number, $anotherNumber, $BigNumber: 100px){
+  @return $some-number + $anotherNumber + $BigNumber;
+}
+@function border($borders...) {
+  @return $borders;
+}
+.foo {
+  padding: my-calculation-function(10px, 5px, 100px);
+  margin: myCalculationFunction($some-number: 10px, $anotherNumber: 5px, $BigNumber: 100px);
+  width: AnotherMyCalculationFunction(10px, 5px);
+  border: border(25px, 35px);
+}
+
+=====================================output=====================================
+$buttonConfig:
+  "save" 50px,
+  "cancel" 50px,
+  "help" 100px;
+
+$locale: "en_us";
+html[lang="#{$locale}"] {
+  font-size: 10px;
+}
+$alertClass: "error";
+p.message-#{$alertClass} {
+  color: red;
+}
+$mediumBreakpoint: 768px;
+@media (max-width: #{$mediumBreakpoint}) {
+  a {
+    font-size: 18px;
+  }
+}
+
+p {
+  @media (max-width: 768px) {
+    font-size: 150%;
+
+    @media (orientation: landscape) {
+      line-height: 75%;
+    }
+  }
+}
+
+.popularAnimal {
+  background: gray;
+}
+.GoodBoy {
+  color: green;
+}
+.dog {
+  @extend .popularAnimal;
+  @extend .GoodBoy;
+  color: white;
+}
+
+%animal {
+  background: gray;
+}
+.cat {
+  @extend %animal;
+  color: white;
+}
+.dog {
+  @extend %animal;
+  color: black;
+}
+
+%mfw-standing-out {
+  font-size: 150%;
+  font-style: italic;
+  padding: 25px;
+}
+%mfwSlightlyShadowed {
+  @include box-shadow(black 2px 2px 10px); // from Compass
+}
+%MFWRounded {
+  @include border-radius(25px); // from Compass
+}
+#join-button {
+  @extend %mfw-standing-out;
+  @extend %mfwSlightlyShadowed;
+  @extend %MFWRounded;
+  background: green;
+  color: white;
+}
+
+a {
+  &:hover {
+    color: red;
+  }
+}
+p {
+  body.no-touch & {
+    display: none;
+  }
+}
+.foo.bar .baz.bang,
+.bip.qux {
+  $selector: &;
+}
+@mixin does-parent-exist {
+  @if & {
+    &:hover {
+      color: red;
+    }
+  } @else {
+    a {
+      color: red;
+    }
+  }
+}
+
+p {
+  @if 1 + 1 == 2 {
+    border: 1px solid;
+  }
+  @if 5 < 3 {
+    border: 2px dotted;
+  }
+  @if null {
+    border: 3px double;
+  }
+}
+
+$mosterType: monster;
+p {
+  @if $mosterType == ocean {
+    color: blue;
+  } @else if $mosterType == matador {
+    color: red;
+  } @else if $mosterType == monster {
+    color: green;
+  } @else if $mosterType == nightKing {
+    color: green;
+  } @else if $mosterType == VeryWickedWolf {
+    color: green;
+  } @else {
+    color: black;
+  }
+}
+
+@for $i from 1 through 3 {
+  .item-#{$i} {
+    width: 2em * $i;
+  }
+}
+
+@each $animal in puma, sea-slug, cheerfulDog, BigSalamander, "string",
+  "another-string", "camelCaseString", "PascalCaseString"
+{
+  .#{$animal}-icon {
+    background-image: url("/images/#{$animal}.png");
+  }
+}
+
+$i: 6;
+@while $i > 0 {
+  .item-#{$i} {
+    width: 2em * $i;
+  }
+  $i: $i - 2;
+}
+
+@mixin cool-border($width: 10px, $coolStyle: "solid", $AwesomeColor: "black") {
+  border: $width $coolStyle $AwesomeColor;
+}
+
+p {
+  @include cool-border(1px, "solid", $fff);
+}
+p {
+  @include cool-border($width: 1px, $coolStyle: "solid", $AwesomeColor: #fff);
+}
+p {
+  @include coolBorder();
+}
+
+@mixin coolBorder() {
+  border: 10px solid #fff;
+}
+p {
+  @include coolBorder(1px, "solid", $fff);
+}
+
+@mixin CoolBorder() {
+  border: 10px solid #fff;
+}
+p {
+  @include CoolBorder(1px, "solid", $fff);
+}
+
+@mixin box-shadow($shadows...) {
+  -moz-box-shadow: $shadows;
+  -webkit-box-shadow: $shadows;
+  box-shadow: $shadows;
+}
+.shadows {
+  @include box-shadow(0px 4px 5px #666, 2px 6px 10px #999);
+}
+
+@mixin apply-to-ie6-only {
+  * html {
+    @content;
+  }
+}
+@include apply-to-ie6-only {
+  #logo {
+    background-image: url(/logo.gif);
+  }
+}
+
+@mixin applyToIe6Only {
+  * html {
+    @content;
+  }
+}
+@include applyToIe6Only {
+  #logo {
+    background-image: url(/logo.gif);
+  }
+}
+
+@mixin ApplyToIe6Only {
+  * html {
+    @content;
+  }
+}
+@include ApplyToIe6Only {
+  #logo {
+    background-image: url(/logo.gif);
+  }
+}
+
+@mixin config-icon-colors($prefix, $colors...) {
+  @each $i in $colors {
+    .#{$prefix}#{nth($i, 1)} {
+      color: nth($i, 2);
+    }
+  }
+}
+@include config-icon-colors(
+  "icon-",
+  "save" green,
+  "cancel" gray,
+  "delete" red,
+  "wait" blue
+);
+
+@function my-calculation-function($some-number, $anotherNumber, $BigNumber) {
+  @return $some-number + $anotherNumber + $BigNumber;
+}
+@function myCalculationFunction($some-number, $anotherNumber, $BigNumber) {
+  @return $some-number + $anotherNumber + $BigNumber;
+}
+@function AnotherMyCalculationFunction(
+  $some-number,
+  $anotherNumber,
+  $BigNumber: 100px
+) {
+  @return $some-number + $anotherNumber + $BigNumber;
+}
+@function border($borders...) {
+  @return $borders;
+}
+.foo {
+  padding: my-calculation-function(10px, 5px, 100px);
+  margin: myCalculationFunction(
+    $some-number: 10px,
+    $anotherNumber: 5px,
+    $BigNumber: 100px
+  );
+  width: AnotherMyCalculationFunction(10px, 5px);
+  border: border(25px, 35px);
+}
+
+================================================================================
+`;
+
+exports[`3930.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$longVariable: (
+(mobile $mobile) (tablet $tablet) (desktop $desktop) (wide $wide)
+);
+
+$list-space: "item-1" "item-2" "item-3";
+$list-space:"item-1""item-2""item-3";
+$list-space:  "item-1"  "item-2"  "item-3"  ;
+$list-space: "item-1"
+  "item-2"
+  "item-3";
+$list-space
+:
+"item-1"
+"item-2"
+"item-3"
+;
+$list-space
+
+:
+
+"item-1"
+
+"item-2"
+
+"item-3"
+
+;
+$list-comma: "item-1", "item-2", "item-3";
+$list-comma:"item-1","item-2","item-3";
+$list-comma:  "item-1"  ,  "item-2"  ,  "item-3"  ;
+$list-comma: "item-1",
+  "item-2",
+  "item-3";
+$list-comma
+:
+"item-1"
+,
+"item-2"
+,
+"item-3"
+;
+$list-comma
+
+:
+
+"item-1"
+
+,
+
+"item-2"
+
+,
+
+"item-3"
+
+;
+$list: "item-1.1" "item-1.2" "item-1.3", "item-2.1" "item-2.2" "item-2.3", "item-3.1" "item-3.2" "item-3.3";
+$list:"item-1.1""item-1.2""item-1.3","item-2.1""item-2.2""item-2.3","item-3.1""item-3.2""item-3.3";
+$list:  "item-1.1"  "item-1.2"  "item-1.3"  ,  "item-2.1"  "item-2.2"  "item-2.3"  ,  "item-3.1"  "item-3.2"  "item-3.3"  ;
+$list: "item-1.1" "item-1.2" "item-1.3",
+  "item-2.1" "item-2.2" "item-2.3",
+  "item-3.1" "item-3.2" "item-3.3";
+$list
+:
+"item-1.1"
+"item-1.2"
+"item-1.3"
+,
+"item-2.1"
+"item-2.2"
+"item-2.3"
+,
+"item-3.1"
+"item-3.2"
+"item-3.3"
+;
+$list
+
+:
+
+"item-1.1"
+
+"item-1.2"
+
+"item-1.3"
+
+,
+
+"item-2.1"
+
+"item-2.2"
+
+"item-2.3"
+
+,
+
+"item-3.1"
+
+"item-3.2"
+
+"item-3.3"
+
+;
+$list: (("item-1.1", "item-1.2", "item-1.3"), ("item-2.1", "item-2.2", "item-2.3"), ("item-3.1", "item-3.2", "item-3.3"));
+$list:(("item-1.1","item-1.2","item-1.3"),("item-2.1","item-2.2","item-2.3"),("item-3.1","item-3.2","item-3.3"));
+$list:  (  (  "item-1.1"  ,  "item-1.2"  ,  "item-1.3"  )  ,  (  "item-2.1"  ,  "item-2.2"  ,  "item-2.3"  )  ,  (  "item-3.1"  ,  "item-3.2"  ,  "item-3.3"  )  )  ;
+$list: (
+  ("item-1.1", "item-1.2", "item-1.3"),
+  ("item-2.1", "item-2.2", "item-2.3"),
+  ("item-3.1", "item-3.2", "item-3.3")
+);
+$list
+:
+(
+(
+"item-1.1"
+,
+"item-1.2"
+,
+"item-1.3"
+)
+,
+(
+"item-2.1"
+,
+"item-2.2"
+,
+"item-2.3"
+)
+,
+(
+"item-3.1"
+,
+"item-3.2"
+,
+"item-3.3"
+)
+)
+;
+$list
+
+:
+
+(
+
+(
+
+"item-1.1"
+
+,
+
+"item-1.2"
+
+,
+
+"item-1.3"
+
+)
+
+,
+
+(
+
+"item-2.1"
+
+,
+
+"item-2.2"
+
+,
+
+"item-2.3"
+
+)
+
+,
+
+(
+
+"item-3.1"
+
+,
+
+"item-3.2"
+
+,
+
+"item-3.3"
+
+)
+
+)
+
+;
+
+$var: (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0);
+$space-scale: (0, "0") (0.25, "0-25") (0.5, "0-5") (0.75, "0-75") (1, "1") (1.25, "1-25") (1.5, "1-5") (1.75, "1-75") (2, "2") (2.25, "2-25") (2.5, "2-5") (2.75, "2-75") (3, "3") (3.25, "3-25") (3.5, "3-5") (3.75, "3-75") (4, "4");
+
+
+
+=====================================output=====================================
+$longVariable: (
+  (mobile $mobile) (tablet $tablet) (desktop $desktop) (wide $wide)
+);
+
+$list-space: "item-1" "item-2" "item-3";
+$list-space: "item-1" "item-2" "item-3";
+$list-space: "item-1" "item-2" "item-3";
+$list-space: "item-1" "item-2" "item-3";
+$list-space: "item-1" "item-2" "item-3";
+$list-space: "item-1" "item-2" "item-3";
+$list-comma: "item-1", "item-2", "item-3";
+$list-comma: "item-1", "item-2", "item-3";
+$list-comma: "item-1", "item-2", "item-3";
+$list-comma: "item-1", "item-2", "item-3";
+$list-comma: "item-1", "item-2", "item-3";
+$list-comma: "item-1", "item-2", "item-3";
+$list:
+  "item-1.1" "item-1.2" "item-1.3",
+  "item-2.1" "item-2.2" "item-2.3",
+  "item-3.1" "item-3.2" "item-3.3";
+$list:
+  "item-1.1" "item-1.2" "item-1.3",
+  "item-2.1" "item-2.2" "item-2.3",
+  "item-3.1" "item-3.2" "item-3.3";
+$list:
+  "item-1.1" "item-1.2" "item-1.3",
+  "item-2.1" "item-2.2" "item-2.3",
+  "item-3.1" "item-3.2" "item-3.3";
+$list:
+  "item-1.1" "item-1.2" "item-1.3",
+  "item-2.1" "item-2.2" "item-2.3",
+  "item-3.1" "item-3.2" "item-3.3";
+$list:
+  "item-1.1" "item-1.2" "item-1.3",
+  "item-2.1" "item-2.2" "item-2.3",
+  "item-3.1" "item-3.2" "item-3.3";
+$list:
+  "item-1.1" "item-1.2" "item-1.3",
+  "item-2.1" "item-2.2" "item-2.3",
+  "item-3.1" "item-3.2" "item-3.3";
+$list: (
+  ("item-1.1", "item-1.2", "item-1.3"),
+  ("item-2.1", "item-2.2", "item-2.3"),
+  ("item-3.1", "item-3.2", "item-3.3")
+);
+$list: (
+  ("item-1.1", "item-1.2", "item-1.3"),
+  ("item-2.1", "item-2.2", "item-2.3"),
+  ("item-3.1", "item-3.2", "item-3.3")
+);
+$list: (
+  ("item-1.1", "item-1.2", "item-1.3"),
+  ("item-2.1", "item-2.2", "item-2.3"),
+  ("item-3.1", "item-3.2", "item-3.3")
+);
+$list: (
+  ("item-1.1", "item-1.2", "item-1.3"),
+  ("item-2.1", "item-2.2", "item-2.3"),
+  ("item-3.1", "item-3.2", "item-3.3")
+);
+$list: (
+  ("item-1.1", "item-1.2", "item-1.3"),
+  ("item-2.1", "item-2.2", "item-2.3"),
+  ("item-3.1", "item-3.2", "item-3.3")
+);
+$list: (
+  ("item-1.1", "item-1.2", "item-1.3"),
+  ("item-2.1", "item-2.2", "item-2.3"),
+  ("item-3.1", "item-3.2", "item-3.3")
+);
+
+$var: (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0)
+  (0 0) (0 0);
+$space-scale: (0, "0") (0.25, "0-25") (0.5, "0-5") (0.75, "0-75") (1, "1")
+  (1.25, "1-25") (1.5, "1-5") (1.75, "1-75") (2, "2") (2.25, "2-25")
+  (2.5, "2-5") (2.75, "2-75") (3, "3") (3.25, "3-25") (3.5, "3-5")
+  (3.75, "3-75") (4, "4");
+
+================================================================================
+`;
+
+exports[`3930.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$longVariable: (
+(mobile $mobile) (tablet $tablet) (desktop $desktop) (wide $wide)
+);
+
+$list-space: "item-1" "item-2" "item-3";
+$list-space:"item-1""item-2""item-3";
+$list-space:  "item-1"  "item-2"  "item-3"  ;
+$list-space: "item-1"
+  "item-2"
+  "item-3";
+$list-space
+:
+"item-1"
+"item-2"
+"item-3"
+;
+$list-space
+
+:
+
+"item-1"
+
+"item-2"
+
+"item-3"
+
+;
+$list-comma: "item-1", "item-2", "item-3";
+$list-comma:"item-1","item-2","item-3";
+$list-comma:  "item-1"  ,  "item-2"  ,  "item-3"  ;
+$list-comma: "item-1",
+  "item-2",
+  "item-3";
+$list-comma
+:
+"item-1"
+,
+"item-2"
+,
+"item-3"
+;
+$list-comma
+
+:
+
+"item-1"
+
+,
+
+"item-2"
+
+,
+
+"item-3"
+
+;
+$list: "item-1.1" "item-1.2" "item-1.3", "item-2.1" "item-2.2" "item-2.3", "item-3.1" "item-3.2" "item-3.3";
+$list:"item-1.1""item-1.2""item-1.3","item-2.1""item-2.2""item-2.3","item-3.1""item-3.2""item-3.3";
+$list:  "item-1.1"  "item-1.2"  "item-1.3"  ,  "item-2.1"  "item-2.2"  "item-2.3"  ,  "item-3.1"  "item-3.2"  "item-3.3"  ;
+$list: "item-1.1" "item-1.2" "item-1.3",
+  "item-2.1" "item-2.2" "item-2.3",
+  "item-3.1" "item-3.2" "item-3.3";
+$list
+:
+"item-1.1"
+"item-1.2"
+"item-1.3"
+,
+"item-2.1"
+"item-2.2"
+"item-2.3"
+,
+"item-3.1"
+"item-3.2"
+"item-3.3"
+;
+$list
+
+:
+
+"item-1.1"
+
+"item-1.2"
+
+"item-1.3"
+
+,
+
+"item-2.1"
+
+"item-2.2"
+
+"item-2.3"
+
+,
+
+"item-3.1"
+
+"item-3.2"
+
+"item-3.3"
+
+;
+$list: (("item-1.1", "item-1.2", "item-1.3"), ("item-2.1", "item-2.2", "item-2.3"), ("item-3.1", "item-3.2", "item-3.3"));
+$list:(("item-1.1","item-1.2","item-1.3"),("item-2.1","item-2.2","item-2.3"),("item-3.1","item-3.2","item-3.3"));
+$list:  (  (  "item-1.1"  ,  "item-1.2"  ,  "item-1.3"  )  ,  (  "item-2.1"  ,  "item-2.2"  ,  "item-2.3"  )  ,  (  "item-3.1"  ,  "item-3.2"  ,  "item-3.3"  )  )  ;
+$list: (
+  ("item-1.1", "item-1.2", "item-1.3"),
+  ("item-2.1", "item-2.2", "item-2.3"),
+  ("item-3.1", "item-3.2", "item-3.3")
+);
+$list
+:
+(
+(
+"item-1.1"
+,
+"item-1.2"
+,
+"item-1.3"
+)
+,
+(
+"item-2.1"
+,
+"item-2.2"
+,
+"item-2.3"
+)
+,
+(
+"item-3.1"
+,
+"item-3.2"
+,
+"item-3.3"
+)
+)
+;
+$list
+
+:
+
+(
+
+(
+
+"item-1.1"
+
+,
+
+"item-1.2"
+
+,
+
+"item-1.3"
+
+)
+
+,
+
+(
+
+"item-2.1"
+
+,
+
+"item-2.2"
+
+,
+
+"item-2.3"
+
+)
+
+,
+
+(
+
+"item-3.1"
+
+,
+
+"item-3.2"
+
+,
+
+"item-3.3"
+
+)
+
+)
+
+;
+
+$var: (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0);
+$space-scale: (0, "0") (0.25, "0-25") (0.5, "0-5") (0.75, "0-75") (1, "1") (1.25, "1-25") (1.5, "1-5") (1.75, "1-75") (2, "2") (2.25, "2-25") (2.5, "2-5") (2.75, "2-75") (3, "3") (3.25, "3-25") (3.5, "3-5") (3.75, "3-75") (4, "4");
+
+
+
+=====================================output=====================================
+$longVariable: (
+  (mobile $mobile) (tablet $tablet) (desktop $desktop) (wide $wide)
+);
+
+$list-space: "item-1" "item-2" "item-3";
+$list-space: "item-1" "item-2" "item-3";
+$list-space: "item-1" "item-2" "item-3";
+$list-space: "item-1" "item-2" "item-3";
+$list-space: "item-1" "item-2" "item-3";
+$list-space: "item-1" "item-2" "item-3";
+$list-comma: "item-1", "item-2", "item-3";
+$list-comma: "item-1", "item-2", "item-3";
+$list-comma: "item-1", "item-2", "item-3";
+$list-comma: "item-1", "item-2", "item-3";
+$list-comma: "item-1", "item-2", "item-3";
+$list-comma: "item-1", "item-2", "item-3";
+$list:
+  "item-1.1" "item-1.2" "item-1.3",
+  "item-2.1" "item-2.2" "item-2.3",
+  "item-3.1" "item-3.2" "item-3.3";
+$list:
+  "item-1.1" "item-1.2" "item-1.3",
+  "item-2.1" "item-2.2" "item-2.3",
+  "item-3.1" "item-3.2" "item-3.3";
+$list:
+  "item-1.1" "item-1.2" "item-1.3",
+  "item-2.1" "item-2.2" "item-2.3",
+  "item-3.1" "item-3.2" "item-3.3";
+$list:
+  "item-1.1" "item-1.2" "item-1.3",
+  "item-2.1" "item-2.2" "item-2.3",
+  "item-3.1" "item-3.2" "item-3.3";
+$list:
+  "item-1.1" "item-1.2" "item-1.3",
+  "item-2.1" "item-2.2" "item-2.3",
+  "item-3.1" "item-3.2" "item-3.3";
+$list:
+  "item-1.1" "item-1.2" "item-1.3",
+  "item-2.1" "item-2.2" "item-2.3",
+  "item-3.1" "item-3.2" "item-3.3";
+$list: (
+  ("item-1.1", "item-1.2", "item-1.3"),
+  ("item-2.1", "item-2.2", "item-2.3"),
+  ("item-3.1", "item-3.2", "item-3.3")
+);
+$list: (
+  ("item-1.1", "item-1.2", "item-1.3"),
+  ("item-2.1", "item-2.2", "item-2.3"),
+  ("item-3.1", "item-3.2", "item-3.3")
+);
+$list: (
+  ("item-1.1", "item-1.2", "item-1.3"),
+  ("item-2.1", "item-2.2", "item-2.3"),
+  ("item-3.1", "item-3.2", "item-3.3")
+);
+$list: (
+  ("item-1.1", "item-1.2", "item-1.3"),
+  ("item-2.1", "item-2.2", "item-2.3"),
+  ("item-3.1", "item-3.2", "item-3.3")
+);
+$list: (
+  ("item-1.1", "item-1.2", "item-1.3"),
+  ("item-2.1", "item-2.2", "item-2.3"),
+  ("item-3.1", "item-3.2", "item-3.3")
+);
+$list: (
+  ("item-1.1", "item-1.2", "item-1.3"),
+  ("item-2.1", "item-2.2", "item-2.3"),
+  ("item-3.1", "item-3.2", "item-3.3")
+);
+
+$var: (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0) (0 0)
+  (0 0) (0 0);
+$space-scale: (0, "0") (0.25, "0-25") (0.5, "0-5") (0.75, "0-75") (1, "1")
+  (1.25, "1-25") (1.5, "1-5") (1.75, "1-75") (2, "2") (2.25, "2-25")
+  (2.5, "2-5") (2.75, "2-75") (3, "3") (3.25, "3-25") (3.5, "3-5")
+  (3.75, "3-75") (4, "4");
+
+================================================================================
+`;
+
+exports[`5375.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.something {
+  grid-template-columns: 1 2fr (3 + 4);
+}
+
+=====================================output=====================================
+.something {
+  grid-template-columns: 1 2fr (3 + 4);
+}
+
+================================================================================
+`;
+
+exports[`5375.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.something {
+  grid-template-columns: 1 2fr (3 + 4);
+}
+
+=====================================output=====================================
+.something {
+  grid-template-columns: 1 2fr (3 + 4);
+}
+
+================================================================================
+`;
+
+exports[`scss.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@media #{$g-breakpoint-tiny} {}
+.#{$fa-css-prefix}-glass:before { content: $fa-var-glass; }
+a {height: calc(#{$foo} + 1);}
+div {
+  background: {
+      size: auto 60%;
+      position: bottom 2px left;
+  }
+}
+a { margin: 0 { left: 10px; } }
+
+=====================================output=====================================
+@media #{$g-breakpoint-tiny} {
+}
+.#{$fa-css-prefix}-glass:before {
+  content: $fa-var-glass;
+}
+a {
+  height: calc(#{$foo} + 1);
+}
+div {
+  background: {
+    size: auto 60%;
+    position: bottom 2px left;
+  }
+}
+a {
+  margin: 0 {
+    left: 10px;
+  }
+}
+
+================================================================================
+`;
+
+exports[`scss.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@media #{$g-breakpoint-tiny} {}
+.#{$fa-css-prefix}-glass:before { content: $fa-var-glass; }
+a {height: calc(#{$foo} + 1);}
+div {
+  background: {
+      size: auto 60%;
+      position: bottom 2px left;
+  }
+}
+a { margin: 0 { left: 10px; } }
+
+=====================================output=====================================
+@media #{$g-breakpoint-tiny} {
+}
+.#{$fa-css-prefix}-glass:before {
+  content: $fa-var-glass;
+}
+a {
+  height: calc(#{$foo} + 1);
+}
+div {
+  background: {
+    size: auto 60%;
+    position: bottom 2px left;
+  }
+}
+a {
+  margin: 0 {
+    left: 10px;
+  }
+}
+
+================================================================================
+`;

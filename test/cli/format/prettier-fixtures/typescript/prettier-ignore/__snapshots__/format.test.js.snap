@@ -1,0 +1,261 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`issue-14238.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export const foo = (
+  // prettier-ignore
+  bar as Baz
+).qux;
+
+=====================================output=====================================
+export const foo = // prettier-ignore
+(bar as Baz).qux;
+
+================================================================================
+`;
+
+exports[`issue-16927.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type Foo = {
+    // prettier-ignore
+    [key: string]: bar;
+};
+
+=====================================output=====================================
+type Foo = {
+  // prettier-ignore
+  [key: string]: bar;
+};
+
+================================================================================
+`;
+
+exports[`mapped-types.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type a= {
+    // prettier-ignore
+    [A in B]: C  |  D
+  }
+
+type b= {
+    [
+      // prettier-ignore
+      A in B
+    ]: C  |  D
+  }
+
+type c= {
+    [
+      A in
+      // prettier-ignore
+      B
+    ]: C  |  D
+  }
+
+type d= {
+    [A in B]:
+      // prettier-ignore
+      C  |  D
+  }
+
+type e= {
+    [
+      /* prettier-ignore */
+      A in B
+    ]: C  |  D
+  }
+
+type f= {
+    [
+      A in
+      /* prettier-ignore */
+      B
+    ]: C  |  D
+  }
+
+type g= {
+    [A in B]:
+      /* prettier-ignore */
+      C  |  D
+  }
+
+
+type h= {
+    /* prettier-ignore */ [A in B]: C  |  D
+  }
+
+type i= {
+    [/* prettier-ignore */ A in B ]: C  |  D
+  }
+
+type j= {
+    [A in /* prettier-ignore */ B]: C  |  D
+  }
+
+type k= {
+    [A in B]: /* prettier-ignore */ C  |  D
+  }
+
+type l= {
+    /* prettier-ignore */
+    [A in B]: C  |  D
+  }
+
+=====================================output=====================================
+type a = {
+    // prettier-ignore
+    [A in B]: C  |  D
+  };
+
+type b = {
+    [
+      // prettier-ignore
+      A in B
+    ]: C  |  D
+  };
+
+type c = {
+  [
+    A in // prettier-ignore
+    B
+  ]: C | D;
+};
+
+type d = {
+  [A in B]:
+    // prettier-ignore
+    C | D;
+};
+
+type e = {
+    [
+      /* prettier-ignore */
+      A in B
+    ]: C  |  D
+  };
+
+type f = {
+  [
+    A in /* prettier-ignore */
+    B
+  ]: C | D;
+};
+
+type g = {
+  [A in B]:
+    /* prettier-ignore */
+    C | D;
+};
+
+type h = {
+    /* prettier-ignore */ [A in B]: C  |  D
+  };
+
+type i = {
+    [/* prettier-ignore */ A in B ]: C  |  D
+  };
+
+type j = {
+  [A in /* prettier-ignore */ B]: C | D;
+};
+
+type k = {
+  [A in B]: /* prettier-ignore */ C  |  D;
+};
+
+type l = {
+    /* prettier-ignore */
+    [A in B]: C  |  D
+  };
+
+================================================================================
+`;
+
+exports[`prettier-ignore-nested-unions.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export type a =
+  // foo
+  | foo1&foo2
+  // bar
+  | bar1&bar2
+  // prettier-ignore
+  | (
+    | aaaaaaaaaaaaa&1
+    // b
+    | bbbbbbbbbbbbb&2
+  )
+  // baz
+  | baz1&baz2;
+
+export type b =
+  // foo
+  | foo1&foo2
+  // bar
+  | bar1&bar2
+  | (
+    // prettier-ignore
+    | aaaaaaaaaaaaa&1
+    // b
+    | bbbbbbbbbbbbb&2
+  )
+  // baz
+  | baz1&baz2;
+
+=====================================output=====================================
+export type a =
+  // foo
+  | (foo1 & foo2)
+  // bar
+  | (bar1 & bar2)
+  // prettier-ignore
+  | (| aaaaaaaaaaaaa&1
+    // b
+    | bbbbbbbbbbbbb&2)
+  // baz
+  | (baz1 & baz2);
+
+export type b =
+  // foo
+  | (foo1 & foo2)
+  // bar
+  | (bar1 & bar2)
+  // prettier-ignore
+  | (| aaaaaaaaaaaaa&1
+    // b
+    | bbbbbbbbbbbbb&2)
+  // baz
+  | (baz1 & baz2);
+
+================================================================================
+`;
+
+exports[`prettier-ignore-parenthesized-type.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type Foo =
+  // prettier-ignore
+  (
+    aa
+  );
+
+=====================================output=====================================
+type Foo =
+  // prettier-ignore
+  aa;
+
+================================================================================
+`;

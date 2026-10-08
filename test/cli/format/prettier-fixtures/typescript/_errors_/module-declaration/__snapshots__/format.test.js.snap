@@ -1,0 +1,61 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format[babel-ts] 1`] = `
+"Missing semicolon. (1:10)
+> 1 | namespace "a" {}
+    |          ^
+Cause: Missing semicolon. (1:9)"
+`;
+
+exports[`snippet: #0 format[oxc-ts] 1`] = `
+"Unexpected token (1:11)
+> 1 | namespace "a" {}
+    |           ^^^"
+`;
+
+exports[`snippet: #0 format[typescript] 1`] = `
+"Identifier expected. (1:11)
+> 1 | namespace "a" {}
+    |           ^
+Cause: Identifier expected."
+`;
+
+exports[`snippet: #1 format[babel-ts] 1`] = `
+"Missing semicolon. (1:10)
+> 1 | namespace "a";
+    |          ^
+Cause: Missing semicolon. (1:9)"
+`;
+
+exports[`snippet: #1 format[oxc-ts] 1`] = `
+"Unexpected token (1:11)
+> 1 | namespace "a";
+    |           ^^^"
+`;
+
+exports[`snippet: #1 format[typescript] 1`] = `
+"Identifier expected. (1:11)
+> 1 | namespace "a";
+    |           ^
+Cause: Identifier expected."
+`;
+
+exports[`snippet: #2 format[babel-ts] 1`] = `
+"Unexpected token, expected "{" (1:12)
+> 1 | namespace a;
+    |            ^
+Cause: Unexpected token, expected "{" (1:11)"
+`;
+
+exports[`snippet: #2 format[oxc-ts] 1`] = `
+"Expected \`{\` but found \`;\` (1:12)
+> 1 | namespace a;
+    |            ^"
+`;
+
+exports[`snippet: #2 format[typescript] 1`] = `
+"'{' expected. (1:12)
+> 1 | namespace a;
+    |            ^
+Cause: '{' expected."
+`;

@@ -1,0 +1,76 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`as-key.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+  [a?.b]?= 1;
+
+  [a?.b]?() {};
+  [a?.b]?= function () {};
+
+  // https://github.com/babel/babel/issues/17310
+  // *[a?.b]?() {};
+  [a?.b]?= function *() {};
+
+  async [a?.b]?() {};
+  [a?.b]?= async function () {};
+
+  async * [a?.b]?() {};
+  [a?.b]?= async function *() {};
+}
+
+class B {
+  static [a?.b]?= 1;
+
+  static [a?.b]?() {};
+  static [a?.b]?= function () {};
+
+  static *[a?.b]?() {};
+  static [a?.b]?= function *() {};
+
+  static async [a?.b]?() {};
+  static [a?.b]?= async function () {};
+
+  static async * [a?.b]?() {};
+  static [a?.b]?= async function *() {};
+}
+
+=====================================output=====================================
+class A {
+  [a?.b]? = 1;
+
+  [a?.b]?() {}
+  [a?.b]? = function () {};
+
+  // https://github.com/babel/babel/issues/17310
+  // *[a?.b]?() {};
+  [a?.b]? = function* () {};
+
+  async [a?.b]?() {}
+  [a?.b]? = async function () {};
+
+  async *[a?.b]?() {}
+  [a?.b]? = async function* () {};
+}
+
+class B {
+  static [a?.b]? = 1;
+
+  static [a?.b]?() {}
+  static [a?.b]? = function () {};
+
+  static *[a?.b]?() {}
+  static [a?.b]? = function* () {};
+
+  static async [a?.b]?() {}
+  static [a?.b]? = async function () {};
+
+  static async *[a?.b]?() {}
+  static [a?.b]? = async function* () {};
+}
+
+================================================================================
+`;

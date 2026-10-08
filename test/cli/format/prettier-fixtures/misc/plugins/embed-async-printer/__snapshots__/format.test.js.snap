@@ -1,0 +1,29 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`with-aync-printer-code-block.md format 1`] = `
+====================================options=====================================
+parsers: ["markdown"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+\`\`\`async-printer
+{
+  "preprocess": "This    text   will be    lowercased.",
+  "print": "This    text   will be      whitespace-normalized."
+}
+\`\`\`
+
+\`\`\`uppercase-rocks
+This text should be uppercased.
+\`\`\`
+
+=====================================output=====================================
+\`\`\`async-printer
+{"preprocess":"this    text   will be    lowercased.","print":"This text will be whitespace-normalized."}
+\`\`\`
+
+\`\`\`uppercase-rocks
+THIS TEXT SHOULD BE UPPERCASED.
+\`\`\`
+
+================================================================================
+`;

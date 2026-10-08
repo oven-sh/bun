@@ -1,0 +1,30 @@
+/* http://tabatkins.github.io/specs/css-apply-rule/#defining */
+
+:root {
+  --toolbar-theme: {
+    background-color: hsl(120, 70%, 95%);
+    border-radius: 4px;
+    border: 1px solid var(--theme-color late);
+  };
+  --toolbar-title-theme: {
+    color: green;
+  };
+}
+
+:root {
+  --without-semi: {color:red;}
+}
+
+:root {
+  --like-a-apply-rule: {
+  color:red;} /* no semi here*/
+  --another-prop: blue;
+}
+
+:root {
+  --like-a-apply-rule: {
+  color:red;} /* no semi here*/
+  --another-one-like-a-apply-rule: {
+    color:red;
+  };
+}

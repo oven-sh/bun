@@ -1,0 +1,42 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`19355.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$a: if(sass($x): 1; else: white);
+$a: if(sass($x): 1   ; else: white);
+$b: if(sass($x): map.get($view, background); else: white);
+$c: if(sass($x): map.get($view, background)   ; else: white);
+
+@debug if(sass(true): 10px; else: 15px);
+@debug if(sass(true): 10px   ; else: 15px);
+@debug if(sass(meta.variable-defined($var)): $var);
+
+@mixin foo($isDark, $view) {
+  .bar {
+    background-color: if(sass($isDark): map.get($view, background) ; else: white);
+  }
+}
+
+=====================================output=====================================
+$a: if(sass($x): 1; else: white);
+$a: if(sass($x): 1; else: white);
+$b: if(sass($x): map.get($view, background); else: white);
+$c: if(sass($x): map.get($view, background); else: white);
+
+@debug if(sass(true): 10px; else: 15px);
+@debug if(sass(true): 10px; else: 15px);
+@debug if(sass(meta.variable-defined($var)): $var);
+
+@mixin foo($isDark, $view) {
+  .bar {
+    background-color: if(
+      sass($isDark): map.get($view, background); else: white
+    );
+  }
+}
+
+================================================================================
+`;

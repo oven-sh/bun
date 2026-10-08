@@ -1,0 +1,21 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`comment-before-arrow.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = () /* before arrow */ =>
+null;
+a = () => /* after arrow */
+null;
+a = (/* in parentheses */) =>
+null;
+
+=====================================output=====================================
+a = () /* before arrow */ => null;
+a = () => /* after arrow */ null;
+a = (/* in parentheses */) => null;
+
+================================================================================
+`;

@@ -1,0 +1,49 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`nested-2.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.btn {&:hover {
+    color: red;
+  }&:active {
+color:blue;}  &:nth-child(5n+1) {
+    color:blue;
+  }
+  &:nth-child(-n+3) { color: green;}
+> li > a {   color: red}  >li>li {
+  color: blue;
+  }
+> p + p {
+    color: green;
+  }
+  }
+
+=====================================output=====================================
+.btn {
+  &:hover {
+    color: red;
+  }
+  &:active {
+    color: blue;
+  }
+  &:nth-child(5n + 1) {
+    color: blue;
+  }
+  &:nth-child(-n + 3) {
+    color: green;
+  }
+  > li > a {
+    color: red;
+  }
+  > li > li {
+    color: blue;
+  }
+  > p + p {
+    color: green;
+  }
+}
+
+================================================================================
+`;

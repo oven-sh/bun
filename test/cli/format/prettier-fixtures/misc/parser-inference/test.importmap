@@ -1,0 +1,5 @@
+{"imports": {
+    "prettier": "https://unpkg.com/prettier@2.6.2/esm/standalone.mjs",
+    "prettier/": "https://unpkg.com/prettier@2.6.2/"
+  }
+}

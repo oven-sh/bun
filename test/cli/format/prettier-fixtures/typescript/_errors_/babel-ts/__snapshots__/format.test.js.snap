@@ -1,0 +1,51 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`abstract.ts format 1`] = `
+"Method 'foo' cannot have an implementation because it is marked abstract. (2:5)
+  1 | class A {
+> 2 |     abstract foo() {}
+    |     ^
+  3 | }
+Cause: Method 'foo' cannot have an implementation because it is marked abstract. (2:4)"
+`;
+
+exports[`classAbstractMethodWithImplementation.ts format 1`] = `
+"Method 'foo' cannot have an implementation because it is marked abstract. (2:5)
+  1 | abstract class A {
+> 2 |     abstract foo() {}
+    |     ^
+  3 | }
+Cause: Method 'foo' cannot have an implementation because it is marked abstract. (2:4)"
+`;
+
+exports[`declare-accessor.ts format 1`] = `
+"'declare' is not allowed in getters. (2:3)
+  1 | class Foo {
+> 2 |   declare get foo()
+    |   ^
+  3 |   declare set foo(v)
+  4 | }
+  5 |
+Cause: 'declare' is not allowed in getters. (2:2)"
+`;
+
+exports[`snippet: #0 format 1`] = `
+"Invalid left-hand side in assignment expression. (1:1)
+> 1 | foo as any = 10;
+    | ^
+Cause: Invalid left-hand side in assignment expression. (1:0)"
+`;
+
+exports[`snippet: #1 format 1`] = `
+"Invalid left-hand side in assignment expression. (1:7)
+> 1 | ({ a: b as any = 2000 } = x);
+    |       ^
+Cause: Invalid left-hand side in assignment expression. (1:6)"
+`;
+
+exports[`snippet: #2 format 1`] = `
+"Unterminated JSX contents. (1:9)
+> 1 | <string>foo = '100';
+    |         ^
+Cause: Unterminated JSX contents. (1:8)"
+`;

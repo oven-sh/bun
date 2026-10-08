@@ -1,0 +1,35 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format 1`] = `
+====================================options=====================================
+parsers: ["markdown", "mdx", "css", "scss", "less", "html"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
++++
+TOML Front Matter content
++++
+=====================================output=====================================
++++
+!!! Formatted by with 'dummy-toml-plugin-parser-name' parser
+TOML Front Matter content
++++
+
+================================================================================
+`;
+
+exports[`snippet: #1 format 1`] = `
+====================================options=====================================
+parsers: ["markdown", "mdx", "css", "scss", "less", "html"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---toml
+TOML Front Matter content
+---
+=====================================output=====================================
+---toml
+!!! Formatted by with 'dummy-toml-plugin-parser-name' parser
+TOML Front Matter content
+---
+
+================================================================================
+`;

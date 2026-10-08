@@ -1,0 +1,123 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`export-star.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export * from "mod";
+
+
+=====================================output=====================================
+export * from "mod";
+
+================================================================================
+`;
+
+exports[`export-star-as.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export * as ns from "mod";
+
+
+=====================================output=====================================
+export * as ns from "mod";
+
+================================================================================
+`;
+
+exports[`export-star-as-default.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export * as default from 'foo'
+
+=====================================output=====================================
+export * as default from "foo";
+
+================================================================================
+`;
+
+exports[`export-star-as-reserved-word.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export * as function from 'foo'
+export * as const from 'foo'
+export * as as from 'foo'
+export * as from from 'foo'
+
+=====================================output=====================================
+export * as function from "foo";
+export * as const from "foo";
+export * as as from "foo";
+export * as from from "foo";
+
+================================================================================
+`;
+
+exports[`export-star-as-string.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export * as 'foo' from 'foo'
+
+=====================================output=====================================
+export * as "foo" from "foo";
+
+================================================================================
+`;
+
+exports[`export-star-as-string.js format[flow] 1`] = `
+"Unexpected string, expected an identifier (1:13)
+> 1 | export * as 'foo' from 'foo'
+    |             ^
+  2 |
+Cause: Unexpected string, expected an identifier (1:12)"
+`;
+
+exports[`export-star-as-string.js format[hermes] 1`] = `
+"'identifier' expected in export clause (1:13)
+> 1 | export * as 'foo' from 'foo'
+    |             ^
+  2 |
+Cause: 'identifier' expected in export clause (1:12)
+export * as 'foo' from 'foo'
+~~~~~~~~~~~~^"
+`;
+
+exports[`export-star-as-string2.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export * as "foo" from 'foo'
+
+=====================================output=====================================
+export * as "foo" from "foo";
+
+================================================================================
+`;
+
+exports[`export-star-as-string2.js format[flow] 1`] = `
+"Unexpected string, expected an identifier (1:13)
+> 1 | export * as "foo" from 'foo'
+    |             ^
+  2 |
+Cause: Unexpected string, expected an identifier (1:12)"
+`;
+
+exports[`export-star-as-string2.js format[hermes] 1`] = `
+"'identifier' expected in export clause (1:13)
+> 1 | export * as "foo" from 'foo'
+    |             ^
+  2 |
+Cause: 'identifier' expected in export clause (1:12)
+export * as "foo" from 'foo'
+~~~~~~~~~~~~^"
+`;

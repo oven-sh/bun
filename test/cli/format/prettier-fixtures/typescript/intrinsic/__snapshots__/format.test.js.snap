@@ -1,0 +1,14 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`intrinsic.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type Uppercase<S extends string> = intrinsic;
+
+=====================================output=====================================
+type Uppercase<S extends string> = intrinsic;
+
+================================================================================
+`;

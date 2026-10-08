@@ -1,0 +1,99 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`lowercase.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@charset "UTF-8";
+
+$myVar: TRANSLATEX(0);
+$myVar2: RGB(255,255,255);
+$myVar3: MAROON;
+$myVar4: HSLA(120,100%,50%,0.3);
+$myVar5: RGBA(0,0,0,0.5);
+$myVar6: HSL(120,100%,50%);
+$myVar7: linear-gradient(to right, RGBA(0,0,0,0.5), RGB(255,255,255));
+
+.class-1 {
+  BACKGROUND: HSL(120, 100%, 50%);
+  BACKGROUND: linear-gradient(to right, $myVar2, RGB(255,255,255));
+  COLOR: RGB(0, 0, 0);
+  TRANSFORM: TRANSLATE(0,0) TRANSLATEX(0) TRANSLATEY(0) TRANSLATEZ(0) TRANSLATE3D(0,0,0) MATRIX(1,1,1,1);
+  TRANSFORM: TRANSLATE(0,0);
+  TRANSFORM: TRANSLATEX(0);
+  TRANSFORM: TRANSLATEY(0);
+  TRANSFORM: TRANSLATE3D(0,0,0);
+  TRANSFORM: MATRIX(1,1,1,1);
+  transform: translateY(0) $myVar;
+  animation: textAnimation 0.1s;
+  animation: tAnimation 0.1s;
+}
+
+.class-2 {
+  BACKGROUND-COLOR: INDIGO;
+  BACKGROUND: HSLA(120, 100%, 50%, 0.3);
+  COLOR: RGBA(0, 0, 0, 0.5);
+  TRANSFORM: ROTATE(1deg) ROTATEX(1deg) ROTATEY(1deg) ROTATEZ(1deg) ROTATE3D(0,0,1,1deg) SKEW(1deg) SKEWX(1deg) SKEWY(1deg) SCALE(1, 1) SCALEX(1) SCALEY(1);
+  TRANSFORM: ROTATE(1deg);
+  TRANSFORM: ROTATEX(1deg);
+  TRANSFORM: ROTATEY(1deg);
+  TRANSFORM: ROTATEZ(1deg);
+  TRANSFORM: ROTATE3D(0,0,1,1deg);
+  TRANSFORM: SKEW(1deg);
+  TRANSFORM: SKEWX(1deg);
+  TRANSFORM: SKEWY(1deg);
+  TRANSFORM: SCALE(1, 1);
+  TRANSFORM: SCALEX(1);
+  TRANSFORM: SCALEY(1);
+}
+
+=====================================output=====================================
+@charset "UTF-8";
+
+$myVar: TRANSLATEX(0);
+$myVar2: RGB(255, 255, 255);
+$myVar3: MAROON;
+$myVar4: HSLA(120, 100%, 50%, 0.3);
+$myVar5: RGBA(0, 0, 0, 0.5);
+$myVar6: HSL(120, 100%, 50%);
+$myVar7: linear-gradient(to right, RGBA(0, 0, 0, 0.5), RGB(255, 255, 255));
+
+.class-1 {
+  background: HSL(120, 100%, 50%);
+  background: linear-gradient(to right, $myVar2, RGB(255, 255, 255));
+  color: RGB(0, 0, 0);
+  transform: TRANSLATE(0, 0) TRANSLATEX(0) TRANSLATEY(0) TRANSLATEZ(0)
+    TRANSLATE3D(0, 0, 0) MATRIX(1, 1, 1, 1);
+  transform: TRANSLATE(0, 0);
+  transform: TRANSLATEX(0);
+  transform: TRANSLATEY(0);
+  transform: TRANSLATE3D(0, 0, 0);
+  transform: MATRIX(1, 1, 1, 1);
+  transform: translateY(0) $myVar;
+  animation: textAnimation 0.1s;
+  animation: tAnimation 0.1s;
+}
+
+.class-2 {
+  background-color: INDIGO;
+  background: HSLA(120, 100%, 50%, 0.3);
+  color: RGBA(0, 0, 0, 0.5);
+  transform: ROTATE(1deg) ROTATEX(1deg) ROTATEY(1deg) ROTATEZ(1deg)
+    ROTATE3D(0, 0, 1, 1deg) SKEW(1deg) SKEWX(1deg) SKEWY(1deg) SCALE(1, 1)
+    SCALEX(1) SCALEY(1);
+  transform: ROTATE(1deg);
+  transform: ROTATEX(1deg);
+  transform: ROTATEY(1deg);
+  transform: ROTATEZ(1deg);
+  transform: ROTATE3D(0, 0, 1, 1deg);
+  transform: SKEW(1deg);
+  transform: SKEWX(1deg);
+  transform: SKEWY(1deg);
+  transform: SCALE(1, 1);
+  transform: SCALEX(1);
+  transform: SCALEY(1);
+}
+
+================================================================================
+`;

@@ -1,0 +1,173 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`jsx_ignore.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "babel-flow", "babel-ts", "__babel_estree", "typescript", "flow", "meriyah", "acorn", "espree", "espree", "hermes", "oxc", "oxc-ts"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// this should remain as-is
+<div>
+ {/* prettier-ignore */}
+ <style jsx global>{ComponentStyles}</style>
+</div>;
+
+// this should remain as-is
+<div>
+ {/* prettier-ignore */}
+ <span     ugly  format=''   />
+</div>;
+
+// this should remain as-is
+f(
+  <Component>
+    {/*prettier-ignore*/}
+    <span     ugly  format=''   />
+  </Component>
+);
+
+// this be formatted
+<div>
+  {/* prettier-ignore */} foo
+  <Bar   excessive    spaces    />
+</div>;
+
+// this should remain as-is
+<div>
+{
+  /* prettier-ignore */
+  foo ( )
+}
+</div>;
+
+// this should remain as-is
+<div>
+{
+  /* prettier-ignore */
+  x     ?   <Y/> : <Z/>
+}
+</div>;
+
+push(
+  // prettier-ignore
+  <td> :)
+  </td>,
+);
+
+function f() {
+  return (
+    // prettier-ignore
+    /* $FlowFixMe(>=0.53.0) */
+    <JSX />
+  );
+}
+
+=====================================output=====================================
+// this should remain as-is
+<div>
+  {/* prettier-ignore */}
+  <style jsx global>{ComponentStyles}</style>
+</div>;
+
+// this should remain as-is
+<div>
+  {/* prettier-ignore */}
+  <span     ugly  format=''   />
+</div>;
+
+// this should remain as-is
+f(
+  <Component>
+    {/*prettier-ignore*/}
+    <span     ugly  format=''   />
+  </Component>,
+);
+
+// this be formatted
+<div>
+  {/* prettier-ignore */} foo
+  <Bar excessive spaces />
+</div>;
+
+// this should remain as-is
+<div>
+  {
+    /* prettier-ignore */
+    foo ( )
+  }
+</div>;
+
+// this should remain as-is
+<div>
+  {
+    /* prettier-ignore */
+    x     ?   <Y/> : <Z/>
+  }
+</div>;
+
+push(
+  // prettier-ignore
+  <td> :)
+  </td>,
+);
+
+function f() {
+  return (
+    // prettier-ignore
+    /* $FlowFixMe(>=0.53.0) */
+    <JSX />
+  );
+}
+
+================================================================================
+`;
+
+exports[`spread.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "babel-flow", "babel-ts", "__babel_estree", "typescript", "flow", "meriyah", "acorn", "espree", "espree", "hermes", "oxc", "oxc-ts"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// #8736
+
+function HelloWorld() {
+  return (
+    <div
+      {...{} /*
+      // @ts-ignore */ /* prettier-ignore */}
+      invalidProp="HelloWorld"
+    >
+      test
+    </div>
+  );
+}
+
+a = <div {.../* prettier-ignore */b}/>
+a = <div {...b/* prettier-ignore */}/>
+a = <div {.../* prettier-ignore */{}}/>
+a = <div {...{/* prettier-ignore */}}/>
+a = <div {...{}/* prettier-ignore */}/>
+
+=====================================output=====================================
+// #8736
+
+function HelloWorld() {
+  return (
+    <div
+      {
+        ...{} /*
+      // @ts-ignore */ /* prettier-ignore */
+      }
+      invalidProp="HelloWorld"
+    >
+      test
+    </div>
+  );
+}
+
+a = <div {/* prettier-ignore */ ...b} />;
+a = <div {...b /* prettier-ignore */} />;
+a = <div {/* prettier-ignore */ ...{}} />;
+a = <div {...{/* prettier-ignore */}} />;
+a = <div {...{} /* prettier-ignore */} />;
+
+================================================================================
+`;

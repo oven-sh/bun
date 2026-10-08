@@ -1,0 +1,274 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`empty.js - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["flow", "babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+=====================================output=====================================
+/** @format */
+
+================================================================================
+`;
+
+exports[`module-with-late-docblock.js - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["flow", "babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function foo(bar) { 
+  return bar + 3 + 4;
+}
+
+/**
+ * Some notes that should not be appended to
+ */ 
+const fruit = 'tomatoes';
+
+=====================================output=====================================
+/** @format */
+
+function foo(bar) {
+  return bar + 3 + 4;
+}
+
+/**
+ * Some notes that should not be appended to
+ */
+const fruit = "tomatoes";
+
+================================================================================
+`;
+
+exports[`module-with-multiple-same-pragma.js - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["flow", "babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/**
+ * @x 1
+ * @x 2
+ */
+
+=====================================output=====================================
+/**
+ * @format
+ * @x 1
+ * @x 2
+ */
+
+================================================================================
+`;
+
+exports[`module-with-pragma.js - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["flow", "babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/**
+ * Here lie words above pragmas
+ * 
+ * @flow
+ * @format
+ */
+
+function foo(bar) {
+  return bar + 3 + 4;
+}
+
+=====================================output=====================================
+/**
+ * Here lie words above pragmas
+ *
+ * @flow
+ * @format
+ */
+
+function foo(bar) {
+  return bar + 3 + 4;
+}
+
+================================================================================
+`;
+
+exports[`module-without-docblock.js - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["flow", "babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function foo(bar) { 
+  return bar + 3 + 4;
+}
+
+=====================================output=====================================
+/** @format */
+
+function foo(bar) {
+  return bar + 3 + 4;
+}
+
+================================================================================
+`;
+
+exports[`module-without-pragma.js - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["flow", "babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/**
+ * @flow
+ * 
+ * Words below the wrong pragma
+ */
+
+function foo(bar) { 
+  return bar + 3 + 4;
+}
+
+=====================================output=====================================
+/**
+ * Words below the wrong pragma
+ *
+ * @format
+ * @flow
+ */
+
+function foo(bar) {
+  return bar + 3 + 4;
+}
+
+================================================================================
+`;
+
+exports[`shebang-only-with-pragma.js - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["flow", "babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+#!/usr/bin/env node
+/** @format */
+
+=====================================output=====================================
+#!/usr/bin/env node
+/** @format */
+
+================================================================================
+`;
+
+exports[`shebang-only-without-pragma.js - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["flow", "babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+#!/usr/bin/env node
+
+=====================================output=====================================
+#!/usr/bin/env node
+/** @format */
+
+================================================================================
+`;
+
+exports[`shebang-with-pragma.js - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["flow", "babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+#!/usr/bin/env node
+/**
+ * @format
+ */
+function test() { const answer = 42;console.log("%s is the answer to life, the universe, and everything", answer);}
+
+=====================================output=====================================
+#!/usr/bin/env node
+/**
+ * @format
+ */
+function test() {
+  const answer = 42;
+  console.log("%s is the answer to life, the universe, and everything", answer);
+}
+
+================================================================================
+`;
+
+exports[`shebang-without-pragma.js - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["flow", "babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+#!/usr/bin/env node
+function test() { const answer = 42;console.log("%s is the answer to life, the universe, and everything", answer);}
+
+=====================================output=====================================
+#!/usr/bin/env node
+/** @format */
+
+function test() {
+  const answer = 42;
+  console.log("%s is the answer to life, the universe, and everything", answer);
+}
+
+================================================================================
+`;
+
+exports[`trailing-spaces-first-line.js - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["flow", "babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/**	
+ * Copyright (c) 2015-present, Facebook, Inc.	
+ * All rights reserved.	
+ *	
+ * This source code is licensed under the license found in the LICENSE file in	
+ * the root directory of this source tree.	
+ */	
+
+=====================================output=====================================
+/**
+ * Copyright (c) 2015-present, Facebook, Inc.
+ * All rights reserved.
+ *
+ * This source code is licensed under the license found in the LICENSE file in
+ * the root directory of this source tree.
+ *
+ * @format
+ */
+
+================================================================================
+`;
+
+exports[`with-comment.js - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["flow", "babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/* comment */
+foo()
+
+=====================================output=====================================
+/**
+ * comment
+ *
+ * @format
+ */
+
+foo();
+
+================================================================================
+`;

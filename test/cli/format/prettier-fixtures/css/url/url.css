@@ -1,0 +1,31 @@
+div {
+  background: url(/images/bg.png);
+  background: -fb-url(/images/bg.png);
+}
+
+@font-face {
+  src: url(RobotoFlex-VariableFont_GRAD,XTRA,YOPQ,YTAS,YTDE,YTFI,YTLC,YTUC,opsz,slnt,wdth,wght.ttf);
+  src: url(foo.ttf?query=foo,bar,);
+  src: url(foo.woff2?foo=rgb\(255,255,0\));
+}
+
+a {
+  content: url(https://example.com/\)\).jpg);
+  content: url(https://example.com/\(\(.jpg);
+  content: url(https://example.com/\ \ .jpg);
+  content: url(   https://example.com/\)\).jpg   );
+  content: url(   https://example.com/\(\(.jpg   );
+  content: url(   https://example.com/\ \ .jpg   );
+
+  background:
+    no-repeat url(https://example.com/\)\).jpg),
+    no-repeat url(https://example.com/\(\(.jpg),
+    no-repeat url(https://example.com/\ \ .jpg),
+    no-repeat url(   https://example.com/\)\).jpg   ),
+    no-repeat url(   https://example.com/\(\(.jpg   ),
+    no-repeat url(   https://example.com/\ \ .jpg   ),
+    no-repeat url(foo.ttf?query=foo,bar,),
+    no-repeat url(foo.woff2?foo=rgb\(255,255,0\))
+    no-repeat url(RobotoFlex-VariableFont_GRAD,XTRA,YOPQ,YTAS,YTDE,YTFI,YTLC,YTUC,opsz,slnt,wdth,wght.ttf);
+  ;
+}

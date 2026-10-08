@@ -1,0 +1,67 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`string.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+interface I {
+    "string": "I";
+}
+
+type T = {
+    "string": "T";
+}
+
+interface A {
+    'string': "A";
+}
+
+type B = {
+    'string': "B";
+}
+
+=====================================output=====================================
+interface I {
+  string: "I";
+}
+
+type T = {
+  string: "T";
+};
+
+interface A {
+  string: "A";
+}
+
+type B = {
+  string: "B";
+};
+
+================================================================================
+`;
+
+exports[`symbol.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+interface I {
+    [Symbol.toStringTag]: "I";
+}
+
+type T = {
+    [Symbol.toStringTag]: "T";
+}
+
+=====================================output=====================================
+interface I {
+  [Symbol.toStringTag]: "I";
+}
+
+type T = {
+  [Symbol.toStringTag]: "T";
+};
+
+================================================================================
+`;

@@ -1,0 +1,23 @@
+div span[foo="bar short\
+short"] {
+  color: red;
+}
+
+/* Should not break before `span`, since it doesn't reach printWidth */
+div span[foo="bar long long long\
+long long long long long long long long long long long long"] {
+  color: red;
+}
+
+div {
+  & span[foo="bar short\
+short"] {
+    color: red;
+  }
+
+  /* Should not break before `span`, since it doesn't reach printWidth */
+  & span[foo="bar long long long\
+long long long long long long long long long long long long"] {
+    color: red;
+  }
+}

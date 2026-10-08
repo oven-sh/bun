@@ -1,0 +1,44 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`module-string-names-export.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export { smile as "smile1" } from "./emojis.js";
+export { "smile" as smile2 } from "./emojis.js";
+export { "smile" as "smile3" } from "./emojis.js";
+export { foo1, bar as "foo2" } from "./emojis.js";
+export { "學而時習之，不亦說乎？", "吾道一以貫之。" as "忠恕。" } from "Confucius";
+export { "smile4" } from "./emojis.js";
+
+=====================================output=====================================
+export { smile as "smile1" } from "./emojis.js";
+export { "smile" as smile2 } from "./emojis.js";
+export { "smile" as "smile3" } from "./emojis.js";
+export { foo1, bar as "foo2" } from "./emojis.js";
+export {
+  "學而時習之，不亦說乎？",
+  "吾道一以貫之。" as "忠恕。",
+} from "Confucius";
+export { "smile4" } from "./emojis.js";
+
+================================================================================
+`;
+
+exports[`module-string-names-import.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import { "default" as quotation1 } from "Confucius";
+import { "foo" as bar, "default" as qux } from "module-a";
+import { "學而時習之，不亦說乎？" as quotation2 } from "Confucius";
+
+=====================================output=====================================
+import { "default" as quotation1 } from "Confucius";
+import { "foo" as bar, "default" as qux } from "module-a";
+import { "學而時習之，不亦說乎？" as quotation2 } from "Confucius";
+
+================================================================================
+`;

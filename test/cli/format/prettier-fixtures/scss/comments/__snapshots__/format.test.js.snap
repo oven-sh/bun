@@ -1,0 +1,1002 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`4594.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.foo,
+// Comment
+.bar {
+  // Comment
+  color: red; // Comment
+}
+
+$my-list:
+  'foo', // Comment
+  'bar'; // Comment
+
+$my-map: (
+  'foo': 1, // Comment
+  'bar': 2, // Comment
+  'buz': calc(1 + 2), // Buz
+  'baz': 4, // Baz
+);
+
+[href]:hover &, // Comment
+[href]:focus &, // Comment
+[href]:active & {
+  .tooltip {
+    opacity: 1;
+  }
+}
+
+@import
+  // Comment
+  'mixins',
+  'variables',
+  // Comment
+  'reset',
+  'scaffolding',
+  'type',
+  // Comment
+  'bar',
+  'tabs';
+
+=====================================output=====================================
+.foo,
+// Comment
+.bar {
+  // Comment
+  color: red; // Comment
+}
+
+$my-list:
+  "foo",
+  // Comment
+  "bar"; // Comment
+
+$my-map: (
+  "foo": 1,
+  // Comment
+  "bar": 2,
+  // Comment
+  "buz": calc(1 + 2),
+  // Buz
+  "baz": 4, // Baz
+);
+
+[href]:hover &, // Comment
+[href]:focus &, // Comment
+[href]:active & {
+  .tooltip {
+    opacity: 1;
+  }
+}
+
+@import // Comment
+  "mixins",
+  "variables",
+  // Comment
+  "reset",
+  "scaffolding", "type",
+  // Comment
+  "bar",
+  "tabs";
+
+================================================================================
+`;
+
+exports[`4878.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@function someVeryLongFunctionNameForJustAPow($base, $exponent) {
+  $result: 1;
+  @for $_ from 1 through $exponent {
+    $result: $result * $base;
+  }
+  @return $result;
+}
+
+@function pow($base, $exponent){
+  @return someVeryLongFunctionNameForJustAPow($base,$exponent);
+}
+
+.foo{
+  width: someVeryLongFunctionNameForJustAPow(2, someVeryLongFunctionNameForJustAPow(2, someVeryLongFunctionNameForJustAPow(2,
+  // This next pow is really powerful
+  someVeryLongFunctionNameForJustAPow(2, someVeryLongFunctionNameForJustAPow(2, someVeryLongFunctionNameForJustAPow(2, someVeryLongFunctionNameForJustAPow(2, someVeryLongFunctionNameForJustAPow(2, someVeryLongFunctionNameForJustAPow(2, someVeryLongFunctionNameForJustAPow(2, someVeryLongFunctionNameForJustAPow(2, someVeryLongFunctionNameForJustAPow(2, 2))))))))))))
+}
+
+.bar{
+  width: pow(2, pow(2, pow(2,
+  // This next pow is really powerful
+  pow(2, pow(2, pow(2, pow(2, pow(2, pow(2, pow(2, pow(2, pow(2, 2))))))))))))
+}
+
+=====================================output=====================================
+@function someVeryLongFunctionNameForJustAPow($base, $exponent) {
+  $result: 1;
+  @for $_ from 1 through $exponent {
+    $result: $result * $base;
+  }
+  @return $result;
+}
+
+@function pow($base, $exponent) {
+  @return someVeryLongFunctionNameForJustAPow($base, $exponent);
+}
+
+.foo {
+  width: someVeryLongFunctionNameForJustAPow(
+    2,
+    someVeryLongFunctionNameForJustAPow(
+      2,
+      someVeryLongFunctionNameForJustAPow(
+        2,
+        // This next pow is really powerful
+        someVeryLongFunctionNameForJustAPow(
+            2,
+            someVeryLongFunctionNameForJustAPow(
+              2,
+              someVeryLongFunctionNameForJustAPow(
+                2,
+                someVeryLongFunctionNameForJustAPow(
+                  2,
+                  someVeryLongFunctionNameForJustAPow(
+                    2,
+                    someVeryLongFunctionNameForJustAPow(
+                      2,
+                      someVeryLongFunctionNameForJustAPow(
+                        2,
+                        someVeryLongFunctionNameForJustAPow(
+                          2,
+                          someVeryLongFunctionNameForJustAPow(2, 2)
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+      )
+    )
+  );
+}
+
+.bar {
+  width: pow(
+    2,
+    pow(
+      2,
+      pow(
+        2,
+        // This next pow is really powerful
+        pow(
+            2,
+            pow(2, pow(2, pow(2, pow(2, pow(2, pow(2, pow(2, pow(2, 2))))))))
+          )
+      )
+    )
+  );
+}
+
+================================================================================
+`;
+
+exports[`14544.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$blah: (
+	"a": 42,
+	/* test test test test test test test test test test test test test test test*/
+	/* test test test test test test test test test test test test test test test*/
+	"b": 43,
+	"c": 44,
+)
+
+=====================================output=====================================
+$blah: (
+  "a": 42,
+  /* test test test test test test test test test test test test test test test*/
+  /* test test test test test test test test test test test test test test test*/
+  "b": 43,
+  "c": 44,
+);
+
+================================================================================
+`;
+
+exports[`CRLF.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$nice-blue: #5B83AD;
+$light-blue: $nice-blue + #111;
+
+// Comment 1
+/*
+ * Comment 2
+ */
+#header {
+    // Comment 3
+    /*
+     * Comment 4
+     */
+    color: @light-blue;
+}
+
+@media only screen and (max-width: 600px) {
+    // Comment 1
+    /*
+     * Comment 5
+     */
+    body {
+        background-color: lightblue; // Comment 6
+        color: red; /* Comment 7 */
+    }
+}
+
+@mixin create-rules($padding) {
+    //
+    // Comment 8
+    //
+    .abc {
+        padding: $padding;
+    }
+    /**
+     * Comment 9
+     */
+    .def {
+        padding: $padding;
+    }
+}
+
+=====================================output=====================================
+$nice-blue: #5b83ad;
+$light-blue: $nice-blue + #111;
+
+// Comment 1
+/*
+ * Comment 2
+ */
+#header {
+  // Comment 3
+  /*
+     * Comment 4
+     */
+  color: @light-blue;
+}
+
+@media only screen and (max-width: 600px) {
+  // Comment 1
+  /*
+     * Comment 5
+     */
+  body {
+    background-color: lightblue; // Comment 6
+    color: red; /* Comment 7 */
+  }
+}
+
+@mixin create-rules($padding) {
+  //
+  // Comment 8
+  //
+  .abc {
+    padding: $padding;
+  }
+  /**
+     * Comment 9
+     */
+  .def {
+    padding: $padding;
+  }
+}
+
+================================================================================
+`;
+
+exports[`at-rule.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@at-root .foo
+// .bar
+{
+
+}
+
+@at-root
+// .bar
+.foo
+{
+
+}
+=====================================output=====================================
+@at-root .foo
+// .bar
+{
+}
+
+@at-root // .bar
+.foo {
+}
+
+================================================================================
+`;
+
+exports[`between-decl.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+selector {
+prop: // comment
+value;
+
+prop: /* block */ value;
+
+prop
+: value;
+}
+
+// #5603
+.grid {
+        grid-template-areas: //
+          "header header header" //
+          "sidebar content content" //
+          "footer footer footer";
+
+        grid-template-areas:
+          "header header header" //
+          "sidebar content content" //
+          "footer footer footer";
+ }
+
+// #8052
+$font-family-rich:
+  // custom
+  'Noto Sans TC', 'Noto Sans SC', 'Noto Sans JP',
+  // Safari for OS X and iOS (San Francisco)
+  -apple-system, BlinkMacSystemFont,
+  // fallback
+  Roboto, 'Helvetica Neue', Helvetica, Arial, sans-serif,
+  // emoji
+  'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol' !default;
+
+// #7109
+.test {
+    background:
+        /////// foo
+        // bar
+
+        radial-gradient(circle farthest-corner at 5% 10%, #000000, transparent 50%);
+}
+
+// TODO: make these pretty
+selector {
+prop:
+/* block */
+value;
+
+prop
+// inline
+:
+value;
+
+prop/* block */:
+value;
+
+prop
+/* block */
+:
+value;
+
+prop/* before */: // after
+value;
+
+
+prop/* before */: /* after*/
+value;
+}
+
+=====================================output=====================================
+selector {
+  prop: // comment
+    value;
+
+  prop: /* block */ value;
+
+  prop: value;
+}
+
+// #5603
+.grid {
+  grid-template-areas: //
+    "header header header" //
+    "sidebar content content" //
+    "footer footer footer";
+
+  grid-template-areas: "header header header" //
+    "sidebar content content" //
+    "footer footer footer";
+}
+
+// #8052
+$font-family-rich:
+  // custom
+  "Noto Sans TC",
+  "Noto Sans SC",
+  "Noto Sans JP",
+  // Safari for OS X and iOS (San Francisco)
+  -apple-system,
+  BlinkMacSystemFont,
+  // fallback
+  Roboto,
+  "Helvetica Neue",
+  Helvetica,
+  Arial,
+  sans-serif,
+  // emoji
+  "Apple Color Emoji",
+  "Segoe UI Emoji",
+  "Segoe UI Symbol" !default;
+
+// #7109
+.test {
+  background:
+        /////// foo
+        // bar
+    radial-gradient(circle farthest-corner at 5% 10%, #000000, transparent 50%);
+}
+
+// TODO: make these pretty
+selector {
+  prop:
+/* block */ value;
+
+  prop // inline
+: value;
+
+  prop/* block */: value;
+
+  prop/* block */
+: value;
+
+  prop/* before */: // after
+    value;
+
+  prop/* before */: /* after*/ value;
+}
+
+================================================================================
+`;
+
+exports[`bug.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@font-face  {
+  src: url(if(
+    $bootstrap-sass-asset-helper,
+    twbs-font-path('#{$icon-font-path}#{$icon-font-name}.eot'),
+    '#{$icon-font-path}#{$icon-font-name}.eot'
+  ));
+}
+
+// Catchall baseclass
+/* Catchall baseclass */
+.glyphicon {
+}
+
+=====================================output=====================================
+@font-face {
+  src: url(if(
+    $bootstrap-sass-asset-helper,
+    twbs-font-path("#{$icon-font-path}#{$icon-font-name}.eot"),
+    "#{$icon-font-path}#{$icon-font-name}.eot"
+  ));
+}
+
+// Catchall baseclass
+/* Catchall baseclass */
+.glyphicon {
+}
+
+================================================================================
+`;
+
+exports[`comments.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// This comment won't be included in the CSS. 
+//This comment won't be included in the CSS.
+//     This comment won't be included in the CSS.     
+
+/* But this comment will, except in compressed mode. */
+/*     But this comment will, except in compressed mode.     */
+/*But this comment will, except in compressed mode.*/
+
+/*! This comment will be included even in compressed mode. */
+
+/// Computes an exponent.
+///// Computes an exponent.
+
+=====================================output=====================================
+// This comment won't be included in the CSS.
+//This comment won't be included in the CSS.
+//     This comment won't be included in the CSS.
+
+/* But this comment will, except in compressed mode. */
+/*     But this comment will, except in compressed mode.     */
+/*But this comment will, except in compressed mode.*/
+
+/*! This comment will be included even in compressed mode. */
+
+/// Computes an exponent.
+///// Computes an exponent.
+
+================================================================================
+`;
+
+exports[`custom-properties.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/* custom properties set & @apply rule */
+:root {
+    /* comments 192 */ --centered /* comments 193 */ : /* comments 194 */ {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    };
+}
+
+=====================================output=====================================
+/* custom properties set & @apply rule */
+:root {
+  /* comments 192 */
+  --centered/* comments 193 */ : /* comments 194 */ {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  };
+}
+
+================================================================================
+`;
+
+exports[`if-eslit-at-rule-decloration.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@function _normalize-include($section) {
+// Check if $section is in the $include list.
+  @if index($_normalize-include, $section) {
+    @return true;
+  }
+// If $include is set to (all), make sure $section is not in $exclude.
+  @else if not index($_normalize-exclude, $section) and index($_normalize-include, all) {
+    @return true;
+  }
+  @return false;
+}
+
+=====================================output=====================================
+@function _normalize-include($section) {
+  // Check if $section is in the $include list.
+  @if index($_normalize-include, $section) {
+    @return true;
+  }
+  // If $include is set to (all), make sure $section is not in $exclude.
+  @else if not
+    index($_normalize-exclude, $section) and
+    index($_normalize-include, all)
+  {
+    @return true;
+  }
+  @return false;
+}
+
+================================================================================
+`;
+
+exports[`in-value.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.real-world-example {
+  background: radial-gradient(
+      circle at left 0% bottom $position,
+      transparent,
+      transparent $diameter,
+      #fbfbfb calc(#{$diameter} + 1px) // Add 1px for edge-smoothing.
+    );
+}
+
+.simplification { 
+  foo: (
+    calc() // not a comment anymore
+  );
+}
+
+=====================================output=====================================
+.real-world-example {
+  background: radial-gradient(
+    circle at left 0% bottom $position,
+    transparent,
+    transparent $diameter,
+    #fbfbfb calc(#{$diameter} + 1px) // Add 1px for edge-smoothing.
+  );
+}
+
+.simplification {
+  foo: (
+    calc() // not a comment anymore
+  );
+}
+
+================================================================================
+`;
+
+exports[`lists.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$my-list:
+  'foo', // Foo
+  'bar'; // Bar
+
+$my-list2:
+  a // a
+  b
+  c;
+
+=====================================output=====================================
+$my-list:
+  "foo",
+  // Foo
+  "bar"; // Bar
+
+$my-list2: a // a
+  b c;
+
+================================================================================
+`;
+
+exports[`maps.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$my-map: (
+  'foo': 1, // Foo
+  'bar': 2, // Bar
+);
+
+=====================================output=====================================
+$my-map: (
+  "foo": 1,
+  // Foo
+  "bar": 2, // Bar
+);
+
+================================================================================
+`;
+
+exports[`mixed.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/* DO NOT ADD EXTRA CODE TO THIS FILE */
+
+@import "a";
+
+// '/*' <-- this breaks formatting
+
+@import 'b';
+// another comment
+//no-space before
+
+=====================================output=====================================
+/* DO NOT ADD EXTRA CODE TO THIS FILE */
+
+@import "a";
+
+// '/*' <-- this breaks formatting
+
+@import "b";
+// another comment
+//no-space before
+
+================================================================================
+`;
+
+exports[`mixed-2.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/* DO NOT ADD EXTRA CODE TO THIS FILE */
+@import "a";
+//*
+@import 'b';
+/* block */
+/*no-space block*/
+
+=====================================output=====================================
+/* DO NOT ADD EXTRA CODE TO THIS FILE */
+@import "a";
+//*
+@import "b";
+/* block */
+/*no-space block*/
+
+================================================================================
+`;
+
+exports[`mixed-block.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/* DO NOT ADD EXTRA CODE TO THIS FILE */
+
+@import "a";
+
+// '/*' <-- this breaks formatting
+
+@import 'b';
+/* block */
+/*no-space block*/
+
+=====================================output=====================================
+/* DO NOT ADD EXTRA CODE TO THIS FILE */
+
+@import "a";
+
+// '/*' <-- this breaks formatting
+
+@import "b";
+/* block */
+/*no-space block*/
+
+================================================================================
+`;
+
+exports[`prettier-ignore.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+foo {
+  /* prettier-ignore */
+  thing:     foo;
+  -ms-thing: foo;
+}
+
+=====================================output=====================================
+foo {
+  /* prettier-ignore */
+  thing:     foo;
+  -ms-thing: foo;
+}
+
+================================================================================
+`;
+
+exports[`selectors.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.powerPathNavigator .helm button.pressedButton, // comment 1
+.powerPathNavigator .helm button:active:not(.disabledButton),
+.powerPathNavigator table.powerPathInfo th:active,
+.powerPathNavigator table.powerPathInfo th:active + th:last-child {
+}
+
+// comment 2
+.powerPathNavigator .helm button.pressedButton,
+.powerPathNavigator .helm button:active:not(.disabledButton) {
+}
+
+.foo,
+// comment 3
+.bar {
+  display: block;
+}
+
+.field
+  {
+  &[data-field-id="1"], // comment 4
+  &[data-field-id="2"], // comment 5
+  &[data-field-id="3"], // comment 6
+  {
+    background: green;
+  }
+}
+
+// comment 7
+.field
+// comment 8
+{ // comment 9
+  // comment 10
+  &[data-field-id="1"], // comment 11
+  // comment 12
+  &[data-field-id="2"] // comment 13
+  // comment 14
+  , // comment 15
+  // comment 16
+  &[data-field-id="3"], // comment 17
+  // comment 18
+  { // comment 19
+    // comment 20
+    background: green;
+    // comment 21
+  } // comment 22
+  // comment 23
+}
+// comment 24
+
+.foo
+// comment 25
+.bar
+// comment 26
+{}
+
+.foo
+// comment 27
++
+// comment 28
+.bar
+// comment 29
+{}
+
+=====================================output=====================================
+.powerPathNavigator .helm button.pressedButton, // comment 1
+.powerPathNavigator .helm button:active:not(.disabledButton),
+.powerPathNavigator table.powerPathInfo th:active,
+.powerPathNavigator table.powerPathInfo th:active + th:last-child {
+}
+
+// comment 2
+.powerPathNavigator .helm button.pressedButton,
+.powerPathNavigator .helm button:active:not(.disabledButton) {
+}
+
+.foo,
+// comment 3
+.bar {
+  display: block;
+}
+
+.field {
+  &[data-field-id="1"], // comment 4
+  &[data-field-id="2"], // comment 5
+  &[data-field-id="3"], // comment 6
+  {
+    background: green;
+  }
+}
+
+// comment 7
+.field
+// comment 8
+{
+  // comment 9
+  // comment 10
+  &[data-field-id="1"], // comment 11
+  // comment 12
+  &[data-field-id="2"] // comment 13
+  // comment 14
+  , // comment 15
+  // comment 16
+  &[data-field-id="3"], // comment 17
+  // comment 18
+  {
+    // comment 19
+    // comment 20
+    background: green;
+    // comment 21
+  } // comment 22
+  // comment 23
+}
+// comment 24
+
+.foo
+// comment 25
+.bar
+// comment 26
+{
+}
+
+.foo
+// comment 27
++
+// comment 28
+.bar
+// comment 29
+{
+}
+
+================================================================================
+`;
+
+exports[`trailing_star_slash.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@media (max-width: 1) {}
+a {
+  // element.style */
+}
+
+=====================================output=====================================
+@media (max-width: 1) {
+}
+a {
+  // element.style */
+}
+
+================================================================================
+`;
+
+exports[`variable-declaration.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$var: /* comment 1 */ all /* comment 2 */ !default /* comment 3 */ ; /* comment 4 */
+
+@mixin text-color {
+  /* comment 5 */
+  /* comment 6 */ $text-color /* comment 7 */ : /* comment 8 */ red /* comment 9 */ !default /* comment 10 */ ; /* comment 11 */
+  /* comment 12 */
+  color: $text-color;
+}
+
+.error {
+  /* comment 13 */
+  /* comment 14 */ $text-color /* comment 15 */ : /* comment 16 */ green /* comment 17 */ !global /* comment 18 */ ; /* comment 19 */
+  /* comment 20 */
+}
+
+=====================================output=====================================
+$var: /* comment 1 */ all /* comment 2 */ !default /* comment 3 */ ; /* comment 4 */
+
+@mixin text-color {
+  /* comment 5 */
+  /* comment 6 */
+  $text-color/* comment 7 */ : /* comment 8 */ red /* comment 9 */ !default /* comment 10 */ ; /* comment 11 */
+  /* comment 12 */
+  color: $text-color;
+}
+
+.error {
+  /* comment 13 */
+  /* comment 14 */
+  $text-color/* comment 15 */ : /* comment 16 */ green /* comment 17 */ !global /* comment 18 */ ; /* comment 19 */
+  /* comment 20 */
+}
+
+================================================================================
+`;

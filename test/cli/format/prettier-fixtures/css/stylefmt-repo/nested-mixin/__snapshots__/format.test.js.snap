@@ -1,0 +1,36 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`nested-mixin.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@mixin test() {
+  $values: blue red;
+  @each $val in $values {
+    color: $val;
+    @for $i from 2 through 10 {
+     background: $i;
+    }
+  }
+  @for $i from 2 through 10 {
+    color: $i;
+  }
+}
+
+=====================================output=====================================
+@mixin test() {
+  $values: blue red;
+  @each $val in $values {
+    color: $val;
+    @for $i from 2 through 10 {
+      background: $i;
+    }
+  }
+  @for $i from 2 through 10 {
+    color: $i;
+  }
+}
+
+================================================================================
+`;

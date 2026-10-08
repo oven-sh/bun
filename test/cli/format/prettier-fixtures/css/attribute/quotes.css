@@ -1,0 +1,11 @@
+a[id=test] {}
+a[id="test"] {}
+a[id='test'] {}
+a[id=func("foo")] {}
+a[class="(╯°□°）╯︵ ┻━┻"]{}
+a[href^="//"] {}
+a[href$="/*"] {}
+a[href="http://example.com"] {}
+input:not([type="radio"]):not([type="checkbox"]) {}
+input:not([type="radio"], [type="checkbox"]) {}
+section:has(:not([type="radio"], [type="checkbox"])) {}

@@ -1,0 +1,65 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`invalid-flags.js format[acorn] 1`] = `
+"Invalid regular expression flag (1:2)
+> 1 | /a/ugv;
+    |  ^
+  2 |
+Cause: Invalid regular expression flag (1:1)"
+`;
+
+exports[`invalid-flags.js format[babel] 1`] = `
+"The 'u' and 'v' regular expression flags cannot be enabled at the same time. (1:7)
+> 1 | /a/ugv;
+    |       ^
+  2 |
+Cause: The 'u' and 'v' regular expression flags cannot be enabled at the same time. (1:6)"
+`;
+
+exports[`invalid-flags.js format[espree] 1`] = `
+"Invalid regular expression flag (1:2)
+> 1 | /a/ugv;
+    |  ^
+  2 |
+Cause: Invalid regular expression flag"
+`;
+
+exports[`invalid-flags.js format[meriyah] 1`] = `
+"Duplicate regular expression flag 'uv' (1:1)
+> 1 | /a/ugv;
+    | ^^^^^
+  2 |
+Cause: [1:0-1:5]: Duplicate regular expression flag 'uv'"
+`;
+
+exports[`invalid-flags2.js format[acorn] 1`] = `
+"Invalid regular expression flag (1:2)
+> 1 | /a/vu;
+    |  ^
+  2 |
+Cause: Invalid regular expression flag (1:1)"
+`;
+
+exports[`invalid-flags2.js format[babel] 1`] = `
+"The 'u' and 'v' regular expression flags cannot be enabled at the same time. (1:6)
+> 1 | /a/vu;
+    |      ^
+  2 |
+Cause: The 'u' and 'v' regular expression flags cannot be enabled at the same time. (1:5)"
+`;
+
+exports[`invalid-flags2.js format[espree] 1`] = `
+"Invalid regular expression flag (1:2)
+> 1 | /a/vu;
+    |  ^
+  2 |
+Cause: Invalid regular expression flag"
+`;
+
+exports[`invalid-flags2.js format[meriyah] 1`] = `
+"Duplicate regular expression flag 'vu' (1:1)
+> 1 | /a/vu;
+    | ^^^^
+  2 |
+Cause: [1:0-1:4]: Duplicate regular expression flag 'vu'"
+`;

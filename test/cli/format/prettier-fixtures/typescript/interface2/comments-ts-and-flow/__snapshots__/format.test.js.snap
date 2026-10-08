@@ -1,0 +1,237 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`18216.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+interface TSAbstractMethodDefinitionNonComputedName1
+  // Comment
+  extends MethodDefinitionNonComputedNameBase {
+}
+
+class TSAbstractMethodDefinitionNonComputedName2
+  // Comment
+  extends MethodDefinitionNonComputedNameBase {
+}
+
+interface TSAbstractMethodDefinitionNonComputedName3 // Comment
+  extends MethodDefinitionNonComputedNameBase {
+}
+
+class TSAbstractMethodDefinitionNonComputedName4 // Comment
+  extends MethodDefinitionNonComputedNameBase {
+}
+
+interface TSAbstractMethodDefinitionNonComputedName5
+  /* Comment */
+  extends MethodDefinitionNonComputedNameBase {
+}
+
+class TSAbstractMethodDefinitionNonComputedName6
+  /* Comment */
+  extends MethodDefinitionNonComputedNameBase {
+}
+
+=====================================output=====================================
+interface TSAbstractMethodDefinitionNonComputedName1
+  // Comment
+  extends MethodDefinitionNonComputedNameBase {}
+
+class TSAbstractMethodDefinitionNonComputedName2
+  // Comment
+  extends MethodDefinitionNonComputedNameBase {}
+
+interface TSAbstractMethodDefinitionNonComputedName3 // Comment
+  extends MethodDefinitionNonComputedNameBase {}
+
+class TSAbstractMethodDefinitionNonComputedName4 // Comment
+  extends MethodDefinitionNonComputedNameBase {}
+
+interface TSAbstractMethodDefinitionNonComputedName5
+  /* Comment */
+  extends MethodDefinitionNonComputedNameBase {}
+
+class TSAbstractMethodDefinitionNonComputedName6
+  /* Comment */
+  extends MethodDefinitionNonComputedNameBase {}
+
+================================================================================
+`;
+
+exports[`18216-mutiple-clauses.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+interface TSAbstractMethodDefinitionNonComputedName1
+  // Comment
+  extends MethodDefinitionNonComputedNameBase, Foo {
+}
+
+class TSAbstractMethodDefinitionNonComputedName2
+  // Comment
+  implements MethodDefinitionNonComputedNameBase, Foo {
+}
+
+interface TSAbstractMethodDefinitionNonComputedName3 // Comment
+  extends MethodDefinitionNonComputedNameBase, Foo {
+}
+
+class TSAbstractMethodDefinitionNonComputedName4 // Comment
+  implements MethodDefinitionNonComputedNameBase, Foo {
+}
+
+interface TSAbstractMethodDefinitionNonComputedName5
+  /* Comment */
+  extends MethodDefinitionNonComputedNameBase, Foo {
+}
+
+class TSAbstractMethodDefinitionNonComputedName6
+  /* Comment */
+  implements MethodDefinitionNonComputedNameBase, Foo {
+}
+
+=====================================output=====================================
+interface TSAbstractMethodDefinitionNonComputedName1
+  // Comment
+  extends MethodDefinitionNonComputedNameBase, Foo {}
+
+class TSAbstractMethodDefinitionNonComputedName2
+  // Comment
+  implements MethodDefinitionNonComputedNameBase, Foo {}
+
+interface TSAbstractMethodDefinitionNonComputedName3 // Comment
+  extends MethodDefinitionNonComputedNameBase, Foo {}
+
+class TSAbstractMethodDefinitionNonComputedName4 // Comment
+  implements MethodDefinitionNonComputedNameBase, Foo {}
+
+interface TSAbstractMethodDefinitionNonComputedName5
+  /* Comment */
+  extends MethodDefinitionNonComputedNameBase, Foo {}
+
+class TSAbstractMethodDefinitionNonComputedName6
+  /* Comment */
+  implements MethodDefinitionNonComputedNameBase, Foo {}
+
+================================================================================
+`;
+
+exports[`18216-type-parameters.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+interface TSAbstractMethodDefinitionNonComputedName1<Foo>
+  // Comment
+  extends MethodDefinitionNonComputedNameBase {
+}
+
+class TSAbstractMethodDefinitionNonComputedName2<Foo>
+  // Comment
+  extends MethodDefinitionNonComputedNameBase {
+}
+
+interface TSAbstractMethodDefinitionNonComputedName3<Foo> // Comment
+  extends MethodDefinitionNonComputedNameBase {
+}
+
+class TSAbstractMethodDefinitionNonComputedName4<Foo> // Comment
+  extends MethodDefinitionNonComputedNameBase {
+}
+
+interface TSAbstractMethodDefinitionNonComputedName5<Foo>
+  /* Comment */
+  extends MethodDefinitionNonComputedNameBase {
+}
+
+class TSAbstractMethodDefinitionNonComputedName6<Foo>
+  /* Comment */
+  extends MethodDefinitionNonComputedNameBase {
+}
+
+=====================================output=====================================
+interface TSAbstractMethodDefinitionNonComputedName1<Foo>
+  // Comment
+  extends MethodDefinitionNonComputedNameBase {}
+
+class TSAbstractMethodDefinitionNonComputedName2<Foo>
+  // Comment
+  extends MethodDefinitionNonComputedNameBase {}
+
+interface TSAbstractMethodDefinitionNonComputedName3<Foo> // Comment
+  extends MethodDefinitionNonComputedNameBase {}
+
+class TSAbstractMethodDefinitionNonComputedName4<Foo> // Comment
+  extends MethodDefinitionNonComputedNameBase {}
+
+interface TSAbstractMethodDefinitionNonComputedName5<Foo>
+  /* Comment */
+  extends MethodDefinitionNonComputedNameBase {}
+
+class TSAbstractMethodDefinitionNonComputedName6<Foo>
+  /* Comment */
+  extends MethodDefinitionNonComputedNameBase {}
+
+================================================================================
+`;
+
+exports[`18216-type-parameters-mutiple-clauses.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+interface TSAbstractMethodDefinitionNonComputedName1<Foo>
+  // Comment
+  extends MethodDefinitionNonComputedNameBase, Foo {
+}
+
+class TSAbstractMethodDefinitionNonComputedName2<Foo>
+  // Comment
+  implements MethodDefinitionNonComputedNameBase, Foo {
+}
+
+interface TSAbstractMethodDefinitionNonComputedName3<Foo> // Comment
+  extends MethodDefinitionNonComputedNameBase, Foo {
+}
+
+class TSAbstractMethodDefinitionNonComputedName4<Foo> // Comment
+  implements MethodDefinitionNonComputedNameBase, Foo {
+}
+
+interface TSAbstractMethodDefinitionNonComputedName5<Foo>
+  /* Comment */
+  extends MethodDefinitionNonComputedNameBase, Foo {
+}
+
+class TSAbstractMethodDefinitionNonComputedName6<Foo>
+  /* Comment */
+  implements MethodDefinitionNonComputedNameBase, Foo {
+}
+
+=====================================output=====================================
+interface TSAbstractMethodDefinitionNonComputedName1<Foo>
+  // Comment
+  extends MethodDefinitionNonComputedNameBase, Foo {}
+
+class TSAbstractMethodDefinitionNonComputedName2<Foo>
+  // Comment
+  implements MethodDefinitionNonComputedNameBase, Foo {}
+
+interface TSAbstractMethodDefinitionNonComputedName3<Foo> // Comment
+  extends MethodDefinitionNonComputedNameBase, Foo {}
+
+class TSAbstractMethodDefinitionNonComputedName4<Foo> // Comment
+  implements MethodDefinitionNonComputedNameBase, Foo {}
+
+interface TSAbstractMethodDefinitionNonComputedName5<Foo>
+  /* Comment */
+  extends MethodDefinitionNonComputedNameBase, Foo {}
+
+class TSAbstractMethodDefinitionNonComputedName6<Foo>
+  /* Comment */
+  implements MethodDefinitionNonComputedNameBase, Foo {}
+
+================================================================================
+`;

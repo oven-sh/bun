@@ -1,0 +1,14 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`type-argument.src.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+Observable.empty<never>();
+
+=====================================output=====================================
+Observable.empty<never>();
+
+================================================================================
+`;

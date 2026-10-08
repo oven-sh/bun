@@ -1,0 +1,82 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`argument.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "babel-flow", "babel-ts", "__babel_estree", "typescript", "flow", "meriyah", "acorn", "espree", "espree", "hermes", "oxc", "oxc-ts"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+new A(
+  <div>
+    <div></div>
+  </div>
+)
+
+A(
+  <div>
+    <div></div>
+  </div>
+)
+
+new A(
+  <>
+    <div></div>
+  </>
+)
+
+A(
+  <>
+    <div></div>
+  </>
+)
+
+=====================================output=====================================
+new A(
+  <div>
+    <div></div>
+  </div>,
+);
+
+A(
+  <div>
+    <div></div>
+  </div>,
+);
+
+new A(
+  <>
+    <div></div>
+  </>,
+);
+
+A(
+  <>
+    <div></div>
+  </>,
+);
+
+================================================================================
+`;
+
+exports[`snippet: #0 format 1`] = `
+====================================options=====================================
+parsers: ["babel", "babel-flow", "babel-ts", "__babel_estree", "typescript", "flow", "meriyah", "acorn", "espree", "espree", "hermes", "oxc", "oxc-ts"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export default <></>
+=====================================output=====================================
+export default <></>;
+
+================================================================================
+`;
+
+exports[`snippet: #1 format 1`] = `
+====================================options=====================================
+parsers: ["babel", "babel-flow", "babel-ts", "__babel_estree", "typescript", "flow", "meriyah", "acorn", "espree", "espree", "hermes", "oxc", "oxc-ts"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export default <div/>
+=====================================output=====================================
+export default <div />;
+
+================================================================================
+`;

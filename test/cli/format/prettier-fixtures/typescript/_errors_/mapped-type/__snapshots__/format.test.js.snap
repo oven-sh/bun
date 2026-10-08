@@ -1,0 +1,33 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`mapped-type.ts format[babel-ts] 1`] = `
+"Unexpected token, expected "}" (3:3)
+  1 | type Mapped = {
+  2 |   [key in keyof O]: number;
+> 3 |   extra_member: should_not_allowed
+    |   ^
+  4 | };
+  5 |
+Cause: Unexpected token, expected "}" (3:2)"
+`;
+
+exports[`mapped-type.ts format[oxc-ts] 1`] = `
+"Expected \`}\` but found \`Identifier\` (3:3)
+  1 | type Mapped = {
+  2 |   [key in keyof O]: number;
+> 3 |   extra_member: should_not_allowed
+    |   ^^^^^^^^^^^^
+  4 | };
+  5 |"
+`;
+
+exports[`mapped-type.ts format[typescript] 1`] = `
+"A mapped type may not declare properties or methods. (3:3)
+  1 | type Mapped = {
+  2 |   [key in keyof O]: number;
+> 3 |   extra_member: should_not_allowed
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  4 | };
+  5 |
+Cause: A mapped type may not declare properties or methods."
+`;

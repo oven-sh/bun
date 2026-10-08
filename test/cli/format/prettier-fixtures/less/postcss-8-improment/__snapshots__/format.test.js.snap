@@ -1,0 +1,69 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`empty-props.less format 1`] = `
+====================================options=====================================
+parsers: ["less"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+:root {
+  --empty:;
+     --one-space: ;
+  --two-space:  ;
+--many-space:       ;
+}
+
+=====================================output=====================================
+:root {
+  --empty:;
+  --one-space: ;
+  --two-space:  ;
+  --many-space:       ;
+}
+
+================================================================================
+`;
+
+exports[`test.less format 1`] = `
+====================================options=====================================
+parsers: ["less"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/*
+This test is copied from \`postcss@8\` release note
+
+https://github.com/postcss/postcss/releases/tag/8.0.0
+*/
+
+:root {
+  --empty: ;
+  --JSON: [1, "2", {"three": {"a":1}}, [4]];
+  --javascript: function(rule) { console.log(rule) };
+}
+
+@supports (--element(".minwidth", { "minWidth": 300 })) {
+  [--self] {
+    background: greenyellow;
+  }
+}
+
+=====================================output=====================================
+/*
+This test is copied from \`postcss@8\` release note
+
+https://github.com/postcss/postcss/releases/tag/8.0.0
+*/
+
+:root {
+  --empty: ;
+  --JSON: [1, "2", {"three": {"a": 1}}, [4]];
+  --javascript: function(rule) {console.log(rule)};
+}
+
+@supports (--element(".minwidth", {"minWidth": 300})) {
+  [--self] {
+    background: greenyellow;
+  }
+}
+
+================================================================================
+`;

@@ -1,0 +1,37 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`await.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function* f() {
+  makeRecord = (   await makeRecordFactory)<ManualValue>
+}
+
+=====================================output=====================================
+async function* f() {
+  makeRecord = (await makeRecordFactory)<ManualValue>;
+}
+
+================================================================================
+`;
+
+exports[`yield.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function* f() {
+  makeRecord = (   yield* makeRecordFactory)<ManualValue>
+  makeRecord = (    yield makeRecordFactory)<ManualValue>
+}
+
+=====================================output=====================================
+async function* f() {
+  makeRecord = (yield* makeRecordFactory)<ManualValue>;
+  makeRecord = (yield makeRecordFactory)<ManualValue>;
+}
+
+================================================================================
+`;

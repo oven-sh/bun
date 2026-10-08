@@ -1,0 +1,443 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`index-signature.ts - {"trailingComma":"all"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+trailingComma: "all"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A = { [key: string] };
+
+type TwoParams = {
+  [a: string, b: string]: string;
+};
+type ThreeParams = {
+  [a: string, b: string, c: string]: string;
+};
+
+type TooLong = {
+  [loooooooooooooooooooooooooong: string, looooooooooooooooooooooooooooooooooooooong: string]: string;
+}
+type TooLong81 = { [loooooooooooooooooooooooooong: string, loooooooooooooooooong: string]: string; }
+type TooLong80 = { [loooooooooooooooooooooooooong: string, looooooooooooooooong: string]: string; }
+
+// note lack of trailing comma in the index signature
+type TooLongSingleParam = {
+  [looooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong: string]: string;
+}
+
+=====================================output=====================================
+type A = { [key: string] };
+
+type TwoParams = {
+  [a: string, b: string]: string;
+};
+type ThreeParams = {
+  [a: string, b: string, c: string]: string;
+};
+
+type TooLong = {
+  [
+    loooooooooooooooooooooooooong: string,
+    looooooooooooooooooooooooooooooooooooooong: string,
+  ]: string;
+};
+type TooLong81 = {
+  [
+    loooooooooooooooooooooooooong: string,
+    loooooooooooooooooong: string,
+  ]: string;
+};
+type TooLong80 = {
+  [loooooooooooooooooooooooooong: string, looooooooooooooooong: string]: string;
+};
+
+// note lack of trailing comma in the index signature
+type TooLongSingleParam = {
+  [
+    looooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong: string
+  ]: string;
+};
+
+================================================================================
+`;
+
+exports[`index-signature.ts - {"trailingComma":"all"} format[babel-ts] 1`] = `
+"Unexpected token, expected "]" (4:13)
+  2 |
+  3 | type TwoParams = {
+> 4 |   [a: string, b: string]: string;
+    |             ^
+  5 | };
+  6 | type ThreeParams = {
+  7 |   [a: string, b: string, c: string]: string;
+Cause: Unexpected token, expected "]" (4:12)"
+`;
+
+exports[`index-signature.ts - {"trailingComma":"all"} format[oxc-ts] 1`] = `
+"An index signature must have a type annotation. (1:12)
+> 1 | type A = { [key: string] };
+    |            ^^^^^^^^^^^^^
+  2 |
+  3 | type TwoParams = {
+  4 |   [a: string, b: string]: string;"
+`;
+
+exports[`index-signature.ts - {"trailingComma":"all"} format[yuku-ts] 1`] = `
+"Expected ':' after index signature parameters, but found '}' (1:26)
+> 1 | type A = { [key: string] };
+    |                          ^
+  2 |
+  3 | type TwoParams = {
+  4 |   [a: string, b: string]: string;"
+`;
+
+exports[`index-signature.ts - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A = { [key: string] };
+
+type TwoParams = {
+  [a: string, b: string]: string;
+};
+type ThreeParams = {
+  [a: string, b: string, c: string]: string;
+};
+
+type TooLong = {
+  [loooooooooooooooooooooooooong: string, looooooooooooooooooooooooooooooooooooooong: string]: string;
+}
+type TooLong81 = { [loooooooooooooooooooooooooong: string, loooooooooooooooooong: string]: string; }
+type TooLong80 = { [loooooooooooooooooooooooooong: string, looooooooooooooooong: string]: string; }
+
+// note lack of trailing comma in the index signature
+type TooLongSingleParam = {
+  [looooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong: string]: string;
+}
+
+=====================================output=====================================
+type A = { [key: string] };
+
+type TwoParams = {
+  [a: string, b: string]: string;
+};
+type ThreeParams = {
+  [a: string, b: string, c: string]: string;
+};
+
+type TooLong = {
+  [
+    loooooooooooooooooooooooooong: string,
+    looooooooooooooooooooooooooooooooooooooong: string,
+  ]: string;
+};
+type TooLong81 = {
+  [
+    loooooooooooooooooooooooooong: string,
+    loooooooooooooooooong: string,
+  ]: string;
+};
+type TooLong80 = {
+  [loooooooooooooooooooooooooong: string, looooooooooooooooong: string]: string;
+};
+
+// note lack of trailing comma in the index signature
+type TooLongSingleParam = {
+  [
+    looooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong: string
+  ]: string;
+};
+
+================================================================================
+`;
+
+exports[`index-signature.ts - {"trailingComma":"es5"} format[babel-ts] 1`] = `
+"Unexpected token, expected "]" (4:13)
+  2 |
+  3 | type TwoParams = {
+> 4 |   [a: string, b: string]: string;
+    |             ^
+  5 | };
+  6 | type ThreeParams = {
+  7 |   [a: string, b: string, c: string]: string;
+Cause: Unexpected token, expected "]" (4:12)"
+`;
+
+exports[`index-signature.ts - {"trailingComma":"es5"} format[oxc-ts] 1`] = `
+"An index signature must have a type annotation. (1:12)
+> 1 | type A = { [key: string] };
+    |            ^^^^^^^^^^^^^
+  2 |
+  3 | type TwoParams = {
+  4 |   [a: string, b: string]: string;"
+`;
+
+exports[`index-signature.ts - {"trailingComma":"es5"} format[yuku-ts] 1`] = `
+"Expected ':' after index signature parameters, but found '}' (1:26)
+> 1 | type A = { [key: string] };
+    |                          ^
+  2 |
+  3 | type TwoParams = {
+  4 |   [a: string, b: string]: string;"
+`;
+
+exports[`index-signature.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A = { [key: string] };
+
+type TwoParams = {
+  [a: string, b: string]: string;
+};
+type ThreeParams = {
+  [a: string, b: string, c: string]: string;
+};
+
+type TooLong = {
+  [loooooooooooooooooooooooooong: string, looooooooooooooooooooooooooooooooooooooong: string]: string;
+}
+type TooLong81 = { [loooooooooooooooooooooooooong: string, loooooooooooooooooong: string]: string; }
+type TooLong80 = { [loooooooooooooooooooooooooong: string, looooooooooooooooong: string]: string; }
+
+// note lack of trailing comma in the index signature
+type TooLongSingleParam = {
+  [looooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong: string]: string;
+}
+
+=====================================output=====================================
+type A = { [key: string] };
+
+type TwoParams = {
+  [a: string, b: string]: string;
+};
+type ThreeParams = {
+  [a: string, b: string, c: string]: string;
+};
+
+type TooLong = {
+  [
+    loooooooooooooooooooooooooong: string,
+    looooooooooooooooooooooooooooooooooooooong: string,
+  ]: string;
+};
+type TooLong81 = {
+  [
+    loooooooooooooooooooooooooong: string,
+    loooooooooooooooooong: string,
+  ]: string;
+};
+type TooLong80 = {
+  [loooooooooooooooooooooooooong: string, looooooooooooooooong: string]: string;
+};
+
+// note lack of trailing comma in the index signature
+type TooLongSingleParam = {
+  [
+    looooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooong: string
+  ]: string;
+};
+
+================================================================================
+`;
+
+exports[`index-signature.ts format[babel-ts] 1`] = `
+"Unexpected token, expected "]" (4:13)
+  2 |
+  3 | type TwoParams = {
+> 4 |   [a: string, b: string]: string;
+    |             ^
+  5 | };
+  6 | type ThreeParams = {
+  7 |   [a: string, b: string, c: string]: string;
+Cause: Unexpected token, expected "]" (4:12)"
+`;
+
+exports[`index-signature.ts format[oxc-ts] 1`] = `
+"An index signature must have a type annotation. (1:12)
+> 1 | type A = { [key: string] };
+    |            ^^^^^^^^^^^^^
+  2 |
+  3 | type TwoParams = {
+  4 |   [a: string, b: string]: string;"
+`;
+
+exports[`index-signature.ts format[yuku-ts] 1`] = `
+"Expected ':' after index signature parameters, but found '}' (1:26)
+> 1 | type A = { [key: string] };
+    |                          ^
+  2 |
+  3 | type TwoParams = {
+  4 |   [a: string, b: string]: string;"
+`;
+
+exports[`jsdoc_only_types.ts - {"trailingComma":"all"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+trailingComma: "all"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let a: *;
+function b(x: ?) {}
+let c: ?string;
+let d: string?;
+let e: ?(string | number);
+let f: !string;
+let g: string!;
+let h: !(string | number);
+
+=====================================output=====================================
+let a: *;
+function b(x: ?) {}
+let c: ?string;
+let d: string?;
+let e: ?(string | number);
+let f: !string;
+let g: string!;
+let h: !(string | number);
+
+================================================================================
+`;
+
+exports[`jsdoc_only_types.ts - {"trailingComma":"all"} format[babel-ts] 1`] = `
+"Unexpected token (1:8)
+> 1 | let a: *;
+    |        ^
+  2 | function b(x: ?) {}
+  3 | let c: ?string;
+  4 | let d: string?;
+Cause: Unexpected token (1:7)"
+`;
+
+exports[`jsdoc_only_types.ts - {"trailingComma":"all"} format[oxc-ts] 1`] = `
+"Unexpected token (1:8)
+> 1 | let a: *;
+    |        ^
+  2 | function b(x: ?) {}
+  3 | let c: ?string;
+  4 | let d: string?;"
+`;
+
+exports[`jsdoc_only_types.ts - {"trailingComma":"all"} format[yuku-ts] 1`] = `
+"Expected a type, but found '*' (1:8)
+> 1 | let a: *;
+    |        ^
+  2 | function b(x: ?) {}
+  3 | let c: ?string;
+  4 | let d: string?;"
+`;
+
+exports[`jsdoc_only_types.ts - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let a: *;
+function b(x: ?) {}
+let c: ?string;
+let d: string?;
+let e: ?(string | number);
+let f: !string;
+let g: string!;
+let h: !(string | number);
+
+=====================================output=====================================
+let a: *;
+function b(x: ?) {}
+let c: ?string;
+let d: string?;
+let e: ?(string | number);
+let f: !string;
+let g: string!;
+let h: !(string | number);
+
+================================================================================
+`;
+
+exports[`jsdoc_only_types.ts - {"trailingComma":"es5"} format[babel-ts] 1`] = `
+"Unexpected token (1:8)
+> 1 | let a: *;
+    |        ^
+  2 | function b(x: ?) {}
+  3 | let c: ?string;
+  4 | let d: string?;
+Cause: Unexpected token (1:7)"
+`;
+
+exports[`jsdoc_only_types.ts - {"trailingComma":"es5"} format[oxc-ts] 1`] = `
+"Unexpected token (1:8)
+> 1 | let a: *;
+    |        ^
+  2 | function b(x: ?) {}
+  3 | let c: ?string;
+  4 | let d: string?;"
+`;
+
+exports[`jsdoc_only_types.ts - {"trailingComma":"es5"} format[yuku-ts] 1`] = `
+"Expected a type, but found '*' (1:8)
+> 1 | let a: *;
+    |        ^
+  2 | function b(x: ?) {}
+  3 | let c: ?string;
+  4 | let d: string?;"
+`;
+
+exports[`jsdoc_only_types.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let a: *;
+function b(x: ?) {}
+let c: ?string;
+let d: string?;
+let e: ?(string | number);
+let f: !string;
+let g: string!;
+let h: !(string | number);
+
+=====================================output=====================================
+let a: *;
+function b(x: ?) {}
+let c: ?string;
+let d: string?;
+let e: ?(string | number);
+let f: !string;
+let g: string!;
+let h: !(string | number);
+
+================================================================================
+`;
+
+exports[`jsdoc_only_types.ts format[babel-ts] 1`] = `
+"Unexpected token (1:8)
+> 1 | let a: *;
+    |        ^
+  2 | function b(x: ?) {}
+  3 | let c: ?string;
+  4 | let d: string?;
+Cause: Unexpected token (1:7)"
+`;
+
+exports[`jsdoc_only_types.ts format[oxc-ts] 1`] = `
+"Unexpected token (1:8)
+> 1 | let a: *;
+    |        ^
+  2 | function b(x: ?) {}
+  3 | let c: ?string;
+  4 | let d: string?;"
+`;
+
+exports[`jsdoc_only_types.ts format[yuku-ts] 1`] = `
+"Expected a type, but found '*' (1:8)
+> 1 | let a: *;
+    |        ^
+  2 | function b(x: ?) {}
+  3 | let c: ?string;
+  4 | let d: string?;"
+`;

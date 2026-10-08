@@ -1,0 +1,27 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`empty.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+details[open] {
+}
+
+div {
+  box-sizing: border-box;;
+  color: red;
+}
+
+=====================================output=====================================
+details[open] {
+}
+
+div {
+  box-sizing: border-box;
+  color: red;
+}
+
+================================================================================
+`;

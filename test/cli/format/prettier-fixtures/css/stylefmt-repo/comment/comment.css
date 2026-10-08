@@ -1,0 +1,32 @@
+/**
+ * comment
+ */
+
+.class
+{
+  padding:10px; }
+/*comment*/
+
+
+.foo{color:red
+}
+
+
+/*
+  at rule
+ */
+
+
+@media only screen {
+  /* inner at rule comment */
+  .foo { display: none; }
+
+  /*
+   * another comment
+   */
+   /* in a row */
+
+.bar {
+  color:yellow;
+}
+}

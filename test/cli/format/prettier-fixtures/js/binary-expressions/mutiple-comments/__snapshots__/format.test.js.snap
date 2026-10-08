@@ -1,0 +1,72 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`17192.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+ErrorLike =
+  SerializedProps &
+  // cause is a new addition to Error that is not yet available in all runtimes. We have added
+  // it to try and pinpoint additional reasoning for failures such as Node's fetch.
+  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/cause
+  { cause: unknown };
+
+ErrorLike =
+  SerializedProps & // cause is a new addition to Error that is not yet available in all runtimes. We have added
+  // it to try and pinpoint additional reasoning for failures such as Node's fetch.
+  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/cause
+  { cause: unknown };
+
+=====================================output=====================================
+ErrorLike =
+  SerializedProps
+  // cause is a new addition to Error that is not yet available in all runtimes. We have added
+  // it to try and pinpoint additional reasoning for failures such as Node's fetch.
+  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/cause
+  & { cause: unknown };
+
+ErrorLike =
+  SerializedProps  // cause is a new addition to Error that is not yet available in all runtimes. We have added
+  // it to try and pinpoint additional reasoning for failures such as Node's fetch.
+  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/cause
+  & { cause: unknown };
+
+================================================================================
+`;
+
+exports[`17192.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+ErrorLike =
+  SerializedProps &
+  // cause is a new addition to Error that is not yet available in all runtimes. We have added
+  // it to try and pinpoint additional reasoning for failures such as Node's fetch.
+  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/cause
+  { cause: unknown };
+
+ErrorLike =
+  SerializedProps & // cause is a new addition to Error that is not yet available in all runtimes. We have added
+  // it to try and pinpoint additional reasoning for failures such as Node's fetch.
+  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/cause
+  { cause: unknown };
+
+=====================================output=====================================
+ErrorLike =
+  SerializedProps &
+  // cause is a new addition to Error that is not yet available in all runtimes. We have added
+  // it to try and pinpoint additional reasoning for failures such as Node's fetch.
+  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/cause
+  { cause: unknown };
+
+ErrorLike =
+  SerializedProps & // cause is a new addition to Error that is not yet available in all runtimes. We have added
+  // it to try and pinpoint additional reasoning for failures such as Node's fetch.
+  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/cause
+  { cause: unknown };
+
+================================================================================
+`;

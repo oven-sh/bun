@@ -1,0 +1,362 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`optional-chaining.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/babel/babel/pull/11669
+
+delete obj?.#x.a
+
+=====================================output=====================================
+// https://github.com/babel/babel/pull/11669
+
+delete obj?.#x.a
+
+================================================================================
+`;
+
+exports[`optional-chaining.js - {"semi":false} format[espree] 1`] = `
+"Private field '#x' must be declared in an enclosing class (3:13)
+  1 | // https://github.com/babel/babel/pull/11669
+  2 |
+> 3 | delete obj?.#x.a
+    |             ^
+  4 |
+Cause: Private field '#x' must be declared in an enclosing class"
+`;
+
+exports[`optional-chaining.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/babel/babel/pull/11669
+
+delete obj?.#x.a
+
+=====================================output=====================================
+// https://github.com/babel/babel/pull/11669
+
+delete obj?.#x.a;
+
+================================================================================
+`;
+
+exports[`optional-chaining.js format[espree] 1`] = `
+"Private field '#x' must be declared in an enclosing class (3:13)
+  1 | // https://github.com/babel/babel/pull/11669
+  2 |
+> 3 | delete obj?.#x.a
+    |             ^
+  4 |
+Cause: Private field '#x' must be declared in an enclosing class"
+`;
+
+exports[`private_fields.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A { #x; #y; }
+class B { #x = 0; #y = 1; }
+
+class C {
+  static #x;
+  static #y = 1;
+}
+
+class D {
+  #x
+  #y
+}
+
+class Point {
+  #x = 1;
+  #y = 2;
+
+  constructor(x = 0, y = 0) {
+    this.#x = +x;
+    this.#y = +y;
+  }
+
+  get x() { return this.#x }
+  set x(value) { this.#x = +value }
+
+  get y() { return this.#y }
+  set y(value) { this.#y = +value }
+
+  equals(p) { return this.#x === p.#x && this.#y === p.#y }
+
+  toString() { return \`Point<\${ this.#x },\${ this.#y }>\` }
+}
+
+class E {
+  async #a() {}
+  #b() {}
+  get #c() {}
+  set #c(bar) {}
+  *#d() {}
+  async *#e() {}
+  get #f() {}
+  set #f(taz) {}
+}
+
+class F {
+  #func(id, { blog: { title } }) {
+    return id + title;
+  }
+}
+
+=====================================output=====================================
+class A {
+  #x
+  #y
+}
+class B {
+  #x = 0
+  #y = 1
+}
+
+class C {
+  static #x
+  static #y = 1
+}
+
+class D {
+  #x
+  #y
+}
+
+class Point {
+  #x = 1
+  #y = 2
+
+  constructor(x = 0, y = 0) {
+    this.#x = +x
+    this.#y = +y
+  }
+
+  get x() {
+    return this.#x
+  }
+  set x(value) {
+    this.#x = +value
+  }
+
+  get y() {
+    return this.#y
+  }
+  set y(value) {
+    this.#y = +value
+  }
+
+  equals(p) {
+    return this.#x === p.#x && this.#y === p.#y
+  }
+
+  toString() {
+    return \`Point<\${this.#x},\${this.#y}>\`
+  }
+}
+
+class E {
+  async #a() {}
+  #b() {}
+  get #c() {}
+  set #c(bar) {}
+  *#d() {}
+  async *#e() {}
+  get #f() {}
+  set #f(taz) {}
+}
+
+class F {
+  #func(id, { blog: { title } }) {
+    return id + title
+  }
+}
+
+================================================================================
+`;
+
+exports[`private_fields.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A { #x; #y; }
+class B { #x = 0; #y = 1; }
+
+class C {
+  static #x;
+  static #y = 1;
+}
+
+class D {
+  #x
+  #y
+}
+
+class Point {
+  #x = 1;
+  #y = 2;
+
+  constructor(x = 0, y = 0) {
+    this.#x = +x;
+    this.#y = +y;
+  }
+
+  get x() { return this.#x }
+  set x(value) { this.#x = +value }
+
+  get y() { return this.#y }
+  set y(value) { this.#y = +value }
+
+  equals(p) { return this.#x === p.#x && this.#y === p.#y }
+
+  toString() { return \`Point<\${ this.#x },\${ this.#y }>\` }
+}
+
+class E {
+  async #a() {}
+  #b() {}
+  get #c() {}
+  set #c(bar) {}
+  *#d() {}
+  async *#e() {}
+  get #f() {}
+  set #f(taz) {}
+}
+
+class F {
+  #func(id, { blog: { title } }) {
+    return id + title;
+  }
+}
+
+=====================================output=====================================
+class A {
+  #x;
+  #y;
+}
+class B {
+  #x = 0;
+  #y = 1;
+}
+
+class C {
+  static #x;
+  static #y = 1;
+}
+
+class D {
+  #x;
+  #y;
+}
+
+class Point {
+  #x = 1;
+  #y = 2;
+
+  constructor(x = 0, y = 0) {
+    this.#x = +x;
+    this.#y = +y;
+  }
+
+  get x() {
+    return this.#x;
+  }
+  set x(value) {
+    this.#x = +value;
+  }
+
+  get y() {
+    return this.#y;
+  }
+  set y(value) {
+    this.#y = +value;
+  }
+
+  equals(p) {
+    return this.#x === p.#x && this.#y === p.#y;
+  }
+
+  toString() {
+    return \`Point<\${this.#x},\${this.#y}>\`;
+  }
+}
+
+class E {
+  async #a() {}
+  #b() {}
+  get #c() {}
+  set #c(bar) {}
+  *#d() {}
+  async *#e() {}
+  get #f() {}
+  set #f(taz) {}
+}
+
+class F {
+  #func(id, { blog: { title } }) {
+    return id + title;
+  }
+}
+
+================================================================================
+`;
+
+exports[`with_comments.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+  #foobar =
+    // comment to break
+    1 +
+    // comment to break again
+    2;
+}
+
+=====================================output=====================================
+class A {
+  #foobar =
+    // comment to break
+    1 +
+    // comment to break again
+    2
+}
+
+================================================================================
+`;
+
+exports[`with_comments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+  #foobar =
+    // comment to break
+    1 +
+    // comment to break again
+    2;
+}
+
+=====================================output=====================================
+class A {
+  #foobar =
+    // comment to break
+    1 +
+    // comment to break again
+    2;
+}
+
+================================================================================
+`;

@@ -1,0 +1,101 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`class.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class x {
+  /**
+  * Set of default settings to be applied to model fetch calls in DAO layer.
+  */
+  static get defaultSettings() {
+  }
+}
+
+=====================================output=====================================
+class x {
+  /**
+   * Set of default settings to be applied to model fetch calls in DAO layer.
+   */
+  static get defaultSettings() {}
+}
+
+================================================================================
+`;
+
+exports[`class-property.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Foo {
+  f(/* ... */) {}
+  f() /* ... */ {}
+  f = (/* ... */) => {};
+  static f(/* ... */) {};
+  static f = (/* ... */) => {};
+  static f = function(/* ... */) {};
+  static f = function f(/* ... */) {};
+}
+
+=====================================output=====================================
+class Foo {
+  f(/* ... */) {}
+  f() /* ... */ {}
+  f = (/* ... */) => {};
+  static f(/* ... */) {}
+  static f = (/* ... */) => {};
+  static f = function (/* ... */) {};
+  static f = function f(/* ... */) {};
+}
+
+================================================================================
+`;
+
+exports[`empty_paren_comment.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let f1 = (/* ... */) => {}
+(function (/* ... */) {})(/* ... */)
+function f2(/* ... */) {}
+
+const obj = {
+  f(/* ... */) {},
+  f: (/* ... */) => {},
+  f: function(/* ... */) {},
+  f: function f(/* ... */) {}
+}
+
+f(/* ... */);
+f(a, /* ... */);
+f(a, /* ... */ b);
+f(/* ... */ a, b);
+
+let f3 = () => import(a /* ... */);
+let f4 = () => doThing(a, /* ... */ b);
+
+=====================================output=====================================
+let f1 = (/* ... */) => {};
+(function (/* ... */) {})(/* ... */);
+function f2(/* ... */) {}
+
+const obj = {
+  f(/* ... */) {},
+  f: (/* ... */) => {},
+  f: function (/* ... */) {},
+  f: function f(/* ... */) {},
+};
+
+f(/* ... */);
+f(a /* ... */);
+f(a, /* ... */ b);
+f(/* ... */ a, b);
+
+let f3 = () => import(a /* ... */);
+let f4 = () => doThing(a, /* ... */ b);
+
+================================================================================
+`;

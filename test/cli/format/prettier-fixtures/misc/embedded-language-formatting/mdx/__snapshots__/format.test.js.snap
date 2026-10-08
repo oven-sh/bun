@@ -1,0 +1,165 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`import-export.mdx - {"embeddedLanguageFormatting":"off"} format 1`] = `
+====================================options=====================================
+embeddedLanguageFormatting: "off"
+parsers: ["mdx"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import D from 'd'
+import {A,B,C}    from "hello-world"
+import {AAAAAAAAAAAAAAAAAAAAAAAA, BBBBBBBBBBBBBBBBBBBBBB, CCCCCCCCCCCCCCCCCCCCCCC}   from  'xyz';
+
+---
+
+import D from 'd'
+
+
+import {A,B,C}    from "hello-world"
+
+
+import {AAAAAAAAAAAAAAAAAAAAAAAA, BBBBBBBBBBBBBBBBBBBBBB, CCCCCCCCCCCCCCCCCCCCCCC}   from  'xyz';
+
+---
+
+export const meta = {
+authors: [fred, sue],
+layout: Layout
+}
+
+export default () =>
+  <Doc     components={{
+        h1: ui.Heading,
+         p:    ui.Text,
+      code:     ui.Code
+         }}
+      />
+
+---
+
+export const a = 1;
+export const b = 1;
+
+=====================================output=====================================
+import D from 'd'
+import {A,B,C}    from "hello-world"
+import {AAAAAAAAAAAAAAAAAAAAAAAA, BBBBBBBBBBBBBBBBBBBBBB, CCCCCCCCCCCCCCCCCCCCCCC}   from  'xyz';
+
+---
+
+import D from 'd'
+
+import {A,B,C}    from "hello-world"
+
+import {AAAAAAAAAAAAAAAAAAAAAAAA, BBBBBBBBBBBBBBBBBBBBBB, CCCCCCCCCCCCCCCCCCCCCCC}   from  'xyz';
+
+---
+
+export const meta = {
+authors: [fred, sue],
+layout: Layout
+}
+
+export default () =>
+  <Doc     components={{
+        h1: ui.Heading,
+         p:    ui.Text,
+      code:     ui.Code
+         }}
+      />
+
+---
+
+export const a = 1;
+export const b = 1;
+
+================================================================================
+`;
+
+exports[`jsx.mdx - {"embeddedLanguageFormatting":"off"} format 1`] = `
+====================================options=====================================
+embeddedLanguageFormatting: "off"
+parsers: ["mdx"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<Heading hi='there'>Hello, world!
+</Heading>
+
+---
+
+<Hello>
+    test   <World />   test
+</Hello>123
+
+---
+
+<Hello>
+    test   <World />   test
+</Hello>
+<Hello>
+    test   <World />   test
+</Hello>123
+
+---
+
+<Hello>
+    test   <World />   test
+</Hello>       123
+<Hello>
+    test   <World />   test
+</Hello>       234
+
+---
+
+<>
+    test   <World        />   test
+</>       123
+
+---
+
+| Column 1 | Column 2 |
+|---|---|
+| Text | <Hello>Text</Hello> |
+
+=====================================output=====================================
+<Heading hi='there'>Hello, world!
+</Heading>
+
+---
+
+<Hello>
+    test   <World />   test
+</Hello>123
+
+---
+
+<Hello>
+    test   <World />   test
+</Hello>
+<Hello>
+    test   <World />   test
+</Hello>123
+
+---
+
+<Hello>
+    test   <World />   test
+</Hello>       123
+<Hello>
+    test   <World />   test
+</Hello>       234
+
+---
+
+<>
+    test   <World        />   test
+</>       123
+
+---
+
+| Column 1 | Column 2            |
+| -------- | ------------------- |
+| Text     | <Hello>Text</Hello> |
+
+================================================================================
+`;

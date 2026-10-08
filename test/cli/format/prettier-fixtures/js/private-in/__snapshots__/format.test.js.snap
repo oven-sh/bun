@@ -1,0 +1,50 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`private-in.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (#prop in obj) {
+}
+
+#prop in     obj;
+
+#prop      in obj;
+
+#prop in
+obj;
+
+#prop
+in
+obj;
+
+#prop
+in obj;
+
+=====================================output=====================================
+if (#prop in obj) {
+}
+
+#prop in obj;
+
+#prop in obj;
+
+#prop in obj;
+
+#prop in obj;
+
+#prop in obj;
+
+================================================================================
+`;
+
+exports[`private-in.js format[espree] 1`] = `
+"Unexpected token #prop (1:5)
+> 1 | if (#prop in obj) {
+    |     ^
+  2 | }
+  3 |
+  4 | #prop in     obj;
+Cause: Unexpected token #prop"
+`;

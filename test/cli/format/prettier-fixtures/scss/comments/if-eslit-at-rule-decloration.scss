@@ -1,0 +1,11 @@
+@function _normalize-include($section) {
+// Check if $section is in the $include list.
+  @if index($_normalize-include, $section) {
+    @return true;
+  }
+// If $include is set to (all), make sure $section is not in $exclude.
+  @else if not index($_normalize-exclude, $section) and index($_normalize-include, all) {
+    @return true;
+  }
+  @return false;
+}

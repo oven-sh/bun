@@ -1,0 +1,171 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`module-with-pragma.js - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["flow", "babel", "typescript"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/**
+ * @flow
+ * @format
+ */
+
+function      foo(bar)
+
+
+{
+
+  return bar +
+    3 +
+  4;
+}
+
+=====================================output=====================================
+/**
+ * @flow
+ * @format
+ */
+
+function foo(bar) {
+  return bar + 3 + 4;
+}
+
+================================================================================
+`;
+
+exports[`module-without-pragma.js - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["flow", "babel", "typescript"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/**
+ * @flow
+ */
+
+function      foo(bar)
+
+
+{
+
+  return bar +
+    3 +
+  4;
+}
+
+=====================================output=====================================
+/**
+ * @flow
+ */
+
+function      foo(bar)
+
+
+{
+
+  return bar +
+    3 +
+  4;
+}
+
+================================================================================
+`;
+
+exports[`range-with-pragma.js - {"requirePragma":true} format 1`] = `
+    : ====================================options=====================================
+    : parsers: ["flow", "babel", "typescript"]
+    : rangeEnd: 36
+    : rangeStart: 21
+    : requirePragma: true
+    :                                                       printWidth: 80 (default) |
+    : =====================================input======================================
+  1 | /**
+  2 |  * @prettier
+  3 |  */
+> 4 | var test = true
+    | ^^^^^^^^^^^^^^^
+  5 |
+    : =====================================output=====================================
+    : /**
+    :  * @prettier
+    :  */
+    : var test = true;
+    :
+    : ================================================================================
+`;
+
+exports[`range-without-pragma.js - {"requirePragma":true} format 1`] = `
+    : ====================================options=====================================
+    : parsers: ["flow", "babel", "typescript"]
+    : rangeEnd: 15
+    : rangeStart: 0
+    : requirePragma: true
+    :                                                       printWidth: 80 (default) |
+    : =====================================input======================================
+> 1 | var test = true
+    | ^^^^^^^^^^^^^^^
+  2 |
+    : =====================================output=====================================
+    : var test = true
+    :
+    : ================================================================================
+`;
+
+exports[`shebang-with-pragma.js - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["flow", "babel", "typescript"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+#!/usr/bin/env node
+/**
+ * @format
+ */
+function test() { const answer = 42;console.log("%s is the answer to life, the universe, and everything", answer);}
+
+=====================================output=====================================
+#!/usr/bin/env node
+/**
+ * @format
+ */
+function test() {
+  const answer = 42;
+  console.log("%s is the answer to life, the universe, and everything", answer);
+}
+
+================================================================================
+`;
+
+exports[`shebang-without-pragma.js - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["flow", "babel", "typescript"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+#!/usr/bin/env node
+function test() { const answer = 42;console.log("%s is the answer to life, the universe, and everything", answer);}
+
+=====================================output=====================================
+#!/usr/bin/env node
+function test() { const answer = 42;console.log("%s is the answer to life, the universe, and everything", answer);}
+
+================================================================================
+`;
+
+exports[`snippet: #0 - {"requirePragma":true} format 1`] = `
+====================================options=====================================
+parsers: ["flow", "babel", "typescript"]
+requirePragma: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+﻿#!/usr/bin/env node
+/** @format */
+prettier
+=====================================output=====================================
+﻿#!/usr/bin/env node
+/** @format */
+prettier;
+
+================================================================================
+`;

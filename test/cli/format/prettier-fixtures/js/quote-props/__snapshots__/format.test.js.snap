@@ -1,0 +1,1426 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`classes.js - {"quoteProps":"as-needed"} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "as-needed"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+  a = "a"
+};
+
+class B {
+  'b' = "b"
+};
+
+class C {
+  c1 = "c1"
+  'c2' = "c2"
+};
+
+class D {
+  d1 = "d1"
+  'd-2' = "d2"
+};
+
+=====================================output=====================================
+class A {
+  a = "a";
+}
+
+class B {
+  b = "b";
+}
+
+class C {
+  c1 = "c1";
+  c2 = "c2";
+}
+
+class D {
+  d1 = "d1";
+  "d-2" = "d2";
+}
+
+================================================================================
+`;
+
+exports[`classes.js - {"quoteProps":"consistent","singleQuote":true} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "consistent"
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+  a = "a"
+};
+
+class B {
+  'b' = "b"
+};
+
+class C {
+  c1 = "c1"
+  'c2' = "c2"
+};
+
+class D {
+  d1 = "d1"
+  'd-2' = "d2"
+};
+
+=====================================output=====================================
+class A {
+  a = 'a';
+}
+
+class B {
+  b = 'b';
+}
+
+class C {
+  c1 = 'c1';
+  c2 = 'c2';
+}
+
+class D {
+  'd1' = 'd1';
+  'd-2' = 'd2';
+}
+
+================================================================================
+`;
+
+exports[`classes.js - {"quoteProps":"consistent"} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "consistent"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+  a = "a"
+};
+
+class B {
+  'b' = "b"
+};
+
+class C {
+  c1 = "c1"
+  'c2' = "c2"
+};
+
+class D {
+  d1 = "d1"
+  'd-2' = "d2"
+};
+
+=====================================output=====================================
+class A {
+  a = "a";
+}
+
+class B {
+  b = "b";
+}
+
+class C {
+  c1 = "c1";
+  c2 = "c2";
+}
+
+class D {
+  "d1" = "d1";
+  "d-2" = "d2";
+}
+
+================================================================================
+`;
+
+exports[`classes.js - {"quoteProps":"preserve"} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "preserve"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+  a = "a"
+};
+
+class B {
+  'b' = "b"
+};
+
+class C {
+  c1 = "c1"
+  'c2' = "c2"
+};
+
+class D {
+  d1 = "d1"
+  'd-2' = "d2"
+};
+
+=====================================output=====================================
+class A {
+  a = "a";
+}
+
+class B {
+  "b" = "b";
+}
+
+class C {
+  c1 = "c1";
+  "c2" = "c2";
+}
+
+class D {
+  d1 = "d1";
+  "d-2" = "d2";
+}
+
+================================================================================
+`;
+
+exports[`numeric-separator.js - {"quoteProps":"as-needed"} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "as-needed"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = {
+
+  0xb_b: '0xb_b', // 187
+  0xb_b_bn: '0xb_b_bn', // 3003
+  0b100000000000_000000000000000011n: '0b100000000000_000000000000000011n' // 536870915
+}
+
+=====================================output=====================================
+a = {
+  0xb_b: "0xb_b", // 187
+  0xb_b_bn: "0xb_b_bn", // 3003
+  0b100000000000_000000000000000011n: "0b100000000000_000000000000000011n", // 536870915
+};
+
+================================================================================
+`;
+
+exports[`numeric-separator.js - {"quoteProps":"consistent","singleQuote":true} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "consistent"
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = {
+
+  0xb_b: '0xb_b', // 187
+  0xb_b_bn: '0xb_b_bn', // 3003
+  0b100000000000_000000000000000011n: '0b100000000000_000000000000000011n' // 536870915
+}
+
+=====================================output=====================================
+a = {
+  0xb_b: '0xb_b', // 187
+  0xb_b_bn: '0xb_b_bn', // 3003
+  0b100000000000_000000000000000011n: '0b100000000000_000000000000000011n', // 536870915
+};
+
+================================================================================
+`;
+
+exports[`numeric-separator.js - {"quoteProps":"consistent"} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "consistent"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = {
+
+  0xb_b: '0xb_b', // 187
+  0xb_b_bn: '0xb_b_bn', // 3003
+  0b100000000000_000000000000000011n: '0b100000000000_000000000000000011n' // 536870915
+}
+
+=====================================output=====================================
+a = {
+  0xb_b: "0xb_b", // 187
+  0xb_b_bn: "0xb_b_bn", // 3003
+  0b100000000000_000000000000000011n: "0b100000000000_000000000000000011n", // 536870915
+};
+
+================================================================================
+`;
+
+exports[`numeric-separator.js - {"quoteProps":"preserve"} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "preserve"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = {
+
+  0xb_b: '0xb_b', // 187
+  0xb_b_bn: '0xb_b_bn', // 3003
+  0b100000000000_000000000000000011n: '0b100000000000_000000000000000011n' // 536870915
+}
+
+=====================================output=====================================
+a = {
+  0xb_b: "0xb_b", // 187
+  0xb_b_bn: "0xb_b_bn", // 3003
+  0b100000000000_000000000000000011n: "0b100000000000_000000000000000011n", // 536870915
+};
+
+================================================================================
+`;
+
+exports[`objects.js - {"quoteProps":"as-needed"} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "as-needed"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = {
+  a: "a"
+};
+
+a = {
+  'b': "b"
+};
+
+a = {
+  // Escapes should stay as escapes and not be unquoted.
+  '\\u0062': "b",
+  '\\u0031': "1"
+};
+
+a = {
+  c1: "c1",
+  'c2': "c2"
+};
+
+a = {
+  d1: "d1",
+  'd-2': "d2"
+};
+
+// None of these should become quoted, regardless of the quoteProps value.
+a = {
+  NaN: null,
+  1: null,
+  1.5: null,
+  .1: null,
+  1.: null,
+  1.0: null,
+  999999999999999999999: null,
+  0.99999999999999999: null,
+  1E2: null,
+  1e+3: null,
+  1e+100: null,
+  0b10: null,
+  0o10: null,
+  0xf: null,
+  2n: null,
+}
+
+a = {
+  // These should be unquoted for quoteProps=as-needed.
+  "NaN": null,
+  "1": null,
+  "1.5": null,
+  // These should never be unquoted. \`1e+100\` technically could (it’s the only
+  // one where \`String(Number(key)) === key\`), but we came to the conclusion
+  // that it is unexpected.
+  ".1": null,
+  "1.": null,
+  "1.0": null,
+  "999999999999999999999": null,
+  "0.99999999999999999": null,
+  "1E2": null,
+  "1e+3": null,
+  "1e+100": null,
+  "0b10": null,
+  "0o10": null,
+  "0xf": null,
+  "2n": null,
+}
+
+Object.entries({
+  // To force quotes for quoteProps=consistent.
+  'a-': 'a-',
+  // These can be quoted:
+  NaN: 'NaN',
+  1: '1',
+  1.5: '1.5',
+  // Prettier will normalize these to \`0.1\` and \`1\` – then they can be quoted.
+  .1: '.1',
+  1.: '1.',
+  // These should never be quoted. The _actual_ keys are shown as comments.
+  // Copy-paste this into the console to verify. If we were to convert these
+  // numbers into decimal (which completely valid), “information/intent” is
+  // lost. Either way, writing code like this is super confusing.
+  1.0: '1.0', // 1
+  999999999999999999999: '999999999999999999999', // 1e+21
+  0.99999999999999999: '0.99999999999999999', // 1
+  1E2: '1E2', // 100
+  1e+3: '1e+3', // 1000
+  1e+100: '1e+100', // 1e+100 – this one is identical, but would be inconsistent to quote.
+  0b10: '0b10', // 2
+  0o10: '0o10', // 8
+  0xf: '0xf', // 15
+  2n: '2n', // 2
+  0xan: '0xan', // 10
+})
+
+// Negative numbers cannot be unquoted.
+!{
+  "-1": null,
+  "-1.5": null,
+}
+
+a = {
+  "\\a": 1,
+  "b": 2
+}
+
+=====================================output=====================================
+a = {
+  a: "a",
+};
+
+a = {
+  b: "b",
+};
+
+a = {
+  // Escapes should stay as escapes and not be unquoted.
+  "\\u0062": "b",
+  "\\u0031": "1",
+};
+
+a = {
+  c1: "c1",
+  c2: "c2",
+};
+
+a = {
+  d1: "d1",
+  "d-2": "d2",
+};
+
+// None of these should become quoted, regardless of the quoteProps value.
+a = {
+  NaN: null,
+  1: null,
+  1.5: null,
+  0.1: null,
+  1: null,
+  1.0: null,
+  999999999999999999999: null,
+  0.99999999999999999: null,
+  1e2: null,
+  1e3: null,
+  1e100: null,
+  0b10: null,
+  0o10: null,
+  0xf: null,
+  2n: null,
+};
+
+a = {
+  // These should be unquoted for quoteProps=as-needed.
+  NaN: null,
+  1: null,
+  1.5: null,
+  // These should never be unquoted. \`1e+100\` technically could (it’s the only
+  // one where \`String(Number(key)) === key\`), but we came to the conclusion
+  // that it is unexpected.
+  ".1": null,
+  "1.": null,
+  "1.0": null,
+  "999999999999999999999": null,
+  "0.99999999999999999": null,
+  "1E2": null,
+  "1e+3": null,
+  "1e+100": null,
+  "0b10": null,
+  "0o10": null,
+  "0xf": null,
+  "2n": null,
+};
+
+Object.entries({
+  // To force quotes for quoteProps=consistent.
+  "a-": "a-",
+  // These can be quoted:
+  NaN: "NaN",
+  1: "1",
+  1.5: "1.5",
+  // Prettier will normalize these to \`0.1\` and \`1\` – then they can be quoted.
+  0.1: ".1",
+  1: "1.",
+  // These should never be quoted. The _actual_ keys are shown as comments.
+  // Copy-paste this into the console to verify. If we were to convert these
+  // numbers into decimal (which completely valid), “information/intent” is
+  // lost. Either way, writing code like this is super confusing.
+  1.0: "1.0", // 1
+  999999999999999999999: "999999999999999999999", // 1e+21
+  0.99999999999999999: "0.99999999999999999", // 1
+  1e2: "1E2", // 100
+  1e3: "1e+3", // 1000
+  1e100: "1e+100", // 1e+100 – this one is identical, but would be inconsistent to quote.
+  0b10: "0b10", // 2
+  0o10: "0o10", // 8
+  0xf: "0xf", // 15
+  2n: "2n", // 2
+  0xan: "0xan", // 10
+});
+
+// Negative numbers cannot be unquoted.
+!{
+  "-1": null,
+  "-1.5": null,
+};
+
+a = {
+  "\\a": 1,
+  b: 2,
+};
+
+================================================================================
+`;
+
+exports[`objects.js - {"quoteProps":"consistent","singleQuote":true} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "consistent"
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = {
+  a: "a"
+};
+
+a = {
+  'b': "b"
+};
+
+a = {
+  // Escapes should stay as escapes and not be unquoted.
+  '\\u0062': "b",
+  '\\u0031': "1"
+};
+
+a = {
+  c1: "c1",
+  'c2': "c2"
+};
+
+a = {
+  d1: "d1",
+  'd-2': "d2"
+};
+
+// None of these should become quoted, regardless of the quoteProps value.
+a = {
+  NaN: null,
+  1: null,
+  1.5: null,
+  .1: null,
+  1.: null,
+  1.0: null,
+  999999999999999999999: null,
+  0.99999999999999999: null,
+  1E2: null,
+  1e+3: null,
+  1e+100: null,
+  0b10: null,
+  0o10: null,
+  0xf: null,
+  2n: null,
+}
+
+a = {
+  // These should be unquoted for quoteProps=as-needed.
+  "NaN": null,
+  "1": null,
+  "1.5": null,
+  // These should never be unquoted. \`1e+100\` technically could (it’s the only
+  // one where \`String(Number(key)) === key\`), but we came to the conclusion
+  // that it is unexpected.
+  ".1": null,
+  "1.": null,
+  "1.0": null,
+  "999999999999999999999": null,
+  "0.99999999999999999": null,
+  "1E2": null,
+  "1e+3": null,
+  "1e+100": null,
+  "0b10": null,
+  "0o10": null,
+  "0xf": null,
+  "2n": null,
+}
+
+Object.entries({
+  // To force quotes for quoteProps=consistent.
+  'a-': 'a-',
+  // These can be quoted:
+  NaN: 'NaN',
+  1: '1',
+  1.5: '1.5',
+  // Prettier will normalize these to \`0.1\` and \`1\` – then they can be quoted.
+  .1: '.1',
+  1.: '1.',
+  // These should never be quoted. The _actual_ keys are shown as comments.
+  // Copy-paste this into the console to verify. If we were to convert these
+  // numbers into decimal (which completely valid), “information/intent” is
+  // lost. Either way, writing code like this is super confusing.
+  1.0: '1.0', // 1
+  999999999999999999999: '999999999999999999999', // 1e+21
+  0.99999999999999999: '0.99999999999999999', // 1
+  1E2: '1E2', // 100
+  1e+3: '1e+3', // 1000
+  1e+100: '1e+100', // 1e+100 – this one is identical, but would be inconsistent to quote.
+  0b10: '0b10', // 2
+  0o10: '0o10', // 8
+  0xf: '0xf', // 15
+  2n: '2n', // 2
+  0xan: '0xan', // 10
+})
+
+// Negative numbers cannot be unquoted.
+!{
+  "-1": null,
+  "-1.5": null,
+}
+
+a = {
+  "\\a": 1,
+  "b": 2
+}
+
+=====================================output=====================================
+a = {
+  a: 'a',
+};
+
+a = {
+  b: 'b',
+};
+
+a = {
+  // Escapes should stay as escapes and not be unquoted.
+  '\\u0062': 'b',
+  '\\u0031': '1',
+};
+
+a = {
+  c1: 'c1',
+  c2: 'c2',
+};
+
+a = {
+  'd1': 'd1',
+  'd-2': 'd2',
+};
+
+// None of these should become quoted, regardless of the quoteProps value.
+a = {
+  NaN: null,
+  1: null,
+  1.5: null,
+  0.1: null,
+  1: null,
+  1.0: null,
+  999999999999999999999: null,
+  0.99999999999999999: null,
+  1e2: null,
+  1e3: null,
+  1e100: null,
+  0b10: null,
+  0o10: null,
+  0xf: null,
+  2n: null,
+};
+
+a = {
+  // These should be unquoted for quoteProps=as-needed.
+  'NaN': null,
+  '1': null,
+  '1.5': null,
+  // These should never be unquoted. \`1e+100\` technically could (it’s the only
+  // one where \`String(Number(key)) === key\`), but we came to the conclusion
+  // that it is unexpected.
+  '.1': null,
+  '1.': null,
+  '1.0': null,
+  '999999999999999999999': null,
+  '0.99999999999999999': null,
+  '1E2': null,
+  '1e+3': null,
+  '1e+100': null,
+  '0b10': null,
+  '0o10': null,
+  '0xf': null,
+  '2n': null,
+};
+
+Object.entries({
+  // To force quotes for quoteProps=consistent.
+  'a-': 'a-',
+  // These can be quoted:
+  'NaN': 'NaN',
+  '1': '1',
+  '1.5': '1.5',
+  // Prettier will normalize these to \`0.1\` and \`1\` – then they can be quoted.
+  '0.1': '.1',
+  '1': '1.',
+  // These should never be quoted. The _actual_ keys are shown as comments.
+  // Copy-paste this into the console to verify. If we were to convert these
+  // numbers into decimal (which completely valid), “information/intent” is
+  // lost. Either way, writing code like this is super confusing.
+  1.0: '1.0', // 1
+  999999999999999999999: '999999999999999999999', // 1e+21
+  0.99999999999999999: '0.99999999999999999', // 1
+  1e2: '1E2', // 100
+  1e3: '1e+3', // 1000
+  1e100: '1e+100', // 1e+100 – this one is identical, but would be inconsistent to quote.
+  0b10: '0b10', // 2
+  0o10: '0o10', // 8
+  0xf: '0xf', // 15
+  2n: '2n', // 2
+  0xan: '0xan', // 10
+});
+
+// Negative numbers cannot be unquoted.
+!{
+  '-1': null,
+  '-1.5': null,
+};
+
+a = {
+  '\\a': 1,
+  'b': 2,
+};
+
+================================================================================
+`;
+
+exports[`objects.js - {"quoteProps":"consistent"} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "consistent"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = {
+  a: "a"
+};
+
+a = {
+  'b': "b"
+};
+
+a = {
+  // Escapes should stay as escapes and not be unquoted.
+  '\\u0062': "b",
+  '\\u0031': "1"
+};
+
+a = {
+  c1: "c1",
+  'c2': "c2"
+};
+
+a = {
+  d1: "d1",
+  'd-2': "d2"
+};
+
+// None of these should become quoted, regardless of the quoteProps value.
+a = {
+  NaN: null,
+  1: null,
+  1.5: null,
+  .1: null,
+  1.: null,
+  1.0: null,
+  999999999999999999999: null,
+  0.99999999999999999: null,
+  1E2: null,
+  1e+3: null,
+  1e+100: null,
+  0b10: null,
+  0o10: null,
+  0xf: null,
+  2n: null,
+}
+
+a = {
+  // These should be unquoted for quoteProps=as-needed.
+  "NaN": null,
+  "1": null,
+  "1.5": null,
+  // These should never be unquoted. \`1e+100\` technically could (it’s the only
+  // one where \`String(Number(key)) === key\`), but we came to the conclusion
+  // that it is unexpected.
+  ".1": null,
+  "1.": null,
+  "1.0": null,
+  "999999999999999999999": null,
+  "0.99999999999999999": null,
+  "1E2": null,
+  "1e+3": null,
+  "1e+100": null,
+  "0b10": null,
+  "0o10": null,
+  "0xf": null,
+  "2n": null,
+}
+
+Object.entries({
+  // To force quotes for quoteProps=consistent.
+  'a-': 'a-',
+  // These can be quoted:
+  NaN: 'NaN',
+  1: '1',
+  1.5: '1.5',
+  // Prettier will normalize these to \`0.1\` and \`1\` – then they can be quoted.
+  .1: '.1',
+  1.: '1.',
+  // These should never be quoted. The _actual_ keys are shown as comments.
+  // Copy-paste this into the console to verify. If we were to convert these
+  // numbers into decimal (which completely valid), “information/intent” is
+  // lost. Either way, writing code like this is super confusing.
+  1.0: '1.0', // 1
+  999999999999999999999: '999999999999999999999', // 1e+21
+  0.99999999999999999: '0.99999999999999999', // 1
+  1E2: '1E2', // 100
+  1e+3: '1e+3', // 1000
+  1e+100: '1e+100', // 1e+100 – this one is identical, but would be inconsistent to quote.
+  0b10: '0b10', // 2
+  0o10: '0o10', // 8
+  0xf: '0xf', // 15
+  2n: '2n', // 2
+  0xan: '0xan', // 10
+})
+
+// Negative numbers cannot be unquoted.
+!{
+  "-1": null,
+  "-1.5": null,
+}
+
+a = {
+  "\\a": 1,
+  "b": 2
+}
+
+=====================================output=====================================
+a = {
+  a: "a",
+};
+
+a = {
+  b: "b",
+};
+
+a = {
+  // Escapes should stay as escapes and not be unquoted.
+  "\\u0062": "b",
+  "\\u0031": "1",
+};
+
+a = {
+  c1: "c1",
+  c2: "c2",
+};
+
+a = {
+  "d1": "d1",
+  "d-2": "d2",
+};
+
+// None of these should become quoted, regardless of the quoteProps value.
+a = {
+  NaN: null,
+  1: null,
+  1.5: null,
+  0.1: null,
+  1: null,
+  1.0: null,
+  999999999999999999999: null,
+  0.99999999999999999: null,
+  1e2: null,
+  1e3: null,
+  1e100: null,
+  0b10: null,
+  0o10: null,
+  0xf: null,
+  2n: null,
+};
+
+a = {
+  // These should be unquoted for quoteProps=as-needed.
+  "NaN": null,
+  "1": null,
+  "1.5": null,
+  // These should never be unquoted. \`1e+100\` technically could (it’s the only
+  // one where \`String(Number(key)) === key\`), but we came to the conclusion
+  // that it is unexpected.
+  ".1": null,
+  "1.": null,
+  "1.0": null,
+  "999999999999999999999": null,
+  "0.99999999999999999": null,
+  "1E2": null,
+  "1e+3": null,
+  "1e+100": null,
+  "0b10": null,
+  "0o10": null,
+  "0xf": null,
+  "2n": null,
+};
+
+Object.entries({
+  // To force quotes for quoteProps=consistent.
+  "a-": "a-",
+  // These can be quoted:
+  "NaN": "NaN",
+  "1": "1",
+  "1.5": "1.5",
+  // Prettier will normalize these to \`0.1\` and \`1\` – then they can be quoted.
+  "0.1": ".1",
+  "1": "1.",
+  // These should never be quoted. The _actual_ keys are shown as comments.
+  // Copy-paste this into the console to verify. If we were to convert these
+  // numbers into decimal (which completely valid), “information/intent” is
+  // lost. Either way, writing code like this is super confusing.
+  1.0: "1.0", // 1
+  999999999999999999999: "999999999999999999999", // 1e+21
+  0.99999999999999999: "0.99999999999999999", // 1
+  1e2: "1E2", // 100
+  1e3: "1e+3", // 1000
+  1e100: "1e+100", // 1e+100 – this one is identical, but would be inconsistent to quote.
+  0b10: "0b10", // 2
+  0o10: "0o10", // 8
+  0xf: "0xf", // 15
+  2n: "2n", // 2
+  0xan: "0xan", // 10
+});
+
+// Negative numbers cannot be unquoted.
+!{
+  "-1": null,
+  "-1.5": null,
+};
+
+a = {
+  "\\a": 1,
+  "b": 2,
+};
+
+================================================================================
+`;
+
+exports[`objects.js - {"quoteProps":"preserve"} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "preserve"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = {
+  a: "a"
+};
+
+a = {
+  'b': "b"
+};
+
+a = {
+  // Escapes should stay as escapes and not be unquoted.
+  '\\u0062': "b",
+  '\\u0031': "1"
+};
+
+a = {
+  c1: "c1",
+  'c2': "c2"
+};
+
+a = {
+  d1: "d1",
+  'd-2': "d2"
+};
+
+// None of these should become quoted, regardless of the quoteProps value.
+a = {
+  NaN: null,
+  1: null,
+  1.5: null,
+  .1: null,
+  1.: null,
+  1.0: null,
+  999999999999999999999: null,
+  0.99999999999999999: null,
+  1E2: null,
+  1e+3: null,
+  1e+100: null,
+  0b10: null,
+  0o10: null,
+  0xf: null,
+  2n: null,
+}
+
+a = {
+  // These should be unquoted for quoteProps=as-needed.
+  "NaN": null,
+  "1": null,
+  "1.5": null,
+  // These should never be unquoted. \`1e+100\` technically could (it’s the only
+  // one where \`String(Number(key)) === key\`), but we came to the conclusion
+  // that it is unexpected.
+  ".1": null,
+  "1.": null,
+  "1.0": null,
+  "999999999999999999999": null,
+  "0.99999999999999999": null,
+  "1E2": null,
+  "1e+3": null,
+  "1e+100": null,
+  "0b10": null,
+  "0o10": null,
+  "0xf": null,
+  "2n": null,
+}
+
+Object.entries({
+  // To force quotes for quoteProps=consistent.
+  'a-': 'a-',
+  // These can be quoted:
+  NaN: 'NaN',
+  1: '1',
+  1.5: '1.5',
+  // Prettier will normalize these to \`0.1\` and \`1\` – then they can be quoted.
+  .1: '.1',
+  1.: '1.',
+  // These should never be quoted. The _actual_ keys are shown as comments.
+  // Copy-paste this into the console to verify. If we were to convert these
+  // numbers into decimal (which completely valid), “information/intent” is
+  // lost. Either way, writing code like this is super confusing.
+  1.0: '1.0', // 1
+  999999999999999999999: '999999999999999999999', // 1e+21
+  0.99999999999999999: '0.99999999999999999', // 1
+  1E2: '1E2', // 100
+  1e+3: '1e+3', // 1000
+  1e+100: '1e+100', // 1e+100 – this one is identical, but would be inconsistent to quote.
+  0b10: '0b10', // 2
+  0o10: '0o10', // 8
+  0xf: '0xf', // 15
+  2n: '2n', // 2
+  0xan: '0xan', // 10
+})
+
+// Negative numbers cannot be unquoted.
+!{
+  "-1": null,
+  "-1.5": null,
+}
+
+a = {
+  "\\a": 1,
+  "b": 2
+}
+
+=====================================output=====================================
+a = {
+  a: "a",
+};
+
+a = {
+  "b": "b",
+};
+
+a = {
+  // Escapes should stay as escapes and not be unquoted.
+  "\\u0062": "b",
+  "\\u0031": "1",
+};
+
+a = {
+  c1: "c1",
+  "c2": "c2",
+};
+
+a = {
+  d1: "d1",
+  "d-2": "d2",
+};
+
+// None of these should become quoted, regardless of the quoteProps value.
+a = {
+  NaN: null,
+  1: null,
+  1.5: null,
+  0.1: null,
+  1: null,
+  1.0: null,
+  999999999999999999999: null,
+  0.99999999999999999: null,
+  1e2: null,
+  1e3: null,
+  1e100: null,
+  0b10: null,
+  0o10: null,
+  0xf: null,
+  2n: null,
+};
+
+a = {
+  // These should be unquoted for quoteProps=as-needed.
+  "NaN": null,
+  "1": null,
+  "1.5": null,
+  // These should never be unquoted. \`1e+100\` technically could (it’s the only
+  // one where \`String(Number(key)) === key\`), but we came to the conclusion
+  // that it is unexpected.
+  ".1": null,
+  "1.": null,
+  "1.0": null,
+  "999999999999999999999": null,
+  "0.99999999999999999": null,
+  "1E2": null,
+  "1e+3": null,
+  "1e+100": null,
+  "0b10": null,
+  "0o10": null,
+  "0xf": null,
+  "2n": null,
+};
+
+Object.entries({
+  // To force quotes for quoteProps=consistent.
+  "a-": "a-",
+  // These can be quoted:
+  NaN: "NaN",
+  1: "1",
+  1.5: "1.5",
+  // Prettier will normalize these to \`0.1\` and \`1\` – then they can be quoted.
+  0.1: ".1",
+  1: "1.",
+  // These should never be quoted. The _actual_ keys are shown as comments.
+  // Copy-paste this into the console to verify. If we were to convert these
+  // numbers into decimal (which completely valid), “information/intent” is
+  // lost. Either way, writing code like this is super confusing.
+  1.0: "1.0", // 1
+  999999999999999999999: "999999999999999999999", // 1e+21
+  0.99999999999999999: "0.99999999999999999", // 1
+  1e2: "1E2", // 100
+  1e3: "1e+3", // 1000
+  1e100: "1e+100", // 1e+100 – this one is identical, but would be inconsistent to quote.
+  0b10: "0b10", // 2
+  0o10: "0o10", // 8
+  0xf: "0xf", // 15
+  2n: "2n", // 2
+  0xan: "0xan", // 10
+});
+
+// Negative numbers cannot be unquoted.
+!{
+  "-1": null,
+  "-1.5": null,
+};
+
+a = {
+  "\\a": 1,
+  "b": 2,
+};
+
+================================================================================
+`;
+
+exports[`with_member_expressions.js - {"quoteProps":"as-needed"} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "as-needed"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const obj = {
+  foo: "",
+  [foo.bar]: ""
+};
+
+class Foo {
+  foo() {}
+  [foo.bar]() {}
+}
+
+=====================================output=====================================
+const obj = {
+  foo: "",
+  [foo.bar]: "",
+};
+
+class Foo {
+  foo() {}
+  [foo.bar]() {}
+}
+
+================================================================================
+`;
+
+exports[`with_member_expressions.js - {"quoteProps":"consistent","singleQuote":true} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "consistent"
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const obj = {
+  foo: "",
+  [foo.bar]: ""
+};
+
+class Foo {
+  foo() {}
+  [foo.bar]() {}
+}
+
+=====================================output=====================================
+const obj = {
+  foo: '',
+  [foo.bar]: '',
+};
+
+class Foo {
+  foo() {}
+  [foo.bar]() {}
+}
+
+================================================================================
+`;
+
+exports[`with_member_expressions.js - {"quoteProps":"consistent"} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "consistent"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const obj = {
+  foo: "",
+  [foo.bar]: ""
+};
+
+class Foo {
+  foo() {}
+  [foo.bar]() {}
+}
+
+=====================================output=====================================
+const obj = {
+  foo: "",
+  [foo.bar]: "",
+};
+
+class Foo {
+  foo() {}
+  [foo.bar]() {}
+}
+
+================================================================================
+`;
+
+exports[`with_member_expressions.js - {"quoteProps":"preserve"} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "preserve"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const obj = {
+  foo: "",
+  [foo.bar]: ""
+};
+
+class Foo {
+  foo() {}
+  [foo.bar]() {}
+}
+
+=====================================output=====================================
+const obj = {
+  foo: "",
+  [foo.bar]: "",
+};
+
+class Foo {
+  foo() {}
+  [foo.bar]() {}
+}
+
+================================================================================
+`;
+
+exports[`with_numbers.js - {"quoteProps":"as-needed"} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "as-needed"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+obj = {
+  foo: "",
+  1: ""
+};
+
+obj = {
+  "bar": "",
+  1: ""
+};
+
+obj = {
+  "foo-bar": "",
+  1: ""
+};
+
+=====================================output=====================================
+obj = {
+  foo: "",
+  1: "",
+};
+
+obj = {
+  bar: "",
+  1: "",
+};
+
+obj = {
+  "foo-bar": "",
+  1: "",
+};
+
+================================================================================
+`;
+
+exports[`with_numbers.js - {"quoteProps":"consistent","singleQuote":true} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "consistent"
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+obj = {
+  foo: "",
+  1: ""
+};
+
+obj = {
+  "bar": "",
+  1: ""
+};
+
+obj = {
+  "foo-bar": "",
+  1: ""
+};
+
+=====================================output=====================================
+obj = {
+  foo: '',
+  1: '',
+};
+
+obj = {
+  bar: '',
+  1: '',
+};
+
+obj = {
+  'foo-bar': '',
+  '1': '',
+};
+
+================================================================================
+`;
+
+exports[`with_numbers.js - {"quoteProps":"consistent"} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "consistent"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+obj = {
+  foo: "",
+  1: ""
+};
+
+obj = {
+  "bar": "",
+  1: ""
+};
+
+obj = {
+  "foo-bar": "",
+  1: ""
+};
+
+=====================================output=====================================
+obj = {
+  foo: "",
+  1: "",
+};
+
+obj = {
+  bar: "",
+  1: "",
+};
+
+obj = {
+  "foo-bar": "",
+  "1": "",
+};
+
+================================================================================
+`;
+
+exports[`with_numbers.js - {"quoteProps":"preserve"} format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+quoteProps: "preserve"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+obj = {
+  foo: "",
+  1: ""
+};
+
+obj = {
+  "bar": "",
+  1: ""
+};
+
+obj = {
+  "foo-bar": "",
+  1: ""
+};
+
+=====================================output=====================================
+obj = {
+  foo: "",
+  1: "",
+};
+
+obj = {
+  "bar": "",
+  1: "",
+};
+
+obj = {
+  "foo-bar": "",
+  1: "",
+};
+
+================================================================================
+`;

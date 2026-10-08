@@ -1,0 +1,98 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`await-with-parens.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function foo(promise) { await (promise); }
+
+function a() {
+  return await (1)
+}
+
+() => { await (x) };
+
+function foo2() {
+  await
+  (foo);
+}
+
+export class C {
+  p = await (0);
+}
+
+await (0);
+
+=====================================output=====================================
+function foo(promise) {
+  await(promise);
+}
+
+function a() {
+  return await(1);
+}
+
+() => {
+  await(x);
+};
+
+function foo2() {
+  await(foo);
+}
+
+export class C {
+  p = await(0);
+}
+
+await 0;
+
+================================================================================
+`;
+
+exports[`await-with-parens.js format[espree] 1`] = `
+"Cannot use keyword 'await' outside an async function (1:25)
+> 1 | function foo(promise) { await (promise); }
+    |                         ^
+  2 |
+  3 | function a() {
+  4 |   return await (1)
+Cause: Cannot use keyword 'await' outside an async function"
+`;
+
+exports[`await-with-parens.js format[hermes] 1`] = `
+"'await' not in an async function (15:7)
+  13 |
+  14 | export class C {
+> 15 |   p = await (0);
+     |       ^
+  16 | }
+  17 |
+  18 | await (0);
+Cause: 'await' not in an async function (15:6)
+  p = await (0);
+      ^~~~~~~~~"
+`;
+
+exports[`await-with-parens.js format[meriyah] 1`] = `
+"Await is only valid in async functions (1:25)
+> 1 | function foo(promise) { await (promise); }
+    |                         ^^^^^
+  2 |
+  3 | function a() {
+  4 |   return await (1)
+Cause: [1:24-1:29]: Await is only valid in async functions"
+`;
+
+exports[`like-call.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+await (1)
+
+=====================================output=====================================
+await 1;
+
+================================================================================
+`;

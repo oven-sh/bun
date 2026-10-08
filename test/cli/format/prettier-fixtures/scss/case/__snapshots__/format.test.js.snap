@@ -1,0 +1,317 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`case.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Convention in this test file:
+// - The case should be preserved for things prefixed with "Keep".
+// - The case should always be preserved for element names and attribute names
+//   in selectors, as well as function names and property keywords.
+// - Other things should mostly be lowercase.
+
+@IMPORT Keep;
+
+HTML#KeepId.KeepClass,
+a[HREF=KeepAttrValue]:HOVER::FIRST-letter,
+svg[viewBox] linearGradient,
+:Not(:NTH-child(2N+1)) {
+    COLOR: #AAbbCC;
+    BACKGROUND-image: URL("KeepString");
+    Margin: 5PX .2E10Em;
+    --Keep-custom-Prop: red;
+    background: Var(--Keep-custom-Prop);
+    animation-name: KeepAnimationName;
+    important: something !IMPORTANT;
+    font-family: INITIAL;
+    padding: UNSET;
+    border: INHERIT;
+    all: REVERT;
+    -WEBKIT-USER-SELECT: none;
+    -MOZ-USER-SELECT: none;
+    -MS-USER-SELECT: none;
+    USER-SELECT: none;
+}
+
+@keyframes KeepAnimationName {
+  FROM {
+    prop: val;
+  }
+
+  #{$KeepInterpolationVar},
+  #{$Keep + 15PX + Keep15PX + '15PX' + "15PX"},
+  #{$Keep + $Keep15PX} {
+    prop: val;
+  }
+
+  TO {
+    prop: val;
+  }
+}
+
+@custom-media --KeepCustomMedia screen and (width >= 768px);
+@media (--KeepCustomMedia) {}
+
+@function KeepFuncName() {
+    @return 12;
+}
+
+%KeepPlaceholderSelector {
+  prop: val;
+}
+
+$KeepTopLevelVar: val;
+@KeepLessVar: val;
+
+@mixin KeepMixinName($Keep: 15IN, $Keep: $Keep15IN, $Keep: Keep-1E-2Em) {
+    $KeepVar: KeepFuncName();
+    #{$KeepInterpolationVar}: val;
+    #{$Keep + 15PX}: val;
+    #{$Keep + $Keep15PX}: val;
+    @KeepLessVar: val;
+    @extend %KeepPlaceholderSelector;
+
+    #{$Keep}[#{$Keep}][#{Keep}^=#{Keep-1A}]:#{$Keep} {
+      prop: val;
+    }
+
+    &Keep & Element {
+      prop: val;
+    }
+
+    BACKGROUND: {
+      COLOR: RED;
+    }
+
+    BACKGROUND: Keep 15PX Keep15PX {
+      COLOR: RED;
+    }
+
+    #{$Keep + 15PX + Keep15PX + '15PX' + "15PX"}: {
+      COLOR: RED;
+    }
+}
+
+@mixin Keep($Keep: $Keep15IN, $Keep: Keepå1E1) {}
+
+@MEDIA (MIN-WIDTH: 700PX) {
+    @include Keep;
+    @include Keep(.12e+01cH);
+    @include Keep($Keep12E01cH);
+}
+
+@MEDIA (#{$Keep}: #{$Keep}) {}
+
+@KEYFRAMES identifier {
+  FROM {
+    margin-top: 50px;
+  }
+  50%  {
+    margin-top: 150px;
+  }
+  TO {
+    margin-top: 100px;
+  }
+}
+
+@-WEBKIT-KEYFRAMES float-up {
+  FROM {
+    margin-top: 50px;
+  }
+  50%  {
+    margin-top: 150px;
+  }
+  TO {
+    margin-top: 100px;
+  }
+}
+
+.foo {
+  color: hsl(0.75TURN, 60%, 70%);
+}
+
+p:FIRST-CHILD {
+  color: lime;
+  background-color: black;
+  padding: 5px;
+}
+
+a::AFTER {
+  content: "→";
+}
+
+a:AFTER {
+  content: "→";
+}
+
+::-WEBKIT-PROGRESS-BAR {
+  background-color: orange;
+}
+
+TABLE {}
+
+.foo { &-KeepSelector {} &-KeepSelector & .KeepClassSelector {} &-100\\.200 {} }
+
+=====================================output=====================================
+// Convention in this test file:
+// - The case should be preserved for things prefixed with "Keep".
+// - The case should always be preserved for element names and attribute names
+//   in selectors, as well as function names and property keywords.
+// - Other things should mostly be lowercase.
+
+@import Keep;
+
+HTML#KeepId.KeepClass,
+a[HREF="KeepAttrValue"]:hover::first-letter,
+svg[viewBox] linearGradient,
+:not(:nth-child(2n + 1)) {
+  color: #aabbcc;
+  background-image: URL("KeepString");
+  margin: 5px 0.2e10em;
+  --Keep-custom-Prop: red;
+  background: Var(--Keep-custom-Prop);
+  animation-name: KeepAnimationName;
+  important: something !important;
+  font-family: initial;
+  padding: unset;
+  border: inherit;
+  all: revert;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+@keyframes KeepAnimationName {
+  from {
+    prop: val;
+  }
+
+  #{$KeepInterpolationVar},
+  #{$Keep + 15px + Keep15PX + "15PX" + "15PX"},
+  #{$Keep + $Keep15PX} {
+    prop: val;
+  }
+
+  to {
+    prop: val;
+  }
+}
+
+@custom-media --KeepCustomMedia screen and (width >= 768px);
+@media (--KeepCustomMedia) {
+}
+
+@function KeepFuncName() {
+  @return 12;
+}
+
+%KeepPlaceholderSelector {
+  prop: val;
+}
+
+$KeepTopLevelVar: val;
+@KeepLessVar: val;
+
+@mixin KeepMixinName($Keep: 15in, $Keep: $Keep15IN, $Keep: Keep-1E-2Em) {
+  $KeepVar: KeepFuncName();
+  #{$KeepInterpolationVar}: val;
+  #{$Keep + 15PX}: val;
+  #{$Keep + $Keep15PX}: val;
+  @KeepLessVar: val;
+  @extend %KeepPlaceholderSelector;
+
+  #{$Keep}[#{$Keep}][#{Keep}^="#{Keep-1A}"]:#{$Keep} {
+    prop: val;
+  }
+
+  &Keep & Element {
+    prop: val;
+  }
+
+  background: {
+    color: RED;
+  }
+
+  background: Keep 15px Keep15PX {
+    color: RED;
+  }
+
+  #{$Keep + 15px + Keep15PX + "15PX" + "15PX"}: {
+    color: RED;
+  }
+}
+
+@mixin Keep($Keep: $Keep15IN, $Keep: Keepå1E1) {
+}
+
+@media (min-width: 700px) {
+  @include Keep;
+  @include Keep(0.12e1ch);
+  @include Keep($Keep12E01cH);
+}
+
+@media (#{$Keep}: #{$Keep}) {
+}
+
+@keyframes identifier {
+  from {
+    margin-top: 50px;
+  }
+  50% {
+    margin-top: 150px;
+  }
+  to {
+    margin-top: 100px;
+  }
+}
+
+@-webkit-keyframes float-up {
+  from {
+    margin-top: 50px;
+  }
+  50% {
+    margin-top: 150px;
+  }
+  to {
+    margin-top: 100px;
+  }
+}
+
+.foo {
+  color: hsl(0.75turn, 60%, 70%);
+}
+
+p:first-child {
+  color: lime;
+  background-color: black;
+  padding: 5px;
+}
+
+a::after {
+  content: "→";
+}
+
+a:after {
+  content: "→";
+}
+
+::-webkit-progress-bar {
+  background-color: orange;
+}
+
+TABLE {
+}
+
+.foo {
+  &-KeepSelector {
+  }
+  &-KeepSelector & .KeepClassSelector {
+  }
+  &-100\\.200 {
+  }
+}
+
+================================================================================
+`;

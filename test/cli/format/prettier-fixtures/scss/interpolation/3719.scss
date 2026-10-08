@@ -1,0 +1,6 @@
+$sm-only: '(min-width: 768px) and (max-width: 991px)';
+$lg-and-up: '(min-width: 1200px)';
+
+@media screen and #{$sm-only, $lg-and-up} {
+  color: #000;
+}

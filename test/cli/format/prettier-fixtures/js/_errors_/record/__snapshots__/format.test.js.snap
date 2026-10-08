@@ -1,0 +1,141 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format[acorn] 1`] = `
+"Unexpected character '{' (1:2)
+> 1 | #{a() {}}
+    |  ^
+Cause: Unexpected character '{' (1:1)"
+`;
+
+exports[`snippet: #0 format[babel] 1`] = `
+"Unexpected token (1:1)
+> 1 | #{a() {}}
+    | ^
+Cause: Unexpected token (1:0)"
+`;
+
+exports[`snippet: #0 format[espree] 1`] = `
+"Unexpected character '{' (1:2)
+> 1 | #{a() {}}
+    |  ^
+Cause: Unexpected character '{'"
+`;
+
+exports[`snippet: #0 format[meriyah] 1`] = `
+"'#' not followed by identifier (1:1)
+> 1 | #{a() {}}
+    | ^
+Cause: [1:0-1:1]: '#' not followed by identifier"
+`;
+
+exports[`snippet: #1 format[acorn] 1`] = `
+"Unexpected character '{' (1:2)
+> 1 | #{async b() {}}
+    |  ^
+Cause: Unexpected character '{' (1:1)"
+`;
+
+exports[`snippet: #1 format[babel] 1`] = `
+"Unexpected token (1:1)
+> 1 | #{async b() {}}
+    | ^
+Cause: Unexpected token (1:0)"
+`;
+
+exports[`snippet: #1 format[espree] 1`] = `
+"Unexpected character '{' (1:2)
+> 1 | #{async b() {}}
+    |  ^
+Cause: Unexpected character '{'"
+`;
+
+exports[`snippet: #1 format[meriyah] 1`] = `
+"'#' not followed by identifier (1:1)
+> 1 | #{async b() {}}
+    | ^
+Cause: [1:0-1:1]: '#' not followed by identifier"
+`;
+
+exports[`snippet: #2 format[acorn] 1`] = `
+"Unexpected character '{' (1:2)
+> 1 | #{get c() {}}
+    |  ^
+Cause: Unexpected character '{' (1:1)"
+`;
+
+exports[`snippet: #2 format[babel] 1`] = `
+"Unexpected token (1:1)
+> 1 | #{get c() {}}
+    | ^
+Cause: Unexpected token (1:0)"
+`;
+
+exports[`snippet: #2 format[espree] 1`] = `
+"Unexpected character '{' (1:2)
+> 1 | #{get c() {}}
+    |  ^
+Cause: Unexpected character '{'"
+`;
+
+exports[`snippet: #2 format[meriyah] 1`] = `
+"'#' not followed by identifier (1:1)
+> 1 | #{get c() {}}
+    | ^
+Cause: [1:0-1:1]: '#' not followed by identifier"
+`;
+
+exports[`snippet: #3 format[acorn] 1`] = `
+"Unexpected character '{' (1:2)
+> 1 | #{set d(_) {}}
+    |  ^
+Cause: Unexpected character '{' (1:1)"
+`;
+
+exports[`snippet: #3 format[babel] 1`] = `
+"Unexpected token (1:1)
+> 1 | #{set d(_) {}}
+    | ^
+Cause: Unexpected token (1:0)"
+`;
+
+exports[`snippet: #3 format[espree] 1`] = `
+"Unexpected character '{' (1:2)
+> 1 | #{set d(_) {}}
+    |  ^
+Cause: Unexpected character '{'"
+`;
+
+exports[`snippet: #3 format[meriyah] 1`] = `
+"'#' not followed by identifier (1:1)
+> 1 | #{set d(_) {}}
+    | ^
+Cause: [1:0-1:1]: '#' not followed by identifier"
+`;
+
+exports[`snippet: #4 format[acorn] 1`] = `
+"Unexpected character '{' (1:2)
+> 1 | #{*e() {}}
+    |  ^
+Cause: Unexpected character '{' (1:1)"
+`;
+
+exports[`snippet: #4 format[babel] 1`] = `
+"Unexpected token (1:1)
+> 1 | #{*e() {}}
+    | ^
+Cause: Unexpected token (1:0)"
+`;
+
+exports[`snippet: #4 format[espree] 1`] = `
+"Unexpected character '{' (1:2)
+> 1 | #{*e() {}}
+    |  ^
+Cause: Unexpected character '{'"
+`;
+
+exports[`snippet: #4 format[meriyah] 1`] = `
+"'#' not followed by identifier (1:1)
+> 1 | #{*e() {}}
+    | ^
+Cause: [1:0-1:1]: '#' not followed by identifier"
+`;

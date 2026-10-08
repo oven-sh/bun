@@ -1,0 +1,17 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`mappedType.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type Keys = 'option1' | 'option2';
+type Flags = { [K in Keys]: boolean };
+
+
+=====================================output=====================================
+type Keys = "option1" | "option2";
+type Flags = { [K in Keys]: boolean };
+
+================================================================================
+`;

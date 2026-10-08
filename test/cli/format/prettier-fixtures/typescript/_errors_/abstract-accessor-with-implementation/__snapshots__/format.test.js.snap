@@ -1,0 +1,53 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format[babel-ts] 1`] = `
+"Method 'getter' cannot have an implementation because it is marked abstract. (2:3)
+  1 | abstract class Foo  {
+> 2 |   abstract get getter() { }
+    |   ^
+  3 | }
+Cause: Method 'getter' cannot have an implementation because it is marked abstract. (2:2)"
+`;
+
+exports[`snippet: #0 format[oxc-ts] 1`] = `
+"Accessor 'getter' cannot have an implementation because it is marked abstract. (2:16)
+  1 | abstract class Foo  {
+> 2 |   abstract get getter() { }
+    |                ^^^^^^
+  3 | }"
+`;
+
+exports[`snippet: #0 format[typescript] 1`] = `
+"An abstract accessor cannot have an implementation. (2:16)
+  1 | abstract class Foo  {
+> 2 |   abstract get getter() { }
+    |                ^^^^^^
+  3 | }
+Cause: An abstract accessor cannot have an implementation."
+`;
+
+exports[`snippet: #1 format[babel-ts] 1`] = `
+"Method 'setter' cannot have an implementation because it is marked abstract. (2:3)
+  1 | abstract class Foo  {
+> 2 |   abstract set setter(v) { }
+    |   ^
+  3 | }
+Cause: Method 'setter' cannot have an implementation because it is marked abstract. (2:2)"
+`;
+
+exports[`snippet: #1 format[oxc-ts] 1`] = `
+"Accessor 'setter' cannot have an implementation because it is marked abstract. (2:16)
+  1 | abstract class Foo  {
+> 2 |   abstract set setter(v) { }
+    |                ^^^^^^
+  3 | }"
+`;
+
+exports[`snippet: #1 format[typescript] 1`] = `
+"An abstract accessor cannot have an implementation. (2:16)
+  1 | abstract class Foo  {
+> 2 |   abstract set setter(v) { }
+    |                ^^^^^^
+  3 | }
+Cause: An abstract accessor cannot have an implementation."
+`;

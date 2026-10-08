@@ -1,0 +1,311 @@
+.a,.b,.c {}
+.r { &, &:hover {} }
+
+@media (min-width: 0px) {
+  .a,.b,:not(asdasldaskdhjkashdahsdkjahskdjhakj,asdasldaskdhjkashdahsdkjahskdjhakj) {color: red}
+}
+
+.asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkas .asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkas,
+.asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkas .asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkas {}
+.asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkas
+.asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkas,
+.asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkas
+.asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkas
+{}
+.asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkas
+
+.asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkas,
+
+.asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkas
+
+.asdasldaskdhjkashdahsdkjahskdjhakjsdkjahsdhkas
+
+{}
+
+.parent,.another-parent{}
+.parent ,.another-parent{}
+.parent, .another-parent{}
+.parent , .another-parent {}
+.parent  ,  .another-parent  {}
+.parent
+,
+.another-parent
+{}
+
+.parent.child {}
+.parent .child {}
+.parent  .child {}
+.parent {
+  .child-one {}
+  .child-two {}
+}
+.parent{
+.child-one  {}
+.child-two  {}
+}
+.parent  {
+  .child-one  {}
+  .child-two  {}
+}
+.parent   {
+   .child-one  {}
+   .child-two  {}
+}
+.parent
+{
+  .child-one
+  {}
+  .child-two
+  {}
+}
+.parent
+
+{
+  .child-one
+
+  {}
+  .child-two
+
+  {}
+}
+
+.parent>.child {}
+.parent > .child {}
+.parent  >  .child {}
+.parent>{
+  .child-one {}
+  .child-two {}
+}
+.parent > {
+  .child-one {}
+  .child-two {}
+}
+.parent  >  {
+  .child-one {}
+  .child-two {}
+}
+.parent
+>
+{
+  .child-one
+  {}
+  .child-two
+  {}
+}
+.parent
+
+>
+
+{
+  .child-one
+
+  {}
+  .child-two
+
+  {}
+}
+.parent {
+>.child-one {}
+>.child-two {}
+}
+.parent {
+ > .child-one {}
+ > .child-two {}
+}
+.parent {
+  > .child-one {}
+  > .child-two {}
+}
+.parent {
+  >  .child-one {}
+  >  .child-two {}
+}
+.parent {
+   >   .child-one {}
+   >   .child-two {}
+}
+
+.parent+.child {}
+.parent + .child {}
+.parent  +  .child {}
+.parent+{
+  .child-one {}
+  .child-two {}
+}
+.parent + {
+  .child-one {}
+  .child-two {}
+}
+.parent  +  {
+  .child-one {}
+  .child-two {}
+}
+.parent
++
+{
+  .child-one
+  {}
+  .child-two
+  {}
+}
+.parent
+
++
+
+{
+  .child-one
+
+  {}
+  .child-two
+
+  {}
+}
+.parent {
++.child-one {}
++.child-two {}
+}
+.parent {
+ + .child-one {}
+ + .child-two {}
+}
+.parent {
+  + .child-one {}
+  + .child-two {}
+}
+.parent {
+  +  .child-one {}
+  +  .child-two {}
+}
+.parent {
+   +   .child-one {}
+   +   .child-two {}
+}
+
+.parent~.child {}
+.parent ~ .child {}
+.parent  ~  .child {}
+.parent~{
+  .child-one {}
+  .child-two {}
+}
+.parent ~ {
+  .child-one {}
+  .child-two {}
+}
+.parent  ~  {
+  .child-one {}
+  .child-two {}
+}
+.parent
+~
+{
+  .child-one
+  {}
+  .child-two
+  {}
+}
+.parent
+
+~
+
+{
+  .child-one
+
+  {}
+  .child-two
+
+  {}
+}
+.parent {
+~.child-one {}
+~.child-two {}
+}
+.parent {
+ ~ .child-one {}
+ ~ .child-two {}
+}
+.parent {
+  ~ .child-one {}
+  ~ .child-two {}
+}
+.parent {
+  ~  .child-one {}
+  ~  .child-two {}
+}
+.parent {
+   ~   .child-one {}
+   ~   .child-two {}
+}
+
+.parent>>>.child {}
+.parent >>> .child {}
+.parent  >>>  .child {}
+.parent>>>{
+  .child-one {}
+  .child-two {}
+}
+.parent >>> {
+  .child-one {}
+  .child-two {}
+}
+.parent  >>>  {
+  .child-one {}
+  .child-two {}
+}
+.parent
+>>>
+{
+  .child-one
+  {}
+  .child-two
+  {}
+}
+.parent
+
+>>>
+
+{
+  .child-one
+
+  {}
+  .child-two
+
+  {}
+}
+.parent {
+>>>.child-one {}
+>>>.child-two {}
+}
+.parent {
+ >>> .child-one {}
+ >>> .child-two {}
+}
+.parent {
+  >>> .child-one {}
+  >>> .child-two {}
+}
+.parent {
+  >>>  .child-one {}
+  >>>  .child-two {}
+}
+.parent {
+   >>>   .child-one {}
+   >>>   .child-two {}
+}
+
+/* This matches all XHTML <a> elements, as XHTML is the default unprefixed namespace */
+a {}
+
+/* This matches all SVG <a> elements */
+svg|a {}
+
+/* This matches both XHTML and SVG <a> elements */
+*|a {}
+
+|B {}
+
+ns|* {}
+
+*|* {}
+
+|* {}

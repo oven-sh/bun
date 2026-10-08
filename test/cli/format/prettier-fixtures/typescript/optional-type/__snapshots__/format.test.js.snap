@@ -1,0 +1,29 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`complex.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type T = [("a" | "b")?];
+type TupleWithOptional = [number, (1 extends 2 ? string[] : number[])?];
+
+=====================================output=====================================
+type T = [("a" | "b")?];
+type TupleWithOptional = [number, (1 extends 2 ? string[] : number[])?];
+
+================================================================================
+`;
+
+exports[`simple.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type X = [number, string?];
+
+=====================================output=====================================
+type X = [number, string?];
+
+================================================================================
+`;

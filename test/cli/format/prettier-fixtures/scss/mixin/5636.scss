@@ -1,0 +1,7 @@
+.foo {
+  @include transition(min-height ($spacer/2) ease-in-out);
+}
+
+.bar {
+  @include transition(min-height, $spacer/2, ease-in-out);
+}

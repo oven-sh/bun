@@ -1,0 +1,164 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`intersection.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type Example = {
+  [A in B]: T;
+} & {
+  [A in B]: T;
+};
+
+=====================================output=====================================
+type Example = {
+  [A in B]: T;
+} & {
+  [A in B]: T;
+};
+
+================================================================================
+`;
+
+exports[`issue-11098.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type Type = {
+  // comment
+  readonly [T in number];
+};
+
+type Type = {
+  // comment1
+  // comment2
+  readonly [T in number];
+};
+
+type Type = {
+  // comment
+  +readonly [T in number];
+};
+
+type Type = {
+  // comment
+  -readonly [T in number];
+};
+
+type Type = {
+  // comment
+  +    readonly [T in number];
+};
+
+type Type = {
+  // comment
+  +readonly     [T in number];
+};
+
+type Type = {
+  // comment
+  readonly       [T in number];
+};
+
+type Type = {
+  // comment
+  [T in number];
+};
+
+type Type = {
+  readonly
+  // comment
+  [T in number];
+};
+
+type Type = {
+  readonly // foo
+  /* bar */ [T in number];
+};
+
+=====================================output=====================================
+type Type = {
+  // comment
+  readonly [T in number];
+};
+
+type Type = {
+  // comment1
+  // comment2
+  readonly [T in number];
+};
+
+type Type = {
+  // comment
+  +readonly [T in number];
+};
+
+type Type = {
+  // comment
+  -readonly [T in number];
+};
+
+type Type = {
+  // comment
+  +readonly [T in number];
+};
+
+type Type = {
+  // comment
+  +readonly [T in number];
+};
+
+type Type = {
+  // comment
+  readonly [T in number];
+};
+
+type Type = {
+  // comment
+  [T in number];
+};
+
+type Type = {
+  // comment
+  readonly [T in number];
+};
+
+type Type = {
+  // foo
+  /* bar */ readonly [T in number];
+};
+
+================================================================================
+`;
+
+exports[`issue-17784.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export type A = B extends { C?: { [D in infer E]?: F } } ? G : H
+
+=====================================output=====================================
+export type A = B extends { C?: { [D in infer E]?: F } } ? G : H;
+
+================================================================================
+`;
+
+exports[`mapped-type.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type Keys = 'option1' | 'option2';
+type A = { [K in Keys] };
+type B = { [K in Keys]+? };
+
+=====================================output=====================================
+type Keys = "option1" | "option2";
+type A = { [K in Keys] };
+type B = { [K in Keys]+? };
+
+================================================================================
+`;

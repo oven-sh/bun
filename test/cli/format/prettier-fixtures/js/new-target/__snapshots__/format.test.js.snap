@@ -1,0 +1,76 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`outside-functions.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const x = new.target;
+
+=====================================output=====================================
+const x = new.target;
+
+================================================================================
+`;
+
+exports[`outside-functions.js format[flow] 1`] = `
+"Unexpected token \`.\` (1:14)
+> 1 | const x = new.target;
+    |              ^
+  2 |
+Cause: Unexpected token \`.\` (1:13)"
+`;
+
+exports[`outside-functions.js format[hermes] 1`] = `
+"'new.target' not in a function (1:11)
+> 1 | const x = new.target;
+    |           ^
+  2 |
+Cause: 'new.target' not in a function (1:10)
+const x = new.target;
+          ^~~~~~~~~~"
+`;
+
+exports[`range.js format 1`] = `
+    : ====================================options=====================================
+    : parsers: ["babel", "flow", "typescript"]
+    : rangeEnd: 52
+    : rangeStart: 38
+    :                                                       printWidth: 80 (default) |
+    : =====================================input======================================
+  1 | class A {
+  2 |   constructor() {
+> 3 |     const x =
+    |           ^^^
+> 4 | new.target;
+    | ^^^^^^^^^^
+  5 |   }
+  6 | }
+  7 |
+    : =====================================output=====================================
+    : class A {
+    :   constructor() {
+    :     const x = new.target;
+    :   }
+    : }
+    :
+    : ================================================================================
+`;
+
+exports[`range.js format[flow] 1`] = `
+"Unexpected token \`.\` (2:4)
+  1 | const x =
+> 2 | new.target;
+    |    ^
+Cause: Unexpected token \`.\` (2:3)"
+`;
+
+exports[`range.js format[hermes] 1`] = `
+"'new.target' not in a function (2:1)
+  1 | const x =
+> 2 | new.target;
+    | ^
+Cause: 'new.target' not in a function (2:0)
+new.target;
+^~~~~~~~~~"
+`;

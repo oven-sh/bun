@@ -1,0 +1,207 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`new-signature.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+interface FooConstructor {
+  new (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number,
+    h: number
+  ): Foo;
+}
+
+interface BarConstructor {
+  new <A, B, C>(
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number,
+    h: number
+  ): Foo;
+}
+
+type BazConstructor = {
+  new (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number,
+    h: number
+  ): Foo;
+}
+
+
+interface ConstructorBigGenerics {
+  // comment
+  new <AAAAAAAAAAAAAAAAAAAAAAAA, AAAAAAAAAAAAAAAAAAAAAAAA, AAAAAAAAAAAAAAAAAAAAAAAA>(
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number,
+    h: number
+  ): Foo;
+}
+
+interface ConstructorInline {
+  // https://github.com/prettier/prettier/issues/2163
+  (i): any;
+}
+
+interface TimerConstructor {
+  // Line-splitting comment
+  new (interval: number, callback: (handler: Timer) => void): Timer;
+}
+
+=====================================output=====================================
+interface FooConstructor {
+  new (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number,
+    h: number,
+  ): Foo;
+}
+
+interface BarConstructor {
+  new <A, B, C>(
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number,
+    h: number,
+  ): Foo;
+}
+
+type BazConstructor = {
+  new (
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number,
+    h: number,
+  ): Foo;
+};
+
+interface ConstructorBigGenerics {
+  // comment
+  new <
+    AAAAAAAAAAAAAAAAAAAAAAAA,
+    AAAAAAAAAAAAAAAAAAAAAAAA,
+    AAAAAAAAAAAAAAAAAAAAAAAA,
+  >(
+    a: number,
+    b: number,
+    c: number,
+    d: number,
+    e: number,
+    f: number,
+    g: number,
+    h: number,
+  ): Foo;
+}
+
+interface ConstructorInline {
+  // https://github.com/prettier/prettier/issues/2163
+  (i): any;
+}
+
+interface TimerConstructor {
+  // Line-splitting comment
+  new (interval: number, callback: (handler: Timer) => void): Timer;
+}
+
+================================================================================
+`;
+
+exports[`parentheses.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+new (import("foo")!)();
+new (import("foo")!.bar)();
+new (import("foo")!\`bar\`)();
+
+=====================================output=====================================
+new (import("foo")!)();
+new (import("foo")!.bar)();
+new (import("foo")!\`bar\`)();
+
+================================================================================
+`;
+
+exports[`with-member-expression.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo = new long_long_member.long_long_member.long_long_member.long_long_member.long_long_member();
+new long_long_member.long_long_member.long_long_member.long_long_member.long_long_member();
+new long_long_member.long_long_member.long_long_member.long_long_member.long_long_member(x);
+foo = new long_long_member!.long_long_member.long_long_member.long_long_member.long_long_member();
+new long_long_member!.long_long_member.long_long_member.long_long_member.long_long_member();
+new long_long_member!.long_long_member.long_long_member.long_long_member.long_long_member(x);
+
+foo = long_long_member.long_long_member.long_long_member.long_long_member.long_long_member();
+long_long_member.long_long_member.long_long_member.long_long_member.long_long_member();
+long_long_member.long_long_member.long_long_member.long_long_member.long_long_member(x);
+foo = long_long_member!.long_long_member.long_long_member.long_long_member.long_long_member();
+long_long_member!.long_long_member.long_long_member.long_long_member.long_long_member();
+long_long_member!.long_long_member.long_long_member.long_long_member.long_long_member(x);
+
+=====================================output=====================================
+foo =
+  new long_long_member.long_long_member.long_long_member.long_long_member.long_long_member();
+new long_long_member.long_long_member.long_long_member.long_long_member.long_long_member();
+new long_long_member.long_long_member.long_long_member.long_long_member.long_long_member(
+  x,
+);
+foo =
+  new long_long_member!.long_long_member.long_long_member.long_long_member.long_long_member();
+new long_long_member!.long_long_member.long_long_member.long_long_member.long_long_member();
+new long_long_member!.long_long_member.long_long_member.long_long_member.long_long_member(
+  x,
+);
+
+foo =
+  long_long_member.long_long_member.long_long_member.long_long_member.long_long_member();
+long_long_member.long_long_member.long_long_member.long_long_member.long_long_member();
+long_long_member.long_long_member.long_long_member.long_long_member.long_long_member(
+  x,
+);
+foo =
+  long_long_member!.long_long_member.long_long_member.long_long_member.long_long_member();
+long_long_member!.long_long_member.long_long_member.long_long_member.long_long_member();
+long_long_member!.long_long_member.long_long_member.long_long_member.long_long_member(
+  x,
+);
+
+================================================================================
+`;

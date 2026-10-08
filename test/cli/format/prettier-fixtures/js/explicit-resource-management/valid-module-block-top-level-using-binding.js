@@ -1,0 +1,3 @@
+module {
+  using foo = bar();
+}

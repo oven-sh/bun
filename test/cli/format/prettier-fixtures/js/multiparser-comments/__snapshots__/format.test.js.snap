@@ -1,0 +1,187 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`comment-inside.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// #9274
+html\`
+  <div>
+    \${this.set && this.set.artist
+    /* avoid console errors if \`this.set\` is undefined */}
+  </div>
+\`;
+
+html\`\${
+      foo
+  /* comment */
+}\`;
+html\`
+\${
+      foo
+  /* comment */
+}
+\`;
+
+
+graphql\`\${
+      foo
+  /* comment */
+}\`;
+graphql\`
+\${
+      foo
+  /* comment */
+}
+\`;
+
+
+css\`\${
+      foo
+  /* comment */
+}\`;
+css\`
+\${
+      foo
+  /* comment */
+}
+\`;
+
+markdown\`\${
+      foo
+  /* comment */
+}\`;
+markdown\`
+\${
+      foo
+  /* comment */
+}
+\`;
+
+// https://github.com/prettier/prettier/pull/9278#issuecomment-700589195
+expr1 = html\`
+  <div>
+    \${x(foo, // fg
+        bar
+      )}</div>
+\`;
+
+=====================================output=====================================
+// #9274
+html\`
+  <div>
+    \${
+      this.set && this.set.artist
+      /* avoid console errors if \`this.set\` is undefined */
+    }
+  </div>
+\`;
+
+html\`\${
+  foo
+  /* comment */
+}\`;
+html\`
+  \${
+    foo
+    /* comment */
+  }
+\`;
+
+graphql\`
+  \${
+    foo
+    /* comment */
+  }
+\`;
+graphql\`
+  \${
+    foo
+    /* comment */
+  }
+\`;
+
+css\`
+  \${
+    foo
+    /* comment */
+  }
+\`;
+css\`
+  \${
+    foo
+    /* comment */
+  }
+\`;
+
+markdown\`\${
+  foo
+  /* comment */
+}\`;
+markdown\`
+\${
+  foo
+  /* comment */
+}
+\`;
+
+// https://github.com/prettier/prettier/pull/9278#issuecomment-700589195
+expr1 = html\`
+  <div>
+    \${x(
+      foo, // fg
+      bar,
+    )}
+  </div>
+\`;
+
+================================================================================
+`;
+
+exports[`comments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+graphql.experimental\`
+  # required by createPaginationContainer
+  fragment MobileHomeDiffsSearchList_search on DifferentialRevisionSearch {
+    # required by createPaginationContainer
+    name
+  }
+\`;
+
+=====================================output=====================================
+graphql.experimental\`
+  # required by createPaginationContainer
+  fragment MobileHomeDiffsSearchList_search on DifferentialRevisionSearch {
+    # required by createPaginationContainer
+    name
+  }
+\`;
+
+================================================================================
+`;
+
+exports[`tagged.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo(html // oops
+\` <div><p>bar</p>foo</div> \`);
+
+=====================================output=====================================
+foo(
+  html // oops
+  \`
+    <div>
+      <p>bar</p>
+      foo
+    </div>
+  \`,
+);
+
+================================================================================
+`;

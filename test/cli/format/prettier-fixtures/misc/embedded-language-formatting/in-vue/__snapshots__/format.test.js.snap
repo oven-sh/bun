@@ -1,0 +1,52 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`in.vue - {"embeddedLanguageFormatting":"off"} format 1`] = `
+====================================options=====================================
+embeddedLanguageFormatting: "off"
+parsers: ["vue"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<template>
+<div>{{foo}}</div>
+</template>
+
+<script lang="ts">
+1  + 2
+</script>
+
+=====================================output=====================================
+<template>
+  <div>{{foo}}</div>
+</template>
+
+<script lang="ts">
+1  + 2
+</script>
+
+================================================================================
+`;
+
+exports[`in.vue format 1`] = `
+====================================options=====================================
+parsers: ["vue"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<template>
+<div>{{foo}}</div>
+</template>
+
+<script lang="ts">
+1  + 2
+</script>
+
+=====================================output=====================================
+<template>
+  <div>{{ foo }}</div>
+</template>
+
+<script lang="ts">
+1 + 2;
+</script>
+
+================================================================================
+`;

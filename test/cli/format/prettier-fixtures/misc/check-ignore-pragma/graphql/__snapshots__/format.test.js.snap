@@ -1,0 +1,53 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`with-noformat-pragma.graphql - {"checkIgnorePragma":true} format 1`] = `
+====================================options=====================================
+checkIgnorePragma: true
+parsers: ["graphql"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+# @noformat
+
+query Browse($offset:Int){browse(offset:$offset)}
+
+=====================================output=====================================
+# @noformat
+
+query Browse($offset:Int){browse(offset:$offset)}
+
+================================================================================
+`;
+
+exports[`with-noprettier-pragma.graphql - {"checkIgnorePragma":true} format 1`] = `
+====================================options=====================================
+checkIgnorePragma: true
+parsers: ["graphql"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+# @noprettier
+
+query Browse($offset:Int){browse(offset:$offset)}
+
+=====================================output=====================================
+# @noprettier
+
+query Browse($offset:Int){browse(offset:$offset)}
+
+================================================================================
+`;
+
+exports[`without-pragma.graphql - {"checkIgnorePragma":true} format 1`] = `
+====================================options=====================================
+checkIgnorePragma: true
+parsers: ["graphql"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+query Browse($offset:Int){browse(offset:$offset)}
+
+=====================================output=====================================
+query Browse($offset: Int) {
+  browse(offset: $offset)
+}
+
+================================================================================
+`;

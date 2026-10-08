@@ -1,0 +1,1 @@
+if (false) function foo(){}

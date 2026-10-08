@@ -1,0 +1,22 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`intersectionType.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A = & string;
+type B =
+  & { foo: string }
+  & { bar: number };
+
+type C = [& { foo: 1 } & { bar: 2 }, & { foo: 3 } & { bar: 4 }];
+
+=====================================output=====================================
+type A = string;
+type B = { foo: string } & { bar: number };
+
+type C = [{ foo: 1 } & { bar: 2 }, { foo: 3 } & { bar: 4 }];
+
+================================================================================
+`;

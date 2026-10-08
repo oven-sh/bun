@@ -1,0 +1,2487 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`array-and-object.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo = foo || [
+  // comment
+  a,
+]
+
+foo = foo || {
+  // comment
+  a,
+}
+
+=====================================output=====================================
+foo = foo || [
+  // comment
+  a,
+];
+
+foo = foo || {
+  // comment
+  a,
+};
+
+================================================================================
+`;
+
+exports[`array-and-object.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo = foo || [
+  // comment
+  a,
+]
+
+foo = foo || {
+  // comment
+  a,
+}
+
+=====================================output=====================================
+foo = foo || [
+  // comment
+  a,
+];
+
+foo = foo || {
+  // comment
+  a,
+};
+
+================================================================================
+`;
+
+exports[`arrow.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function f() {
+  const appEntities = getAppEntities(loadObject).filter(
+    entity => entity && entity.isInstallAvailable() && !entity.isQueue() && entity.isDisabled()
+  )
+}
+
+function f2() {
+  const appEntities = getAppEntities(loadObject).map(
+    entity => entity && entity.isInstallAvailable() && !entity.isQueue() && entity.isDisabled() && {
+      id: entity.id
+    }
+  )
+}
+
+((x) => x) + '';
+'' + ((x) => x);
+
+=====================================output=====================================
+function f() {
+  const appEntities = getAppEntities(loadObject).filter(
+    (entity) =>
+      entity
+      && entity.isInstallAvailable()
+      && !entity.isQueue()
+      && entity.isDisabled(),
+  );
+}
+
+function f2() {
+  const appEntities = getAppEntities(loadObject).map(
+    (entity) =>
+      entity
+      && entity.isInstallAvailable()
+      && !entity.isQueue()
+      && entity.isDisabled() && {
+        id: entity.id,
+      },
+  );
+}
+
+((x) => x) + "";
+"" + ((x) => x);
+
+================================================================================
+`;
+
+exports[`arrow.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function f() {
+  const appEntities = getAppEntities(loadObject).filter(
+    entity => entity && entity.isInstallAvailable() && !entity.isQueue() && entity.isDisabled()
+  )
+}
+
+function f2() {
+  const appEntities = getAppEntities(loadObject).map(
+    entity => entity && entity.isInstallAvailable() && !entity.isQueue() && entity.isDisabled() && {
+      id: entity.id
+    }
+  )
+}
+
+((x) => x) + '';
+'' + ((x) => x);
+
+=====================================output=====================================
+function f() {
+  const appEntities = getAppEntities(loadObject).filter(
+    (entity) =>
+      entity &&
+      entity.isInstallAvailable() &&
+      !entity.isQueue() &&
+      entity.isDisabled(),
+  );
+}
+
+function f2() {
+  const appEntities = getAppEntities(loadObject).map(
+    (entity) =>
+      entity &&
+      entity.isInstallAvailable() &&
+      !entity.isQueue() &&
+      entity.isDisabled() && {
+        id: entity.id,
+      },
+  );
+}
+
+((x) => x) + "";
+"" + ((x) => x);
+
+================================================================================
+`;
+
+exports[`bitwise-flags.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const FLAG_A = 1 << 0;
+const FLAG_B = 1 << 1;
+const FLAG_C = 1 << 2;
+
+const all = FLAG_A | FLAG_B | FLAG_C;
+
+=====================================output=====================================
+const FLAG_A = 1 << 0;
+const FLAG_B = 1 << 1;
+const FLAG_C = 1 << 2;
+
+const all = FLAG_A | FLAG_B | FLAG_C;
+
+================================================================================
+`;
+
+exports[`bitwise-flags.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const FLAG_A = 1 << 0;
+const FLAG_B = 1 << 1;
+const FLAG_C = 1 << 2;
+
+const all = FLAG_A | FLAG_B | FLAG_C;
+
+=====================================output=====================================
+const FLAG_A = 1 << 0;
+const FLAG_B = 1 << 1;
+const FLAG_C = 1 << 2;
+
+const all = FLAG_A | FLAG_B | FLAG_C;
+
+================================================================================
+`;
+
+exports[`call.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(
+  aaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbb &&
+  ccccccccccccccccccccccccc &&
+  ddddddddddddddddddddddddd &&
+  eeeeeeeeeeeeeeeeeeeeeeeee
+)();
+
+(
+  aa &&
+  bb &&
+  cc &&
+  dd &&
+  ee
+)();
+
+(
+  aaaaaaaaaaaaaaaaaaaaaaaaa +
+  bbbbbbbbbbbbbbbbbbbbbbbbb +
+  ccccccccccccccccccccccccc +
+  ddddddddddddddddddddddddd +
+  eeeeeeeeeeeeeeeeeeeeeeeee
+)();
+
+(
+  aa +
+  bb +
+  cc +
+  dd +
+  ee
+)();
+
+(
+  aaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbb &&
+  ccccccccccccccccccccccccc &&
+  ddddddddddddddddddddddddd &&
+  eeeeeeeeeeeeeeeeeeeeeeeee
+)()()();
+
+(
+  aaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbb &&
+  ccccccccccccccccccccccccc &&
+  ddddddddddddddddddddddddd &&
+  eeeeeeeeeeeeeeeeeeeeeeeee
+)(
+  aaaaaaaaaaaaaaaaaaaaaaaaa &&
+    bbbbbbbbbbbbbbbbbbbbbbbbb &&
+    ccccccccccccccccccccccccc &&
+    ddddddddddddddddddddddddd &&
+    eeeeeeeeeeeeeeeeeeeeeeeee
+)(
+  aaaaaaaaaaaaaaaaaaaaaaaaa &&
+    bbbbbbbbbbbbbbbbbbbbbbbbb &&
+    ccccccccccccccccccccccccc &&
+    ddddddddddddddddddddddddd &&
+    eeeeeeeeeeeeeeeeeeeeeeeee
+)(
+  aaaaaaaaaaaaaaaaaaaaaaaaa &&
+    bbbbbbbbbbbbbbbbbbbbbbbbb &&
+    ccccccccccccccccccccccccc &&
+    ddddddddddddddddddddddddd &&
+    eeeeeeeeeeeeeeeeeeeeeeeee
+);
+
+=====================================output=====================================
+(
+  aaaaaaaaaaaaaaaaaaaaaaaaa
+  && bbbbbbbbbbbbbbbbbbbbbbbbb
+  && ccccccccccccccccccccccccc
+  && ddddddddddddddddddddddddd
+  && eeeeeeeeeeeeeeeeeeeeeeeee
+)();
+
+(aa && bb && cc && dd && ee)();
+
+(
+  aaaaaaaaaaaaaaaaaaaaaaaaa
+  + bbbbbbbbbbbbbbbbbbbbbbbbb
+  + ccccccccccccccccccccccccc
+  + ddddddddddddddddddddddddd
+  + eeeeeeeeeeeeeeeeeeeeeeeee
+)();
+
+(aa + bb + cc + dd + ee)();
+
+(
+  aaaaaaaaaaaaaaaaaaaaaaaaa
+  && bbbbbbbbbbbbbbbbbbbbbbbbb
+  && ccccccccccccccccccccccccc
+  && ddddddddddddddddddddddddd
+  && eeeeeeeeeeeeeeeeeeeeeeeee
+)()()();
+
+(
+  aaaaaaaaaaaaaaaaaaaaaaaaa
+  && bbbbbbbbbbbbbbbbbbbbbbbbb
+  && ccccccccccccccccccccccccc
+  && ddddddddddddddddddddddddd
+  && eeeeeeeeeeeeeeeeeeeeeeeee
+)(
+  aaaaaaaaaaaaaaaaaaaaaaaaa
+    && bbbbbbbbbbbbbbbbbbbbbbbbb
+    && ccccccccccccccccccccccccc
+    && ddddddddddddddddddddddddd
+    && eeeeeeeeeeeeeeeeeeeeeeeee,
+)(
+  aaaaaaaaaaaaaaaaaaaaaaaaa
+    && bbbbbbbbbbbbbbbbbbbbbbbbb
+    && ccccccccccccccccccccccccc
+    && ddddddddddddddddddddddddd
+    && eeeeeeeeeeeeeeeeeeeeeeeee,
+)(
+  aaaaaaaaaaaaaaaaaaaaaaaaa
+    && bbbbbbbbbbbbbbbbbbbbbbbbb
+    && ccccccccccccccccccccccccc
+    && ddddddddddddddddddddddddd
+    && eeeeeeeeeeeeeeeeeeeeeeeee,
+);
+
+================================================================================
+`;
+
+exports[`call.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(
+  aaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbb &&
+  ccccccccccccccccccccccccc &&
+  ddddddddddddddddddddddddd &&
+  eeeeeeeeeeeeeeeeeeeeeeeee
+)();
+
+(
+  aa &&
+  bb &&
+  cc &&
+  dd &&
+  ee
+)();
+
+(
+  aaaaaaaaaaaaaaaaaaaaaaaaa +
+  bbbbbbbbbbbbbbbbbbbbbbbbb +
+  ccccccccccccccccccccccccc +
+  ddddddddddddddddddddddddd +
+  eeeeeeeeeeeeeeeeeeeeeeeee
+)();
+
+(
+  aa +
+  bb +
+  cc +
+  dd +
+  ee
+)();
+
+(
+  aaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbb &&
+  ccccccccccccccccccccccccc &&
+  ddddddddddddddddddddddddd &&
+  eeeeeeeeeeeeeeeeeeeeeeeee
+)()()();
+
+(
+  aaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbb &&
+  ccccccccccccccccccccccccc &&
+  ddddddddddddddddddddddddd &&
+  eeeeeeeeeeeeeeeeeeeeeeeee
+)(
+  aaaaaaaaaaaaaaaaaaaaaaaaa &&
+    bbbbbbbbbbbbbbbbbbbbbbbbb &&
+    ccccccccccccccccccccccccc &&
+    ddddddddddddddddddddddddd &&
+    eeeeeeeeeeeeeeeeeeeeeeeee
+)(
+  aaaaaaaaaaaaaaaaaaaaaaaaa &&
+    bbbbbbbbbbbbbbbbbbbbbbbbb &&
+    ccccccccccccccccccccccccc &&
+    ddddddddddddddddddddddddd &&
+    eeeeeeeeeeeeeeeeeeeeeeeee
+)(
+  aaaaaaaaaaaaaaaaaaaaaaaaa &&
+    bbbbbbbbbbbbbbbbbbbbbbbbb &&
+    ccccccccccccccccccccccccc &&
+    ddddddddddddddddddddddddd &&
+    eeeeeeeeeeeeeeeeeeeeeeeee
+);
+
+=====================================output=====================================
+(
+  aaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbb &&
+  ccccccccccccccccccccccccc &&
+  ddddddddddddddddddddddddd &&
+  eeeeeeeeeeeeeeeeeeeeeeeee
+)();
+
+(aa && bb && cc && dd && ee)();
+
+(
+  aaaaaaaaaaaaaaaaaaaaaaaaa +
+  bbbbbbbbbbbbbbbbbbbbbbbbb +
+  ccccccccccccccccccccccccc +
+  ddddddddddddddddddddddddd +
+  eeeeeeeeeeeeeeeeeeeeeeeee
+)();
+
+(aa + bb + cc + dd + ee)();
+
+(
+  aaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbb &&
+  ccccccccccccccccccccccccc &&
+  ddddddddddddddddddddddddd &&
+  eeeeeeeeeeeeeeeeeeeeeeeee
+)()()();
+
+(
+  aaaaaaaaaaaaaaaaaaaaaaaaa &&
+  bbbbbbbbbbbbbbbbbbbbbbbbb &&
+  ccccccccccccccccccccccccc &&
+  ddddddddddddddddddddddddd &&
+  eeeeeeeeeeeeeeeeeeeeeeeee
+)(
+  aaaaaaaaaaaaaaaaaaaaaaaaa &&
+    bbbbbbbbbbbbbbbbbbbbbbbbb &&
+    ccccccccccccccccccccccccc &&
+    ddddddddddddddddddddddddd &&
+    eeeeeeeeeeeeeeeeeeeeeeeee,
+)(
+  aaaaaaaaaaaaaaaaaaaaaaaaa &&
+    bbbbbbbbbbbbbbbbbbbbbbbbb &&
+    ccccccccccccccccccccccccc &&
+    ddddddddddddddddddddddddd &&
+    eeeeeeeeeeeeeeeeeeeeeeeee,
+)(
+  aaaaaaaaaaaaaaaaaaaaaaaaa &&
+    bbbbbbbbbbbbbbbbbbbbbbbbb &&
+    ccccccccccccccccccccccccc &&
+    ddddddddddddddddddddddddd &&
+    eeeeeeeeeeeeeeeeeeeeeeeee,
+);
+
+================================================================================
+`;
+
+exports[`chain-expression.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (
+  true
+  // This is a really complicated part of the condition, so we need a big ol'
+  // comment here to explain it.
+  && flibble.blibble.blobble?.bloo
+) {
+  doThings();
+}
+
+=====================================output=====================================
+if (
+  true
+  // This is a really complicated part of the condition, so we need a big ol'
+  // comment here to explain it.
+  && flibble.blibble.blobble?.bloo
+) {
+  doThings();
+}
+
+================================================================================
+`;
+
+exports[`chain-expression.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (
+  true
+  // This is a really complicated part of the condition, so we need a big ol'
+  // comment here to explain it.
+  && flibble.blibble.blobble?.bloo
+) {
+  doThings();
+}
+
+=====================================output=====================================
+if (
+  true &&
+  // This is a really complicated part of the condition, so we need a big ol'
+  // comment here to explain it.
+  flibble.blibble.blobble?.bloo
+) {
+  doThings();
+}
+
+================================================================================
+`;
+
+exports[`comment.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = (
+  // Comment 1
+  (Math.random() * (yRange * (1 - minVerticalFraction)))
+  + (minVerticalFraction * yRange)
+) - offset;
+
+a +
+ a +
+ a + // comment
+ a +
+ a;
+
+a &&
+  longLongLongLongLongLongLongLongLong &&
+  longLongLongLongLongLongLongLongLong &&  // comment
+  longLongLongLongLongLongLongLongLong &&
+  longLongLongLongLongLongLongLongLong
+
+a ||
+  longLongLongLongLongLongLongLongLong ||
+  longLongLongLongLongLongLongLongLong ||  // comment
+  longLongLongLongLongLongLongLongLong ||
+  longLongLongLongLongLongLongLongLong
+
+var a = x(abifornCringerMoshedPerplexSawder
++ kochabCooieGameOnOboleUnweave // f
++ glimseGlyphsHazardNoopsTieTie+bifornCringerMoshedPerplexSawder);
+
+foo[
+  a +
+  a + // comment
+  a +
+  bar[
+    b +
+    b +
+    b + // comment
+    b +
+    b
+  ]
+];
+
+!(
+  a +
+  a + // comment
+  a +
+  !(
+    b +
+    b +
+    b + // comment
+    b +
+    b
+  )
+);
+
+const logical_expression =
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa /* trailing comment */ &&
+  /* leading comment */ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &&
+  // line comment
+  cccccccccccccccccccccccc;
+
+const bc = a /* internal before */ || /* internal after */ b;
+
+a +
+  /**/
+  a.a().a();
+
+=====================================output=====================================
+a =
+  // Comment 1
+  Math.random() * (yRange * (1 - minVerticalFraction))
+  + minVerticalFraction * yRange
+  - offset;
+
+a
+  + a
+  + a // comment
+  + a
+  + a;
+
+a
+  && longLongLongLongLongLongLongLongLong
+  && longLongLongLongLongLongLongLongLong // comment
+  && longLongLongLongLongLongLongLongLong
+  && longLongLongLongLongLongLongLongLong;
+
+a
+  || longLongLongLongLongLongLongLongLong
+  || longLongLongLongLongLongLongLongLong // comment
+  || longLongLongLongLongLongLongLongLong
+  || longLongLongLongLongLongLongLongLong;
+
+var a = x(
+  abifornCringerMoshedPerplexSawder
+    + kochabCooieGameOnOboleUnweave // f
+    + glimseGlyphsHazardNoopsTieTie
+    + bifornCringerMoshedPerplexSawder,
+);
+
+foo[
+  a
+    + a // comment
+    + a
+    + bar[
+      b
+        + b
+        + b // comment
+        + b
+        + b
+    ]
+];
+
+!(
+  a
+  + a // comment
+  + a
+  + !(
+    b
+    + b
+    + b // comment
+    + b
+    + b
+  )
+);
+
+const logical_expression =
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa /* trailing comment */
+  && /* leading comment */ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  // line comment
+  && cccccccccccccccccccccccc;
+
+const bc = a /* internal before */ || /* internal after */ b;
+
+a
+  /**/
+  + a.a().a();
+
+================================================================================
+`;
+
+exports[`comment.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = (
+  // Comment 1
+  (Math.random() * (yRange * (1 - minVerticalFraction)))
+  + (minVerticalFraction * yRange)
+) - offset;
+
+a +
+ a +
+ a + // comment
+ a +
+ a;
+
+a &&
+  longLongLongLongLongLongLongLongLong &&
+  longLongLongLongLongLongLongLongLong &&  // comment
+  longLongLongLongLongLongLongLongLong &&
+  longLongLongLongLongLongLongLongLong
+
+a ||
+  longLongLongLongLongLongLongLongLong ||
+  longLongLongLongLongLongLongLongLong ||  // comment
+  longLongLongLongLongLongLongLongLong ||
+  longLongLongLongLongLongLongLongLong
+
+var a = x(abifornCringerMoshedPerplexSawder
++ kochabCooieGameOnOboleUnweave // f
++ glimseGlyphsHazardNoopsTieTie+bifornCringerMoshedPerplexSawder);
+
+foo[
+  a +
+  a + // comment
+  a +
+  bar[
+    b +
+    b +
+    b + // comment
+    b +
+    b
+  ]
+];
+
+!(
+  a +
+  a + // comment
+  a +
+  !(
+    b +
+    b +
+    b + // comment
+    b +
+    b
+  )
+);
+
+const logical_expression =
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa /* trailing comment */ &&
+  /* leading comment */ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &&
+  // line comment
+  cccccccccccccccccccccccc;
+
+const bc = a /* internal before */ || /* internal after */ b;
+
+a +
+  /**/
+  a.a().a();
+
+=====================================output=====================================
+a =
+  // Comment 1
+  Math.random() * (yRange * (1 - minVerticalFraction)) +
+  minVerticalFraction * yRange -
+  offset;
+
+a +
+  a +
+  a + // comment
+  a +
+  a;
+
+a &&
+  longLongLongLongLongLongLongLongLong &&
+  longLongLongLongLongLongLongLongLong && // comment
+  longLongLongLongLongLongLongLongLong &&
+  longLongLongLongLongLongLongLongLong;
+
+a ||
+  longLongLongLongLongLongLongLongLong ||
+  longLongLongLongLongLongLongLongLong || // comment
+  longLongLongLongLongLongLongLongLong ||
+  longLongLongLongLongLongLongLongLong;
+
+var a = x(
+  abifornCringerMoshedPerplexSawder +
+    kochabCooieGameOnOboleUnweave + // f
+    glimseGlyphsHazardNoopsTieTie +
+    bifornCringerMoshedPerplexSawder,
+);
+
+foo[
+  a +
+    a + // comment
+    a +
+    bar[
+      b +
+        b +
+        b + // comment
+        b +
+        b
+    ]
+];
+
+!(
+  a +
+  a + // comment
+  a +
+  !(
+    b +
+    b +
+    b + // comment
+    b +
+    b
+  )
+);
+
+const logical_expression =
+  aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa /* trailing comment */ &&
+  /* leading comment */ bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb &&
+  // line comment
+  cccccccccccccccccccccccc;
+
+const bc = a /* internal before */ || /* internal after */ b;
+
+a +
+  /**/
+  a.a().a();
+
+================================================================================
+`;
+
+exports[`equality.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+x == y == z;
+x != y == z;
+x == y != z;
+x != y != z;
+
+x === y === z;
+x !== y === z;
+x === y !== z;
+x !== y !== z;
+
+=====================================output=====================================
+(x == y) == z;
+(x != y) == z;
+(x == y) != z;
+(x != y) != z;
+
+(x === y) === z;
+(x !== y) === z;
+(x === y) !== z;
+(x !== y) !== z;
+
+================================================================================
+`;
+
+exports[`equality.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+x == y == z;
+x != y == z;
+x == y != z;
+x != y != z;
+
+x === y === z;
+x !== y === z;
+x === y !== z;
+x !== y !== z;
+
+=====================================output=====================================
+(x == y) == z;
+(x != y) == z;
+(x == y) != z;
+(x != y) != z;
+
+(x === y) === z;
+(x !== y) === z;
+(x === y) !== z;
+(x !== y) !== z;
+
+================================================================================
+`;
+
+exports[`exp.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a ** b ** c;
+(a ** b) ** c;
+a.b ** c;
+(-a) ** b;
+a ** -b;
+-(a**b);
+(a * b) ** c;
+a ** (b * c);
+(a % b) ** c;
+
+=====================================output=====================================
+a ** (b ** c);
+(a ** b) ** c;
+a.b ** c;
+(-a) ** b;
+a ** -b;
+-(a ** b);
+(a * b) ** c;
+a ** (b * c);
+(a % b) ** c;
+
+================================================================================
+`;
+
+exports[`exp.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a ** b ** c;
+(a ** b) ** c;
+a.b ** c;
+(-a) ** b;
+a ** -b;
+-(a**b);
+(a * b) ** c;
+a ** (b * c);
+(a % b) ** c;
+
+=====================================output=====================================
+a ** (b ** c);
+(a ** b) ** c;
+a.b ** c;
+(-a) ** b;
+a ** -b;
+-(a ** b);
+(a * b) ** c;
+a ** (b * c);
+(a % b) ** c;
+
+================================================================================
+`;
+
+exports[`if.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (this.hasPlugin("dynamicImports") && this.lookahead().type) {}
+
+if (this.hasPlugin("dynamicImports") && this.lookahead().type === tt.parenLeft) {}
+
+if (this.hasPlugin("dynamicImports") && this.lookahead().type === tt.parenLeft.right) {}
+
+if (VeryVeryVeryVeryVeryVeryVeryVeryLong === VeryVeryVeryVeryVeryVeryVeryVeryLong) {
+}
+
+=====================================output=====================================
+if (this.hasPlugin("dynamicImports") && this.lookahead().type) {
+}
+
+if (
+  this.hasPlugin("dynamicImports")
+  && this.lookahead().type === tt.parenLeft
+) {
+}
+
+if (
+  this.hasPlugin("dynamicImports")
+  && this.lookahead().type === tt.parenLeft.right
+) {
+}
+
+if (
+  VeryVeryVeryVeryVeryVeryVeryVeryLong === VeryVeryVeryVeryVeryVeryVeryVeryLong
+) {
+}
+
+================================================================================
+`;
+
+exports[`if.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (this.hasPlugin("dynamicImports") && this.lookahead().type) {}
+
+if (this.hasPlugin("dynamicImports") && this.lookahead().type === tt.parenLeft) {}
+
+if (this.hasPlugin("dynamicImports") && this.lookahead().type === tt.parenLeft.right) {}
+
+if (VeryVeryVeryVeryVeryVeryVeryVeryLong === VeryVeryVeryVeryVeryVeryVeryVeryLong) {
+}
+
+=====================================output=====================================
+if (this.hasPlugin("dynamicImports") && this.lookahead().type) {
+}
+
+if (
+  this.hasPlugin("dynamicImports") &&
+  this.lookahead().type === tt.parenLeft
+) {
+}
+
+if (
+  this.hasPlugin("dynamicImports") &&
+  this.lookahead().type === tt.parenLeft.right
+) {
+}
+
+if (
+  VeryVeryVeryVeryVeryVeryVeryVeryLong === VeryVeryVeryVeryVeryVeryVeryVeryLong
+) {
+}
+
+================================================================================
+`;
+
+exports[`in_instanceof.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+!foo in bar;
+(!foo in bar); 
+!(foo in bar);
+(!foo) in bar;
+
+!foo instanceof Bar;
+(!foo instanceof Bar);
+!(foo instanceof Bar);
+(!foo) instanceof Bar;
+
+~foo in bar;
+(~foo in bar); 
+~(foo in bar);
+(~foo) in bar;
+
+~foo instanceof Bar;
+(~foo instanceof Bar);
+~(foo instanceof Bar);
+(~foo) instanceof Bar;
+
++foo in bar;
+(+foo in bar); 
++(foo in bar);
+(+foo) in bar;
+
++foo instanceof Bar;
+(+foo instanceof Bar);
++(foo instanceof Bar);
+(+foo) instanceof Bar;
+
+-foo in bar;
+(-foo in bar); 
+-(foo in bar);
+(-foo) in bar;
+
+-foo instanceof Bar;
+(-foo instanceof Bar);
+-(foo instanceof Bar);
+(-foo) instanceof Bar;
+
+void 0 in bar;
+(void 0 in bar);
+void (0 in bar);
+(void 0) in bar;
+
+void 0 instanceof bar;
+(void 0 instanceof bar);
+void (0 instanceof bar);
+(void 0) instanceof bar;
+
+delete 0 in bar;
+(delete 0 in bar);
+delete (0 in bar);
+(delete 0) in bar;
+
+delete 0 instanceof bar;
+(delete 0 instanceof bar);
+delete (0 instanceof bar);
+(delete 0) instanceof bar;
+
+typeof 0 in bar;
+(typeof 0 in bar);
+typeof (0 in bar);
+(typeof 0) in bar;
+
+typeof 0 instanceof bar;
+(typeof 0 instanceof bar);
+typeof (0 instanceof bar);
+(typeof 0) instanceof bar;
+
+++x instanceof bar; // not ambiguous, because ++(x instanceof bar) is obviously invalid
+
+!!foo instanceof Bar;
+
+=====================================output=====================================
+(!foo) in bar;
+(!foo) in bar;
+!(foo in bar);
+(!foo) in bar;
+
+(!foo) instanceof Bar;
+(!foo) instanceof Bar;
+!(foo instanceof Bar);
+(!foo) instanceof Bar;
+
+(~foo) in bar;
+(~foo) in bar;
+~(foo in bar);
+(~foo) in bar;
+
+(~foo) instanceof Bar;
+(~foo) instanceof Bar;
+~(foo instanceof Bar);
+(~foo) instanceof Bar;
+
+(+foo) in bar;
+(+foo) in bar;
++(foo in bar);
+(+foo) in bar;
+
+(+foo) instanceof Bar;
+(+foo) instanceof Bar;
++(foo instanceof Bar);
+(+foo) instanceof Bar;
+
+(-foo) in bar;
+(-foo) in bar;
+-(foo in bar);
+(-foo) in bar;
+
+(-foo) instanceof Bar;
+(-foo) instanceof Bar;
+-(foo instanceof Bar);
+(-foo) instanceof Bar;
+
+(void 0) in bar;
+(void 0) in bar;
+void (0 in bar);
+(void 0) in bar;
+
+(void 0) instanceof bar;
+(void 0) instanceof bar;
+void (0 instanceof bar);
+(void 0) instanceof bar;
+
+(delete 0) in bar;
+(delete 0) in bar;
+delete (0 in bar);
+(delete 0) in bar;
+
+(delete 0) instanceof bar;
+(delete 0) instanceof bar;
+delete (0 instanceof bar);
+(delete 0) instanceof bar;
+
+(typeof 0) in bar;
+(typeof 0) in bar;
+typeof (0 in bar);
+(typeof 0) in bar;
+
+(typeof 0) instanceof bar;
+(typeof 0) instanceof bar;
+typeof (0 instanceof bar);
+(typeof 0) instanceof bar;
+
+++x instanceof bar; // not ambiguous, because ++(x instanceof bar) is obviously invalid
+
+(!!foo) instanceof Bar;
+
+================================================================================
+`;
+
+exports[`in_instanceof.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+!foo in bar;
+(!foo in bar); 
+!(foo in bar);
+(!foo) in bar;
+
+!foo instanceof Bar;
+(!foo instanceof Bar);
+!(foo instanceof Bar);
+(!foo) instanceof Bar;
+
+~foo in bar;
+(~foo in bar); 
+~(foo in bar);
+(~foo) in bar;
+
+~foo instanceof Bar;
+(~foo instanceof Bar);
+~(foo instanceof Bar);
+(~foo) instanceof Bar;
+
++foo in bar;
+(+foo in bar); 
++(foo in bar);
+(+foo) in bar;
+
++foo instanceof Bar;
+(+foo instanceof Bar);
++(foo instanceof Bar);
+(+foo) instanceof Bar;
+
+-foo in bar;
+(-foo in bar); 
+-(foo in bar);
+(-foo) in bar;
+
+-foo instanceof Bar;
+(-foo instanceof Bar);
+-(foo instanceof Bar);
+(-foo) instanceof Bar;
+
+void 0 in bar;
+(void 0 in bar);
+void (0 in bar);
+(void 0) in bar;
+
+void 0 instanceof bar;
+(void 0 instanceof bar);
+void (0 instanceof bar);
+(void 0) instanceof bar;
+
+delete 0 in bar;
+(delete 0 in bar);
+delete (0 in bar);
+(delete 0) in bar;
+
+delete 0 instanceof bar;
+(delete 0 instanceof bar);
+delete (0 instanceof bar);
+(delete 0) instanceof bar;
+
+typeof 0 in bar;
+(typeof 0 in bar);
+typeof (0 in bar);
+(typeof 0) in bar;
+
+typeof 0 instanceof bar;
+(typeof 0 instanceof bar);
+typeof (0 instanceof bar);
+(typeof 0) instanceof bar;
+
+++x instanceof bar; // not ambiguous, because ++(x instanceof bar) is obviously invalid
+
+!!foo instanceof Bar;
+
+=====================================output=====================================
+(!foo) in bar;
+(!foo) in bar;
+!(foo in bar);
+(!foo) in bar;
+
+(!foo) instanceof Bar;
+(!foo) instanceof Bar;
+!(foo instanceof Bar);
+(!foo) instanceof Bar;
+
+(~foo) in bar;
+(~foo) in bar;
+~(foo in bar);
+(~foo) in bar;
+
+(~foo) instanceof Bar;
+(~foo) instanceof Bar;
+~(foo instanceof Bar);
+(~foo) instanceof Bar;
+
+(+foo) in bar;
+(+foo) in bar;
++(foo in bar);
+(+foo) in bar;
+
+(+foo) instanceof Bar;
+(+foo) instanceof Bar;
++(foo instanceof Bar);
+(+foo) instanceof Bar;
+
+(-foo) in bar;
+(-foo) in bar;
+-(foo in bar);
+(-foo) in bar;
+
+(-foo) instanceof Bar;
+(-foo) instanceof Bar;
+-(foo instanceof Bar);
+(-foo) instanceof Bar;
+
+(void 0) in bar;
+(void 0) in bar;
+void (0 in bar);
+(void 0) in bar;
+
+(void 0) instanceof bar;
+(void 0) instanceof bar;
+void (0 instanceof bar);
+(void 0) instanceof bar;
+
+(delete 0) in bar;
+(delete 0) in bar;
+delete (0 in bar);
+(delete 0) in bar;
+
+(delete 0) instanceof bar;
+(delete 0) instanceof bar;
+delete (0 instanceof bar);
+(delete 0) instanceof bar;
+
+(typeof 0) in bar;
+(typeof 0) in bar;
+typeof (0 in bar);
+(typeof 0) in bar;
+
+(typeof 0) instanceof bar;
+(typeof 0) instanceof bar;
+typeof (0 instanceof bar);
+(typeof 0) instanceof bar;
+
+++x instanceof bar; // not ambiguous, because ++(x instanceof bar) is obviously invalid
+
+(!!foo) instanceof Bar;
+
+================================================================================
+`;
+
+exports[`inline-jsx.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const user = renderedUser || <div><User name={this.state.user.name} age={this.state.user.age} /></div>;
+
+const user2 = renderedUser || shouldRenderUser && <div><User name={this.state.user.name} age={this.state.user.age} /></div>;
+
+const avatar = hasAvatar && <Gravatar user={author} size={size} />;
+
+const avatar2 = (hasAvatar || showPlaceholder) && <Gravatar user={author} size={size} />;
+
+=====================================output=====================================
+const user = renderedUser || (
+  <div>
+    <User name={this.state.user.name} age={this.state.user.age} />
+  </div>
+);
+
+const user2 =
+  renderedUser
+  || (shouldRenderUser && (
+    <div>
+      <User name={this.state.user.name} age={this.state.user.age} />
+    </div>
+  ));
+
+const avatar = hasAvatar && <Gravatar user={author} size={size} />;
+
+const avatar2 = (hasAvatar || showPlaceholder) && (
+  <Gravatar user={author} size={size} />
+);
+
+================================================================================
+`;
+
+exports[`inline-jsx.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const user = renderedUser || <div><User name={this.state.user.name} age={this.state.user.age} /></div>;
+
+const user2 = renderedUser || shouldRenderUser && <div><User name={this.state.user.name} age={this.state.user.age} /></div>;
+
+const avatar = hasAvatar && <Gravatar user={author} size={size} />;
+
+const avatar2 = (hasAvatar || showPlaceholder) && <Gravatar user={author} size={size} />;
+
+=====================================output=====================================
+const user = renderedUser || (
+  <div>
+    <User name={this.state.user.name} age={this.state.user.age} />
+  </div>
+);
+
+const user2 =
+  renderedUser ||
+  (shouldRenderUser && (
+    <div>
+      <User name={this.state.user.name} age={this.state.user.age} />
+    </div>
+  ));
+
+const avatar = hasAvatar && <Gravatar user={author} size={size} />;
+
+const avatar2 = (hasAvatar || showPlaceholder) && (
+  <Gravatar user={author} size={size} />
+);
+
+================================================================================
+`;
+
+exports[`inline-object-array.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+prevState = prevState || {
+  catalogs: [],
+  loadState: LOADED,
+  opened: false,
+  searchQuery: '',
+  selectedCatalog: null,
+};
+
+prevState = prevState ||
+  defaultState || {
+    catalogs: [],
+    loadState: LOADED,
+    opened: false,
+    searchQuery: '',
+    selectedCatalog: null,
+  };
+
+prevState = prevState ||
+  defaultState && {
+    catalogs: [],
+    loadState: LOADED,
+    opened: false,
+    searchQuery: '',
+    selectedCatalog: null,
+  };
+
+prevState = prevState || useDefault && defaultState || {
+    catalogs: [],
+    loadState: LOADED,
+    opened: false,
+    searchQuery: '',
+    selectedCatalog: null,
+  };
+
+this.steps = steps || [
+  {
+    name: 'mock-module',
+    path: '/nux/mock-module',
+  },
+];
+
+this.steps = steps || checkStep && [
+  {
+    name: 'mock-module',
+    path: '/nux/mock-module',
+  },
+];
+
+this.steps = steps && checkStep || [
+  {
+    name: 'mock-module',
+    path: '/nux/mock-module',
+  },
+];
+
+const create = () => {
+  const result = doSomething();
+  return (
+    shouldReturn &&
+    result.ok && {
+      status: "ok",
+      createdAt: result.createdAt,
+      updatedAt: result.updatedAt
+    }
+  );
+}
+
+const create2 = () => {
+  const result = doSomething();
+  return (
+    shouldReturn && result.ok && result || {
+      status: "ok",
+      createdAt: result.createdAt,
+      updatedAt: result.updatedAt
+    }
+  );
+}
+
+const obj = {
+  state: shouldHaveState &&
+    stateIsOK && {
+      loadState: LOADED,
+      opened: false
+    },
+  loadNext: stateIsOK && hasNext || {
+      skipNext: true
+    },
+  loaded: true
+}
+
+=====================================output=====================================
+prevState = prevState || {
+  catalogs: [],
+  loadState: LOADED,
+  opened: false,
+  searchQuery: "",
+  selectedCatalog: null,
+};
+
+prevState = prevState
+  || defaultState || {
+    catalogs: [],
+    loadState: LOADED,
+    opened: false,
+    searchQuery: "",
+    selectedCatalog: null,
+  };
+
+prevState =
+  prevState
+  || (defaultState && {
+    catalogs: [],
+    loadState: LOADED,
+    opened: false,
+    searchQuery: "",
+    selectedCatalog: null,
+  });
+
+prevState = prevState
+  || (useDefault && defaultState) || {
+    catalogs: [],
+    loadState: LOADED,
+    opened: false,
+    searchQuery: "",
+    selectedCatalog: null,
+  };
+
+this.steps = steps || [
+  {
+    name: "mock-module",
+    path: "/nux/mock-module",
+  },
+];
+
+this.steps =
+  steps
+  || (checkStep && [
+    {
+      name: "mock-module",
+      path: "/nux/mock-module",
+    },
+  ]);
+
+this.steps = (steps && checkStep) || [
+  {
+    name: "mock-module",
+    path: "/nux/mock-module",
+  },
+];
+
+const create = () => {
+  const result = doSomething();
+  return (
+    shouldReturn
+    && result.ok && {
+      status: "ok",
+      createdAt: result.createdAt,
+      updatedAt: result.updatedAt,
+    }
+  );
+};
+
+const create2 = () => {
+  const result = doSomething();
+  return (
+    (shouldReturn && result.ok && result) || {
+      status: "ok",
+      createdAt: result.createdAt,
+      updatedAt: result.updatedAt,
+    }
+  );
+};
+
+const obj = {
+  state: shouldHaveState
+    && stateIsOK && {
+      loadState: LOADED,
+      opened: false,
+    },
+  loadNext: (stateIsOK && hasNext) || {
+    skipNext: true,
+  },
+  loaded: true,
+};
+
+================================================================================
+`;
+
+exports[`inline-object-array.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+prevState = prevState || {
+  catalogs: [],
+  loadState: LOADED,
+  opened: false,
+  searchQuery: '',
+  selectedCatalog: null,
+};
+
+prevState = prevState ||
+  defaultState || {
+    catalogs: [],
+    loadState: LOADED,
+    opened: false,
+    searchQuery: '',
+    selectedCatalog: null,
+  };
+
+prevState = prevState ||
+  defaultState && {
+    catalogs: [],
+    loadState: LOADED,
+    opened: false,
+    searchQuery: '',
+    selectedCatalog: null,
+  };
+
+prevState = prevState || useDefault && defaultState || {
+    catalogs: [],
+    loadState: LOADED,
+    opened: false,
+    searchQuery: '',
+    selectedCatalog: null,
+  };
+
+this.steps = steps || [
+  {
+    name: 'mock-module',
+    path: '/nux/mock-module',
+  },
+];
+
+this.steps = steps || checkStep && [
+  {
+    name: 'mock-module',
+    path: '/nux/mock-module',
+  },
+];
+
+this.steps = steps && checkStep || [
+  {
+    name: 'mock-module',
+    path: '/nux/mock-module',
+  },
+];
+
+const create = () => {
+  const result = doSomething();
+  return (
+    shouldReturn &&
+    result.ok && {
+      status: "ok",
+      createdAt: result.createdAt,
+      updatedAt: result.updatedAt
+    }
+  );
+}
+
+const create2 = () => {
+  const result = doSomething();
+  return (
+    shouldReturn && result.ok && result || {
+      status: "ok",
+      createdAt: result.createdAt,
+      updatedAt: result.updatedAt
+    }
+  );
+}
+
+const obj = {
+  state: shouldHaveState &&
+    stateIsOK && {
+      loadState: LOADED,
+      opened: false
+    },
+  loadNext: stateIsOK && hasNext || {
+      skipNext: true
+    },
+  loaded: true
+}
+
+=====================================output=====================================
+prevState = prevState || {
+  catalogs: [],
+  loadState: LOADED,
+  opened: false,
+  searchQuery: "",
+  selectedCatalog: null,
+};
+
+prevState = prevState ||
+  defaultState || {
+    catalogs: [],
+    loadState: LOADED,
+    opened: false,
+    searchQuery: "",
+    selectedCatalog: null,
+  };
+
+prevState =
+  prevState ||
+  (defaultState && {
+    catalogs: [],
+    loadState: LOADED,
+    opened: false,
+    searchQuery: "",
+    selectedCatalog: null,
+  });
+
+prevState = prevState ||
+  (useDefault && defaultState) || {
+    catalogs: [],
+    loadState: LOADED,
+    opened: false,
+    searchQuery: "",
+    selectedCatalog: null,
+  };
+
+this.steps = steps || [
+  {
+    name: "mock-module",
+    path: "/nux/mock-module",
+  },
+];
+
+this.steps =
+  steps ||
+  (checkStep && [
+    {
+      name: "mock-module",
+      path: "/nux/mock-module",
+    },
+  ]);
+
+this.steps = (steps && checkStep) || [
+  {
+    name: "mock-module",
+    path: "/nux/mock-module",
+  },
+];
+
+const create = () => {
+  const result = doSomething();
+  return (
+    shouldReturn &&
+    result.ok && {
+      status: "ok",
+      createdAt: result.createdAt,
+      updatedAt: result.updatedAt,
+    }
+  );
+};
+
+const create2 = () => {
+  const result = doSomething();
+  return (
+    (shouldReturn && result.ok && result) || {
+      status: "ok",
+      createdAt: result.createdAt,
+      updatedAt: result.updatedAt,
+    }
+  );
+};
+
+const obj = {
+  state: shouldHaveState &&
+    stateIsOK && {
+      loadState: LOADED,
+      opened: false,
+    },
+  loadNext: (stateIsOK && hasNext) || {
+    skipNext: true,
+  },
+  loaded: true,
+};
+
+================================================================================
+`;
+
+exports[`jsx_parent.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div
+  src={
+    !isJellyfishEnabled &&
+    diffUpdateMessageInput != null &&
+    this.state.isUpdateMessageEmpty
+  }
+/>;
+
+<div>
+  {!isJellyfishEnabled &&
+    diffUpdateMessageInput != null &&
+    this.state.isUpdateMessageEmpty}
+</div>;
+
+<div
+  style={
+    !isJellyfishEnabled &&
+    diffUpdateMessageInput && {
+      fontSize: 14,
+      color: '#fff'
+    }
+  }
+/>;
+
+<div>
+  {!isJellyfishEnabled &&
+    diffUpdateMessageInput != null && <div><span>Text</span></div>}
+</div>;
+
+<div>
+  {!isJellyfishEnabled &&
+    diffUpdateMessageInput != null && child || <div><span>Text</span></div>}
+</div>;
+
+=====================================output=====================================
+<div
+  src={
+    !isJellyfishEnabled
+    && diffUpdateMessageInput != null
+    && this.state.isUpdateMessageEmpty
+  }
+/>;
+
+<div>
+  {!isJellyfishEnabled
+    && diffUpdateMessageInput != null
+    && this.state.isUpdateMessageEmpty}
+</div>;
+
+<div
+  style={
+    !isJellyfishEnabled
+    && diffUpdateMessageInput && {
+      fontSize: 14,
+      color: "#fff",
+    }
+  }
+/>;
+
+<div>
+  {!isJellyfishEnabled && diffUpdateMessageInput != null && (
+    <div>
+      <span>Text</span>
+    </div>
+  )}
+</div>;
+
+<div>
+  {(!isJellyfishEnabled && diffUpdateMessageInput != null && child) || (
+    <div>
+      <span>Text</span>
+    </div>
+  )}
+</div>;
+
+================================================================================
+`;
+
+exports[`jsx_parent.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div
+  src={
+    !isJellyfishEnabled &&
+    diffUpdateMessageInput != null &&
+    this.state.isUpdateMessageEmpty
+  }
+/>;
+
+<div>
+  {!isJellyfishEnabled &&
+    diffUpdateMessageInput != null &&
+    this.state.isUpdateMessageEmpty}
+</div>;
+
+<div
+  style={
+    !isJellyfishEnabled &&
+    diffUpdateMessageInput && {
+      fontSize: 14,
+      color: '#fff'
+    }
+  }
+/>;
+
+<div>
+  {!isJellyfishEnabled &&
+    diffUpdateMessageInput != null && <div><span>Text</span></div>}
+</div>;
+
+<div>
+  {!isJellyfishEnabled &&
+    diffUpdateMessageInput != null && child || <div><span>Text</span></div>}
+</div>;
+
+=====================================output=====================================
+<div
+  src={
+    !isJellyfishEnabled &&
+    diffUpdateMessageInput != null &&
+    this.state.isUpdateMessageEmpty
+  }
+/>;
+
+<div>
+  {!isJellyfishEnabled &&
+    diffUpdateMessageInput != null &&
+    this.state.isUpdateMessageEmpty}
+</div>;
+
+<div
+  style={
+    !isJellyfishEnabled &&
+    diffUpdateMessageInput && {
+      fontSize: 14,
+      color: "#fff",
+    }
+  }
+/>;
+
+<div>
+  {!isJellyfishEnabled && diffUpdateMessageInput != null && (
+    <div>
+      <span>Text</span>
+    </div>
+  )}
+</div>;
+
+<div>
+  {(!isJellyfishEnabled && diffUpdateMessageInput != null && child) || (
+    <div>
+      <span>Text</span>
+    </div>
+  )}
+</div>;
+
+================================================================================
+`;
+
+exports[`like-regexp.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+0 ? a : { b : 1 }/2;
+
+=====================================output=====================================
+0 ? a : { b: 1 } / 2;
+
+================================================================================
+`;
+
+exports[`like-regexp.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+0 ? a : { b : 1 }/2;
+
+=====================================output=====================================
+0 ? a : { b: 1 } / 2;
+
+================================================================================
+`;
+
+exports[`math.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+x + y / z;
+x / y + z;
+
+x * y % z;
+x / y % z;
+x % y * z;
+x % y / z;
+
+x % y % z;
+
+x << y >> z;
+x >>> y << z;
+x >>> y >>> z;
+x + y >> z;
+
+x | y & z;
+x & y | z;
+x ^ y ^ z;
+x & y & z;
+x | y | z;
+x & y >> z;
+x << y | z;
+
+=====================================output=====================================
+x + y / z;
+x / y + z;
+
+(x * y) % z;
+(x / y) % z;
+(x % y) * z;
+(x % y) / z;
+
+(x % y) % z;
+
+(x << y) >> z;
+(x >>> y) << z;
+(x >>> y) >>> z;
+(x + y) >> z;
+
+x | (y & z);
+(x & y) | z;
+x ^ y ^ z;
+x & y & z;
+x | y | z;
+x & (y >> z);
+(x << y) | z;
+
+================================================================================
+`;
+
+exports[`math.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+x + y / z;
+x / y + z;
+
+x * y % z;
+x / y % z;
+x % y * z;
+x % y / z;
+
+x % y % z;
+
+x << y >> z;
+x >>> y << z;
+x >>> y >>> z;
+x + y >> z;
+
+x | y & z;
+x & y | z;
+x ^ y ^ z;
+x & y & z;
+x | y | z;
+x & y >> z;
+x << y | z;
+
+=====================================output=====================================
+x + y / z;
+x / y + z;
+
+(x * y) % z;
+(x / y) % z;
+(x % y) * z;
+(x % y) / z;
+
+(x % y) % z;
+
+(x << y) >> z;
+(x >>> y) << z;
+(x >>> y) >>> z;
+(x + y) >> z;
+
+x | (y & z);
+(x & y) | z;
+x ^ y ^ z;
+x & y & z;
+x | y | z;
+x & (y >> z);
+(x << y) | z;
+
+================================================================================
+`;
+
+exports[`return.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function foo() {
+  return this.hasPlugin("dynamicImports") && this.lookahead().type === tt.parenLeft.right;
+}
+
+function foo2() {
+  return this.hasPlugin("dynamicImports") && this.lookahead().type === tt.parenLeft.right
+    ? true
+    : false;
+}
+
+function foo3() {
+  return this.calculate().compute().first.numberOfThings > this.calculate().compute().last.numberOfThings
+    ? true
+    : false;
+}
+
+=====================================output=====================================
+function foo() {
+  return (
+    this.hasPlugin("dynamicImports")
+    && this.lookahead().type === tt.parenLeft.right
+  );
+}
+
+function foo2() {
+  return this.hasPlugin("dynamicImports")
+    && this.lookahead().type === tt.parenLeft.right
+    ? true
+    : false;
+}
+
+function foo3() {
+  return this.calculate().compute().first.numberOfThings
+    > this.calculate().compute().last.numberOfThings
+    ? true
+    : false;
+}
+
+================================================================================
+`;
+
+exports[`return.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function foo() {
+  return this.hasPlugin("dynamicImports") && this.lookahead().type === tt.parenLeft.right;
+}
+
+function foo2() {
+  return this.hasPlugin("dynamicImports") && this.lookahead().type === tt.parenLeft.right
+    ? true
+    : false;
+}
+
+function foo3() {
+  return this.calculate().compute().first.numberOfThings > this.calculate().compute().last.numberOfThings
+    ? true
+    : false;
+}
+
+=====================================output=====================================
+function foo() {
+  return (
+    this.hasPlugin("dynamicImports") &&
+    this.lookahead().type === tt.parenLeft.right
+  );
+}
+
+function foo2() {
+  return this.hasPlugin("dynamicImports") &&
+    this.lookahead().type === tt.parenLeft.right
+    ? true
+    : false;
+}
+
+function foo3() {
+  return this.calculate().compute().first.numberOfThings >
+    this.calculate().compute().last.numberOfThings
+    ? true
+    : false;
+}
+
+================================================================================
+`;
+
+exports[`short-right.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+this._cumulativeHeights &&
+ Math.abs(
+   this._cachedItemHeight(this._firstVisibleIndex + i) -
+     this._provider.fastHeight(i + this._firstVisibleIndex),
+ ) >
+   1
+
+foooooooooooooooooooooooooooooooooooooooooooooooooooooooooo(
+  aaaaaaaaaaaaaaaaaaa
+) +
+  a;
+
+const isPartOfPackageJSON = dependenciesArray.indexOf(
+  dependencyWithOutRelativePath.split('/')[0],
+) !== -1;
+
+defaultContent.filter(defaultLocale => {
+  // ...
+})[0] || null;
+
+=====================================output=====================================
+this._cumulativeHeights
+  && Math.abs(
+    this._cachedItemHeight(this._firstVisibleIndex + i)
+      - this._provider.fastHeight(i + this._firstVisibleIndex),
+  ) > 1;
+
+foooooooooooooooooooooooooooooooooooooooooooooooooooooooooo(aaaaaaaaaaaaaaaaaaa)
+  + a;
+
+const isPartOfPackageJSON =
+  dependenciesArray.indexOf(dependencyWithOutRelativePath.split("/")[0]) !== -1;
+
+defaultContent.filter((defaultLocale) => {
+  // ...
+})[0] || null;
+
+================================================================================
+`;
+
+exports[`short-right.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+this._cumulativeHeights &&
+ Math.abs(
+   this._cachedItemHeight(this._firstVisibleIndex + i) -
+     this._provider.fastHeight(i + this._firstVisibleIndex),
+ ) >
+   1
+
+foooooooooooooooooooooooooooooooooooooooooooooooooooooooooo(
+  aaaaaaaaaaaaaaaaaaa
+) +
+  a;
+
+const isPartOfPackageJSON = dependenciesArray.indexOf(
+  dependencyWithOutRelativePath.split('/')[0],
+) !== -1;
+
+defaultContent.filter(defaultLocale => {
+  // ...
+})[0] || null;
+
+=====================================output=====================================
+this._cumulativeHeights &&
+  Math.abs(
+    this._cachedItemHeight(this._firstVisibleIndex + i) -
+      this._provider.fastHeight(i + this._firstVisibleIndex),
+  ) > 1;
+
+foooooooooooooooooooooooooooooooooooooooooooooooooooooooooo(
+  aaaaaaaaaaaaaaaaaaa,
+) + a;
+
+const isPartOfPackageJSON =
+  dependenciesArray.indexOf(dependencyWithOutRelativePath.split("/")[0]) !== -1;
+
+defaultContent.filter((defaultLocale) => {
+  // ...
+})[0] || null;
+
+================================================================================
+`;
+
+exports[`test.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// It should always break the highest precedence operators first, and
+// break them all at the same time.
+
+const x = longVariable + longVariable + longVariable;
+const x1 = longVariable + longVariable + longVariable + longVariable - longVariable + longVariable;
+const x2 = longVariable + longVariable * longVariable + longVariable - longVariable + longVariable;
+const x3 = longVariable + longVariable * longVariable * longVariable / longVariable + longVariable;
+
+const x4 = longVariable && longVariable && longVariable && longVariable && longVariable && longVariable;
+const x5 = longVariable && longVariable || longVariable && longVariable || longVariable && longVariable;
+const x6 = firstItemWithAVeryLongNameThatKeepsGoing || firstItemWithAVeryLongNameThatKeepsGoing || {};
+const x7 = firstItemWithAVeryLongNameThatKeepsGoing || firstItemWithAVeryLongNameThatKeepsGoing || [];
+const x8 = call(firstItemWithAVeryLongNameThatKeepsGoing, firstItemWithAVeryLongNameThatKeepsGoing) || [];
+
+const x9 = longVariable * longint && longVariable >> 0 && longVariable + longVariable;
+
+const x10 = longVariable > longint && longVariable === 0 + longVariable * longVariable;
+
+foo(obj.property * new Class() && obj instanceof Class && longVariable ? number + 5 : false);
+
+=====================================output=====================================
+// It should always break the highest precedence operators first, and
+// break them all at the same time.
+
+const x = longVariable + longVariable + longVariable;
+const x1 =
+  longVariable
+  + longVariable
+  + longVariable
+  + longVariable
+  - longVariable
+  + longVariable;
+const x2 =
+  longVariable
+  + longVariable * longVariable
+  + longVariable
+  - longVariable
+  + longVariable;
+const x3 =
+  longVariable
+  + (longVariable * longVariable * longVariable) / longVariable
+  + longVariable;
+
+const x4 =
+  longVariable
+  && longVariable
+  && longVariable
+  && longVariable
+  && longVariable
+  && longVariable;
+const x5 =
+  (longVariable && longVariable)
+  || (longVariable && longVariable)
+  || (longVariable && longVariable);
+const x6 =
+  firstItemWithAVeryLongNameThatKeepsGoing
+  || firstItemWithAVeryLongNameThatKeepsGoing
+  || {};
+const x7 =
+  firstItemWithAVeryLongNameThatKeepsGoing
+  || firstItemWithAVeryLongNameThatKeepsGoing
+  || [];
+const x8 =
+  call(
+    firstItemWithAVeryLongNameThatKeepsGoing,
+    firstItemWithAVeryLongNameThatKeepsGoing,
+  ) || [];
+
+const x9 =
+  longVariable * longint && longVariable >> 0 && longVariable + longVariable;
+
+const x10 =
+  longVariable > longint && longVariable === 0 + longVariable * longVariable;
+
+foo(
+  obj.property * new Class() && obj instanceof Class && longVariable
+    ? number + 5
+    : false,
+);
+
+================================================================================
+`;
+
+exports[`test.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// It should always break the highest precedence operators first, and
+// break them all at the same time.
+
+const x = longVariable + longVariable + longVariable;
+const x1 = longVariable + longVariable + longVariable + longVariable - longVariable + longVariable;
+const x2 = longVariable + longVariable * longVariable + longVariable - longVariable + longVariable;
+const x3 = longVariable + longVariable * longVariable * longVariable / longVariable + longVariable;
+
+const x4 = longVariable && longVariable && longVariable && longVariable && longVariable && longVariable;
+const x5 = longVariable && longVariable || longVariable && longVariable || longVariable && longVariable;
+const x6 = firstItemWithAVeryLongNameThatKeepsGoing || firstItemWithAVeryLongNameThatKeepsGoing || {};
+const x7 = firstItemWithAVeryLongNameThatKeepsGoing || firstItemWithAVeryLongNameThatKeepsGoing || [];
+const x8 = call(firstItemWithAVeryLongNameThatKeepsGoing, firstItemWithAVeryLongNameThatKeepsGoing) || [];
+
+const x9 = longVariable * longint && longVariable >> 0 && longVariable + longVariable;
+
+const x10 = longVariable > longint && longVariable === 0 + longVariable * longVariable;
+
+foo(obj.property * new Class() && obj instanceof Class && longVariable ? number + 5 : false);
+
+=====================================output=====================================
+// It should always break the highest precedence operators first, and
+// break them all at the same time.
+
+const x = longVariable + longVariable + longVariable;
+const x1 =
+  longVariable +
+  longVariable +
+  longVariable +
+  longVariable -
+  longVariable +
+  longVariable;
+const x2 =
+  longVariable +
+  longVariable * longVariable +
+  longVariable -
+  longVariable +
+  longVariable;
+const x3 =
+  longVariable +
+  (longVariable * longVariable * longVariable) / longVariable +
+  longVariable;
+
+const x4 =
+  longVariable &&
+  longVariable &&
+  longVariable &&
+  longVariable &&
+  longVariable &&
+  longVariable;
+const x5 =
+  (longVariable && longVariable) ||
+  (longVariable && longVariable) ||
+  (longVariable && longVariable);
+const x6 =
+  firstItemWithAVeryLongNameThatKeepsGoing ||
+  firstItemWithAVeryLongNameThatKeepsGoing ||
+  {};
+const x7 =
+  firstItemWithAVeryLongNameThatKeepsGoing ||
+  firstItemWithAVeryLongNameThatKeepsGoing ||
+  [];
+const x8 =
+  call(
+    firstItemWithAVeryLongNameThatKeepsGoing,
+    firstItemWithAVeryLongNameThatKeepsGoing,
+  ) || [];
+
+const x9 =
+  longVariable * longint && longVariable >> 0 && longVariable + longVariable;
+
+const x10 =
+  longVariable > longint && longVariable === 0 + longVariable * longVariable;
+
+foo(
+  obj.property * new Class() && obj instanceof Class && longVariable
+    ? number + 5
+    : false,
+);
+
+================================================================================
+`;
+
+exports[`unary.js - {"experimentalOperatorPosition":"start"} format 1`] = `
+====================================options=====================================
+experimentalOperatorPosition: "start"
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const anyTestFailures = !(
+  aggregatedResults.numFailedTests === 0 &&
+  aggregatedResults.numRuntimeErrorTestSuites === 0
+);
+
+=====================================output=====================================
+const anyTestFailures = !(
+  aggregatedResults.numFailedTests === 0
+  && aggregatedResults.numRuntimeErrorTestSuites === 0
+);
+
+================================================================================
+`;
+
+exports[`unary.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const anyTestFailures = !(
+  aggregatedResults.numFailedTests === 0 &&
+  aggregatedResults.numRuntimeErrorTestSuites === 0
+);
+
+=====================================output=====================================
+const anyTestFailures = !(
+  aggregatedResults.numFailedTests === 0 &&
+  aggregatedResults.numRuntimeErrorTestSuites === 0
+);
+
+================================================================================
+`;

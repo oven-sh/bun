@@ -1,0 +1,607 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`postcss-mixins.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a {
+    @mixin $(theme)-colors;
+}
+
+@define-mixin icon $network, $color: blue {
+    .icon.is-$(network) {
+        color: $color;
+        @mixin-content;
+    }
+    .icon.is-$(network):hover {
+       color: white;
+       background: $color;
+   }
+}
+
+@mixin icon twitter {
+    background: url(twt.png);
+}
+@mixin icon youtube, red {
+    background: url(youtube.png);
+}
+
+.search {
+    @mixin icon search;
+}
+
+a {
+    color: black;
+    @mixin parent {
+        @mixin child;
+    }
+}
+
+=====================================output=====================================
+a {
+  @mixin $(theme)-colors;
+}
+
+@define-mixin icon $network, $color: blue {
+  .icon.is-$(network) {
+    color: $color;
+    @mixin-content;
+  }
+  .icon.is-$(network):hover {
+    color: white;
+    background: $color;
+  }
+}
+
+@mixin icon twitter {
+  background: url(twt.png);
+}
+@mixin icon youtube, red {
+  background: url(youtube.png);
+}
+
+.search {
+  @mixin icon search;
+}
+
+a {
+  color: black;
+  @mixin parent {
+    @mixin child;
+  }
+}
+
+================================================================================
+`;
+
+exports[`postcss-nested.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.phone {
+    &_title {
+        width: 500px;
+        @media (max-width: 500px) {
+            width: auto;
+        }
+        body.is_dark & {
+            color: white;
+        }
+    }
+    img {
+        display: block;
+    }
+}
+
+=====================================output=====================================
+.phone {
+  &_title {
+    width: 500px;
+    @media (max-width: 500px) {
+      width: auto;
+    }
+    body.is_dark & {
+      color: white;
+    }
+  }
+  img {
+    display: block;
+  }
+}
+
+================================================================================
+`;
+
+exports[`postcss-nested-props.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.funky {
+    font: {
+        family: fantasy;
+        size: 30em;
+        weight: bold;
+    }
+}
+
+.funky {
+    font: 20px/24px fantasy {
+        weight: bold;
+    }
+}
+
+=====================================output=====================================
+.funky {
+  font: {
+    family: fantasy;
+    size: 30em;
+    weight: bold;
+  }
+}
+
+.funky {
+  font: 20px/24px fantasy {
+    weight: bold;
+  }
+}
+
+================================================================================
+`;
+
+exports[`postcss-nesting.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a {
+  order: 1;
+  @nest b & {
+    order: 2;
+  }
+  @nest c & {
+    order: 3;
+  }
+  @nest d & {
+    order: 4;
+  }
+  @nest e & {
+    order: 5;
+  }
+}
+a {
+  order: 1;
+  @nest & b {
+    order: 2;
+  }
+  @nest & c {
+    order: 3;
+  }
+  @nest & d {
+    order: 4;
+  }
+  @nest & e {
+    order: 5;
+  }
+}
+
+.rule-1 {
+  order: 1;
+  @media screen, print {
+    order: 2;
+    &.rule-2 {
+      order: 3;
+      @media (max-width: 30em) {
+        order: 4;
+        @nest .rule-prefix & {
+          order: 5;
+        }
+        order: 6;
+      }
+      order: 7;
+    }
+    order: 8;
+  }
+  order: 9;
+}
+
+a, b {
+  order: 1;
+  & c, & d {
+    order: 2;
+    & e, & f {
+      order: 3;
+    }
+    order: 4;
+  }
+  order: 5;
+}
+a, b {
+  order: 1;
+  @nest & c, & d {
+    order: 2;
+    @nest & e, & f {
+      order: 3;
+    }
+    order: 4;
+  }
+  order: 5;
+}
+
+a {
+  & b {
+    & c {
+      order: 1;
+    }
+  }
+}
+d {
+  order: 2;
+  & e {
+    order: 3;
+  }
+}
+f {
+  & g {
+    order: 4;
+  }
+  order: 5;
+}
+a {
+  @nest & b {
+    @nest & c {
+      order: 1;
+    }
+  }
+}
+d {
+  order: 2;
+  @nest & e {
+    order: 3;
+  }
+}
+f {
+  @nest & g {
+    order: 4;
+  }
+  order: 5;
+}
+
+a, b {
+  order: 1;
+  c, d {
+    order: 2;
+  }
+}
+& e {
+  order: 3;
+}
+f {
+  & g & {
+    order: 4;
+  }
+  &h {
+    order: 5;
+  }
+}
+a, b {
+  order: 1;
+  @nest c, d {
+    order: 2;
+  }
+}
+@nest & e {
+  order: 3;
+}
+f {
+  @nest & g & {
+    order: 4;
+  }
+  @nest &h {
+    order: 5;
+  }
+}
+
+a {
+  order: 1;
+  @media (min-width: 100px) {
+    order: 2;
+    @media (max-width: 200px) {
+      order: 3;
+    }
+    & b {
+      @media (max-width: 200px) {
+        order: 4;
+      }
+    }
+  }
+  @media screen, print and speech {
+    @media (max-width: 300px), (min-aspect-ratio: 16/9) {
+      order: 5;
+      & c {
+        order: 6;
+      }
+    }
+  }
+}
+a {
+  order: 1;
+  @media (min-width: 100px) {
+    order: 2;
+    @media (max-width: 200px) {
+      order: 3;
+    }
+    @nest & b {
+      @media (max-width: 200px) {
+        order: 4;
+      }
+    }
+  }
+  @media screen, print and speech {
+    @media (max-width: 300px), (min-aspect-ratio: 16/9) {
+      order: 5;
+      @nest & c {
+        order: 6;
+      }
+    }
+  }
+}
+a {
+  order: 1;
+  @nest very-very-very-very-very-very-very-very-very-long-selector &, very-very-very-very-very-very-very-very-very-long-selector & {
+    order: 2;
+  }
+  @nest very-very-very-very-very-very-very-very-very-long-selector + very-very-very-very-very-very-very-very-very-long-selector  &, very-very-very-very-very-very-very-very-very-long-selector very-very-very-very-very-very-very-very-very-long-selector & {
+    order: 2;
+  }
+}
+
+=====================================output=====================================
+a {
+  order: 1;
+  @nest b & {
+    order: 2;
+  }
+  @nest c & {
+    order: 3;
+  }
+  @nest d & {
+    order: 4;
+  }
+  @nest e & {
+    order: 5;
+  }
+}
+a {
+  order: 1;
+  @nest & b {
+    order: 2;
+  }
+  @nest & c {
+    order: 3;
+  }
+  @nest & d {
+    order: 4;
+  }
+  @nest & e {
+    order: 5;
+  }
+}
+
+.rule-1 {
+  order: 1;
+  @media screen, print {
+    order: 2;
+    &.rule-2 {
+      order: 3;
+      @media (max-width: 30em) {
+        order: 4;
+        @nest .rule-prefix & {
+          order: 5;
+        }
+        order: 6;
+      }
+      order: 7;
+    }
+    order: 8;
+  }
+  order: 9;
+}
+
+a,
+b {
+  order: 1;
+  & c,
+  & d {
+    order: 2;
+    & e,
+    & f {
+      order: 3;
+    }
+    order: 4;
+  }
+  order: 5;
+}
+a,
+b {
+  order: 1;
+  @nest & c, & d {
+    order: 2;
+    @nest & e, & f {
+      order: 3;
+    }
+    order: 4;
+  }
+  order: 5;
+}
+
+a {
+  & b {
+    & c {
+      order: 1;
+    }
+  }
+}
+d {
+  order: 2;
+  & e {
+    order: 3;
+  }
+}
+f {
+  & g {
+    order: 4;
+  }
+  order: 5;
+}
+a {
+  @nest & b {
+    @nest & c {
+      order: 1;
+    }
+  }
+}
+d {
+  order: 2;
+  @nest & e {
+    order: 3;
+  }
+}
+f {
+  @nest & g {
+    order: 4;
+  }
+  order: 5;
+}
+
+a,
+b {
+  order: 1;
+  c,
+  d {
+    order: 2;
+  }
+}
+& e {
+  order: 3;
+}
+f {
+  & g & {
+    order: 4;
+  }
+  &h {
+    order: 5;
+  }
+}
+a,
+b {
+  order: 1;
+  @nest c, d {
+    order: 2;
+  }
+}
+@nest & e {
+  order: 3;
+}
+f {
+  @nest & g & {
+    order: 4;
+  }
+  @nest &h {
+    order: 5;
+  }
+}
+
+a {
+  order: 1;
+  @media (min-width: 100px) {
+    order: 2;
+    @media (max-width: 200px) {
+      order: 3;
+    }
+    & b {
+      @media (max-width: 200px) {
+        order: 4;
+      }
+    }
+  }
+  @media screen, print and speech {
+    @media (max-width: 300px), (min-aspect-ratio: 16/9) {
+      order: 5;
+      & c {
+        order: 6;
+      }
+    }
+  }
+}
+a {
+  order: 1;
+  @media (min-width: 100px) {
+    order: 2;
+    @media (max-width: 200px) {
+      order: 3;
+    }
+    @nest & b {
+      @media (max-width: 200px) {
+        order: 4;
+      }
+    }
+  }
+  @media screen, print and speech {
+    @media (max-width: 300px), (min-aspect-ratio: 16/9) {
+      order: 5;
+      @nest & c {
+        order: 6;
+      }
+    }
+  }
+}
+a {
+  order: 1;
+  @nest very-very-very-very-very-very-very-very-very-long-selector &,
+    very-very-very-very-very-very-very-very-very-long-selector & {
+    order: 2;
+  }
+  @nest very-very-very-very-very-very-very-very-very-long-selector
+      + very-very-very-very-very-very-very-very-very-long-selector
+      &,
+    very-very-very-very-very-very-very-very-very-long-selector
+      very-very-very-very-very-very-very-very-very-long-selector
+      & {
+    order: 2;
+  }
+}
+
+================================================================================
+`;
+
+exports[`postcss-simple-vars.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+background-color: $$(style)Color;
+background-color: $$(style)Color Color122;
+color: @@color;
+font: 100% $font-stack;
+background-color: darken(@link-color, 10%);
+border: 1px solid var(--border-color);
+color: $(style)color;
+color: @@(style) color123;
+color: @@(style)color123;
+
+=====================================output=====================================
+background-color: $$(style)Color;
+background-color: $$(style)Color Color122;
+color: @@color;
+font: 100% $font-stack;
+background-color: darken(@link-color, 10%);
+border: 1px solid var(--border-color);
+color: $(style) color;
+color: @@(style) color123;
+color: @@(style) color123;
+
+================================================================================
+`;

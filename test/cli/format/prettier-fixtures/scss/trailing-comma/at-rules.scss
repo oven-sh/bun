@@ -1,0 +1,33 @@
+a {
+@include section-type-1(
+$header:
+(
+margin: 0 0 $margin-base,
+text-align: left,
+),
+$decoration:
+(
+type: base,
+margin: 0 auto -1px 0,
+primary-color: $brand-primary,
+secondary-color: $gray-light,
+),
+$title:
+(
+margin: 0 0 $margin-small,
+color: false,
+font-size: $font-size-h3,
+font-weight: false,
+line-height: $line-height-h3,
+)
+);
+}
+
+a {
+@include item-spotlight-properties-transition(
+"-title",
+(
+box-shadow: 0 3px 10px rgba(0, 0, 0, 0.15),
+)
+);
+}

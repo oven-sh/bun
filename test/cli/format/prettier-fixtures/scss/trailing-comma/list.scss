@@ -1,0 +1,48 @@
+$colors: hotpink deepskyblue firebrick,;
+$list: (a,);
+$list: ('Helvetica', 'Arial', sans-serif,);
+$colors: (
+  "red",
+  "blue"
+);
+$config: (
+  themes: (
+    mist: (
+      header: #dcfac0,
+      content: #00968b,
+      footer: #85c79c
+    ),
+    $spring: (
+      header: #f4fac7,
+      content: #c2454e,
+      footer: #ffb158
+    )
+  )
+);
+
+$breakpoint-map: (
+  small: (
+    min-width: null,
+    max-width: 479px,
+    base-font: 16px,
+    vertical-rhythm: 1.3
+  ),
+  medium: (
+    min-width: 480px,
+    max-width: 959px,
+    base-font: 18px,
+    vertical-rhythm: 1.414
+  ),
+  large: (
+    min-width: 960px,
+    max-width: 1099px,
+    base-font: 18px,
+    vertical-rhythm: 1.5
+  ),
+  xlarge: (
+    min-width: 1100px,
+    max-width: null,
+    base-font: 21px,
+    vertical-rhythm: 1.618
+  )
+);

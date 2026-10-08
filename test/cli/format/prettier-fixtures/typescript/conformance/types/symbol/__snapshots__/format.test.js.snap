@@ -1,0 +1,16 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`symbol.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var x: symbol
+var x: symbol | string
+
+=====================================output=====================================
+var x: symbol;
+var x: symbol | string;
+
+================================================================================
+`;

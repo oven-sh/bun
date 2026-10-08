@@ -1,0 +1,73 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`test.jsonc - {"quoteProps":"as-needed"} format 1`] = `
+====================================options=====================================
+parsers: ["jsonc"]
+quoteProps: "as-needed"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+[
+  "Object keys should always quoted!",
+  {"key":""},
+  {"key":"","key-can-not-unquote":""},
+  {key:""},
+]
+
+=====================================output=====================================
+[
+  "Object keys should always quoted!",
+  { "key": "" },
+  { "key": "", "key-can-not-unquote": "" },
+  { "key": "" },
+]
+
+================================================================================
+`;
+
+exports[`test.jsonc - {"quoteProps":"consistent"} format 1`] = `
+====================================options=====================================
+parsers: ["jsonc"]
+quoteProps: "consistent"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+[
+  "Object keys should always quoted!",
+  {"key":""},
+  {"key":"","key-can-not-unquote":""},
+  {key:""},
+]
+
+=====================================output=====================================
+[
+  "Object keys should always quoted!",
+  { "key": "" },
+  { "key": "", "key-can-not-unquote": "" },
+  { "key": "" },
+]
+
+================================================================================
+`;
+
+exports[`test.jsonc - {"quoteProps":"preserve"} format 1`] = `
+====================================options=====================================
+parsers: ["jsonc"]
+quoteProps: "preserve"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+[
+  "Object keys should always quoted!",
+  {"key":""},
+  {"key":"","key-can-not-unquote":""},
+  {key:""},
+]
+
+=====================================output=====================================
+[
+  "Object keys should always quoted!",
+  { "key": "" },
+  { "key": "", "key-can-not-unquote": "" },
+  { "key": "" },
+]
+
+================================================================================
+`;

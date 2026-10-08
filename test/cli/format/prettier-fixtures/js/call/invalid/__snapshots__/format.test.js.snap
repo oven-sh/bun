@@ -1,0 +1,69 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`null-arguments-item.js format[__babel_estree] 1`] = `
+"Unexpected token ','. (1:12)
+> 1 | foor('a', , 'b');
+    |            ^
+  2 | foo('looooooooooooooooooooooooooooooooooooooooooooooong', , 'looooooooooooooooooooooooooooooooooooooooooooooong');
+  3 | foo("a",
+  4 |     //1
+Cause: Unexpected token ','. (1:11)"
+`;
+
+exports[`null-arguments-item.js format[acorn] 1`] = `
+"Unexpected token (1:11)
+> 1 | foor('a', , 'b');
+    |           ^
+  2 | foo('looooooooooooooooooooooooooooooooooooooooooooooong', , 'looooooooooooooooooooooooooooooooooooooooooooooong');
+  3 | foo("a",
+  4 |     //1
+Cause: Unexpected token (1:10)"
+`;
+
+exports[`null-arguments-item.js format[babel] 1`] = `
+"Unexpected token ','. (1:12)
+> 1 | foor('a', , 'b');
+    |            ^
+  2 | foo('looooooooooooooooooooooooooooooooooooooooooooooong', , 'looooooooooooooooooooooooooooooooooooooooooooooong');
+  3 | foo("a",
+  4 |     //1
+Cause: Unexpected token ','. (1:11)"
+`;
+
+exports[`null-arguments-item.js format[espree] 1`] = `
+"Unexpected token , (1:11)
+> 1 | foor('a', , 'b');
+    |           ^
+  2 | foo('looooooooooooooooooooooooooooooooooooooooooooooong', , 'looooooooooooooooooooooooooooooooooooooooooooooong');
+  3 | foo("a",
+  4 |     //1
+Cause: Unexpected token ,"
+`;
+
+exports[`null-arguments-item.js format[meriyah] 1`] = `
+"Unexpected token: ',' (1:11)
+> 1 | foor('a', , 'b');
+    |           ^
+  2 | foo('looooooooooooooooooooooooooooooooooooooooooooooong', , 'looooooooooooooooooooooooooooooooooooooooooooooong');
+  3 | foo("a",
+  4 |     //1
+Cause: [1:10-1:11]: Unexpected token: ','"
+`;
+
+exports[`null-arguments-item.js format[oxc] 1`] = `
+"Unexpected token (1:11)
+> 1 | foor('a', , 'b');
+    |           ^
+  2 | foo('looooooooooooooooooooooooooooooooooooooooooooooong', , 'looooooooooooooooooooooooooooooooooooooooooooooong');
+  3 | foo("a",
+  4 |     //1"
+`;
+
+exports[`null-arguments-item.js format[yuku] 1`] = `
+"Unexpected token ',' (1:11)
+> 1 | foor('a', , 'b');
+    |           ^
+  2 | foo('looooooooooooooooooooooooooooooooooooooooooooooong', , 'looooooooooooooooooooooooooooooooooooooooooooooong');
+  3 | foo("a",
+  4 |     //1"
+`;

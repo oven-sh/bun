@@ -1,0 +1,34 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`key-remapping.ts format 1`] = `
+====================================options=====================================
+parsers: ["babel-ts", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type MappedTypeWithNewKeys<T> = {
+  [K in keyof T as NewKeyType]: T[K]
+};
+  
+type RemoveKindField<T> = {
+  [K in keyof T as Exclude<K, "kind">]: T[K]
+};
+  
+type PickByValueType<T, U> = {
+  [K in keyof T as T[K] extends U ? K : never]: T[K]
+};
+
+=====================================output=====================================
+type MappedTypeWithNewKeys<T> = {
+  [K in keyof T as NewKeyType]: T[K];
+};
+
+type RemoveKindField<T> = {
+  [K in keyof T as Exclude<K, "kind">]: T[K];
+};
+
+type PickByValueType<T, U> = {
+  [K in keyof T as T[K] extends U ? K : never]: T[K];
+};
+
+================================================================================
+`;

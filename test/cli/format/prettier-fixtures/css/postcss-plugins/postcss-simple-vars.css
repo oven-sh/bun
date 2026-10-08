@@ -1,0 +1,9 @@
+background-color: $$(style)Color;
+background-color: $$(style)Color Color122;
+color: @@color;
+font: 100% $font-stack;
+background-color: darken(@link-color, 10%);
+border: 1px solid var(--border-color);
+color: $(style)color;
+color: @@(style) color123;
+color: @@(style)color123;

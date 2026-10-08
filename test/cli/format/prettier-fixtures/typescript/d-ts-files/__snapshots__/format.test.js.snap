@@ -1,0 +1,31 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`const-without-initializer.d.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export const    version: string;
+
+=====================================output=====================================
+export const version: string;
+
+================================================================================
+`;
+
+exports[`const-without-initializer-in-namespace.d.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export namespace builders {
+  const    breakParent: string;
+}
+
+=====================================output=====================================
+export namespace builders {
+  const breakParent: string;
+}
+
+================================================================================
+`;

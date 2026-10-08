@@ -1,0 +1,123 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`conditional-types.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export type UnwrappedResultRow<T> = {
+    [P in keyof T]: (
+        T[P] extends Req<infer a> ? (
+            a
+        ) : (
+            T[P] extends Opt<infer b> ? (
+                b
+            ) : (
+                // TEST
+                never
+            )
+        )
+    );
+};
+
+=====================================output=====================================
+export type UnwrappedResultRow<T> = {
+  [P in keyof T]: T[P] extends Req<infer a>
+    ? a
+    : T[P] extends Opt<infer b>
+      ? b
+      : // TEST
+        never;
+};
+
+================================================================================
+`;
+
+exports[`keyword-types-with-parens-comments.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let foo: (
+    // comment
+    any
+);
+let foo: (
+    // comment
+    null
+);
+let foo: (
+    // comment
+    this
+);
+let foo: (
+    // comment
+    number
+);
+let foo: (
+    // comment
+    void
+);
+let foo: (
+    // comment
+    boolean
+);
+let foo: (
+    // comment
+    bigint
+);
+let foo: (
+    // comment
+    symbol
+);
+let foo: (
+    // comment
+    string
+);
+let foo: (
+    // comment
+    never
+);
+let foo: (
+    // comment
+    object
+);
+let foo: (
+    // comment
+    undefined
+);
+let foo: (
+    // comment
+    unknown
+);
+
+=====================================output=====================================
+let foo: // comment
+any;
+let foo: // comment
+null;
+let foo: // comment
+this;
+let foo: // comment
+number;
+let foo: // comment
+void;
+let foo: // comment
+boolean;
+let foo: // comment
+bigint;
+let foo: // comment
+symbol;
+let foo: // comment
+string;
+let foo: // comment
+never;
+let foo: // comment
+object;
+let foo: // comment
+undefined;
+let foo: // comment
+unknown;
+
+================================================================================
+`;

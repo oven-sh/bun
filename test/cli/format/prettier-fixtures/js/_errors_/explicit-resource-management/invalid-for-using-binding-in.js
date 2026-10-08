@@ -1,0 +1,1 @@
+for (using foo in {});

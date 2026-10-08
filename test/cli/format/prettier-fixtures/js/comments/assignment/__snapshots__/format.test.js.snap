@@ -1,0 +1,63 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`variable-declarator.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let a1 // comment
+ = 1;
+let a12
+// comment
+ = 1;
+let a2 /* comment */
+ = 1;
+let a22
+/* comment */
+ = 1;
+let a3 /*
+comment */
+ = 1;
+let a32
+/*
+comment */
+ = 1;
+let a4 = // comment
+1;
+let a42 =
+// comment
+1;
+let a5 = /* comment */
+1;
+let a52 =
+/* comment */
+1;
+
+=====================================output=====================================
+let a1 = 1; // comment
+let a12 =
+  // comment
+  1;
+let a2 = /* comment */ 1;
+let a22 =
+  /* comment */
+  1;
+let a3 =
+  /*
+comment */
+  1;
+let a32 =
+  /*
+comment */
+  1;
+let a4 = 1; // comment
+let a42 =
+  // comment
+  1;
+let a5 = /* comment */ 1;
+let a52 =
+  /* comment */
+  1;
+
+================================================================================
+`;

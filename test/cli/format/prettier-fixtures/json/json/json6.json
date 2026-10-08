@@ -1,0 +1,47 @@
+[
+{'//': 'Keyword `undefined`',
+    "data": [
+      {undefined: undefined},
+      undefined,
+      [undefined, ]
+    ]
+  },
+
+{'//': 'back-tick quoted strings',
+    "data": [
+      ``,
+      `foo`,
+      `
+  multiple-line
+`,
+      `\u{1F409}\`'"\${}`,
+      {'as-object-value': `foo`}
+    ]
+  },
+
+{'//': 'String escapes ',
+    "data": [
+      '\0', '\xFF', '\u00FF', `\u{1F409}`
+    ]
+  },
+
+{'//': 'Numbers',
+    "data": [
+      0o123, 0b101010, 1e5, 123_456, 0xDeeD_Beef,
+      0123,
+      -Infinity, -NaN,
+      +1, -1,
+      +0o123, +0b101010, +1e5, +123_456, +0xDeeD_Beef,
+      -0o123, -0b101010, -1e5, -123_456, -0xDeeD_Beef,
+    ]
+  },
+
+{'//': 'empty members',
+    data: [
+      [,],
+      [1, , 2,,,,],
+      [1, , 2],
+      [1, , 2,]
+    ]
+  }
+]

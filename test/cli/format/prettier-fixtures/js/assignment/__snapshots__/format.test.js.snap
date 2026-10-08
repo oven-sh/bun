@@ -1,0 +1,928 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`binaryish.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const computedDescriptionLines = (showConfirm &&
+  descriptionLinesConfirming) ||
+  (focused && !loading && descriptionLinesFocused) ||
+  descriptionLines;
+
+computedDescriptionLines = (focused &&
+  !loading &&
+  descriptionLinesFocused) ||
+  descriptionLines;
+
+=====================================output=====================================
+const computedDescriptionLines =
+  (showConfirm && descriptionLinesConfirming) ||
+  (focused && !loading && descriptionLinesFocused) ||
+  descriptionLines;
+
+computedDescriptionLines =
+  (focused && !loading && descriptionLinesFocused) || descriptionLines;
+
+================================================================================
+`;
+
+exports[`binaryish.js format[hermes] 1`] = `
+"invalid assignment left-hand side (6:1)
+  4 |   descriptionLines;
+  5 |
+> 6 | computedDescriptionLines = (focused &&
+    | ^
+  7 |   !loading &&
+  8 |   descriptionLinesFocused) ||
+  9 |   descriptionLines;
+Cause: invalid assignment left-hand side (6:0)
+computedDescriptionLines = (focused &&
+^~~~~~~~~~~~~~~~~~~~~~~~"
+`;
+
+exports[`call-with-template.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const result = template(\`
+  if (SOME_VAR === "") {}
+\`)({
+  SOME_VAR: value,
+});
+
+const output =
+ template(\`function f() %%A%%\`)({
+   A: t.blockStatement([]),
+ });
+
+=====================================output=====================================
+const result = template(\`
+  if (SOME_VAR === "") {}
+\`)({
+  SOME_VAR: value,
+});
+
+const output = template(\`function f() %%A%%\`)({
+  A: t.blockStatement([]),
+});
+
+================================================================================
+`;
+
+exports[`chain.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let bifornCringerMoshedPerplexSawder=
+askTrovenaBeenaDependsRowans=
+glimseGlyphsHazardNoopsTieTie=
+averredBathersBoxroomBuggyNurl=
+anodyneCondosMalateOverateRetinol=
+annularCooeedSplicesWalksWayWay=
+kochabCooieGameOnOboleUnweave;
+
+bifornCringerMoshedPerplexSawder =
+  askTrovenaBeenaDependsRowans =
+  glimseGlyphsHazardNoopsTieTie =
+  x =
+  averredBathersBoxroomBuggyNurl =
+  anodyneCondosMal(sdsadsa,dasdas,asd(()=>sdf)).ateOverateRetinol =
+  annularCooeedSplicesWalksWayWay =
+    kochabCooieGameOnOboleUnweave;
+
+bifornCringerMoshedPerplexSawder =
+  askTrovenaBeenaDependsRowans =
+  glimseGlyphsHazardNoopsTieTie =
+  x =
+  averredBathersBoxroomBuggyNurl =
+  anodyneCondosMal(sdsadsa,dasdas,asd(()=>sdf)).ateOverateRetinol =
+  annularCooeedSplicesWalksWayWay =
+    kochabCooieGameOnOboleUnweave+kochabCooieGameOnOboleUnweave;
+
+a=b=c;
+
+=====================================output=====================================
+let bifornCringerMoshedPerplexSawder =
+  (askTrovenaBeenaDependsRowans =
+  glimseGlyphsHazardNoopsTieTie =
+  averredBathersBoxroomBuggyNurl =
+  anodyneCondosMalateOverateRetinol =
+  annularCooeedSplicesWalksWayWay =
+    kochabCooieGameOnOboleUnweave);
+
+bifornCringerMoshedPerplexSawder =
+  askTrovenaBeenaDependsRowans =
+  glimseGlyphsHazardNoopsTieTie =
+  x =
+  averredBathersBoxroomBuggyNurl =
+  anodyneCondosMal(
+    sdsadsa,
+    dasdas,
+    asd(() => sdf),
+  ).ateOverateRetinol =
+  annularCooeedSplicesWalksWayWay =
+    kochabCooieGameOnOboleUnweave;
+
+bifornCringerMoshedPerplexSawder =
+  askTrovenaBeenaDependsRowans =
+  glimseGlyphsHazardNoopsTieTie =
+  x =
+  averredBathersBoxroomBuggyNurl =
+  anodyneCondosMal(
+    sdsadsa,
+    dasdas,
+    asd(() => sdf),
+  ).ateOverateRetinol =
+  annularCooeedSplicesWalksWayWay =
+    kochabCooieGameOnOboleUnweave + kochabCooieGameOnOboleUnweave;
+
+a = b = c;
+
+================================================================================
+`;
+
+exports[`chain-two-segments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+tt.parenR.updateContext = tt.braceR.updateContext = function () {
+  if (this.state.context.length === 1) {
+    return;
+  }
+}
+
+=====================================output=====================================
+tt.parenR.updateContext = tt.braceR.updateContext = function () {
+  if (this.state.context.length === 1) {
+    return;
+  }
+};
+
+================================================================================
+`;
+
+exports[`destructuring.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let {
+  bottom: offsetBottom,
+  left: offsetLeft,
+  right: offsetRight,
+  top: offsetTop,
+} = getPressRectOffset == null ? DEFAULT_PRESS_RECT : getPressRectOffset();
+
+const { accessibilityModule: FooAccessibilityModule, accessibilityModule: FooAccessibilityModule2, accessibilityModule: FooAccessibilityModule3, accessibilityModule: FooAccessibilityModule4,
+      } = foo || {};
+
+({ prop: toAssign = "default" } = { prop: "propval" });
+
+=====================================output=====================================
+let {
+  bottom: offsetBottom,
+  left: offsetLeft,
+  right: offsetRight,
+  top: offsetTop,
+} = getPressRectOffset == null ? DEFAULT_PRESS_RECT : getPressRectOffset();
+
+const {
+  accessibilityModule: FooAccessibilityModule,
+  accessibilityModule: FooAccessibilityModule2,
+  accessibilityModule: FooAccessibilityModule3,
+  accessibilityModule: FooAccessibilityModule4,
+} = foo || {};
+
+({ prop: toAssign = "default" } = { prop: "propval" });
+
+================================================================================
+`;
+
+exports[`destructuring-array.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const [
+  width= nextWidth,
+  height= nextHeight,
+  baseline= nextBaseline,
+] = measureText(nextText, getFontString(element));
+
+=====================================output=====================================
+const [width = nextWidth, height = nextHeight, baseline = nextBaseline] =
+  measureText(nextText, getFontString(element));
+
+================================================================================
+`;
+
+exports[`destructuring-heuristic.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+{{
+  const {
+    id,
+    static: isStatic,
+    method: isMethod,
+    methodId,
+    getId,
+    setId,
+  } = privateNamesMap.get(name);
+
+  const {
+    id1,
+    method: isMethod1,
+    methodId1
+  } = privateNamesMap.get(name);
+
+  const {
+    id2,
+    method: isMethod2,
+    methodId2
+  } = privateNamesMap.get(bifornCringerMoshedPerplexSawder);
+
+  const {
+    id3,
+    method: isMethod3,
+    methodId3
+  } = anodyneCondosMalateOverateRetinol.get(bifornCringerMoshedPerplexSawder);
+}}
+
+=====================================output=====================================
+{
+  {
+    const {
+      id,
+      static: isStatic,
+      method: isMethod,
+      methodId,
+      getId,
+      setId,
+    } = privateNamesMap.get(name);
+
+    const { id1, method: isMethod1, methodId1 } = privateNamesMap.get(name);
+
+    const {
+      id2,
+      method: isMethod2,
+      methodId2,
+    } = privateNamesMap.get(bifornCringerMoshedPerplexSawder);
+
+    const {
+      id3,
+      method: isMethod3,
+      methodId3,
+    } = anodyneCondosMalateOverateRetinol.get(bifornCringerMoshedPerplexSawder);
+  }
+}
+
+================================================================================
+`;
+
+exports[`discussion-15196.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function f() {
+  const { section, rubric, authors, tags } = await utils.upsertCommonData(mainData);
+
+  const loooooooooooooooooooooooooong1 = await looooooooooooooong.looooooooooooooong.loooooong;
+  const loooooooooooooooooooooooooong2 = await looooooooooooooong.looooooooooooooong.loooooong();
+  const loooooooooooooooooooooooooong3 = await looooooooooooooooooooooooooooooooooooooooooooog();
+  const loooooooooooooooooooooooooong4 = !await looooooooooooooong.looooooooooooooong.loooooong;
+  const loooooooooooooooooooooooooong5 = void !!await looooooooooooooong.looooooooooooooong.loooooong;
+
+  const longlonglonglonglonglonglong1 = await new Promise((resolve, reject) => { setTimeout(() => { resolve('foo'); }, 300); })
+  const longlonglonglonglonglonglong2 = await { then(onFulfilled, onRejected) { onFulfilled(1234567890) } };
+}
+
+function* g() {
+  const { section, rubric, authors, tags } = yield utils.upsertCommonData(mainData);
+
+  const loooooooooooooooooooooooooong1 = yield looooooooooooooong.looooooooooooooong.loooooong;
+  const loooooooooooooooooooooooooong2 = yield looooooooooooooong.looooooooooooooong.loooooong();
+  const loooooooooooooooooooooooooong3 = yield looooooooooooooooooooooooooooooooooooooooooooog();
+  const loooooooooooooooooooooooooong4 = !(yield looooooooooooooong.looooooooooooooong.loooooong);
+  const loooooooooooooooooooooooooong5 = void !!(yield looooooooooooooong.looooooooooooooong.loooooong);
+  const loooooooooooooooooooooooooong6 = yield* looooooooooooooong.looooooooooooooong.loooooong;
+
+  const longlonglonglonglonglonglong1 = yield qwertyuiop(asdfghjkl, zxcvbnm, qwertyuiop, asdfghjkl);
+  const longlonglonglonglonglonglong2 = yield { qwertyuiop: 1234567890, asdfghjkl: 1234567890, zxcvbnm: 123456789 };
+
+  const x = yield;
+}
+
+=====================================output=====================================
+async function f() {
+  const { section, rubric, authors, tags } =
+    await utils.upsertCommonData(mainData);
+
+  const loooooooooooooooooooooooooong1 =
+    await looooooooooooooong.looooooooooooooong.loooooong;
+  const loooooooooooooooooooooooooong2 =
+    await looooooooooooooong.looooooooooooooong.loooooong();
+  const loooooooooooooooooooooooooong3 =
+    await looooooooooooooooooooooooooooooooooooooooooooog();
+  const loooooooooooooooooooooooooong4 =
+    !(await looooooooooooooong.looooooooooooooong.loooooong);
+  const loooooooooooooooooooooooooong5 =
+    void !!(await looooooooooooooong.looooooooooooooong.loooooong);
+
+  const longlonglonglonglonglonglong1 = await new Promise((resolve, reject) => {
+    setTimeout(() => {
+      resolve("foo");
+    }, 300);
+  });
+  const longlonglonglonglonglonglong2 = await {
+    then(onFulfilled, onRejected) {
+      onFulfilled(1234567890);
+    },
+  };
+}
+
+function* g() {
+  const { section, rubric, authors, tags } =
+    yield utils.upsertCommonData(mainData);
+
+  const loooooooooooooooooooooooooong1 =
+    yield looooooooooooooong.looooooooooooooong.loooooong;
+  const loooooooooooooooooooooooooong2 =
+    yield looooooooooooooong.looooooooooooooong.loooooong();
+  const loooooooooooooooooooooooooong3 =
+    yield looooooooooooooooooooooooooooooooooooooooooooog();
+  const loooooooooooooooooooooooooong4 =
+    !(yield looooooooooooooong.looooooooooooooong.loooooong);
+  const loooooooooooooooooooooooooong5 =
+    void !!(yield looooooooooooooong.looooooooooooooong.loooooong);
+  const loooooooooooooooooooooooooong6 =
+    yield* looooooooooooooong.looooooooooooooong.loooooong;
+
+  const longlonglonglonglonglonglong1 = yield qwertyuiop(
+    asdfghjkl,
+    zxcvbnm,
+    qwertyuiop,
+    asdfghjkl,
+  );
+  const longlonglonglonglonglonglong2 = yield {
+    qwertyuiop: 1234567890,
+    asdfghjkl: 1234567890,
+    zxcvbnm: 123456789,
+  };
+
+  const x = yield;
+}
+
+================================================================================
+`;
+
+exports[`issue-1419.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+someReallyLongThingStoredInAMapWithAReallyBigName[pageletID] =
+  _someVariableThatWeAreCheckingForFalsiness
+    ? Date.now() - _someVariableThatWeAreCheckingForFalsiness
+    : 0;
+
+=====================================output=====================================
+someReallyLongThingStoredInAMapWithAReallyBigName[pageletID] =
+  _someVariableThatWeAreCheckingForFalsiness
+    ? Date.now() - _someVariableThatWeAreCheckingForFalsiness
+    : 0;
+
+================================================================================
+`;
+
+exports[`issue-1966.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const aVeryLongNameThatGoesOnAndOn = this.someOtherObject.someOtherNestedObject.someLongFunctionName();
+
+this.someObject.someOtherNestedObject = this.someOtherObject.whyNotNestAnotherOne.someLongFunctionName();
+
+this.isaverylongmethodexpression.withmultiplelevels = this.isanotherverylongexpression.thatisalsoassigned = 0;
+
+=====================================output=====================================
+const aVeryLongNameThatGoesOnAndOn =
+  this.someOtherObject.someOtherNestedObject.someLongFunctionName();
+
+this.someObject.someOtherNestedObject =
+  this.someOtherObject.whyNotNestAnotherOne.someLongFunctionName();
+
+this.isaverylongmethodexpression.withmultiplelevels =
+  this.isanotherverylongexpression.thatisalsoassigned = 0;
+
+================================================================================
+`;
+
+exports[`issue-2184.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const areaPercentageDiff = (
+    topRankedZoneFit.areaPercentageRemaining
+  - previousZoneFitNow.areaPercentageRemaining
+).toFixed(2)
+
+=====================================output=====================================
+const areaPercentageDiff = (
+  topRankedZoneFit.areaPercentageRemaining -
+  previousZoneFitNow.areaPercentageRemaining
+).toFixed(2);
+
+================================================================================
+`;
+
+exports[`issue-2482-1.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+aParticularlyLongAndObnoxiousNameForIllustrativePurposes =
+  anotherVeryLongNameForIllustrativePurposes;
+
+aParticularlyLongAndObnoxiousNameForIllustrativePurposes =
+  'a very long string for illustrative purposes'.length;
+
+aParticularlyLongAndObnoxiousNameForIllustrativePurposes =
+  anotherVeryLongNameForIllustrativePurposes();
+
+aParticularlyLongAndObnoxiousNameForIllustrativePurposes =
+  anotherVeryLongNameForIllustrativePurposes.length;
+
+aParticularlyLongAndObnoxiousNameForIllustrativePurposes =
+  anotherVeryLongNameForIllustrativePurposes + 1;
+
+
+=====================================output=====================================
+aParticularlyLongAndObnoxiousNameForIllustrativePurposes =
+  anotherVeryLongNameForIllustrativePurposes;
+
+aParticularlyLongAndObnoxiousNameForIllustrativePurposes =
+  "a very long string for illustrative purposes".length;
+
+aParticularlyLongAndObnoxiousNameForIllustrativePurposes =
+  anotherVeryLongNameForIllustrativePurposes();
+
+aParticularlyLongAndObnoxiousNameForIllustrativePurposes =
+  anotherVeryLongNameForIllustrativePurposes.length;
+
+aParticularlyLongAndObnoxiousNameForIllustrativePurposes =
+  anotherVeryLongNameForIllustrativePurposes + 1;
+
+================================================================================
+`;
+
+exports[`issue-2482-2.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class foo {
+    bar() {
+        const median = dates.length % 2
+            ? dates[half].getTime()
+            : (dates[half - 1].getTime() + dates[half].getTime()) / 2.0;
+    }
+}
+
+=====================================output=====================================
+class foo {
+  bar() {
+    const median =
+      dates.length % 2
+        ? dates[half].getTime()
+        : (dates[half - 1].getTime() + dates[half].getTime()) / 2.0;
+  }
+}
+
+================================================================================
+`;
+
+exports[`issue-2540.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+manifestCache[templateId] = readFileSync(\`\${MANIFESTS_PATH}/\${templateId}.json\`, { encoding: 'utf-8' });
+
+=====================================output=====================================
+manifestCache[templateId] = readFileSync(
+  \`\${MANIFESTS_PATH}/\${templateId}.json\`,
+  { encoding: "utf-8" },
+);
+
+================================================================================
+`;
+
+exports[`issue-3819.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+this.dummy.type1.dummyPropertyFunction
+      = this.dummy.type2.dummyPropertyFunction
+      = this.dummy.type3.dummyPropertyFunction
+      = this.dummy.type4.dummyPropertyFunction
+      = this.dummy.type5.dummyPropertyFunction
+      = this.dummy.type6.dummyPropertyFunction
+      = this.dummy.type7.dummyPropertyFunction
+      = this.dummy.type8.dummyPropertyFunction
+      = () => {
+        return 'dummy';
+      };
+
+=====================================output=====================================
+this.dummy.type1.dummyPropertyFunction =
+  this.dummy.type2.dummyPropertyFunction =
+  this.dummy.type3.dummyPropertyFunction =
+  this.dummy.type4.dummyPropertyFunction =
+  this.dummy.type5.dummyPropertyFunction =
+  this.dummy.type6.dummyPropertyFunction =
+  this.dummy.type7.dummyPropertyFunction =
+  this.dummy.type8.dummyPropertyFunction =
+    () => {
+      return "dummy";
+    };
+
+================================================================================
+`;
+
+exports[`issue-4094.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (something) {
+  const otherBrandsWithThisAdjacencyCount123 = Object.values(edge.to.edges).length
+}
+
+=====================================output=====================================
+if (something) {
+  const otherBrandsWithThisAdjacencyCount123 = Object.values(
+    edge.to.edges,
+  ).length;
+}
+
+================================================================================
+`;
+
+exports[`issue-5610.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Function call wrapping is not optimal for readability:
+// Function names tend to get pushed to the right, whereas arguments end up on the left,
+// creating a wide gap that the eyes have to cross in order to read the call.
+const {qfwvfkwjdqgz, bctsyljqucgz, xuodxhmgwwpw} =
+  qbhtcuzxwedz(yrwimwkjeeiu, njwvozigdkfi, alvvjgkmnmhd);
+
+=====================================output=====================================
+// Function call wrapping is not optimal for readability:
+// Function names tend to get pushed to the right, whereas arguments end up on the left,
+// creating a wide gap that the eyes have to cross in order to read the call.
+const { qfwvfkwjdqgz, bctsyljqucgz, xuodxhmgwwpw } = qbhtcuzxwedz(
+  yrwimwkjeeiu,
+  njwvozigdkfi,
+  alvvjgkmnmhd,
+);
+
+================================================================================
+`;
+
+exports[`issue-6922.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+async function f() {
+  const { data, status } = await request.delete(
+    \`/account/\${accountId}/documents/\${type}/\${documentNumber}\`,
+    { validateStatus: () => true }
+  );
+  return { data, status };
+}
+
+const data1 = request.delete(
+  '----------------------------------------------',
+  { validateStatus: () => true }
+);
+
+const data2 = request.delete(
+  '----------------------------------------------x',
+  { validateStatus: () => true }
+);
+
+const data3 = request.delete(
+  '----------------------------------------------xx',
+  { validateStatus: () => true }
+);
+
+const data4 = request.delete(
+  '----------------------------------------------xxx',
+  { validateStatus: () => true }
+);
+
+=====================================output=====================================
+async function f() {
+  const { data, status } = await request.delete(
+    \`/account/\${accountId}/documents/\${type}/\${documentNumber}\`,
+    { validateStatus: () => true },
+  );
+  return { data, status };
+}
+
+const data1 = request.delete("----------------------------------------------", {
+  validateStatus: () => true,
+});
+
+const data2 = request.delete(
+  "----------------------------------------------x",
+  { validateStatus: () => true },
+);
+
+const data3 = request.delete(
+  "----------------------------------------------xx",
+  { validateStatus: () => true },
+);
+
+const data4 = request.delete(
+  "----------------------------------------------xxx",
+  { validateStatus: () => true },
+);
+
+================================================================================
+`;
+
+exports[`issue-7091.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const {
+  imStore, showChat, customerServiceAccount
+} = store[config.reduxStoreName]
+
+=====================================output=====================================
+const { imStore, showChat, customerServiceAccount } =
+  store[config.reduxStoreName];
+
+================================================================================
+`;
+
+exports[`issue-7572.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const t = {
+  "hello": world(),
+  'this-is-a-very-long-key-and-the-assignment-should-be-put-on-the-next-line':
+  	orMaybeIAmMisunderstandingAndIHaveSetSomethingWrongInMyConfig(),
+  "can-someone-explain": this()
+};
+
+=====================================output=====================================
+const t = {
+  hello: world(),
+  "this-is-a-very-long-key-and-the-assignment-should-be-put-on-the-next-line":
+    orMaybeIAmMisunderstandingAndIHaveSetSomethingWrongInMyConfig(),
+  "can-someone-explain": this(),
+};
+
+================================================================================
+`;
+
+exports[`issue-7961.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// works as expected
+something.veeeeeery.looooooooooooooooooooooooooong = some.other.rather.long.chain;
+
+// does not work if it ends with a function call
+something.veeeeeery.looooooooooooooooooooooooooong = some.other.rather.long.chain.functionCall();
+
+=====================================output=====================================
+// works as expected
+something.veeeeeery.looooooooooooooooooooooooooong =
+  some.other.rather.long.chain;
+
+// does not work if it ends with a function call
+something.veeeeeery.looooooooooooooooooooooooooong =
+  some.other.rather.long.chain.functionCall();
+
+================================================================================
+`;
+
+exports[`issue-8218.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const pendingIndicators = shield.alarmGeneratorConfiguration.getPendingVersionColumnValues;
+
+const pendingIndicatorz =
+  shield.alarmGeneratorConfiguration.getPendingVersionColumnValues();
+
+=====================================output=====================================
+const pendingIndicators =
+  shield.alarmGeneratorConfiguration.getPendingVersionColumnValues;
+
+const pendingIndicatorz =
+  shield.alarmGeneratorConfiguration.getPendingVersionColumnValues();
+
+================================================================================
+`;
+
+exports[`issue-10218.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const _id1 = data.createTestMessageWithAReallyLongName.someVeryLongProperty.thisIsAlsoALongProperty._id;
+
+const {_id2} = data.createTestMessageWithAReallyLongName.someVeryLongProperty.thisIsAlsoALongProperty;
+
+const {_id:id3} = data.createTestMessageWithAReallyLongName.someVeryLongProperty.thisIsAlsoALongProperty;
+
+=====================================output=====================================
+const _id1 =
+  data.createTestMessageWithAReallyLongName.someVeryLongProperty
+    .thisIsAlsoALongProperty._id;
+
+const { _id2 } =
+  data.createTestMessageWithAReallyLongName.someVeryLongProperty
+    .thisIsAlsoALongProperty;
+
+const { _id: id3 } =
+  data.createTestMessageWithAReallyLongName.someVeryLongProperty
+    .thisIsAlsoALongProperty;
+
+================================================================================
+`;
+
+exports[`issue-15534.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+params["redirectTo"] = \`\${window.location.pathname}\${window.location.search}\${window.location.hash}\`;
+
+params["redirectTo"]["codePointAt"]["name"] =
+  \`\${window.location.pathname}\${window.location.search}\${window.location.hash}\`;
+
+params.redirectTo.bar.bar.ba.barab["foo"].abr =
+  \`\${window.location.pathname}\${window.location.search}\${window.location.hash}\`;
+
+=====================================output=====================================
+params["redirectTo"] =
+  \`\${window.location.pathname}\${window.location.search}\${window.location.hash}\`;
+
+params["redirectTo"]["codePointAt"]["name"] =
+  \`\${window.location.pathname}\${window.location.search}\${window.location.hash}\`;
+
+params.redirectTo.bar.bar.ba.barab["foo"].abr =
+  \`\${window.location.pathname}\${window.location.search}\${window.location.hash}\`;
+
+================================================================================
+`;
+
+exports[`issue-17437.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+didScheduleRenderPhaseUpdateDuringThisPassFoo =
+didScheduleRenderPhaseUpdate
+     = true
+
+=====================================output=====================================
+didScheduleRenderPhaseUpdateDuringThisPassFoo =
+  didScheduleRenderPhaseUpdate = true;
+
+================================================================================
+`;
+
+exports[`lone-arg.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let vgChannel = pointPositionDefaultRef({
+  model,
+  defaultPos,
+  channel,
+})()
+
+let vgChannel2 = pointPositionDefaultRef({ model,
+  defaultPos,
+  channel,
+})()
+
+const bifornCringerMoshedPerplexSawderGlyphsHa =
+  someBigFunctionName("foo")("bar");
+
+if (true) {
+  node.id = this.flowParseTypeAnnotatableIdentifier(/*allowPrimitiveOverride*/ true);
+}
+
+const bifornCringerMoshedPerplexSawderGlyphsHb = someBigFunctionName(\`foo
+\`)("bar");
+
+=====================================output=====================================
+let vgChannel = pointPositionDefaultRef({
+  model,
+  defaultPos,
+  channel,
+})();
+
+let vgChannel2 = pointPositionDefaultRef({ model, defaultPos, channel })();
+
+const bifornCringerMoshedPerplexSawderGlyphsHa =
+  someBigFunctionName("foo")("bar");
+
+if (true) {
+  node.id = this.flowParseTypeAnnotatableIdentifier(
+    /*allowPrimitiveOverride*/ true,
+  );
+}
+
+const bifornCringerMoshedPerplexSawderGlyphsHb = someBigFunctionName(\`foo
+\`)("bar");
+
+================================================================================
+`;
+
+exports[`sequence.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for ((i = 0), (len = arr.length); i < len; i++) {
+  console.log(arr[i])
+}
+
+for (i = 0, len = arr.length; i < len; i++) {
+  console.log(arr[i])
+}
+
+=====================================output=====================================
+for (i = 0, len = arr.length; i < len; i++) {
+  console.log(arr[i]);
+}
+
+for (i = 0, len = arr.length; i < len; i++) {
+  console.log(arr[i]);
+}
+
+================================================================================
+`;
+
+exports[`unary.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const loooooooooooooooooooooooooong1 = void looooooooooooooong.looooooooooooooong.loooooong;
+const loooooooooooooooooooooooooong2 = void "looooooooooooooooooooooooooooooooooooooooooog";
+const loooooooooooooooooooooooooong3 = !looooooooooooooong.looooooooooooooong.loooooong;
+const loooooooooooooooooooooooooong4 = !"looooooooooooooooooooooooooooooooooooooooooog";
+const loooooooooooooooooooooooooong5 = void void looooooooooooooong.looooooooooooooong.loooooong;
+const loooooooooooooooooooooooooong6 = void void "looooooooooooooooooooooooooooooooooooooooooog";
+const loooooooooooooooooooooooooong7 = !!looooooooooooooong.looooooooooooooong.loooooong;
+const loooooooooooooooooooooooooong8 = !!"looooooooooooooooooooooooooooooooooooooooooog";
+
+=====================================output=====================================
+const loooooooooooooooooooooooooong1 =
+  void looooooooooooooong.looooooooooooooong.loooooong;
+const loooooooooooooooooooooooooong2 =
+  void "looooooooooooooooooooooooooooooooooooooooooog";
+const loooooooooooooooooooooooooong3 =
+  !looooooooooooooong.looooooooooooooong.loooooong;
+const loooooooooooooooooooooooooong4 =
+  !"looooooooooooooooooooooooooooooooooooooooooog";
+const loooooooooooooooooooooooooong5 =
+  void void looooooooooooooong.looooooooooooooong.loooooong;
+const loooooooooooooooooooooooooong6 =
+  void void "looooooooooooooooooooooooooooooooooooooooooog";
+const loooooooooooooooooooooooooong7 =
+  !!looooooooooooooong.looooooooooooooong.loooooong;
+const loooooooooooooooooooooooooong8 =
+  !!"looooooooooooooooooooooooooooooooooooooooooog";
+
+================================================================================
+`;

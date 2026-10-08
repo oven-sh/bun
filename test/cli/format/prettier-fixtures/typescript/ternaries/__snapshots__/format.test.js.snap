@@ -1,0 +1,122 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`indent.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo = (callNode.parent?.type === AST_NODE_TYPES.ChainExpression
+  ? callNode.parent.parent
+  : callNode.parent
+).TSESTree!.BinaryExpression;
+
+foo = (callNode.parent?.type === AST_NODE_TYPES.ChainExpression
+  ? callNode.parent.parent
+  : callNode.parent
+).TSESTree!.BinaryExpression;
+
+bifornCringerMoshedPerplexSawder = (glimseGlyphsHazardNoopsTieTie === 0 &&
+kochabCooieGameOnOboleUnweave === Math.PI
+  ? averredBathersBoxroomBuggyNurl
+  : anodyneCondosMalateOverateRetinol
+).annularCooeedSplicesWalksWayWay
+  .annularCooeedSplicesWalksWayWay(annularCooeedSplicesWalksWayWay)!
+  .annularCooeedSplicesWalksWayWay();
+
+foo = (callNode.parent?.type === AST_NODE_TYPES.ChainExpression
+  ? callNode.parent.parent
+  : callNode.parent
+).TSESTree!.BinaryExpression!;
+
+foo = (callNode.parent?.type === AST_NODE_TYPES.ChainExpression
+  ? callNode.parent.parent
+  : callNode.parent
+).TSESTree!.BinaryExpression!;
+
+bifornCringerMoshedPerplexSawder = (glimseGlyphsHazardNoopsTieTie === 0 &&
+kochabCooieGameOnOboleUnweave === Math.PI
+  ? averredBathersBoxroomBuggyNurl
+  : anodyneCondosMalateOverateRetinol
+).annularCooeedSplicesWalksWayWay
+  .annularCooeedSplicesWalksWayWay(annularCooeedSplicesWalksWayWay)!
+  .annularCooeedSplicesWalksWayWay()!;
+
+bifornCringerMoshedPerplexSawder =
+  askTrovenaBeenaDependsRowans +
+  (glimseGlyphsHazardNoopsTieTie === 0
+    ? averredBathersBoxroomBuggyNurl
+    : anodyneCondosMalateOverateRetinol
+  ).Foo!.foo;
+
+foo = (coooooooooooooooooooooooooooooooooooooooooooooooooooond
+  ? baaaaaaaaaaaaaaaaaaaaar
+  : baaaaaaaaaaaaaaaaaaaaaz)!;
+
+foo = (coooooooooooooooooooooooooooooooooooooooooooooooooooond
+  ? baaaaaaaaaaaaaaaaaaaaar
+  : baaaaaaaaaaaaaaaaaaaaaz)!!!!!;
+
+=====================================output=====================================
+foo = (
+  callNode.parent?.type === AST_NODE_TYPES.ChainExpression
+    ? callNode.parent.parent
+    : callNode.parent
+).TSESTree!.BinaryExpression;
+
+foo = (
+  callNode.parent?.type === AST_NODE_TYPES.ChainExpression
+    ? callNode.parent.parent
+    : callNode.parent
+).TSESTree!.BinaryExpression;
+
+bifornCringerMoshedPerplexSawder = (
+  glimseGlyphsHazardNoopsTieTie === 0 &&
+  kochabCooieGameOnOboleUnweave === Math.PI
+    ? averredBathersBoxroomBuggyNurl
+    : anodyneCondosMalateOverateRetinol
+).annularCooeedSplicesWalksWayWay
+  .annularCooeedSplicesWalksWayWay(annularCooeedSplicesWalksWayWay)!
+  .annularCooeedSplicesWalksWayWay();
+
+foo = (
+  callNode.parent?.type === AST_NODE_TYPES.ChainExpression
+    ? callNode.parent.parent
+    : callNode.parent
+).TSESTree!.BinaryExpression!;
+
+foo = (
+  callNode.parent?.type === AST_NODE_TYPES.ChainExpression
+    ? callNode.parent.parent
+    : callNode.parent
+).TSESTree!.BinaryExpression!;
+
+bifornCringerMoshedPerplexSawder = (
+  glimseGlyphsHazardNoopsTieTie === 0 &&
+  kochabCooieGameOnOboleUnweave === Math.PI
+    ? averredBathersBoxroomBuggyNurl
+    : anodyneCondosMalateOverateRetinol
+).annularCooeedSplicesWalksWayWay
+  .annularCooeedSplicesWalksWayWay(annularCooeedSplicesWalksWayWay)!
+  .annularCooeedSplicesWalksWayWay()!;
+
+bifornCringerMoshedPerplexSawder =
+  askTrovenaBeenaDependsRowans +
+  (glimseGlyphsHazardNoopsTieTie === 0
+    ? averredBathersBoxroomBuggyNurl
+    : anodyneCondosMalateOverateRetinol
+  ).Foo!.foo;
+
+foo = (
+  coooooooooooooooooooooooooooooooooooooooooooooooooooond
+    ? baaaaaaaaaaaaaaaaaaaaar
+    : baaaaaaaaaaaaaaaaaaaaaz
+)!;
+
+foo = (
+  coooooooooooooooooooooooooooooooooooooooooooooooooooond
+    ? baaaaaaaaaaaaaaaaaaaaar
+    : baaaaaaaaaaaaaaaaaaaaaz
+)!!!!!;
+
+================================================================================
+`;

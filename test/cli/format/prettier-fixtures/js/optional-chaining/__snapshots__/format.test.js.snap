@@ -1,0 +1,451 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`as-key.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const a = {
+  [a?.b]: 1,
+
+  [a?.b]() {},
+  [a?.b]:function() {},
+
+  *[a?.b]() {},
+  [a?.b]:function*() {},
+
+  async[a?.b]() {},
+  [a?.b]:async function() {},
+
+  async*[a?.b]() {},
+  [a?.b]:async function*() {},
+};
+
+class A {
+  [a?.b]= 1;
+
+  [a?.b]() {};
+  [a?.b]=function() {};
+
+  *[a?.b]() {};
+  [a?.b]=function*() {};
+
+  async[a?.b]() {};
+  [a?.b]=async function() {};
+
+  async*[a?.b]() {};
+  [a?.b]=async function*() {};
+}
+
+class B {
+  static [a?.b]= 1;
+
+  static [a?.b]() {};
+  static [a?.b]=function() {};
+
+  static *[a?.b]() {};
+  static [a?.b]=function*() {};
+
+  static async[a?.b]() {};
+  static [a?.b]=async function() {};
+
+  static async*[a?.b]() {};
+  static [a?.b]=async function*() {};
+}
+
+=====================================output=====================================
+const a = {
+  [a?.b]: 1,
+
+  [a?.b]() {},
+  [a?.b]: function () {},
+
+  *[a?.b]() {},
+  [a?.b]: function* () {},
+
+  async [a?.b]() {},
+  [a?.b]: async function () {},
+
+  async *[a?.b]() {},
+  [a?.b]: async function* () {},
+};
+
+class A {
+  [a?.b] = 1;
+
+  [a?.b]() {}
+  [a?.b] = function () {};
+
+  *[a?.b]() {}
+  [a?.b] = function* () {};
+
+  async [a?.b]() {}
+  [a?.b] = async function () {};
+
+  async *[a?.b]() {}
+  [a?.b] = async function* () {};
+}
+
+class B {
+  static [a?.b] = 1;
+
+  static [a?.b]() {}
+  static [a?.b] = function () {};
+
+  static *[a?.b]() {}
+  static [a?.b] = function* () {};
+
+  static async [a?.b]() {}
+  static [a?.b] = async function () {};
+
+  static async *[a?.b]() {}
+  static [a?.b] = async function* () {};
+}
+
+================================================================================
+`;
+
+exports[`chaining.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var street = user.address?.street
+var fooValue = myForm.querySelector('input[name=foo]')?.value
+
+obj?.prop;
+obj?.[expr];
+func?.(...args);
+
+a?.();
+a?.[++x];
+a?.b.c(++x).d;
+a?.b[3].c?.(x).d;
+a?.b.c;
+(a?.b).c;
+a?.b?.c;
+delete a?.b;
+
+a?.b[3].c?.(x).d.e?.f[3].g?.(y).h;
+
+(a?.b).c();
+(a?.b[c]).c();
+
+(a?.b)?.c.d?.e;
+(a ? b : c)?.d;
+
+(list || list2)?.length;
+(list || list2)?.[(list || list2)];
+
+async function HelloWorld() {
+  var x = (await foo.bar.blah)?.hi;
+  a?.[await b];
+  (await x)?.();
+}
+
+a[b?.c].d();
+a?.[b?.c].d();
+a[b?.c]?.d();
+a?.[b?.c]?.d();
+
+(one?.fn());
+(one?.two).fn();
+(one?.two)();
+(one?.two())();
+(one.two?.fn());
+(one.two?.three).fn();
+(one.two?.three?.fn());
+
+(one?.());
+(one?.())();
+(one?.())?.();
+
+(one?.()).two;
+
+a?.[b ? c : d];
+
+(-1)?.toFixed();
+(void fn)?.();
+(a && b)?.();
+(a ? b : c)?.();
+(function(){})?.();
+(() => f)?.();
+(()=>f)?.x;
+(a?.(x)).x;
+(aaaaaaaaaaaaaaaaaaaaaaaa&&aaaaaaaaaaaaaaaaaaaaaaaa&&aaaaaaaaaaaaaaaaaaaaaaaa)?.();
+
+let f = () => ({}?.());
+let g = () => ({}?.b);
+a = () => ({}?.() && a);
+a = () => ({}?.()() && a);
+a = () => ({}?.().b && a);
+a = () => ({}?.b && a);
+a = () => ({}?.b() && a);
+(a) => ({}?.()?.b && 0);
+(a) => ({}?.b?.b && 0);
+(x) => ({}?.()());
+(x) => ({}?.().b);
+(x) => ({}?.b());
+(x) => ({}?.b.b);
+({}?.a().b());
+({ a: 1 }?.entries());
+
+new (foo?.bar)();
+new (foo?.bar())();
+new (foo?.())();
+
+=====================================output=====================================
+var street = user.address?.street;
+var fooValue = myForm.querySelector("input[name=foo]")?.value;
+
+obj?.prop;
+obj?.[expr];
+func?.(...args);
+
+a?.();
+a?.[++x];
+a?.b.c(++x).d;
+a?.b[3].c?.(x).d;
+a?.b.c;
+(a?.b).c;
+a?.b?.c;
+delete a?.b;
+
+a?.b[3].c?.(x).d.e?.f[3].g?.(y).h;
+
+(a?.b).c();
+(a?.b[c]).c();
+
+a?.b?.c.d?.e;
+(a ? b : c)?.d;
+
+(list || list2)?.length;
+(list || list2)?.[list || list2];
+
+async function HelloWorld() {
+  var x = (await foo.bar.blah)?.hi;
+  a?.[await b];
+  (await x)?.();
+}
+
+a[b?.c].d();
+a?.[b?.c].d();
+a[b?.c]?.d();
+a?.[b?.c]?.d();
+
+one?.fn();
+(one?.two).fn();
+(one?.two)();
+(one?.two())();
+one.two?.fn();
+(one.two?.three).fn();
+one.two?.three?.fn();
+
+one?.();
+(one?.())();
+one?.()?.();
+
+(one?.()).two;
+
+a?.[b ? c : d];
+
+(-1)?.toFixed();
+(void fn)?.();
+(a && b)?.();
+(a ? b : c)?.();
+(function () {})?.();
+(() => f)?.();
+(() => f)?.x;
+(a?.(x)).x;
+(
+  aaaaaaaaaaaaaaaaaaaaaaaa &&
+  aaaaaaaaaaaaaaaaaaaaaaaa &&
+  aaaaaaaaaaaaaaaaaaaaaaaa
+)?.();
+
+let f = () => ({})?.();
+let g = () => ({})?.b;
+a = () => ({})?.() && a;
+a = () => ({})?.()() && a;
+a = () => ({})?.().b && a;
+a = () => ({})?.b && a;
+a = () => ({})?.b() && a;
+(a) => ({})?.()?.b && 0;
+(a) => ({})?.b?.b && 0;
+(x) => ({})?.()();
+(x) => ({})?.().b;
+(x) => ({})?.b();
+(x) => ({})?.b.b;
+({})?.a().b();
+({ a: 1 })?.entries();
+
+new (foo?.bar)();
+new (foo?.bar())();
+new (foo?.())();
+
+================================================================================
+`;
+
+exports[`comments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function foo() {
+  return a
+    .b()
+    .c()
+    // Comment
+    ?.d()
+}
+
+fooBar
+  .doSomething("Hello World")
+  .doAnotherThing("Foo", { foo: bar })
+
+  // App configuration.
+  .doOneMoreThing(config)
+
+  ?.run(() => console.log("Bar"));
+
+bigDeal
+
+  .doSomething("Hello World")
+
+  // Hello world
+  ?.doAnotherThing("Foo", { foo: bar })
+
+  // App configuration.
+  .doOneMoreThing(config)
+
+  ?.run(() => console.log("Bar"));
+
+foo.bar.baz
+
+  ?.doSomething("Hello World")
+
+  // Hello world
+  .foo.bar.doAnotherThing("Foo", { foo: bar })
+
+  .doOneMoreThing(config)
+  ?.bar.run(() => console.log("Bar"));
+
+(somethingGood ? thisIsIt : maybeNot)
+
+// Hello world
+.doSomething("Hello World")
+
+  ?.doAnotherThing("Foo", { foo: bar }) // Run this
+  .run(() => console.log("Bar")); // Do this
+
+=====================================output=====================================
+function foo() {
+  return (
+    a
+      .b()
+      .c()
+      // Comment
+      ?.d()
+  );
+}
+
+fooBar
+  .doSomething("Hello World")
+  .doAnotherThing("Foo", { foo: bar })
+
+  // App configuration.
+  .doOneMoreThing(config)
+
+  ?.run(() => console.log("Bar"));
+
+bigDeal
+
+  .doSomething("Hello World")
+
+  // Hello world
+  ?.doAnotherThing("Foo", { foo: bar })
+
+  // App configuration.
+  .doOneMoreThing(config)
+
+  ?.run(() => console.log("Bar"));
+
+foo.bar.baz
+
+  ?.doSomething("Hello World")
+
+  // Hello world
+  .foo.bar.doAnotherThing("Foo", { foo: bar })
+
+  .doOneMoreThing(config)
+  ?.bar.run(() => console.log("Bar"));
+
+(somethingGood ? thisIsIt : maybeNot)
+
+  // Hello world
+  .doSomething("Hello World")
+
+  ?.doAnotherThing("Foo", { foo: bar }) // Run this
+  .run(() => console.log("Bar")); // Do this
+
+================================================================================
+`;
+
+exports[`eval.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/babel/babel/pull/11850
+
+let foo;
+
+/* indirect eval calls */
+eval?.(foo);
+
+(eval)?.(foo);
+
+eval?.()();
+
+eval?.().foo;
+
+/* direct eval calls */
+
+eval()?.();
+
+eval()?.foo;
+
+/* plain function calls */
+
+foo.eval?.(foo);
+
+eval.foo?.(foo);
+
+=====================================output=====================================
+// https://github.com/babel/babel/pull/11850
+
+let foo;
+
+/* indirect eval calls */
+eval?.(foo);
+
+eval?.(foo);
+
+eval?.()();
+
+eval?.().foo;
+
+/* direct eval calls */
+
+eval()?.();
+
+eval()?.foo;
+
+/* plain function calls */
+
+foo.eval?.(foo);
+
+eval.foo?.(foo);
+
+================================================================================
+`;

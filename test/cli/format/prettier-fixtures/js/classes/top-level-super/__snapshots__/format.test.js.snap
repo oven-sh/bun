@@ -1,0 +1,38 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`example.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+super();
+
+=====================================output=====================================
+super();
+
+================================================================================
+`;
+
+exports[`example.js format[acorn] 1`] = `
+"super() call outside constructor of a subclass (1:1)
+> 1 | super();
+    | ^
+  2 |
+Cause: super() call outside constructor of a subclass (1:0)"
+`;
+
+exports[`example.js format[espree] 1`] = `
+"'super' keyword outside a method (1:1)
+> 1 | super();
+    | ^
+  2 |
+Cause: 'super' keyword outside a method"
+`;
+
+exports[`example.js format[meriyah] 1`] = `
+"Calls to super must be in the "constructor" method of a class expression or class declaration that has a superclass (1:6)
+> 1 | super();
+    |      ^
+  2 |
+Cause: [1:5-1:6]: Calls to super must be in the "constructor" method of a class expression or class declaration that has a superclass"
+`;

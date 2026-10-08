@@ -1,0 +1,16 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`undefined.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var x: undefined
+var x: undefined | string
+
+=====================================output=====================================
+var x: undefined;
+var x: undefined | string;
+
+================================================================================
+`;

@@ -1,0 +1,23 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`bug.js - {"printWidth":35} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+printWidth: 35
+                   printWidth: 35 |
+=====================================input======================================
+const foo = {
+  bar: props.bar ? props.bar : noop,
+  baz: props.baz
+}
+
+=====================================output=====================================
+const foo = {
+  bar: props.bar
+    ? props.bar
+    : noop,
+  baz: props.baz,
+};
+
+================================================================================
+`;

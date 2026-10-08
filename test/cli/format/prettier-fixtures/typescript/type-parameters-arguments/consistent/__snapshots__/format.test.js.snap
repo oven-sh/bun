@@ -1,0 +1,131 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`flow-only.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+const foo6: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<empty> = a;
+const foo7: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<mixed> = a;
+
+=====================================output=====================================
+const foo6: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<empty> =
+  a;
+const foo7: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<mixed> =
+  a;
+
+================================================================================
+`;
+
+exports[`issue-9501.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const name: SomeGeneric<
+  Pick<Config, "ONE_LONG_PROP" | "ANOTHER_LONG_PROP">
+> = null;
+
+=====================================output=====================================
+const name: SomeGeneric<Pick<Config, "ONE_LONG_PROP" | "ANOTHER_LONG_PROP">> =
+  null;
+
+================================================================================
+`;
+
+exports[`simple-types.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const foo1: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<any> = a;
+const foo2: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<null> = a;
+const foo3: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<this> = a;
+const foo4: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<void> = a;
+const foo5: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<true> = a;
+const foo6: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<false> = a;
+const foo7: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<symbol> = a;
+const foo8: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<true> = a;
+const foo9: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<"STRING"> = a;
+const foo10: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<0> = a;
+const foo11: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<0xDeeD_Beef> = a;
+const foo12: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<0xDeeD_Beefn> = a;
+
+=====================================output=====================================
+const foo1: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<any> =
+  a;
+const foo2: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<null> =
+  a;
+const foo3: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<this> =
+  a;
+const foo4: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<void> =
+  a;
+const foo5: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<true> =
+  a;
+const foo6: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<false> =
+  a;
+const foo7: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<symbol> =
+  a;
+const foo8: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<true> =
+  a;
+const foo9: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<"STRING"> =
+  a;
+const foo10: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<0> =
+  a;
+const foo11: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<0xdeed_beef> =
+  a;
+const foo12: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<0xdeed_beefn> =
+  a;
+
+================================================================================
+`;
+
+exports[`template-literal-types.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const foo1: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<\`Hello, \${keyof World}\`> = a;
+
+=====================================output=====================================
+const foo1: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<\`Hello, \${keyof World}\`> =
+  a;
+
+================================================================================
+`;
+
+exports[`template-literal-types.ts format[flow] 1`] = `"Missing visitor keys for 'TemplateLiteralTypeAnnotation'."`;
+
+exports[`template-literal-types.ts format[hermes] 1`] = `
+"unexpected token in type annotation (1:84)
+> 1 | const foo1: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<\`Hello, \${keyof World}\`> = a;
+    |                                                                                    ^
+  2 |
+Cause: unexpected token in type annotation (1:83)
+const foo1: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<\`Hello, \${keyof World}\`> = a;
+                                                                                   ^"
+`;
+
+exports[`typescript-only.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const foo1: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<never> = a;
+const foo2: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<object> = a;
+const foo3: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<undefined> = a;
+const foo4: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<unknown> = a;
+
+=====================================output=====================================
+const foo1: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<never> =
+  a;
+const foo2: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<object> =
+  a;
+const foo3: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<undefined> =
+  a;
+const foo4: Fooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo<unknown> =
+  a;
+
+================================================================================
+`;

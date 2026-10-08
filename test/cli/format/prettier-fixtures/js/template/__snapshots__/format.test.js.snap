@@ -1,0 +1,424 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`arrow.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+() => a\`
+	a
+\`;
+
+() => \`
+	a
+\`;
+
+=====================================output=====================================
+() => a\`
+	a
+\`;
+
+() => \`
+	a
+\`;
+
+================================================================================
+`;
+
+exports[`call.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+insertRule(\`*, *:before, *:after {
+  box-sizing: inherit;
+}\`);
+
+insertRule\`*, *:before, *:after {
+  box-sizing: inherit;
+}\`;
+
+new Error(formatErrorMessage\`
+  This a really bad error.
+  Which has more than one line.
+\`);
+
+=====================================output=====================================
+insertRule(\`*, *:before, *:after {
+  box-sizing: inherit;
+}\`);
+
+insertRule\`*, *:before, *:after {
+  box-sizing: inherit;
+}\`;
+
+new Error(formatErrorMessage\`
+  This a really bad error.
+  Which has more than one line.
+\`);
+
+================================================================================
+`;
+
+exports[`comment.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+\`
+(?:\${escapeChar}[\\\\S\\\\s]|(?:(?!\${// Using \`XRegExp.union\` safely rewrites backreferences in \`left\` and \`right\`.
+// Intentionally not passing \`basicFlags\` to \`XRegExp.union\` since any syntax
+// transformation resulting from those flags was already applied to \`left\` and
+// \`right\` when they were passed through the XRegExp constructor above.
+XRegExp.union([left, right], '', {conjunction: 'or'}).source})[^\${escapeChar}])+)+
+\`;
+
+\`a\${/* b */c/* d */}e\${// f
+g
+// h
+}\`;
+
+=====================================output=====================================
+\`
+(?:\${escapeChar}[\\\\S\\\\s]|(?:(?!\${
+  // Using \`XRegExp.union\` safely rewrites backreferences in \`left\` and \`right\`.
+  // Intentionally not passing \`basicFlags\` to \`XRegExp.union\` since any syntax
+  // transformation resulting from those flags was already applied to \`left\` and
+  // \`right\` when they were passed through the XRegExp constructor above.
+  XRegExp.union([left, right], "", { conjunction: "or" }).source
+})[^\${escapeChar}])+)+
+\`;
+
+\`a\${/* b */ c /* d */}e\${
+  // f
+  g
+  // h
+}\`;
+
+================================================================================
+`;
+
+exports[`faulty-locations.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var o = {
+  [\`key\`]: () => {
+    // Comment
+  }
+};
+
+var x = {
+  y: () => Relay.QL\`
+    query {
+      \${foo},
+      field,
+    }
+  \`
+};
+
+=====================================output=====================================
+var o = {
+  [\`key\`]: () => {
+    // Comment
+  },
+};
+
+var x = {
+  y: () => Relay.QL\`
+    query {
+      \${foo},
+      field,
+    }
+  \`,
+};
+
+================================================================================
+`;
+
+exports[`graphql.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+module.exports = Relay.createContainer(
+  // ...
+  {
+    fragments: {
+      nodes: ({solution_type, time_frame}) => Relay.QL\`
+        fragment on RelatedNode @relay(plural: true) {
+          __typename
+          \${OptimalSolutionsSection
+            .getFragment(
+              'node',
+              {solution_type, time_frame},
+            )
+          }
+        }
+      \`,
+    },
+  },
+);
+
+=====================================output=====================================
+module.exports = Relay.createContainer(
+  // ...
+  {
+    fragments: {
+      nodes: ({ solution_type, time_frame }) => Relay.QL\`
+        fragment on RelatedNode @relay(plural: true) {
+          __typename
+          \${OptimalSolutionsSection.getFragment("node", {
+            solution_type,
+            time_frame,
+          })}
+        }
+      \`,
+    },
+  },
+);
+
+================================================================================
+`;
+
+exports[`indent.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const foo = () => {
+  {
+    {
+      {
+        return \`
+line 1
+line 2
+...
+line n
+\${foo({
+  many: keys,
+  many: keys
+})}
+line n + 1
+line n + 2
+line n + n
+\`;
+      }
+    }
+  }
+};
+=====================================output=====================================
+const foo = () => {
+  {
+    {
+      {
+        return \`
+line 1
+line 2
+...
+line n
+\${foo({
+  many: keys,
+  many: keys,
+})}
+line n + 1
+line n + 2
+line n + n
+\`;
+      }
+    }
+  }
+};
+
+================================================================================
+`;
+
+exports[`inline.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+this._pipe.write(\`\\n\\n Pattern matches \${total} \${pluralizeTest}\`);
+this._pipe.write(
+  \`\\n\\n Pattern matches \${total} \${pluralizeTest}\`
+);
+this._pipe
+  .write(
+    \`\\n\\n Pattern matches \${total} \${pluralizeTest}\`
+  );
+
+this._pipe.write(\`\\n\\n Pattern matches \${total} \${pluralizeTest} but that's long\`);
+
+this._pipe.write(
+  \`\\n\\n Pattern matches \${total} \${pluralizeTest} but that's long\`
+);
+
+this._pipe.write(\`
+  \\n\\n Pattern matches \${total} \${pluralizeTest} but that's long
+\`);
+
+
+() => \`
+  a
+\`;
+
+() =>
+  \`
+    a
+  \`;
+
+
+// https://github.com/prettier/prettier/issues/5529
+editTitle += \`\${iconHTML({ class: "reply-to-glyph" })}\`;
+
+=====================================output=====================================
+this._pipe.write(\`\\n\\n Pattern matches \${total} \${pluralizeTest}\`);
+this._pipe.write(\`\\n\\n Pattern matches \${total} \${pluralizeTest}\`);
+this._pipe.write(\`\\n\\n Pattern matches \${total} \${pluralizeTest}\`);
+
+this._pipe.write(
+  \`\\n\\n Pattern matches \${total} \${pluralizeTest} but that's long\`,
+);
+
+this._pipe.write(
+  \`\\n\\n Pattern matches \${total} \${pluralizeTest} but that's long\`,
+);
+
+this._pipe.write(\`
+  \\n\\n Pattern matches \${total} \${pluralizeTest} but that's long
+\`);
+
+() => \`
+  a
+\`;
+
+() =>
+  \`
+    a
+  \`;
+
+// https://github.com/prettier/prettier/issues/5529
+editTitle += \`\${iconHTML({ class: "reply-to-glyph" })}\`;
+
+================================================================================
+`;
+
+exports[`parenthesis.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// "ArrowFunctionExpression"
+(() => {})\`\`;
+
+// "AssignmentExpression"
+(b = c)\`\`;
+
+// "AwaitExpression"
+async function f() {
+  (await b)\`\`;
+}
+
+// "BinaryExpression"
+(b + c)\`\`;
+
+// "CallExpression"
+b()\`\`;
+
+// "ClassExpression"
+(class {})\`\`;
+
+// "ConditionalExpression"
+(b ? c : d)\`\`;
+
+// "FunctionExpression"
+(function() {})\`\`;
+
+// "LogicalExpression"
+(b || c)\`\`;
+
+// "MemberExpression"
+b.c\`\`;
+
+// "NewExpression"
+(new B())\`\`;
+
+// "ObjectExpression"
+({})\`\`;
+
+// "SequenceExpression"
+(b, c)\`\`;
+
+// "TaggedTemplateExpression"
+(\`\`)\`\`;
+
+// "UnaryExpression"
+(void b)\`\`;
+
+// "UpdateExpression"
+(++b)\`\`;
+
+// "YieldExpression"
+function* d() {
+  (yield 1)\`\`;
+}
+
+=====================================output=====================================
+// "ArrowFunctionExpression"
+(() => {})\`\`;
+
+// "AssignmentExpression"
+(b = c)\`\`;
+
+// "AwaitExpression"
+async function f() {
+  (await b)\`\`;
+}
+
+// "BinaryExpression"
+(b + c)\`\`;
+
+// "CallExpression"
+b()\`\`;
+
+// "ClassExpression"
+(class {})\`\`;
+
+// "ConditionalExpression"
+(b ? c : d)\`\`;
+
+// "FunctionExpression"
+(function () {})\`\`;
+
+// "LogicalExpression"
+(b || c)\`\`;
+
+// "MemberExpression"
+b.c\`\`;
+
+// "NewExpression"
+new B()\`\`;
+
+// "ObjectExpression"
+({})\`\`;
+
+// "SequenceExpression"
+(b, c)\`\`;
+
+// "TaggedTemplateExpression"
+\`\`\`\`;
+
+// "UnaryExpression"
+(void b)\`\`;
+
+// "UpdateExpression"
+(++b)\`\`;
+
+// "YieldExpression"
+function* d() {
+  (yield 1)\`\`;
+}
+
+================================================================================
+`;

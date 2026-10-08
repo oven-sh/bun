@@ -1,0 +1,91 @@
+@charset "UTF-8";
+/* @charset must always have double quotes: https://www.w3.org/TR/css-syntax-3/#determine-the-fallback-encoding */
+/* Also, it has to be the very first thing in the file, but here are some more tests anyway: */
+@charset 'UTF-8'; /* Single quotes are invalid here. Keep them since we don't know what the user is doing. */
+
+@supports (content: one "two" three 'four') {
+  a[href="foo" y],
+  abbr[title^='It\'s a trap!'],
+  img[src=""] {
+    /* Simple strings. */
+    content: "abc";
+    content: 'abc';
+
+    /* Escape. */
+    content: '\A';
+
+    /* Emoji. */
+    content: '🐶';
+
+    /* Empty string. */
+    content: "";
+    content: '';
+
+    /* Single double quote. */
+    content: "\"";
+    content: '"';
+
+    /* Single single quote. */
+    content: "'";
+    content: '\'';
+
+    /* One of each. */
+    content: "\"'";
+    content: '"\'';
+
+    /* One of each with unnecessary escapes. */
+    content: "\"\'";
+    content: '\"\'';
+
+    /* More double quotes than single quotes. */
+    content: "\"'\"";
+    content: '"\'"';
+
+    /* More single quotes than double quotes. */
+    content: "\"''";
+    content: '"\'\'';
+
+    /* Two of each. */
+    content: "\"\"''";
+    content: '""\'\'';
+
+    /* Single backslash. */
+    content: '\\';
+    content: "\\";
+
+    /* Backslases. */
+    content: "\"\\\"\\\\\" '\'\\'\\\'\\\\'";
+    content: '\'\\\'\\\\\' "\"\\"\\\"\\\\"';
+
+    /* Somewhat more real-word example. */
+    content: "He's sayin': \"How's it goin'?\" Don't ask me why.";
+    content: 'He\'s sayin\': "How\'s it goin\'?" Don\'t ask me why.';
+
+    /* Somewhat more real-word example 2. */
+    content: "var backslash = \"\\\", doubleQuote = '\"';";
+    content: 'var backslash = "\\", doubleQuote = \'"\';';
+
+    /* Leave all "escapes" alone. */
+    content: "\Abc4 foo \n" /* "comment" */ "\end";
+    content: '\Abc4 foo \n' /* 'comment' */ '\end';
+  }
+}
+
+@import "file.css";
+@import 'file.css';
+
+@import url("foo.css");
+@import url('foo.css');
+
+@import "foo.css" screen and (orientation: landscape);
+@import 'foo.css' screen and (orientation: landscape);
+
+@foo "one";
+@foo 'one';
+@foo "one" two 'three';
+@foo ("one");
+@foo ('one');
+@foo ("one" two 'three');
+
+one "two" three {}
+one 'two' three {}

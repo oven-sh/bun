@@ -1,0 +1,227 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`dynamic-import.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import.defer("foo");
+
+=====================================output=====================================
+import.defer("foo");
+
+================================================================================
+`;
+
+exports[`dynamic-import.js format[acorn] 1`] = `
+"The only valid meta property for import is 'import.meta' (1:8)
+> 1 | import.defer("foo");
+    |        ^
+  2 |
+Cause: The only valid meta property for import is 'import.meta' (1:7)"
+`;
+
+exports[`dynamic-import.js format[espree] 1`] = `
+"The only valid meta property for import is 'import.meta' (1:8)
+> 1 | import.defer("foo");
+    |        ^
+  2 |
+Cause: The only valid meta property for import is 'import.meta'"
+`;
+
+exports[`dynamic-import.js format[flow] 1`] = `
+"Unexpected identifier, expected the identifier \`meta\` (1:8)
+> 1 | import.defer("foo");
+    |        ^
+  2 |
+Cause: Unexpected identifier, expected the identifier \`meta\` (1:7)"
+`;
+
+exports[`dynamic-import.js format[hermes] 1`] = `
+"'meta' expected in member expression (1:8)
+> 1 | import.defer("foo");
+    |        ^
+  2 |
+Cause: 'meta' expected in member expression (1:7)
+import.defer("foo");
+       ^~~~~
+note: start of member expression (1:0)
+import.defer("foo");
+^"
+`;
+
+exports[`dynamic-import.js format[meriyah] 1`] = `
+"The only valid meta property for import is 'import.meta' (1:8)
+> 1 | import.defer("foo");
+    |        ^^^^^
+  2 |
+Cause: [1:7-1:12]: The only valid meta property for import is 'import.meta'"
+`;
+
+exports[`dynamic-import-attributes-expression.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import.defer("x", { with: { attr: "val" } });
+
+=====================================output=====================================
+import.defer("x", { with: { attr: "val" } });
+
+================================================================================
+`;
+
+exports[`dynamic-import-attributes-expression.js format[acorn] 1`] = `
+"The only valid meta property for import is 'import.meta' (1:8)
+> 1 | import.defer("x", { with: { attr: "val" } });
+    |        ^
+  2 |
+Cause: The only valid meta property for import is 'import.meta' (1:7)"
+`;
+
+exports[`dynamic-import-attributes-expression.js format[espree] 1`] = `
+"The only valid meta property for import is 'import.meta' (1:8)
+> 1 | import.defer("x", { with: { attr: "val" } });
+    |        ^
+  2 |
+Cause: The only valid meta property for import is 'import.meta'"
+`;
+
+exports[`dynamic-import-attributes-expression.js format[flow] 1`] = `
+"Unexpected identifier, expected the identifier \`meta\` (1:8)
+> 1 | import.defer("x", { with: { attr: "val" } });
+    |        ^
+  2 |
+Cause: Unexpected identifier, expected the identifier \`meta\` (1:7)"
+`;
+
+exports[`dynamic-import-attributes-expression.js format[hermes] 1`] = `
+"'meta' expected in member expression (1:8)
+> 1 | import.defer("x", { with: { attr: "val" } });
+    |        ^
+  2 |
+Cause: 'meta' expected in member expression (1:7)
+import.defer("x", { with: { attr: "val" } });
+       ^~~~~
+note: start of member expression (1:0)
+import.defer("x", { with: { attr: "val" } });
+^"
+`;
+
+exports[`dynamic-import-attributes-expression.js format[meriyah] 1`] = `
+"The only valid meta property for import is 'import.meta' (1:8)
+> 1 | import.defer("x", { with: { attr: "val" } });
+    |        ^^^^^
+  2 |
+Cause: [1:7-1:12]: The only valid meta property for import is 'import.meta'"
+`;
+
+exports[`import-defer.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import defer * as ns from "x";
+
+=====================================output=====================================
+import defer * as ns from "x";
+
+================================================================================
+`;
+
+exports[`import-defer.js format[acorn] 1`] = `
+"Unexpected token (1:14)
+> 1 | import defer * as ns from "x";
+    |              ^
+  2 |
+Cause: Unexpected token (1:13)"
+`;
+
+exports[`import-defer.js format[espree] 1`] = `
+"Unexpected token * (1:14)
+> 1 | import defer * as ns from "x";
+    |              ^
+  2 |
+Cause: Unexpected token *"
+`;
+
+exports[`import-defer.js format[flow] 1`] = `
+"Unexpected token \`*\`, expected the keyword \`from\` (1:14)
+> 1 | import defer * as ns from "x";
+    |              ^
+  2 |
+Cause: Unexpected token \`*\`, expected the keyword \`from\` (1:13)"
+`;
+
+exports[`import-defer.js format[hermes] 1`] = `
+"'from' expected (1:14)
+> 1 | import defer * as ns from "x";
+    |              ^
+  2 |
+Cause: 'from' expected (1:13)
+import defer * as ns from "x";
+             ^"
+`;
+
+exports[`import-defer.js format[meriyah] 1`] = `
+"Expected 'from' (1:14)
+> 1 | import defer * as ns from "x";
+    |              ^
+  2 |
+Cause: [1:13-1:14]: Expected 'from'"
+`;
+
+exports[`import-defer-attributes-declaration.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import defer * as ns from "x" with { attr: "val" };
+
+=====================================output=====================================
+import defer * as ns from "x" with { attr: "val" };
+
+================================================================================
+`;
+
+exports[`import-defer-attributes-declaration.js format[acorn] 1`] = `
+"Unexpected token (1:14)
+> 1 | import defer * as ns from "x" with { attr: "val" };
+    |              ^
+  2 |
+Cause: Unexpected token (1:13)"
+`;
+
+exports[`import-defer-attributes-declaration.js format[espree] 1`] = `
+"Unexpected token * (1:14)
+> 1 | import defer * as ns from "x" with { attr: "val" };
+    |              ^
+  2 |
+Cause: Unexpected token *"
+`;
+
+exports[`import-defer-attributes-declaration.js format[flow] 1`] = `
+"Unexpected token \`*\`, expected the keyword \`from\` (1:14)
+> 1 | import defer * as ns from "x" with { attr: "val" };
+    |              ^
+  2 |
+Cause: Unexpected token \`*\`, expected the keyword \`from\` (1:13)"
+`;
+
+exports[`import-defer-attributes-declaration.js format[hermes] 1`] = `
+"'from' expected (1:14)
+> 1 | import defer * as ns from "x" with { attr: "val" };
+    |              ^
+  2 |
+Cause: 'from' expected (1:13)
+import defer * as ns from "x" with { attr: "val" };
+             ^"
+`;
+
+exports[`import-defer-attributes-declaration.js format[meriyah] 1`] = `
+"Expected 'from' (1:14)
+> 1 | import defer * as ns from "x" with { attr: "val" };
+    |              ^
+  2 |
+Cause: [1:13-1:14]: Expected 'from'"
+`;

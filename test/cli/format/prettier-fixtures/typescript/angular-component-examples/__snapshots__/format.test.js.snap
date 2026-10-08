@@ -1,0 +1,301 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`15934.component.ts - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import { Component } from '@angular/core';
+
+@Component({
+    selector: 'app-root',
+    template: \`
+        <h1>My App</h1>
+        <app-todo-list></app-todo-list>
+    \`,
+    styles: \`h1 { color: blue }\`
+})
+export class AppComponent {}
+
+=====================================output=====================================
+import { Component } from "@angular/core";
+
+@Component({
+  selector: "app-root",
+  template: \`
+    <h1>My App</h1>
+    <app-todo-list></app-todo-list>
+  \`,
+  styles: \`
+    h1 {
+      color: blue;
+    }
+  \`,
+})
+export class AppComponent {}
+
+================================================================================
+`;
+
+exports[`15934.component.ts - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import { Component } from '@angular/core';
+
+@Component({
+    selector: 'app-root',
+    template: \`
+        <h1>My App</h1>
+        <app-todo-list></app-todo-list>
+    \`,
+    styles: \`h1 { color: blue }\`
+})
+export class AppComponent {}
+
+=====================================output=====================================
+import { Component } from "@angular/core";
+
+@Component({
+  selector: "app-root",
+  template: \`
+    <h1>My App</h1>
+    <app-todo-list></app-todo-list>
+  \`,
+  styles: \`
+    h1 {
+      color: blue;
+    }
+  \`
+})
+export class AppComponent {}
+
+================================================================================
+`;
+
+exports[`15934-computed.component.ts - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import { Component } from '@angular/core';
+
+const styles = "foobar";
+
+@Component({
+    selector: 'app-root',
+    template: \`
+        <h1>My App</h1>
+        <app-todo-list></app-todo-list>
+    \`,
+    [styles]: \`h1 { color: blue }\`
+})
+export class AppComponent {}
+
+=====================================output=====================================
+import { Component } from "@angular/core";
+
+const styles = "foobar";
+
+@Component({
+  selector: "app-root",
+  template: \`
+    <h1>My App</h1>
+    <app-todo-list></app-todo-list>
+  \`,
+  [styles]: \`h1 { color: blue }\`,
+})
+export class AppComponent {}
+
+================================================================================
+`;
+
+exports[`15934-computed.component.ts - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import { Component } from '@angular/core';
+
+const styles = "foobar";
+
+@Component({
+    selector: 'app-root',
+    template: \`
+        <h1>My App</h1>
+        <app-todo-list></app-todo-list>
+    \`,
+    [styles]: \`h1 { color: blue }\`
+})
+export class AppComponent {}
+
+=====================================output=====================================
+import { Component } from "@angular/core";
+
+const styles = "foobar";
+
+@Component({
+  selector: "app-root",
+  template: \`
+    <h1>My App</h1>
+    <app-todo-list></app-todo-list>
+  \`,
+  [styles]: \`h1 { color: blue }\`
+})
+export class AppComponent {}
+
+================================================================================
+`;
+
+exports[`15969-computed.component.ts - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import { Component } from '@angular/core';
+
+const template = "foobar";
+
+@Component({
+  [template]: \`<h1>{{       hello }}</h1>\`,
+})
+export class AppComponent {}
+
+=====================================output=====================================
+import { Component } from "@angular/core";
+
+const template = "foobar";
+
+@Component({
+  [template]: \`<h1>{{       hello }}</h1>\`,
+})
+export class AppComponent {}
+
+================================================================================
+`;
+
+exports[`15969-computed.component.ts - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import { Component } from '@angular/core';
+
+const template = "foobar";
+
+@Component({
+  [template]: \`<h1>{{       hello }}</h1>\`,
+})
+export class AppComponent {}
+
+=====================================output=====================================
+import { Component } from "@angular/core";
+
+const template = "foobar";
+
+@Component({
+  [template]: \`<h1>{{       hello }}</h1>\`
+})
+export class AppComponent {}
+
+================================================================================
+`;
+
+exports[`test.component.ts - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@Component({
+       selector: 'app-test',
+  template: \`<ul>   <li>test</li>
+  </ul>
+  \`,
+  styles: [   \`
+  
+ :host {
+   color: red;
+ } 
+ div { background: blue
+ }
+\`
+
+]
+})
+class     TestComponent {}
+
+=====================================output=====================================
+@Component({
+  selector: "app-test",
+  template: \`<ul>
+    <li>test</li>
+  </ul> \`,
+  styles: [
+    \`
+      :host {
+        color: red;
+      }
+      div {
+        background: blue;
+      }
+    \`,
+  ],
+})
+class TestComponent {}
+
+================================================================================
+`;
+
+exports[`test.component.ts - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@Component({
+       selector: 'app-test',
+  template: \`<ul>   <li>test</li>
+  </ul>
+  \`,
+  styles: [   \`
+  
+ :host {
+   color: red;
+ } 
+ div { background: blue
+ }
+\`
+
+]
+})
+class     TestComponent {}
+
+=====================================output=====================================
+@Component({
+  selector: "app-test",
+  template: \`<ul>
+    <li>test</li>
+  </ul> \`,
+  styles: [
+    \`
+      :host {
+        color: red;
+      }
+      div {
+        background: blue;
+      }
+    \`
+  ]
+})
+class TestComponent {}
+
+================================================================================
+`;

@@ -1,0 +1,314 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`dangling.ts - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+Thing?.(/* dangling */);
+declare class Foo extends Qux<string> {/* dangling */}
+
+=====================================output=====================================
+Thing?.(/* dangling */)
+declare class Foo extends Qux<string> {
+  /* dangling */
+}
+
+================================================================================
+`;
+
+exports[`dangling.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+Thing?.(/* dangling */);
+declare class Foo extends Qux<string> {/* dangling */}
+
+=====================================output=====================================
+Thing?.(/* dangling */);
+declare class Foo extends Qux<string> {
+  /* dangling */
+}
+
+================================================================================
+`;
+
+exports[`issues.ts - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function f(
+  someReallyLongArgument: WithSomeLongType,
+  someReallyLongArgument2: WithSomeLongType,
+  // Trailing comment should stay after
+) {}
+
+
+=====================================output=====================================
+function f(
+  someReallyLongArgument: WithSomeLongType,
+  someReallyLongArgument2: WithSomeLongType,
+  // Trailing comment should stay after
+) {}
+
+================================================================================
+`;
+
+exports[`issues.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function f(
+  someReallyLongArgument: WithSomeLongType,
+  someReallyLongArgument2: WithSomeLongType,
+  // Trailing comment should stay after
+) {}
+
+
+=====================================output=====================================
+function f(
+  someReallyLongArgument: WithSomeLongType,
+  someReallyLongArgument2: WithSomeLongType,
+  // Trailing comment should stay after
+) {}
+
+================================================================================
+`;
+
+exports[`last-arg.ts - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type f1 = (
+  currentRequest: {a: number},
+  // TODO this is a very very very very long comment that makes it go > 80 columns
+) => number;
+
+f2 = (
+  currentRequest: {a: number},
+  // TODO this is a very very very very long comment that makes it go > 80 columns
+): number => {};
+
+f3 = (
+  currentRequest: {a: number},
+  // TODO this is a very very very very long comment that makes it go > 80 columns
+) => {};
+
+f4 = function(
+  currentRequest: {a: number},
+  // TODO this is a very very very very long comment that makes it go > 80 columns
+) {};
+
+class X {
+  f(
+    currentRequest: {a: number},
+    // TODO this is a very very very very long comment that makes it go > 80 columns
+  ) {}
+}
+
+function f5(
+  a: number
+// some comment here
+): number {
+  return a + 1;
+}
+
+var x = {
+  getSectionMode(
+    pageMetaData: PageMetaData,
+    sectionMetaData: SectionMetaData
+    /* $FlowFixMe This error was exposed while converting keyMirror
+     * to keyMirrorRecursive */
+  ): $Enum<SectionMode> {
+  }
+}
+
+class X2 {
+  getSectionMode(
+    pageMetaData: PageMetaData,
+    sectionMetaData: SectionMetaData = ['unknown']
+    /* $FlowFixMe This error was exposed while converting keyMirror
+     * to keyMirrorRecursive */
+  ): $Enum<SectionMode> {
+  }
+}
+
+=====================================output=====================================
+type f1 = (
+  currentRequest: { a: number },
+  // TODO this is a very very very very long comment that makes it go > 80 columns
+) => number
+
+f2 = (
+  currentRequest: { a: number },
+  // TODO this is a very very very very long comment that makes it go > 80 columns
+): number => {}
+
+f3 = (
+  currentRequest: { a: number },
+  // TODO this is a very very very very long comment that makes it go > 80 columns
+) => {}
+
+f4 = function (
+  currentRequest: { a: number },
+  // TODO this is a very very very very long comment that makes it go > 80 columns
+) {}
+
+class X {
+  f(
+    currentRequest: { a: number },
+    // TODO this is a very very very very long comment that makes it go > 80 columns
+  ) {}
+}
+
+function f5(
+  a: number,
+  // some comment here
+): number {
+  return a + 1
+}
+
+var x = {
+  getSectionMode(
+    pageMetaData: PageMetaData,
+    sectionMetaData: SectionMetaData,
+    /* $FlowFixMe This error was exposed while converting keyMirror
+     * to keyMirrorRecursive */
+  ): $Enum<SectionMode> {},
+}
+
+class X2 {
+  getSectionMode(
+    pageMetaData: PageMetaData,
+    sectionMetaData: SectionMetaData = ["unknown"],
+    /* $FlowFixMe This error was exposed while converting keyMirror
+     * to keyMirrorRecursive */
+  ): $Enum<SectionMode> {}
+}
+
+================================================================================
+`;
+
+exports[`last-arg.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type f1 = (
+  currentRequest: {a: number},
+  // TODO this is a very very very very long comment that makes it go > 80 columns
+) => number;
+
+f2 = (
+  currentRequest: {a: number},
+  // TODO this is a very very very very long comment that makes it go > 80 columns
+): number => {};
+
+f3 = (
+  currentRequest: {a: number},
+  // TODO this is a very very very very long comment that makes it go > 80 columns
+) => {};
+
+f4 = function(
+  currentRequest: {a: number},
+  // TODO this is a very very very very long comment that makes it go > 80 columns
+) {};
+
+class X {
+  f(
+    currentRequest: {a: number},
+    // TODO this is a very very very very long comment that makes it go > 80 columns
+  ) {}
+}
+
+function f5(
+  a: number
+// some comment here
+): number {
+  return a + 1;
+}
+
+var x = {
+  getSectionMode(
+    pageMetaData: PageMetaData,
+    sectionMetaData: SectionMetaData
+    /* $FlowFixMe This error was exposed while converting keyMirror
+     * to keyMirrorRecursive */
+  ): $Enum<SectionMode> {
+  }
+}
+
+class X2 {
+  getSectionMode(
+    pageMetaData: PageMetaData,
+    sectionMetaData: SectionMetaData = ['unknown']
+    /* $FlowFixMe This error was exposed while converting keyMirror
+     * to keyMirrorRecursive */
+  ): $Enum<SectionMode> {
+  }
+}
+
+=====================================output=====================================
+type f1 = (
+  currentRequest: { a: number },
+  // TODO this is a very very very very long comment that makes it go > 80 columns
+) => number;
+
+f2 = (
+  currentRequest: { a: number },
+  // TODO this is a very very very very long comment that makes it go > 80 columns
+): number => {};
+
+f3 = (
+  currentRequest: { a: number },
+  // TODO this is a very very very very long comment that makes it go > 80 columns
+) => {};
+
+f4 = function (
+  currentRequest: { a: number },
+  // TODO this is a very very very very long comment that makes it go > 80 columns
+) {};
+
+class X {
+  f(
+    currentRequest: { a: number },
+    // TODO this is a very very very very long comment that makes it go > 80 columns
+  ) {}
+}
+
+function f5(
+  a: number,
+  // some comment here
+): number {
+  return a + 1;
+}
+
+var x = {
+  getSectionMode(
+    pageMetaData: PageMetaData,
+    sectionMetaData: SectionMetaData,
+    /* $FlowFixMe This error was exposed while converting keyMirror
+     * to keyMirrorRecursive */
+  ): $Enum<SectionMode> {},
+};
+
+class X2 {
+  getSectionMode(
+    pageMetaData: PageMetaData,
+    sectionMetaData: SectionMetaData = ["unknown"],
+    /* $FlowFixMe This error was exposed while converting keyMirror
+     * to keyMirrorRecursive */
+  ): $Enum<SectionMode> {}
+}
+
+================================================================================
+`;

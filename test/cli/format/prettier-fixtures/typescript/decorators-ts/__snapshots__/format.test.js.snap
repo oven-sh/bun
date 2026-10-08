@@ -1,0 +1,318 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`accessor-decorator.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Point {
+  private _x: number;
+  private _y: number;
+  constructor(x: number, y: number) {
+    this._x = x;
+    this._y = y;
+  }
+
+  @configurable(false)
+  get x() {
+    return this._x;
+  }
+
+  @configurable(false)
+  get y() {
+    return this._y;
+  }
+}
+
+=====================================output=====================================
+class Point {
+  private _x: number;
+  private _y: number;
+  constructor(x: number, y: number) {
+    this._x = x;
+    this._y = y;
+  }
+
+  @configurable(false)
+  get x() {
+    return this._x;
+  }
+
+  @configurable(false)
+  get y() {
+    return this._y;
+  }
+}
+
+================================================================================
+`;
+
+exports[`angular.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@Component({
+  selector: 'toh-hero-button',
+  template: \`<button>{{label}}</button>\`
+})
+export class HeroButtonComponent {
+  @Output() change = new EventEmitter<any>();
+  @Input() label: string;
+}
+
+=====================================output=====================================
+@Component({
+  selector: "toh-hero-button",
+  template: \`<button>{{ label }}</button>\`,
+})
+export class HeroButtonComponent {
+  @Output() change = new EventEmitter<any>();
+  @Input() label: string;
+}
+
+================================================================================
+`;
+
+exports[`class-decorator.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@sealed
+class Greeter {
+  greeting: string;
+  constructor(message: string) {
+    this.greeting = message;
+  }
+  greet() {
+    return "Hello, " + this.greeting;
+  }
+}
+
+=====================================output=====================================
+@sealed
+class Greeter {
+  greeting: string;
+  constructor(message: string) {
+    this.greeting = message;
+  }
+  greet() {
+    return "Hello, " + this.greeting;
+  }
+}
+
+================================================================================
+`;
+
+exports[`method-decorator.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Greeter {
+  greeting: string;
+  constructor(message: string) {
+    this.greeting = message;
+  }
+
+  @enumerable(false)
+  greet() {
+    return "Hello, " + this.greeting;
+  }
+}
+
+=====================================output=====================================
+class Greeter {
+  greeting: string;
+  constructor(message: string) {
+    this.greeting = message;
+  }
+
+  @enumerable(false)
+  greet() {
+    return "Hello, " + this.greeting;
+  }
+}
+
+================================================================================
+`;
+
+exports[`mobx.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class X {
+	@deco x() {
+      return this.count * 2;
+	}
+	@deco get x() {
+      return this.count * 2;
+	}
+}
+
+=====================================output=====================================
+class X {
+  @deco x() {
+    return this.count * 2;
+  }
+  @deco get x() {
+    return this.count * 2;
+  }
+}
+
+================================================================================
+`;
+
+exports[`multiple.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class C {
+  @f()
+  @g()
+  method() {}
+}
+
+=====================================output=====================================
+class C {
+  @f()
+  @g()
+  method() {}
+}
+
+================================================================================
+`;
+
+exports[`parameter-decorator.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Greeter {
+  greeting: string;
+
+  constructor(message: string) {
+    this.greeting = message;
+  }
+
+  @validate
+  greet(@required name: string) {
+    return "Hello " + name + ", " + this.greeting;
+  }
+
+  @validate
+  destructured(@required { toString }: Object) {
+    return Function.prototype.toString.apply(toString);
+  }
+}
+
+=====================================output=====================================
+class Greeter {
+  greeting: string;
+
+  constructor(message: string) {
+    this.greeting = message;
+  }
+
+  @validate
+  greet(@required name: string) {
+    return "Hello " + name + ", " + this.greeting;
+  }
+
+  @validate
+  destructured(@required { toString }: Object) {
+    return Function.prototype.toString.apply(toString);
+  }
+}
+
+================================================================================
+`;
+
+exports[`property-decorator.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Greeter {
+  @format("Hello, %s") greeting: string;
+
+  constructor(message: string) {
+    this.greeting = message;
+  }
+  greet() {
+    let formatString = getFormat(this, "greeting");
+    return formatString.replace("%s", this.greeting);
+  }
+}
+
+=====================================output=====================================
+class Greeter {
+  @format("Hello, %s") greeting: string;
+
+  constructor(message: string) {
+    this.greeting = message;
+  }
+  greet() {
+    let formatString = getFormat(this, "greeting");
+    return formatString.replace("%s", this.greeting);
+  }
+}
+
+================================================================================
+`;
+
+exports[`typeorm.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@Entity()
+export class Board {
+
+    @PrimaryGeneratedColumn()
+    id: number;
+
+    @Column()
+    slug: string;
+
+    @Column()
+    name: string;
+
+    @Column()
+    theme: string;
+
+    @Column()
+    description: string;
+
+    @OneToMany(type => Topic, topic => topic.board)
+    topics: Topic[]
+
+}
+
+=====================================output=====================================
+@Entity()
+export class Board {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  slug: string;
+
+  @Column()
+  name: string;
+
+  @Column()
+  theme: string;
+
+  @Column()
+  description: string;
+
+  @OneToMany((type) => Topic, (topic) => topic.board)
+  topics: Topic[];
+}
+
+================================================================================
+`;

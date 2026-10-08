@@ -1,0 +1,1124 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`comments.ts - {"experimentalTernaries":true} format 1`] = `
+====================================options=====================================
+experimentalTernaries: true
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A = B extends T
+  ? // comment
+    foo
+  : bar;
+
+type A = B extends test /* comment
+  comment
+      comment
+*/
+  ? foo
+  : bar;
+
+type T = test extends B
+  ? /* comment
+          comment
+    comment
+          comment
+  */
+    foo
+  : bar;
+
+type T = test extends B
+  ? /* comment
+       comment
+       comment
+       comment
+    */
+    foo
+  : test extends B
+  ? /* comment
+  comment
+    comment */
+    foo
+  : bar;
+
+type T = test extends B
+  ? /* comment */
+    foo
+  : bar;
+
+type T = test extends B
+  ? foo
+  : /* comment
+         comment
+     comment
+           comment
+    */
+  bar;
+
+type T = test extends B
+  ? foo
+  : /* comment
+         comment
+     comment
+           comment
+    */
+  test extends B
+  ? foo
+  : /* comment
+  comment
+    comment
+   */
+    bar;
+
+type T = test extends B
+  ? foo
+  : /* comment */
+  bar;
+
+type T = test extends B ? test extends B /* c
+c */? foo : bar : bar;
+
+type T = any extends B
+    // Comment
+    // Multiline comment
+    ? B | C
+    : D;
+T = any instanceof B
+    // Comment
+    // Multiline comment
+    ? B | C
+    : D;
+T = any instanceof B
+    ? D
+    // Comment
+    // Multiline comment
+    : B | C;
+
+type T = any extends B
+    // Comment
+    ? B | C
+    : D;
+T = any instanceof B
+    // Comment
+    ? B | C
+    : D;
+
+type T = any extends B
+  /**
+  * Comment
+  */
+    ? B | C
+    : D;
+T = any instanceof B
+  /**
+  * Comment
+  */
+    ? B | C
+    : D;
+type T = any extends B
+  ?/* Comment */
+     B | C
+    : D;
+T = any instanceof B
+  ?/* Comment */
+     B | C
+    : D;
+
+=====================================output=====================================
+type A =
+  B extends T ?
+    // comment
+    foo
+  : bar;
+
+type A =
+  B extends (
+    test /* comment
+  comment
+      comment
+*/
+  ) ?
+    foo
+  : bar;
+
+type T =
+  test extends B ?
+    /* comment
+          comment
+    comment
+          comment
+  */
+    foo
+  : bar;
+
+type T =
+  test extends B ?
+    /* comment
+       comment
+       comment
+       comment
+    */
+    foo
+  : test extends B ?
+    /* comment
+  comment
+    comment */
+    foo
+  : bar;
+
+type T = test extends B ? /* comment */ foo : bar;
+
+type T =
+  test extends B ? foo
+  : /* comment
+         comment
+     comment
+           comment
+    */
+    bar;
+
+type T =
+  test extends B ? foo
+  : /* comment
+         comment
+     comment
+           comment
+    */
+  test extends B ? foo
+  : /* comment
+  comment
+    comment
+   */
+    bar;
+
+type T = test extends B ? foo : /* comment */ bar;
+
+type T =
+  test extends B ?
+    test extends (
+      B /* c
+c */
+    ) ?
+      foo
+    : bar
+  : bar;
+
+type T =
+  any extends B ?
+    // Comment
+    // Multiline comment
+    B | C
+  : D;
+T =
+  any instanceof B ?
+    // Comment
+    // Multiline comment
+    B | C
+  : D;
+T =
+  any instanceof B ? D
+    // Comment
+    // Multiline comment
+  : B | C;
+
+type T =
+  any extends B ?
+    // Comment
+    B | C
+  : D;
+T =
+  any instanceof B ?
+    // Comment
+    B | C
+  : D;
+
+type T =
+  any extends B ?
+    /**
+     * Comment
+     */
+    B | C
+  : D;
+T = any instanceof B ?
+    /**
+     * Comment
+     */
+    B | C
+  : D;
+type T = any extends B ? /* Comment */ B | C : D;
+T = any instanceof B ? /* Comment */ B | C : D;
+
+================================================================================
+`;
+
+exports[`comments.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A = B extends T
+  ? // comment
+    foo
+  : bar;
+
+type A = B extends test /* comment
+  comment
+      comment
+*/
+  ? foo
+  : bar;
+
+type T = test extends B
+  ? /* comment
+          comment
+    comment
+          comment
+  */
+    foo
+  : bar;
+
+type T = test extends B
+  ? /* comment
+       comment
+       comment
+       comment
+    */
+    foo
+  : test extends B
+  ? /* comment
+  comment
+    comment */
+    foo
+  : bar;
+
+type T = test extends B
+  ? /* comment */
+    foo
+  : bar;
+
+type T = test extends B
+  ? foo
+  : /* comment
+         comment
+     comment
+           comment
+    */
+  bar;
+
+type T = test extends B
+  ? foo
+  : /* comment
+         comment
+     comment
+           comment
+    */
+  test extends B
+  ? foo
+  : /* comment
+  comment
+    comment
+   */
+    bar;
+
+type T = test extends B
+  ? foo
+  : /* comment */
+  bar;
+
+type T = test extends B ? test extends B /* c
+c */? foo : bar : bar;
+
+type T = any extends B
+    // Comment
+    // Multiline comment
+    ? B | C
+    : D;
+T = any instanceof B
+    // Comment
+    // Multiline comment
+    ? B | C
+    : D;
+T = any instanceof B
+    ? D
+    // Comment
+    // Multiline comment
+    : B | C;
+
+type T = any extends B
+    // Comment
+    ? B | C
+    : D;
+T = any instanceof B
+    // Comment
+    ? B | C
+    : D;
+
+type T = any extends B
+  /**
+  * Comment
+  */
+    ? B | C
+    : D;
+T = any instanceof B
+  /**
+  * Comment
+  */
+    ? B | C
+    : D;
+type T = any extends B
+  ?/* Comment */
+     B | C
+    : D;
+T = any instanceof B
+  ?/* Comment */
+     B | C
+    : D;
+
+=====================================output=====================================
+type A = B extends T
+  ? // comment
+    foo
+  : bar;
+
+type A = B extends test /* comment
+  comment
+      comment
+*/
+  ? foo
+  : bar;
+
+type T = test extends B
+  ? /* comment
+          comment
+    comment
+          comment
+  */
+    foo
+  : bar;
+
+type T = test extends B
+  ? /* comment
+       comment
+       comment
+       comment
+    */
+    foo
+  : test extends B
+    ? /* comment
+  comment
+    comment */
+      foo
+    : bar;
+
+type T = test extends B ? /* comment */ foo : bar;
+
+type T = test extends B
+  ? foo
+  : /* comment
+         comment
+     comment
+           comment
+    */
+    bar;
+
+type T = test extends B
+  ? foo
+  : /* comment
+         comment
+     comment
+           comment
+    */
+    test extends B
+    ? foo
+    : /* comment
+  comment
+    comment
+   */
+      bar;
+
+type T = test extends B ? foo : /* comment */ bar;
+
+type T = test extends B
+  ? test extends B /* c
+c */
+    ? foo
+    : bar
+  : bar;
+
+type T = any extends B
+  ? // Comment
+    // Multiline comment
+    B | C
+  : D;
+T =
+  any instanceof B
+    ? // Comment
+      // Multiline comment
+      B | C
+    : D;
+T =
+  any instanceof B
+    ? D
+    : // Comment
+      // Multiline comment
+      B | C;
+
+type T = any extends B
+  ? // Comment
+    B | C
+  : D;
+T =
+  any instanceof B
+    ? // Comment
+      B | C
+    : D;
+
+type T = any extends B
+  ? /**
+     * Comment
+     */
+    B | C
+  : D;
+T =
+  any instanceof B
+    ? /**
+       * Comment
+       */
+      B | C
+    : D;
+type T = any extends B ? /* Comment */ B | C : D;
+T = any instanceof B ? /* Comment */ B | C : D;
+
+================================================================================
+`;
+
+exports[`conditional-types.ts - {"experimentalTernaries":true} format 1`] = `
+====================================options=====================================
+experimentalTernaries: true
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export type DeepReadonly<T> = T extends any[] ? DeepReadonlyArray<T[number]> : T extends object ? DeepReadonlyObject<T> : T;
+
+type NonFunctionPropertyNames<T> = { [K in keyof T]: T[K] extends Function ? never : K }[keyof T];
+
+interface DeepReadonlyArray<T> extends ReadonlyArray<DeepReadonly<T>> {}
+
+type DeepReadonlyObject<T> = {
+    readonly [P in NonFunctionPropertyNames<T>]: DeepReadonly<T[P]>;
+};
+
+type TypeName<T> =
+  T extends string ? "string" :
+  T extends number ? "number" :
+  T extends boolean ? "boolean" :
+  T extends undefined ? "undefined" :
+  T extends Function ? "function" :
+  "object";
+
+type Type01 = 0 extends (1 extends 2  ? 3 : 4) ? 5 : 6;
+type Type02 = 0 extends ((1 extends 2  ? 3 : 4)) ? 5 : 6;
+type Type03 = 0 extends (((1 extends 2  ? 3 : 4))) ? 5 : 6;
+type Type04 = 0 extends ((((1 extends 2  ? 3 : 4)))) ? 5 : 6;
+type Type05 = (0 extends 1 ? 2 : 3) extends 4 ? 5 : 6;
+type Type06 = ((0 extends 1 ? 2 : 3)) extends 4 ? 5 : 6;
+type Type07 = (((0 extends 1 ? 2 : 3))) extends 4 ? 5 : 6;
+type Type08 = ((((0 extends 1 ? 2 : 3)))) extends 4 ? 5 : 6;
+
+type T1 = () => void extends T ? U : V;
+type T1a = () => (void extends T ? U : V);
+type T1b = () => (void) extends T ? U : V;
+type T2 = (() => void) extends T ? U : V;
+
+type U1 = new () => X extends T ? U : V;
+type U1a = new () => (X extends T ? U : V);
+type U1b = new () => (X) extends T ? U : V;
+type U2 = (new () => X) extends T ? U : V;
+
+=====================================output=====================================
+export type DeepReadonly<T> =
+  T extends any[] ? DeepReadonlyArray<T[number]>
+  : T extends object ? DeepReadonlyObject<T>
+  : T;
+
+type NonFunctionPropertyNames<T> = {
+  [K in keyof T]: T[K] extends Function ? never : K;
+}[keyof T];
+
+interface DeepReadonlyArray<T> extends ReadonlyArray<DeepReadonly<T>> {}
+
+type DeepReadonlyObject<T> = {
+  readonly [P in NonFunctionPropertyNames<T>]: DeepReadonly<T[P]>;
+};
+
+type TypeName<T> =
+  T extends string ? "string"
+  : T extends number ? "number"
+  : T extends boolean ? "boolean"
+  : T extends undefined ? "undefined"
+  : T extends Function ? "function"
+  : "object";
+
+type Type01 = 0 extends (1 extends 2 ? 3 : 4) ? 5 : 6;
+type Type02 = 0 extends (1 extends 2 ? 3 : 4) ? 5 : 6;
+type Type03 = 0 extends (1 extends 2 ? 3 : 4) ? 5 : 6;
+type Type04 = 0 extends (1 extends 2 ? 3 : 4) ? 5 : 6;
+type Type05 = (0 extends 1 ? 2 : 3) extends 4 ? 5 : 6;
+type Type06 = (0 extends 1 ? 2 : 3) extends 4 ? 5 : 6;
+type Type07 = (0 extends 1 ? 2 : 3) extends 4 ? 5 : 6;
+type Type08 = (0 extends 1 ? 2 : 3) extends 4 ? 5 : 6;
+
+type T1 = () => void extends T ? U : V;
+type T1a = () => void extends T ? U : V;
+type T1b = () => void extends T ? U : V;
+type T2 = (() => void) extends T ? U : V;
+
+type U1 = new () => X extends T ? U : V;
+type U1a = new () => X extends T ? U : V;
+type U1b = new () => X extends T ? U : V;
+type U2 = (new () => X) extends T ? U : V;
+
+================================================================================
+`;
+
+exports[`conditional-types.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export type DeepReadonly<T> = T extends any[] ? DeepReadonlyArray<T[number]> : T extends object ? DeepReadonlyObject<T> : T;
+
+type NonFunctionPropertyNames<T> = { [K in keyof T]: T[K] extends Function ? never : K }[keyof T];
+
+interface DeepReadonlyArray<T> extends ReadonlyArray<DeepReadonly<T>> {}
+
+type DeepReadonlyObject<T> = {
+    readonly [P in NonFunctionPropertyNames<T>]: DeepReadonly<T[P]>;
+};
+
+type TypeName<T> =
+  T extends string ? "string" :
+  T extends number ? "number" :
+  T extends boolean ? "boolean" :
+  T extends undefined ? "undefined" :
+  T extends Function ? "function" :
+  "object";
+
+type Type01 = 0 extends (1 extends 2  ? 3 : 4) ? 5 : 6;
+type Type02 = 0 extends ((1 extends 2  ? 3 : 4)) ? 5 : 6;
+type Type03 = 0 extends (((1 extends 2  ? 3 : 4))) ? 5 : 6;
+type Type04 = 0 extends ((((1 extends 2  ? 3 : 4)))) ? 5 : 6;
+type Type05 = (0 extends 1 ? 2 : 3) extends 4 ? 5 : 6;
+type Type06 = ((0 extends 1 ? 2 : 3)) extends 4 ? 5 : 6;
+type Type07 = (((0 extends 1 ? 2 : 3))) extends 4 ? 5 : 6;
+type Type08 = ((((0 extends 1 ? 2 : 3)))) extends 4 ? 5 : 6;
+
+type T1 = () => void extends T ? U : V;
+type T1a = () => (void extends T ? U : V);
+type T1b = () => (void) extends T ? U : V;
+type T2 = (() => void) extends T ? U : V;
+
+type U1 = new () => X extends T ? U : V;
+type U1a = new () => (X extends T ? U : V);
+type U1b = new () => (X) extends T ? U : V;
+type U2 = (new () => X) extends T ? U : V;
+
+=====================================output=====================================
+export type DeepReadonly<T> = T extends any[]
+  ? DeepReadonlyArray<T[number]>
+  : T extends object
+    ? DeepReadonlyObject<T>
+    : T;
+
+type NonFunctionPropertyNames<T> = {
+  [K in keyof T]: T[K] extends Function ? never : K;
+}[keyof T];
+
+interface DeepReadonlyArray<T> extends ReadonlyArray<DeepReadonly<T>> {}
+
+type DeepReadonlyObject<T> = {
+  readonly [P in NonFunctionPropertyNames<T>]: DeepReadonly<T[P]>;
+};
+
+type TypeName<T> = T extends string
+  ? "string"
+  : T extends number
+    ? "number"
+    : T extends boolean
+      ? "boolean"
+      : T extends undefined
+        ? "undefined"
+        : T extends Function
+          ? "function"
+          : "object";
+
+type Type01 = 0 extends (1 extends 2 ? 3 : 4) ? 5 : 6;
+type Type02 = 0 extends (1 extends 2 ? 3 : 4) ? 5 : 6;
+type Type03 = 0 extends (1 extends 2 ? 3 : 4) ? 5 : 6;
+type Type04 = 0 extends (1 extends 2 ? 3 : 4) ? 5 : 6;
+type Type05 = (0 extends 1 ? 2 : 3) extends 4 ? 5 : 6;
+type Type06 = (0 extends 1 ? 2 : 3) extends 4 ? 5 : 6;
+type Type07 = (0 extends 1 ? 2 : 3) extends 4 ? 5 : 6;
+type Type08 = (0 extends 1 ? 2 : 3) extends 4 ? 5 : 6;
+
+type T1 = () => void extends T ? U : V;
+type T1a = () => void extends T ? U : V;
+type T1b = () => void extends T ? U : V;
+type T2 = (() => void) extends T ? U : V;
+
+type U1 = new () => X extends T ? U : V;
+type U1a = new () => X extends T ? U : V;
+type U1b = new () => X extends T ? U : V;
+type U2 = (new () => X) extends T ? U : V;
+
+================================================================================
+`;
+
+exports[`infer-type.ts - {"experimentalTernaries":true} format 1`] = `
+====================================options=====================================
+experimentalTernaries: true
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type TestReturnType<T extends (...args: any[]) => any> = T extends (...args: any[]) => infer R ? R : any;
+
+type Unpacked<T> =
+  T extends (infer U)[] ? U :
+  T extends (...args: any[]) => infer U ? U :
+  T extends Promise<infer U> ? U :
+  T;
+
+=====================================output=====================================
+type TestReturnType<T extends (...args: any[]) => any> =
+  T extends (...args: any[]) => infer R ? R : any;
+
+type Unpacked<T> =
+  T extends (infer U)[] ? U
+  : T extends (...args: any[]) => infer U ? U
+  : T extends Promise<infer U> ? U
+  : T;
+
+================================================================================
+`;
+
+exports[`infer-type.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type TestReturnType<T extends (...args: any[]) => any> = T extends (...args: any[]) => infer R ? R : any;
+
+type Unpacked<T> =
+  T extends (infer U)[] ? U :
+  T extends (...args: any[]) => infer U ? U :
+  T extends Promise<infer U> ? U :
+  T;
+
+=====================================output=====================================
+type TestReturnType<T extends (...args: any[]) => any> = T extends (
+  ...args: any[]
+) => infer R
+  ? R
+  : any;
+
+type Unpacked<T> = T extends (infer U)[]
+  ? U
+  : T extends (...args: any[]) => infer U
+    ? U
+    : T extends Promise<infer U>
+      ? U
+      : T;
+
+================================================================================
+`;
+
+exports[`nested-in-condition.ts - {"experimentalTernaries":true} format 1`] = `
+====================================options=====================================
+experimentalTernaries: true
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type Foo =
+  (ThingamabobberFactory extends AbstractThingamabobberFactory ? GobbledygookProvider : CompositeGobbledygookProvider) extends
+  DoubleGobbledygookProvider
+    ? UniqueDalgametreService
+    : CompositeZamazingoResolver;
+
+type Foo2 =
+  DoubleGobbledygookProvider extends
+  (ThingamabobberFactory extends AbstractThingamabobberFactory ? GobbledygookProvider : CompositeGobbledygookProvider)
+    ? UniqueDalgametreService
+    : CompositeZamazingoResolver;
+
+type Foo3 =
+  (ThingamabobberFactory extends AbstractThingamabobberFactory ? GobbledygookProvider : CompositeGobbledygookProvider) extends
+  (DoubleGobbledygookProvider extends MockGobbledygookProvider ? MockThingamabobberFactory : ThingamabobberFactory)
+    ? UniqueDalgametreService
+    : CompositeZamazingoResolver;
+
+=====================================output=====================================
+type Foo =
+  (
+    ThingamabobberFactory extends AbstractThingamabobberFactory ?
+      GobbledygookProvider
+    : CompositeGobbledygookProvider
+  ) extends DoubleGobbledygookProvider ?
+    UniqueDalgametreService
+  : CompositeZamazingoResolver;
+
+type Foo2 =
+  DoubleGobbledygookProvider extends (
+    ThingamabobberFactory extends AbstractThingamabobberFactory ?
+      GobbledygookProvider
+    : CompositeGobbledygookProvider
+  ) ?
+    UniqueDalgametreService
+  : CompositeZamazingoResolver;
+
+type Foo3 =
+  (
+    ThingamabobberFactory extends AbstractThingamabobberFactory ?
+      GobbledygookProvider
+    : CompositeGobbledygookProvider
+  ) extends (
+    DoubleGobbledygookProvider extends MockGobbledygookProvider ?
+      MockThingamabobberFactory
+    : ThingamabobberFactory
+  ) ?
+    UniqueDalgametreService
+  : CompositeZamazingoResolver;
+
+================================================================================
+`;
+
+exports[`nested-in-condition.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type Foo =
+  (ThingamabobberFactory extends AbstractThingamabobberFactory ? GobbledygookProvider : CompositeGobbledygookProvider) extends
+  DoubleGobbledygookProvider
+    ? UniqueDalgametreService
+    : CompositeZamazingoResolver;
+
+type Foo2 =
+  DoubleGobbledygookProvider extends
+  (ThingamabobberFactory extends AbstractThingamabobberFactory ? GobbledygookProvider : CompositeGobbledygookProvider)
+    ? UniqueDalgametreService
+    : CompositeZamazingoResolver;
+
+type Foo3 =
+  (ThingamabobberFactory extends AbstractThingamabobberFactory ? GobbledygookProvider : CompositeGobbledygookProvider) extends
+  (DoubleGobbledygookProvider extends MockGobbledygookProvider ? MockThingamabobberFactory : ThingamabobberFactory)
+    ? UniqueDalgametreService
+    : CompositeZamazingoResolver;
+
+=====================================output=====================================
+type Foo = (
+  ThingamabobberFactory extends AbstractThingamabobberFactory
+    ? GobbledygookProvider
+    : CompositeGobbledygookProvider
+) extends DoubleGobbledygookProvider
+  ? UniqueDalgametreService
+  : CompositeZamazingoResolver;
+
+type Foo2 = DoubleGobbledygookProvider extends (
+  ThingamabobberFactory extends AbstractThingamabobberFactory
+    ? GobbledygookProvider
+    : CompositeGobbledygookProvider
+)
+  ? UniqueDalgametreService
+  : CompositeZamazingoResolver;
+
+type Foo3 = (
+  ThingamabobberFactory extends AbstractThingamabobberFactory
+    ? GobbledygookProvider
+    : CompositeGobbledygookProvider
+) extends (
+  DoubleGobbledygookProvider extends MockGobbledygookProvider
+    ? MockThingamabobberFactory
+    : ThingamabobberFactory
+)
+  ? UniqueDalgametreService
+  : CompositeZamazingoResolver;
+
+================================================================================
+`;
+
+exports[`new-ternary-spec.ts - {"experimentalTernaries":true} format 1`] = `
+====================================options=====================================
+experimentalTernaries: true
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// TypeScript has the same behavior, including a line break after =, but no parens around "conditional":
+type KnownKeys<T> =
+  {
+    [K in keyof T]: string extends K ? never
+    : number extends K ? never
+    : K;
+  } extends { [_ in keyof T]: infer U } ?
+    {} extends U ? never
+    : U
+  : never;
+
+type KnownKeysWithLongExtends<T> =
+  {
+    [K in keyof T]: string extends K ? never
+    : number extends K ? never
+    : K;
+  } extends {
+    [_ in keyof T]: SomeReallyLongThingThatBreaksTheLine<infer U>
+  } ? U
+  : never;
+
+// TypeScript examples:
+type TypeName<T> =
+  T extends string ? "string"
+  : T extends number ? "number"
+  : T extends boolean ? "boolean"
+  : T extends undefined ? "undefined"
+  : T extends Function ? "function"
+  : "object";
+
+type Unpacked<T> =
+  T extends (infer U)[] ? U
+  : T extends (...args: any[]) => infer U ?
+    SomeReallyLongThingThatBreaksTheLine<U>
+  : T extends Promise<infer U> ? U
+  : T;
+=====================================output=====================================
+// TypeScript has the same behavior, including a line break after =, but no parens around "conditional":
+type KnownKeys<T> =
+  {
+    [K in keyof T]: string extends K ? never
+    : number extends K ? never
+    : K;
+  } extends { [_ in keyof T]: infer U } ?
+    {} extends U ?
+      never
+    : U
+  : never;
+
+type KnownKeysWithLongExtends<T> =
+  {
+    [K in keyof T]: string extends K ? never
+    : number extends K ? never
+    : K;
+  } extends {
+    [_ in keyof T]: SomeReallyLongThingThatBreaksTheLine<infer U>;
+  } ?
+    U
+  : never;
+
+// TypeScript examples:
+type TypeName<T> =
+  T extends string ? "string"
+  : T extends number ? "number"
+  : T extends boolean ? "boolean"
+  : T extends undefined ? "undefined"
+  : T extends Function ? "function"
+  : "object";
+
+type Unpacked<T> =
+  T extends (infer U)[] ? U
+  : T extends (...args: any[]) => infer U ?
+    SomeReallyLongThingThatBreaksTheLine<U>
+  : T extends Promise<infer U> ? U
+  : T;
+
+================================================================================
+`;
+
+exports[`new-ternary-spec.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// TypeScript has the same behavior, including a line break after =, but no parens around "conditional":
+type KnownKeys<T> =
+  {
+    [K in keyof T]: string extends K ? never
+    : number extends K ? never
+    : K;
+  } extends { [_ in keyof T]: infer U } ?
+    {} extends U ? never
+    : U
+  : never;
+
+type KnownKeysWithLongExtends<T> =
+  {
+    [K in keyof T]: string extends K ? never
+    : number extends K ? never
+    : K;
+  } extends {
+    [_ in keyof T]: SomeReallyLongThingThatBreaksTheLine<infer U>
+  } ? U
+  : never;
+
+// TypeScript examples:
+type TypeName<T> =
+  T extends string ? "string"
+  : T extends number ? "number"
+  : T extends boolean ? "boolean"
+  : T extends undefined ? "undefined"
+  : T extends Function ? "function"
+  : "object";
+
+type Unpacked<T> =
+  T extends (infer U)[] ? U
+  : T extends (...args: any[]) => infer U ?
+    SomeReallyLongThingThatBreaksTheLine<U>
+  : T extends Promise<infer U> ? U
+  : T;
+=====================================output=====================================
+// TypeScript has the same behavior, including a line break after =, but no parens around "conditional":
+type KnownKeys<T> = {
+  [K in keyof T]: string extends K ? never : number extends K ? never : K;
+} extends { [_ in keyof T]: infer U }
+  ? {} extends U
+    ? never
+    : U
+  : never;
+
+type KnownKeysWithLongExtends<T> = {
+  [K in keyof T]: string extends K ? never : number extends K ? never : K;
+} extends {
+  [_ in keyof T]: SomeReallyLongThingThatBreaksTheLine<infer U>;
+}
+  ? U
+  : never;
+
+// TypeScript examples:
+type TypeName<T> = T extends string
+  ? "string"
+  : T extends number
+    ? "number"
+    : T extends boolean
+      ? "boolean"
+      : T extends undefined
+        ? "undefined"
+        : T extends Function
+          ? "function"
+          : "object";
+
+type Unpacked<T> = T extends (infer U)[]
+  ? U
+  : T extends (...args: any[]) => infer U
+    ? SomeReallyLongThingThatBreaksTheLine<U>
+    : T extends Promise<infer U>
+      ? U
+      : T;
+
+================================================================================
+`;
+
+exports[`parentheses.ts - {"experimentalTernaries":true} format 1`] = `
+====================================options=====================================
+experimentalTernaries: true
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// #13275
+type Foo<T> = T extends ((...a: any[]) => infer R extends string) ? R : never;
+type Foo<T> = T extends (new (...a: any[]) => infer R extends string) ? R : never;
+
+// #14275
+type Test<T> = T extends ((
+  token: TSESTree.Token
+) => token is infer U extends TSESTree.Token)
+  ? U
+  : TSESTree.Token;
+type Test<T> = T extends ((
+  token: TSESTree.Token
+) => asserts token is infer U extends TSESTree.Token)
+  ? U
+  : TSESTree.Token;
+type Test<T> = T extends (new (
+  token: TSESTree.Token
+) => token is infer U extends TSESTree.Token)
+  ? U
+  : TSESTree.Token;
+
+=====================================output=====================================
+// #13275
+type Foo<T> = T extends ((...a: any[]) => infer R extends string) ? R : never;
+type Foo<T> =
+  T extends (new (...a: any[]) => infer R extends string) ? R : never;
+
+// #14275
+type Test<T> =
+  T extends (
+    ((token: TSESTree.Token) => token is infer U extends TSESTree.Token)
+  ) ?
+    U
+  : TSESTree.Token;
+type Test<T> =
+  T extends (
+    ((token: TSESTree.Token) => asserts token is infer U extends TSESTree.Token)
+  ) ?
+    U
+  : TSESTree.Token;
+type Test<T> =
+  T extends (
+    (new (token: TSESTree.Token) => token is infer U extends TSESTree.Token)
+  ) ?
+    U
+  : TSESTree.Token;
+
+================================================================================
+`;
+
+exports[`parentheses.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// #13275
+type Foo<T> = T extends ((...a: any[]) => infer R extends string) ? R : never;
+type Foo<T> = T extends (new (...a: any[]) => infer R extends string) ? R : never;
+
+// #14275
+type Test<T> = T extends ((
+  token: TSESTree.Token
+) => token is infer U extends TSESTree.Token)
+  ? U
+  : TSESTree.Token;
+type Test<T> = T extends ((
+  token: TSESTree.Token
+) => asserts token is infer U extends TSESTree.Token)
+  ? U
+  : TSESTree.Token;
+type Test<T> = T extends (new (
+  token: TSESTree.Token
+) => token is infer U extends TSESTree.Token)
+  ? U
+  : TSESTree.Token;
+
+=====================================output=====================================
+// #13275
+type Foo<T> = T extends ((...a: any[]) => infer R extends string) ? R : never;
+type Foo<T> = T extends (new (...a: any[]) => infer R extends string)
+  ? R
+  : never;
+
+// #14275
+type Test<T> = T extends ((
+  token: TSESTree.Token,
+) => token is infer U extends TSESTree.Token)
+  ? U
+  : TSESTree.Token;
+type Test<T> = T extends ((
+  token: TSESTree.Token,
+) => asserts token is infer U extends TSESTree.Token)
+  ? U
+  : TSESTree.Token;
+type Test<T> = T extends (new (
+  token: TSESTree.Token,
+) => token is infer U extends TSESTree.Token)
+  ? U
+  : TSESTree.Token;
+
+================================================================================
+`;

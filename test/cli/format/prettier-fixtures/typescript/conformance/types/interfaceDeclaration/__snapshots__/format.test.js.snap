@@ -1,0 +1,32 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`interfaceDeclaration.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+interface abstract {
+    abstract(): void,
+    concrete(): number
+}
+
+interface X {
+  x
+}
+
+interface nil {}
+
+=====================================output=====================================
+interface abstract {
+  abstract(): void;
+  concrete(): number;
+}
+
+interface X {
+  x;
+}
+
+interface nil {}
+
+================================================================================
+`;

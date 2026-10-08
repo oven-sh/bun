@@ -1,0 +1,20 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`emptyTuplesTypeAssertion02.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// @declaration: true
+
+let x = [] as [];
+let y = x[0];
+
+=====================================output=====================================
+// @declaration: true
+
+let x = [] as [];
+let y = x[0];
+
+================================================================================
+`;

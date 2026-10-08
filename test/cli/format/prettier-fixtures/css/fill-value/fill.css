@@ -1,0 +1,37 @@
+div {
+  border-left: 1px solid mix($warningBackgroundColors, $warningBorderColors, 50%);
+  $fontFamily: "Lato", -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+/* #4460 */
+.SearchBox {
+  box-shadow: 0 1rem 6rem rgba(0, 0, 0, 0.18), 0 0.3rem 1rem rgba(0, 0, 0, 0.17);
+}
+
+.SearchBox {
+  @include foo {
+    margin-left: sg-layout-width(logo-shopify) / 2 * -1 + sg-offset-x(page-nav) / 2;
+  }
+}
+
+.SearchBox {
+  box-shadow: 0 1rem 6rem rgba(0, 0, 0, 0.18), 0 0.3rem 1rem rgba(0, 0, 0, 0.17) !important;
+}
+
+.demo {
+  background-position: 0 0, 0 spacing(tight), spacing(tight) -1 * spacing(tight), -1 * spacing(tight) 0;
+}
+
+/* #4604 */
+.this-will-not-wrap {
+  background: transparent url(/long/path/to/dummy-image.svg) -1000px center no-repeat;
+}
+
+.this-will-wrap-correctly {
+  background: transparent url(/long/path/to/dummy-image.svg) 1000px center no-repeat;
+}
+
+.this-will-also-wrap-but-incorrectly {
+  background: transparent url(/even/longer/path/to/dummy-image.svg) -1000px center no-repeat;
+}
+

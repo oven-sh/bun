@@ -1,0 +1,37 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`await-expression.js - {"experimentalTernaries":true} format 1`] = `
+====================================options=====================================
+experimentalTernaries: true
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+stopDirectory = await (useCache
+  ? memoizedFindProjectRoot
+  : findProjectRootWithoutCache)(path.dirname(path.resolve(filePath)));
+
+=====================================output=====================================
+stopDirectory = await (
+  useCache ?
+    memoizedFindProjectRoot
+  : findProjectRootWithoutCache)(path.dirname(path.resolve(filePath)));
+
+================================================================================
+`;
+
+exports[`await-expression.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+stopDirectory = await (useCache
+  ? memoizedFindProjectRoot
+  : findProjectRootWithoutCache)(path.dirname(path.resolve(filePath)));
+
+=====================================output=====================================
+stopDirectory = await (
+  useCache ? memoizedFindProjectRoot : findProjectRootWithoutCache
+)(path.dirname(path.resolve(filePath)));
+
+================================================================================
+`;

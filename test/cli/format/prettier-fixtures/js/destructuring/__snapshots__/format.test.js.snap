@@ -1,0 +1,147 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`destructuring.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const [one, two = null, three = null] = arr;
+a = ([s=1,]) => 1
+const { children, ...props } = this.props
+
+const { user: { firstName, lastName } } = this.props;
+
+const {
+  name: { first, last },
+  organisation: { address: { street: orgStreetAddress, postcode: orgPostcode } }
+} = user;
+
+function f({ data: { name } }) {}
+
+const UserComponent = function({
+  name: { first, last },
+  organisation: { address: { street: orgStreetAddress, postcode: orgPostcode } },
+}) {
+  return
+};
+
+const { a, b, c, d: { e } } = someObject;
+
+try {
+  // code
+} catch ({ data: { message }}) {
+  // code
+}
+
+try {
+  // code
+} catch ({ data: { message: { errors }}}) {
+  // code
+}
+
+const obj = {
+  func(id, { blog: { title } }) {
+    return id + title;
+  },
+};
+
+class A {
+  func(id, { blog: { title } }) {
+    return id + title;
+  }
+}
+
+=====================================output=====================================
+const [one, two = null, three = null] = arr;
+a = ([s = 1]) => 1;
+const { children, ...props } = this.props;
+
+const {
+  user: { firstName, lastName },
+} = this.props;
+
+const {
+  name: { first, last },
+  organisation: {
+    address: { street: orgStreetAddress, postcode: orgPostcode },
+  },
+} = user;
+
+function f({ data: { name } }) {}
+
+const UserComponent = function ({
+  name: { first, last },
+  organisation: {
+    address: { street: orgStreetAddress, postcode: orgPostcode },
+  },
+}) {
+  return;
+};
+
+const {
+  a,
+  b,
+  c,
+  d: { e },
+} = someObject;
+
+try {
+  // code
+} catch ({ data: { message } }) {
+  // code
+}
+
+try {
+  // code
+} catch ({
+  data: {
+    message: { errors },
+  },
+}) {
+  // code
+}
+
+const obj = {
+  func(id, { blog: { title } }) {
+    return id + title;
+  },
+};
+
+class A {
+  func(id, { blog: { title } }) {
+    return id + title;
+  }
+}
+
+================================================================================
+`;
+
+exports[`destructuring.js format[hermes] 1`] = `
+"invalid assignment left-hand side (2:1)
+  1 | const [one, two = null, three = null] = arr;
+> 2 | a = ([s=1,]) => 1
+    | ^
+  3 | const { children, ...props } = this.props
+  4 |
+  5 | const { user: { firstName, lastName } } = this.props;
+Cause: invalid assignment left-hand side (2:0)
+a = ([s=1,]) => 1
+^"
+`;
+
+exports[`issue-5988.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const { foo, bar: bazAndSomething, quxIsLong } = someBigFunctionName("foo")("bar");
+
+=====================================output=====================================
+const {
+  foo,
+  bar: bazAndSomething,
+  quxIsLong,
+} = someBigFunctionName("foo")("bar");
+
+================================================================================
+`;

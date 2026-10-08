@@ -1,0 +1,1 @@
+query Browse($offset:Int){browse(offset:$offset)}

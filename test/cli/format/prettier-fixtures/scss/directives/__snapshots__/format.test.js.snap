@@ -1,0 +1,119 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`3021.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@warn "Warn (#{$message}).";
+@warn  "Warn (#{$message}).";
+@warn   "Warn (#{$message}).";
+@warn #{$message};
+@warn "Very long long long long long long long long long long long long long line (#{$message}).";
+@warn
+  "Very long long long long long long long long long long long long long line (#{$message}).";
+@error "Error (#{$message}).";
+@error  "Error (#{$message}).";
+@error   "Error (#{$message}).";
+@error #{$message};
+@error "Very long long long long long long long long long long long long long line Error (#{$message}).";
+@error
+  "Very long long long long long long long long long long long long long line Error (#{$message}).";
+
+
+=====================================output=====================================
+@warn "Warn (#{$message}).";
+@warn "Warn (#{$message}).";
+@warn "Warn (#{$message}).";
+@warn #{$message};
+@warn "Very long long long long long long long long long long long long long line (#{$message}).";
+@warn "Very long long long long long long long long long long long long long line (#{$message}).";
+@error "Error (#{$message}).";
+@error "Error (#{$message}).";
+@error "Error (#{$message}).";
+@error #{$message};
+@error "Very long long long long long long long long long long long long long line Error (#{$message}).";
+@error "Very long long long long long long long long long long long long long line Error (#{$message}).";
+
+================================================================================
+`;
+
+exports[`3021.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@warn "Warn (#{$message}).";
+@warn  "Warn (#{$message}).";
+@warn   "Warn (#{$message}).";
+@warn #{$message};
+@warn "Very long long long long long long long long long long long long long line (#{$message}).";
+@warn
+  "Very long long long long long long long long long long long long long line (#{$message}).";
+@error "Error (#{$message}).";
+@error  "Error (#{$message}).";
+@error   "Error (#{$message}).";
+@error #{$message};
+@error "Very long long long long long long long long long long long long long line Error (#{$message}).";
+@error
+  "Very long long long long long long long long long long long long long line Error (#{$message}).";
+
+
+=====================================output=====================================
+@warn "Warn (#{$message}).";
+@warn "Warn (#{$message}).";
+@warn "Warn (#{$message}).";
+@warn #{$message};
+@warn "Very long long long long long long long long long long long long long line (#{$message}).";
+@warn "Very long long long long long long long long long long long long long line (#{$message}).";
+@error "Error (#{$message}).";
+@error "Error (#{$message}).";
+@error "Error (#{$message}).";
+@error #{$message};
+@error "Very long long long long long long long long long long long long long line Error (#{$message}).";
+@error "Very long long long long long long long long long long long long long line Error (#{$message}).";
+
+================================================================================
+`;
+
+exports[`directives.scss - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@qux .foo
+// .bar 
+
+{}
+
+=====================================output=====================================
+@qux .foo
+// .bar
+{
+}
+
+================================================================================
+`;
+
+exports[`directives.scss - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@qux .foo
+// .bar 
+
+{}
+
+=====================================output=====================================
+@qux .foo
+// .bar
+{
+}
+
+================================================================================
+`;

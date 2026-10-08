@@ -1,0 +1,843 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`custom-selector.css - {"singleQuote":true} format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@custom-selector :--icon i[class^='icon-'], i[class*=' icon-'];
+@custom-selector :--icon i[ class ^= 'icon-' ], i[ class *= ' icon-' ];
+@custom-selector
+:--icon
+i[
+class
+^=
+'icon-'
+]
+,
+i[
+class
+*=
+' icon-'
+]
+;
+
+=====================================output=====================================
+@custom-selector :--icon i[class^='icon-'], i[class*=' icon-'];
+@custom-selector :--icon i[class^='icon-'], i[class*=' icon-'];
+@custom-selector :--icon i[class^='icon-'], i[class*=' icon-'];
+
+================================================================================
+`;
+
+exports[`custom-selector.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@custom-selector :--icon i[class^='icon-'], i[class*=' icon-'];
+@custom-selector :--icon i[ class ^= 'icon-' ], i[ class *= ' icon-' ];
+@custom-selector
+:--icon
+i[
+class
+^=
+'icon-'
+]
+,
+i[
+class
+*=
+' icon-'
+]
+;
+
+=====================================output=====================================
+@custom-selector :--icon i[class^="icon-"], i[class*=" icon-"];
+@custom-selector :--icon i[class^="icon-"], i[class*=" icon-"];
+@custom-selector :--icon i[class^="icon-"], i[class*=" icon-"];
+
+================================================================================
+`;
+
+exports[`insensitive.css - {"singleQuote":true} format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+input[type="radio" i] {}
+img[alt~="person" i][src*="lorem" i] {}
+section:has(:not([type="radio" i], [type="checkbox" i])) {}
+
+input[type="radio" I] {}
+img[alt~="person" I][src*="lorem" I] {}
+section:has(:not([type="radio" I], [type="checkbox" I])) {}
+
+[type=a   I] {}
+[type="a"   I] {}
+
+=====================================output=====================================
+input[type='radio' i] {
+}
+img[alt~='person' i][src*='lorem' i] {
+}
+section:has(:not([type='radio' i], [type='checkbox' i])) {
+}
+
+input[type='radio' I] {
+}
+img[alt~='person' I][src*='lorem' I] {
+}
+section:has(:not([type='radio' I], [type='checkbox' I])) {
+}
+
+[type='a' I] {
+}
+[type='a' I] {
+}
+
+================================================================================
+`;
+
+exports[`insensitive.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+input[type="radio" i] {}
+img[alt~="person" i][src*="lorem" i] {}
+section:has(:not([type="radio" i], [type="checkbox" i])) {}
+
+input[type="radio" I] {}
+img[alt~="person" I][src*="lorem" I] {}
+section:has(:not([type="radio" I], [type="checkbox" I])) {}
+
+[type=a   I] {}
+[type="a"   I] {}
+
+=====================================output=====================================
+input[type="radio" i] {
+}
+img[alt~="person" i][src*="lorem" i] {
+}
+section:has(:not([type="radio" i], [type="checkbox" i])) {
+}
+
+input[type="radio" I] {
+}
+img[alt~="person" I][src*="lorem" I] {
+}
+section:has(:not([type="radio" I], [type="checkbox" I])) {
+}
+
+[type="a" I] {
+}
+[type="a" I] {
+}
+
+================================================================================
+`;
+
+exports[`namespaces.css - {"singleQuote":true} format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@namespace foo "http://www.example.com";
+[foo|att=val] {}
+[*|att] {}
+[|att] {}
+[att] {}
+
+=====================================output=====================================
+@namespace foo 'http://www.example.com';
+[foo|att='val'] {
+}
+[*|att] {
+}
+[|att] {
+}
+[att] {
+}
+
+================================================================================
+`;
+
+exports[`namespaces.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@namespace foo "http://www.example.com";
+[foo|att=val] {}
+[*|att] {}
+[|att] {}
+[att] {}
+
+=====================================output=====================================
+@namespace foo "http://www.example.com";
+[foo|att="val"] {
+}
+[*|att] {
+}
+[|att] {
+}
+[att] {
+}
+
+================================================================================
+`;
+
+exports[`quotes.css - {"singleQuote":true} format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a[id=test] {}
+a[id="test"] {}
+a[id='test'] {}
+a[id=func("foo")] {}
+a[class="(╯°□°）╯︵ ┻━┻"]{}
+a[href^="//"] {}
+a[href$="/*"] {}
+a[href="http://example.com"] {}
+input:not([type="radio"]):not([type="checkbox"]) {}
+input:not([type="radio"], [type="checkbox"]) {}
+section:has(:not([type="radio"], [type="checkbox"])) {}
+
+=====================================output=====================================
+a[id='test'] {
+}
+a[id='test'] {
+}
+a[id='test'] {
+}
+a[id=func('foo')] {
+}
+a[class='(╯°□°）╯︵ ┻━┻'] {
+}
+a[href^='//'] {
+}
+a[href$='/*'] {
+}
+a[href='http://example.com'] {
+}
+input:not([type='radio']):not([type='checkbox']) {
+}
+input:not([type='radio'], [type='checkbox']) {
+}
+section:has(:not([type='radio'], [type='checkbox'])) {
+}
+
+================================================================================
+`;
+
+exports[`quotes.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a[id=test] {}
+a[id="test"] {}
+a[id='test'] {}
+a[id=func("foo")] {}
+a[class="(╯°□°）╯︵ ┻━┻"]{}
+a[href^="//"] {}
+a[href$="/*"] {}
+a[href="http://example.com"] {}
+input:not([type="radio"]):not([type="checkbox"]) {}
+input:not([type="radio"], [type="checkbox"]) {}
+section:has(:not([type="radio"], [type="checkbox"])) {}
+
+=====================================output=====================================
+a[id="test"] {
+}
+a[id="test"] {
+}
+a[id="test"] {
+}
+a[id=func("foo")] {
+}
+a[class="(╯°□°）╯︵ ┻━┻"] {
+}
+a[href^="//"] {
+}
+a[href$="/*"] {
+}
+a[href="http://example.com"] {
+}
+input:not([type="radio"]):not([type="checkbox"]) {
+}
+input:not([type="radio"], [type="checkbox"]) {
+}
+section:has(:not([type="radio"], [type="checkbox"])) {
+}
+
+================================================================================
+`;
+
+exports[`sensitive.css - {"singleQuote":true} format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+[type=a s],
+[type=as],
+[type="a" s] ,
+[type="a s"],
+[type=a   s],
+[type="a"   s]{}
+
+[type=a   S] {}
+[type="a"   S] {}
+
+[type=a   x] {}
+[type='a'   x] {}
+
+=====================================output=====================================
+[type='a' s],
+[type='as'],
+[type='a' s],
+[type='a s'],
+[type='a' s],
+[type='a' s] {
+}
+
+[type='a' S] {
+}
+[type='a' S] {
+}
+
+[type='a' x] {
+}
+[type='a' x] {
+}
+
+================================================================================
+`;
+
+exports[`sensitive.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+[type=a s],
+[type=as],
+[type="a" s] ,
+[type="a s"],
+[type=a   s],
+[type="a"   s]{}
+
+[type=a   S] {}
+[type="a"   S] {}
+
+[type=a   x] {}
+[type='a'   x] {}
+
+=====================================output=====================================
+[type="a" s],
+[type="as"],
+[type="a" s],
+[type="a s"],
+[type="a" s],
+[type="a" s] {
+}
+
+[type="a" S] {
+}
+[type="a" S] {
+}
+
+[type="a" x] {
+}
+[type="a" x] {
+}
+
+================================================================================
+`;
+
+exports[`spaces.css - {"singleQuote":true} format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+singleQuote: true
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+[lang] {}
+[ lang] {}
+[lang ] {}
+[ lang ] {}
+[  lang  ] {}
+[
+lang
+] {}
+span[lang] {}
+span[ lang] {}
+span[lang ] {}
+span[ lang ] {}
+span[  lang  ] {}
+span[lang='pt'] {}
+span[lang ='pt'] {}
+span[lang= 'pt'] {}
+span[lang = 'pt'] {}
+span[lang  =  'pt'] {}
+span[lang='pt' ] {}
+span[lang='pt'  ] {}
+span[
+lang
+=
+'pt'
+] {}
+span[ lang ~= 'en-us' ] {}
+span[  lang  ~=  'en-us'  ] {}
+span[ lang |='zh' ] {}
+span[
+lang
+~=
+'en-us'
+] {}
+a[ href ^= '#' ] {}
+a[ href $= '.cn' ] {}
+a[ href *= 'example' ] {}
+a[
+href
+*=
+'example'
+] {}
+input[ type = 'radio' i ] {}
+input[  type  =  'radio'  i  ] {}
+input[ type ~= 'radio' i ] {}
+input[  type  ~=  'radio'  i  ] {}
+input[
+type
+~=
+'radio'
+i
+] {}
+img[ alt = 'person' ][ src = 'lorem' ] {}
+img[ alt  =  'person' ][ src  =  'lorem' ] {}
+img[ alt ~= 'person' ][ src *= 'lorem' ] {}
+img[  alt  ~=  'person'  ][  src  *=  'lorem'  ] {}
+img[
+alt
+~=
+'person'
+][
+src
+*=
+'lorem'
+] {}
+section:has(:not([type='radio'], [type='checkbox'])) {}
+section:has(:not([type='radio' i], [type='checkbox' i])) {}
+section:has(:not([ type = 'radio' ], [ type = 'checkbox' ])) {}
+section:has(:not([ type = 'radio' i ], [ type = 'checkbox' i ])) {}
+section:has(:not([  type  =  'radio'  ], [  type  =  'checkbox'  ])) {}
+section:has(:not([  type  =  'radio'  i  ], [  type  =  'checkbox'  i  ])) {}
+section:has(:not([
+type
+=
+'radio'
+], [
+type
+=
+'checkbox'
+])) {}
+section:has(:not([
+type
+=
+'radio'
+i
+], [
+type
+=
+'checkbox'
+i
+])) {}
+[foo|att=val] {}
+[ foo | att = val ] {}
+[  foo  |  att  =  val  ] {}
+[
+foo
+|
+att
+=
+val
+] {}
+[*|att] {}
+[ * | att ] {}
+[  *  |  att  ] {}
+[
+*
+|
+att
+] {}
+[|att] {}
+[ | att ] {}
+[  |  att  ] {}
+[
+|
+att
+] {}
+
+=====================================output=====================================
+[lang] {
+}
+[lang] {
+}
+[lang] {
+}
+[lang] {
+}
+[lang] {
+}
+[lang] {
+}
+span[lang] {
+}
+span[lang] {
+}
+span[lang] {
+}
+span[lang] {
+}
+span[lang] {
+}
+span[lang='pt'] {
+}
+span[lang='pt'] {
+}
+span[lang='pt'] {
+}
+span[lang='pt'] {
+}
+span[lang='pt'] {
+}
+span[lang='pt'] {
+}
+span[lang='pt'] {
+}
+span[lang='pt'] {
+}
+span[lang~='en-us'] {
+}
+span[lang~='en-us'] {
+}
+span[lang|='zh'] {
+}
+span[lang~='en-us'] {
+}
+a[href^='#'] {
+}
+a[href$='.cn'] {
+}
+a[href*='example'] {
+}
+a[href*='example'] {
+}
+input[type='radio' i] {
+}
+input[type='radio' i] {
+}
+input[type~='radio' i] {
+}
+input[type~='radio' i] {
+}
+input[type~='radio' i] {
+}
+img[alt='person'][src='lorem'] {
+}
+img[alt='person'][src='lorem'] {
+}
+img[alt~='person'][src*='lorem'] {
+}
+img[alt~='person'][src*='lorem'] {
+}
+img[alt~='person'][src*='lorem'] {
+}
+section:has(:not([type='radio'], [type='checkbox'])) {
+}
+section:has(:not([type='radio' i], [type='checkbox' i])) {
+}
+section:has(:not([type='radio'], [type='checkbox'])) {
+}
+section:has(:not([type='radio' i], [type='checkbox' i])) {
+}
+section:has(:not([type='radio'], [type='checkbox'])) {
+}
+section:has(:not([type='radio' i], [type='checkbox' i])) {
+}
+section:has(:not([type='radio'], [type='checkbox'])) {
+}
+section:has(:not([type='radio' i], [type='checkbox' i])) {
+}
+[foo|att='val'] {
+}
+[foo|att='val'] {
+}
+[foo|att='val'] {
+}
+[foo|att='val'] {
+}
+[*|att] {
+}
+[*|att] {
+}
+[*|att] {
+}
+[*|att] {
+}
+[|att] {
+}
+[|att] {
+}
+[|att] {
+}
+[|att] {
+}
+
+================================================================================
+`;
+
+exports[`spaces.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+[lang] {}
+[ lang] {}
+[lang ] {}
+[ lang ] {}
+[  lang  ] {}
+[
+lang
+] {}
+span[lang] {}
+span[ lang] {}
+span[lang ] {}
+span[ lang ] {}
+span[  lang  ] {}
+span[lang='pt'] {}
+span[lang ='pt'] {}
+span[lang= 'pt'] {}
+span[lang = 'pt'] {}
+span[lang  =  'pt'] {}
+span[lang='pt' ] {}
+span[lang='pt'  ] {}
+span[
+lang
+=
+'pt'
+] {}
+span[ lang ~= 'en-us' ] {}
+span[  lang  ~=  'en-us'  ] {}
+span[ lang |='zh' ] {}
+span[
+lang
+~=
+'en-us'
+] {}
+a[ href ^= '#' ] {}
+a[ href $= '.cn' ] {}
+a[ href *= 'example' ] {}
+a[
+href
+*=
+'example'
+] {}
+input[ type = 'radio' i ] {}
+input[  type  =  'radio'  i  ] {}
+input[ type ~= 'radio' i ] {}
+input[  type  ~=  'radio'  i  ] {}
+input[
+type
+~=
+'radio'
+i
+] {}
+img[ alt = 'person' ][ src = 'lorem' ] {}
+img[ alt  =  'person' ][ src  =  'lorem' ] {}
+img[ alt ~= 'person' ][ src *= 'lorem' ] {}
+img[  alt  ~=  'person'  ][  src  *=  'lorem'  ] {}
+img[
+alt
+~=
+'person'
+][
+src
+*=
+'lorem'
+] {}
+section:has(:not([type='radio'], [type='checkbox'])) {}
+section:has(:not([type='radio' i], [type='checkbox' i])) {}
+section:has(:not([ type = 'radio' ], [ type = 'checkbox' ])) {}
+section:has(:not([ type = 'radio' i ], [ type = 'checkbox' i ])) {}
+section:has(:not([  type  =  'radio'  ], [  type  =  'checkbox'  ])) {}
+section:has(:not([  type  =  'radio'  i  ], [  type  =  'checkbox'  i  ])) {}
+section:has(:not([
+type
+=
+'radio'
+], [
+type
+=
+'checkbox'
+])) {}
+section:has(:not([
+type
+=
+'radio'
+i
+], [
+type
+=
+'checkbox'
+i
+])) {}
+[foo|att=val] {}
+[ foo | att = val ] {}
+[  foo  |  att  =  val  ] {}
+[
+foo
+|
+att
+=
+val
+] {}
+[*|att] {}
+[ * | att ] {}
+[  *  |  att  ] {}
+[
+*
+|
+att
+] {}
+[|att] {}
+[ | att ] {}
+[  |  att  ] {}
+[
+|
+att
+] {}
+
+=====================================output=====================================
+[lang] {
+}
+[lang] {
+}
+[lang] {
+}
+[lang] {
+}
+[lang] {
+}
+[lang] {
+}
+span[lang] {
+}
+span[lang] {
+}
+span[lang] {
+}
+span[lang] {
+}
+span[lang] {
+}
+span[lang="pt"] {
+}
+span[lang="pt"] {
+}
+span[lang="pt"] {
+}
+span[lang="pt"] {
+}
+span[lang="pt"] {
+}
+span[lang="pt"] {
+}
+span[lang="pt"] {
+}
+span[lang="pt"] {
+}
+span[lang~="en-us"] {
+}
+span[lang~="en-us"] {
+}
+span[lang|="zh"] {
+}
+span[lang~="en-us"] {
+}
+a[href^="#"] {
+}
+a[href$=".cn"] {
+}
+a[href*="example"] {
+}
+a[href*="example"] {
+}
+input[type="radio" i] {
+}
+input[type="radio" i] {
+}
+input[type~="radio" i] {
+}
+input[type~="radio" i] {
+}
+input[type~="radio" i] {
+}
+img[alt="person"][src="lorem"] {
+}
+img[alt="person"][src="lorem"] {
+}
+img[alt~="person"][src*="lorem"] {
+}
+img[alt~="person"][src*="lorem"] {
+}
+img[alt~="person"][src*="lorem"] {
+}
+section:has(:not([type="radio"], [type="checkbox"])) {
+}
+section:has(:not([type="radio" i], [type="checkbox" i])) {
+}
+section:has(:not([type="radio"], [type="checkbox"])) {
+}
+section:has(:not([type="radio" i], [type="checkbox" i])) {
+}
+section:has(:not([type="radio"], [type="checkbox"])) {
+}
+section:has(:not([type="radio" i], [type="checkbox" i])) {
+}
+section:has(:not([type="radio"], [type="checkbox"])) {
+}
+section:has(:not([type="radio" i], [type="checkbox" i])) {
+}
+[foo|att="val"] {
+}
+[foo|att="val"] {
+}
+[foo|att="val"] {
+}
+[foo|att="val"] {
+}
+[*|att] {
+}
+[*|att] {
+}
+[*|att] {
+}
+[*|att] {
+}
+[|att] {
+}
+[|att] {
+}
+[|att] {
+}
+[|att] {
+}
+
+================================================================================
+`;

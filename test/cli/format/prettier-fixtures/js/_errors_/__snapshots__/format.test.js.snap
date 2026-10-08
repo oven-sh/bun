@@ -1,0 +1,181 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`html-like-comments.js format 1`] = `
+"Unexpected token (3:1)
+  1 | // Only support HTML-like comment in HTML
+  2 | alert(
+> 3 | <!-- comment
+    | ^
+  4 | 'hello world'
+  5 | )
+  6 |
+Cause: Unexpected token (3:0)"
+`;
+
+exports[`import-attributes-for-export-without-from.js format 1`] = `
+"Unexpected token, expected "(" (1:32)
+> 1 | export { default as foo } with { type: "json" };
+    |                                ^
+  2 |
+Cause: Unexpected token, expected "(" (1:31)"
+`;
+
+exports[`import-attributes-with-parens.js format 1`] = `
+"Unexpected token, expected "{" (1:17)
+> 1 | import "x" with ({type: 'json'});
+    |                 ^
+  2 |
+Cause: Unexpected token, expected "{" (1:16)"
+`;
+
+exports[`invalid-escape-in-identifier.js format 1`] = `
+"Invalid Unicode escape. (1:7)
+> 1 | const \\u{20} = 1
+    |       ^
+  2 | const \\u{3000} = 1
+  3 |
+Cause: Invalid Unicode escape. (1:6)"
+`;
+
+exports[`invalid-escape-in-identifier-2.js format 1`] = `
+"Expecting Unicode escape sequence \\uXXXX. (1:3)
+> 1 | a\\ = a
+    |   ^
+  2 |
+Cause: Expecting Unicode escape sequence \\uXXXX. (1:2)"
+`;
+
+exports[`module-attributes.js format 1`] = `
+"Unexpected token, expected "{" (1:33)
+> 1 | import foo from "foo.json" with type: "json";
+    |                                 ^
+  2 |
+Cause: Unexpected token, expected "{" (1:32)"
+`;
+
+exports[`no-for-in-init-concise-binary-in.js format 1`] = `
+"Unexpected token, expected ")" (3:18)
+  1 | // https://github.com/babel/babel/pull/11931
+  2 |
+> 3 | for (() => x in y;;);
+    |                  ^
+  4 |
+Cause: Unexpected token, expected ")" (3:17)"
+`;
+
+exports[`partial-template-strings.js format 1`] = `
+"Unexpected token (6:42)
+  4 |
+  5 | const Diagnostics = {
+> 6 |   unexpected_token: \`Unexpected token: \${?}\`,
+    |                                          ^
+  7 |   name_not_found: \`'\${?}' not found.\`
+  8 | };
+  9 | Diagnostics.name_not_found("foo"); // "'foo' not found."
+Cause: Unexpected token (6:41)"
+`;
+
+exports[`snippet: #0 format 1`] = `
+"Binding should be performed on object property. (1:3)
+> 1 | ::%DebugPrint(null)
+    |   ^
+Cause: Binding should be performed on object property. (1:2)"
+`;
+
+exports[`snippet: #1 format 1`] = `
+"Unexpected token (1:3)
+> 1 | a.%DebugPrint();
+    |   ^
+Cause: Unexpected token (1:2)"
+`;
+
+exports[`snippet: #2 format 1`] = `
+"Unexpected token (1:11)
+> 1 | const i = %DebugPrint;
+    |           ^
+Cause: Unexpected token (1:10)"
+`;
+
+exports[`snippet: #3 format 1`] = `
+"Unexpected token (1:7)
+> 1 | f(x + ?)
+    |       ^
+Cause: Unexpected token (1:6)"
+`;
+
+exports[`snippet: #4 format 1`] = `
+"Unexpected token (1:5)
+> 1 | x + ?
+    |     ^
+Cause: Unexpected token (1:4)"
+`;
+
+exports[`snippet: #5 format 1`] = `
+"Unexpected token (1:1)
+> 1 | ?.f()
+    | ^
+Cause: Unexpected token (1:0)"
+`;
+
+exports[`snippet: #6 format 1`] = `
+"Unexpected token (5:12)
+  3 |
+  4 |   static isC(obj) {
+> 5 |     return try obj.#brand;
+    |            ^
+  6 |   }
+  7 | }
+Cause: Unexpected token (5:11)"
+`;
+
+exports[`snippet: #7 format 1`] = `
+"Unexpected token (1:7)
+> 1 | const #{ a, b } = #{ a: 1, b: 2 };
+    |       ^
+Cause: Unexpected token (1:6)"
+`;
+
+exports[`snippet: #8 format 1`] = `
+"Unexpected token (1:7)
+> 1 | const #[a, b] = #[1, 2];
+    |       ^
+Cause: Unexpected token (1:6)"
+`;
+
+exports[`snippet: #9 format 1`] = `
+"Unexpected token (1:2)
+> 1 | [| 1 |]
+    |  ^
+Cause: Unexpected token (1:1)"
+`;
+
+exports[`snippet: #10 format 1`] = `
+"Identifier directly after number. (1:12)
+> 1 | 0b101011101m;
+    |            ^
+Cause: Identifier directly after number. (1:11)"
+`;
+
+exports[`snippet: #11 format 1`] = `
+"Identifier directly after number. (1:8)
+> 1 | 0x16432m;
+    |        ^
+Cause: Identifier directly after number. (1:7)"
+`;
+
+exports[`snippet: #12 format 1`] = `
+"Identifier directly after number. (1:8)
+> 1 | 0o16432m;
+    |        ^
+Cause: Identifier directly after number. (1:7)"
+`;
+
+exports[`static-import-source-should-not-has-extra-token.js format 1`] = `
+"Unexpected token (4:16)
+  2 | // be parenthesized, that accidentally break #8016
+  3 |
+> 4 | import {} from (('a'));
+    |                ^
+  5 |
+Cause: Unexpected token (4:15)"
+`;

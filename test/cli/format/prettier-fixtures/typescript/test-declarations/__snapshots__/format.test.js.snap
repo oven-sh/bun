@@ -1,0 +1,36 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`test_declarations.ts - {"arrowParens":"avoid"} format 1`] = `
+====================================options=====================================
+arrowParens: "avoid"
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+test("does something really long and complicated so I have to write a very long name for the test", <T>(done) => {
+  console.log("hello!");
+});
+
+=====================================output=====================================
+test("does something really long and complicated so I have to write a very long name for the test", <T>(done) => {
+  console.log("hello!");
+});
+
+================================================================================
+`;
+
+exports[`test_declarations.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+test("does something really long and complicated so I have to write a very long name for the test", <T>(done) => {
+  console.log("hello!");
+});
+
+=====================================output=====================================
+test("does something really long and complicated so I have to write a very long name for the test", <T>(done) => {
+  console.log("hello!");
+});
+
+================================================================================
+`;

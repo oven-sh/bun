@@ -1,0 +1,32 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`non-nested-combinator.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.card-meta {
+  @include padding(null 1rem 1rem);background-color: $card-base-background-color;
+  color: $meta-font-color;
+  .card-content--with-image+&
+  {padding-top: 1rem;
+  }a {
+    color: inherit;
+  }
+}
+
+=====================================output=====================================
+.card-meta {
+  @include padding(null 1rem 1rem);
+  background-color: $card-base-background-color;
+  color: $meta-font-color;
+  .card-content--with-image + & {
+    padding-top: 1rem;
+  }
+  a {
+    color: inherit;
+  }
+}
+
+================================================================================
+`;

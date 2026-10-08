@@ -1,0 +1,133 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`conditional.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(valid
+  ? helper.responseBody(this.currentUser)
+  : helper.responseBody(this.defaultUser))
+.prop;
+
+=====================================output=====================================
+(valid
+  ? helper.responseBody(this.currentUser)
+  : helper.responseBody(this.defaultUser)
+).prop;
+
+================================================================================
+`;
+
+exports[`expand.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const veryVeryVeryVeryVeryVeryVeryLong = doc.expandedStates[doc.expandedStates.length - 1];
+const small = doc.expandedStates[doc.expandedStates.length - 1];
+
+const promises = [
+  promise.resolve().then(console.log).catch(err => {
+    console.log(err)
+    return null
+  }),
+  redis.fetch(),
+  other.fetch(),
+];
+
+const promises2 = [
+  promise.resolve().veryLongFunctionCall().veryLongFunctionCall().then(console.log).catch(err => {
+    console.log(err)
+    return null
+  }),
+  redis.fetch(),
+  other.fetch(),
+];
+
+window.FooClient.setVars({
+  locale: getFooLocale({ page }),
+  authorizationToken: data.token
+}).initVerify("foo_container");
+
+window.something.FooClient.setVars({
+  locale: getFooLocale({ page }),
+  authorizationToken: data.token
+}).initVerify("foo_container");
+
+window.FooClient.something.setVars({
+  locale: getFooLocale({ page }),
+  authorizationToken: data.token
+}).initVerify("foo_container");
+
+=====================================output=====================================
+const veryVeryVeryVeryVeryVeryVeryLong =
+  doc.expandedStates[doc.expandedStates.length - 1];
+const small = doc.expandedStates[doc.expandedStates.length - 1];
+
+const promises = [
+  promise
+    .resolve()
+    .then(console.log)
+    .catch((err) => {
+      console.log(err);
+      return null;
+    }),
+  redis.fetch(),
+  other.fetch(),
+];
+
+const promises2 = [
+  promise
+    .resolve()
+    .veryLongFunctionCall()
+    .veryLongFunctionCall()
+    .then(console.log)
+    .catch((err) => {
+      console.log(err);
+      return null;
+    }),
+  redis.fetch(),
+  other.fetch(),
+];
+
+window.FooClient.setVars({
+  locale: getFooLocale({ page }),
+  authorizationToken: data.token,
+}).initVerify("foo_container");
+
+window.something.FooClient.setVars({
+  locale: getFooLocale({ page }),
+  authorizationToken: data.token,
+}).initVerify("foo_container");
+
+window.FooClient.something
+  .setVars({
+    locale: getFooLocale({ page }),
+    authorizationToken: data.token,
+  })
+  .initVerify("foo_container");
+
+================================================================================
+`;
+
+exports[`logical.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(veryLongVeryLongVeryLong || e).prop;
+
+(veryLongVeryLongVeryLong || anotherVeryLongVeryLongVeryLong || veryVeryVeryLongError).prop;
+
+=====================================output=====================================
+(veryLongVeryLongVeryLong || e).prop;
+
+(
+  veryLongVeryLongVeryLong ||
+  anotherVeryLongVeryLongVeryLong ||
+  veryVeryVeryLongError
+).prop;
+
+================================================================================
+`;

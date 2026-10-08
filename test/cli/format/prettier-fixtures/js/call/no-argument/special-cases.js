@@ -1,0 +1,6 @@
+require(/* comment */)
+new require(/* comment */)
+define(/* comment */)
+new define(/* comment */)
+it(/* comment */)
+new it(/* comment */)

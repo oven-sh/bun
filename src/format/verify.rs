@@ -118,7 +118,7 @@ fn items<'a>(file: &'a File<'a>) -> Vec<Item<'a>> {
                 b"|" | b"&"
                     if before.is_some_and(|it| {
                         (it.kind() == TokenKind::Punctuator && !is_closer(it))
-                            || matches!(it.text(), b"extends" | b"as" | b"satisfies" | b"is" | b"keyof" | b"readonly")
+                            || matches!(it.text(), b"extends" | b"as" | b"satisfies" | b"is" | b"keyof" | b"readonly" | b"in")
                     }) =>
                 {
                     continue;
@@ -195,7 +195,17 @@ fn items<'a>(file: &'a File<'a>) -> Vec<Item<'a>> {
 fn is_modifier(text: &[u8]) -> bool {
     matches!(
         text,
-        b"declare" | b"public" | b"protected" | b"private" | b"static" | b"abstract" | b"override" | b"readonly"
+        b"declare"
+            | b"public"
+            | b"protected"
+            | b"private"
+            | b"static"
+            | b"abstract"
+            | b"override"
+            | b"readonly"
+            | b"const"
+            | b"in"
+            | b"out"
     )
 }
 

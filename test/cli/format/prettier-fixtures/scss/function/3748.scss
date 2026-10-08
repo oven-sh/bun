@@ -1,0 +1,20 @@
+.card-column-simple {
+  @include breakpoint( getBp( md ) ) {
+    padding: $spacing_content-sm $spacing_content-md;
+  }
+
+  @include breakpoint (getBp(md)) {
+    &:nth-child(2n + 3) {
+      clear: both;
+    }
+  }
+
+  @include breakpoint (getBp(xl)) {
+    &:nth-child(2n + 3) {
+      clear: none;
+    }
+    &:nth-child(3n + 4) {
+      clear: both;
+    }
+  }
+}

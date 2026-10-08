@@ -1,0 +1,37 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`with-noformat-pragma.json5 - {"checkIgnorePragma":false} format 1`] = `
+====================================options=====================================
+checkIgnorePragma: false
+parsers: ["json5"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/** @noformat */
+
+{hello:       "world"}
+
+=====================================output=====================================
+/** @noformat */
+
+{ hello: "world" }
+
+================================================================================
+`;
+
+exports[`with-noprettier-pragma.json5 - {"checkIgnorePragma":false} format 1`] = `
+====================================options=====================================
+checkIgnorePragma: false
+parsers: ["json5"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/** @noprettier */
+
+{hello:       "world"}
+
+=====================================output=====================================
+/** @noprettier */
+
+{ hello: "world" }
+
+================================================================================
+`;

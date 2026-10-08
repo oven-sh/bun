@@ -1,0 +1,14 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`cunstructorType.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var d: new(x: number) => void;
+
+=====================================output=====================================
+var d: new (x: number) => void;
+
+================================================================================
+`;

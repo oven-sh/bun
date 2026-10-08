@@ -1,0 +1,33 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`invalid-exponent.js format[acorn] 1`] = `
+"Invalid number (1:1)
+> 1 | 12.3e
+    | ^
+  2 |
+Cause: Invalid number (1:0)"
+`;
+
+exports[`invalid-exponent.js format[babel] 1`] = `
+"Floating-point numbers require a valid exponent after the 'e'. (1:1)
+> 1 | 12.3e
+    | ^
+  2 |
+Cause: Floating-point numbers require a valid exponent after the 'e'. (1:0)"
+`;
+
+exports[`invalid-exponent.js format[espree] 1`] = `
+"Invalid number (1:1)
+> 1 | 12.3e
+    | ^
+  2 |
+Cause: Invalid number"
+`;
+
+exports[`invalid-exponent.js format[meriyah] 1`] = `
+"Non-number found after exponent indicator (1:1)
+> 1 | 12.3e
+    | ^^^^^
+  2 |
+Cause: [1:0-1:5]: Non-number found after exponent indicator"
+`;

@@ -1,0 +1,201 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`front-matter-json.md - {"embeddedLanguageFormatting":"off"} format 1`] = `
+====================================options=====================================
+embeddedLanguageFormatting: "off"
+parsers: ["markdown"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---json
+{
+    "a": 1 }
+...
+
+The above should be reformatted because it isn't parsed as json front matter.
+
+=====================================output=====================================
+---json
+{
+"a": 1 }
+...
+
+The above should be reformatted because it isn't parsed as json front matter.
+
+================================================================================
+`;
+
+exports[`front-matter-json.md format 1`] = `
+====================================options=====================================
+parsers: ["markdown"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---json
+{
+    "a": 1 }
+...
+
+The above should be reformatted because it isn't parsed as json front matter.
+
+=====================================output=====================================
+---json
+{
+"a": 1 }
+...
+
+The above should be reformatted because it isn't parsed as json front matter.
+
+================================================================================
+`;
+
+exports[`front-matter-pandoc.md - {"embeddedLanguageFormatting":"off"} format 1`] = `
+====================================options=====================================
+embeddedLanguageFormatting: "off"
+parsers: ["markdown"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---yaml
+  
+title: Hello
+slug: home
+
+...
+
+Hello world!
+
+
+=====================================output=====================================
+---yaml
+  
+title: Hello
+slug: home
+
+...
+
+Hello world!
+
+================================================================================
+`;
+
+exports[`front-matter-pandoc.md format 1`] = `
+====================================options=====================================
+parsers: ["markdown"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---yaml
+  
+title: Hello
+slug: home
+
+...
+
+Hello world!
+
+
+=====================================output=====================================
+---yaml
+title: Hello
+slug: home
+...
+
+Hello world!
+
+================================================================================
+`;
+
+exports[`issue-16342.md - {"embeddedLanguageFormatting":"off"} format 1`] = `
+====================================options=====================================
+embeddedLanguageFormatting: "off"
+parsers: ["markdown"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---
+foo:
+  - bar1
+
+  - bar2
+
+  - bar3
+---
+
+Markdown
+
+=====================================output=====================================
+---
+foo:
+  - bar1
+
+  - bar2
+
+  - bar3
+---
+
+Markdown
+
+================================================================================
+`;
+
+exports[`issue-16342.md format 1`] = `
+====================================options=====================================
+parsers: ["markdown"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---
+foo:
+  - bar1
+
+  - bar2
+
+  - bar3
+---
+
+Markdown
+
+=====================================output=====================================
+---
+foo:
+  - bar1
+
+  - bar2
+
+  - bar3
+---
+
+Markdown
+
+================================================================================
+`;
+
+exports[`test.md - {"embeddedLanguageFormatting":"off"} format 1`] = `
+====================================options=====================================
+embeddedLanguageFormatting: "off"
+parsers: ["markdown"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+\`\`\`js
+1 +  2
+\`\`\`
+
+=====================================output=====================================
+\`\`\`js
+1 +  2
+\`\`\`
+
+================================================================================
+`;
+
+exports[`test.md format 1`] = `
+====================================options=====================================
+parsers: ["markdown"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+\`\`\`js
+1 +  2
+\`\`\`
+
+=====================================output=====================================
+\`\`\`js
+1 + 2;
+\`\`\`
+
+================================================================================
+`;

@@ -1,0 +1,1 @@
+class A{}   class A{}

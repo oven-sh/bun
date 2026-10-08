@@ -1,0 +1,4 @@
+{a:
+{ "b": <<<PRETTIER_RANGE_START>>>2, "c": 3<<<PRETTIER_RANGE_END>>> },
+b: {d:4}
+}

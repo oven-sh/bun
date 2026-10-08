@@ -1,0 +1,64 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`with-pragma.vue - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["vue"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<!-- @prettier -->
+
+<template>
+  <div>This will be pre-compiled</div>
+</template>
+<script>
+const    x      = 1;
+</script>
+<style src="./my-component.css"></style>
+
+
+=====================================output=====================================
+<!-- @prettier -->
+
+<template>
+  <div>This will be pre-compiled</div>
+</template>
+<script>
+const x = 1;
+</script>
+<style src="./my-component.css"></style>
+
+================================================================================
+`;
+
+exports[`without-pragma.vue - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["vue"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+
+
+
+<template>
+  <div>This will be pre-compiled</div>
+</template>
+<script>
+const    x      = 1;
+</script>
+<style src="./my-component.css"></style>
+
+=====================================output=====================================
+<!-- @format -->
+
+<template>
+  <div>This will be pre-compiled</div>
+</template>
+<script>
+const x = 1;
+</script>
+<style src="./my-component.css"></style>
+
+================================================================================
+`;

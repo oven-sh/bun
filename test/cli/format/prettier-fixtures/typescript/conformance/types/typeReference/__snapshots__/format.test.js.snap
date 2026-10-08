@@ -1,0 +1,16 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`typeReference.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let n: Promise<number>
+let m: Map<number, string>
+
+=====================================output=====================================
+let n: Promise<number>;
+let m: Map<number, string>;
+
+================================================================================
+`;

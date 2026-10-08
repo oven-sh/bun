@@ -1,0 +1,31 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`number.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/babel/babel/pull/11854
+
+a = 09e1_1;
+a = 09.1_1;
+
+=====================================output=====================================
+// https://github.com/babel/babel/pull/11854
+
+a = 09e1_1;
+a = 09.1_1;
+
+================================================================================
+`;
+
+exports[`number.js format[typescript] 1`] = `
+"Decimals with leading zeros are not allowed. (3:5)
+  1 | // https://github.com/babel/babel/pull/11854
+  2 |
+> 3 | a = 09e1_1;
+    |     ^
+  4 | a = 09.1_1;
+  5 |
+Cause: Decimals with leading zeros are not allowed."
+`;

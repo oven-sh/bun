@@ -1,0 +1,870 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`arrow.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export default function searchUsers(action$) {
+  return action$.ofType(ActionTypes.SEARCHED_USERS)
+    .map(action => action.payload.query)
+    .filter(q => !!q)
+    .switchMap(q =>
+      Observable.timer(800) // debounce
+        .takeUntil(action$.ofType(ActionTypes.CLEARED_SEARCH_RESULTS))
+        .mergeMap(() => Observable.merge(
+          Observable.of(replace(\`?q=\${q}\`)),
+          ajax.getJSON(\`https://api.github.com/search/users?q=\${q}\`)
+            .map(res => res.items)
+            .map(receiveUsers)
+        ))
+    );
+};
+
+=====================================output=====================================
+export default function searchUsers(action$) {
+  return action$
+    .ofType(ActionTypes.SEARCHED_USERS)
+    .map((action) => action.payload.query)
+    .filter((q) => !!q)
+    .switchMap((q) =>
+      Observable.timer(800) // debounce
+        .takeUntil(action$.ofType(ActionTypes.CLEARED_SEARCH_RESULTS))
+        .mergeMap(() =>
+          Observable.merge(
+            Observable.of(replace(\`?q=\${q}\`)),
+            ajax
+              .getJSON(\`https://api.github.com/search/users?q=\${q}\`)
+              .map((res) => res.items)
+              .map(receiveUsers),
+          ),
+        ),
+    );
+}
+
+================================================================================
+`;
+
+exports[`assignment-pattern.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+bob.doL(({ a, b = () => {
+  console.log;
+}}) => something.else.else({}));
+
+=====================================output=====================================
+bob.doL(
+  ({
+    a,
+    b = () => {
+      console.log;
+    },
+  }) => something.else.else({}),
+);
+
+================================================================================
+`;
+
+exports[`break-parent.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+({
+  processors: [
+    require("autoprefixer", {
+      browsers: ["> 1%", "last 2 versions", "ie >= 11", "Firefox ESR"]
+    }),
+    require("postcss-url")({
+      url: url =>
+        url.startsWith("/") || /^[a-z]+:/.test(url) ? url : \`/static/\${url}\`
+    })
+  ]
+});
+
+true
+  ? test({
+      a: 1
+    })
+  : <div
+      a={123412342314}
+      b={123412341234}
+      c={123412341234}
+      d={123412341234}
+      e={123412341234}
+      f={123412341234}
+      g={123412341234}
+    />;
+
+=====================================output=====================================
+({
+  processors: [
+    require("autoprefixer", {
+      browsers: ["> 1%", "last 2 versions", "ie >= 11", "Firefox ESR"],
+    }),
+    require("postcss-url")({
+      url: (url) =>
+        url.startsWith("/") || /^[a-z]+:/.test(url) ? url : \`/static/\${url}\`,
+    }),
+  ],
+});
+
+true ? (
+  test({
+    a: 1,
+  })
+) : (
+  <div
+    a={123412342314}
+    b={123412341234}
+    c={123412341234}
+    d={123412341234}
+    e={123412341234}
+    f={123412341234}
+    g={123412341234}
+  />
+);
+
+================================================================================
+`;
+
+exports[`dangling-comment-in-arrow-function.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo(
+  (
+    // foo
+  ) => {}
+);
+
+=====================================output=====================================
+foo((
+  // foo
+) => {});
+
+================================================================================
+`;
+
+exports[`edge_case.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+
+a(
+  SomethingVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryLong,
+  [
+    {
+      SomethingVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryLong: 1
+    }
+  ]
+);
+
+exports.examples = [
+  {
+    render: withGraphQLQuery(
+      'node(1234567890){image{uri}}',
+      function(container, data) {
+        return (
+          <div>
+            <InlineBlock>
+              <img
+                src={data[1234567890].image.uri}
+                style={{position: 'absolute', top: '0', left: '0', zIndex:'-1'}}
+              />
+            </InlineBlock>
+          </div>
+        );
+      }
+    )
+  }
+];
+
+someReallyReallyReallyReallyReallyReallyReallyReallyReallyReallyReallyReallyReallyReally.a([
+  [],
+  // comment
+  [],
+]);
+
+(function webpackUniversalModuleDefinition() {})(this, function(__WEBPACK_EXTERNAL_MODULE_85__, __WEBPACK_EXTERNAL_MODULE_115__) {
+return /******/ (function(modules) { // webpackBootstrap
+
+/******/ })
+/************************************************************************/
+/******/ ([
+/* 0 */
+/***/ function(module, exports, __webpack_require__) {
+
+/***/ },
+/* 1 */
+/***/ function(module, exports, __webpack_require__) {
+
+/***/ },
+/* 2 */
+/***/ function(module, exports, __webpack_require__) {
+
+/***/ }
+/******/ ])
+});
+
+=====================================output=====================================
+a(
+  SomethingVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryLong,
+  [
+    {
+      SomethingVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryLong: 1,
+    },
+  ],
+);
+
+exports.examples = [
+  {
+    render: withGraphQLQuery(
+      "node(1234567890){image{uri}}",
+      function (container, data) {
+        return (
+          <div>
+            <InlineBlock>
+              <img
+                src={data[1234567890].image.uri}
+                style={{
+                  position: "absolute",
+                  top: "0",
+                  left: "0",
+                  zIndex: "-1",
+                }}
+              />
+            </InlineBlock>
+          </div>
+        );
+      },
+    ),
+  },
+];
+
+someReallyReallyReallyReallyReallyReallyReallyReallyReallyReallyReallyReallyReallyReally.a(
+  [
+    [],
+    // comment
+    [],
+  ],
+);
+
+(function webpackUniversalModuleDefinition() {})(
+  this,
+  function (__WEBPACK_EXTERNAL_MODULE_85__, __WEBPACK_EXTERNAL_MODULE_115__) {
+    return /******/ (function (modules) {
+      // webpackBootstrap
+      /******/
+    })(
+      /************************************************************************/
+      /******/ [
+        /* 0 */
+        /***/ function (module, exports, __webpack_require__) {
+          /***/
+        },
+        /* 1 */
+        /***/ function (module, exports, __webpack_require__) {
+          /***/
+        },
+        /* 2 */
+        /***/ function (module, exports, __webpack_require__) {
+          /***/
+        },
+        /******/
+      ],
+    );
+  },
+);
+
+================================================================================
+`;
+
+exports[`embed.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo(/* HTML */ \`<!-- bar1 --> bar <!-- bar2 -->\`);
+foo(/* HTML */ \` <!-- bar1 --> bar <!-- bar2 --> \`);
+foo(/* HTML */ \`<div><p>bar</p>foo</div>\`);
+foo(/* HTML */ \` <div><p>bar</p>foo</div> \`);
+foo(/* GraphQL */ \`query { foo { bar } }\`);
+foo(/* ... */ css\`color:magenta\`);
+const a = b => /* HTML */ \`<!-- bar1 --> bar <!-- bar2 -->\`
+const c = b => /* HTML */ \` <!-- bar1 --> bar <!-- bar2 --> \`
+
+=====================================output=====================================
+foo(
+  /* HTML */ \`<!-- bar1 -->
+    bar
+    <!-- bar2 -->\`,
+);
+foo(/* HTML */ \`
+  <!-- bar1 -->
+  bar
+  <!-- bar2 -->
+\`);
+foo(
+  /* HTML */ \`<div>
+    <p>bar</p>
+    foo
+  </div>\`,
+);
+foo(/* HTML */ \`
+  <div>
+    <p>bar</p>
+    foo
+  </div>
+\`);
+foo(/* GraphQL */ \`
+  query {
+    foo {
+      bar
+    }
+  }
+\`);
+foo(/* ... */ css\`
+  color: magenta;
+\`);
+const a = (b) =>
+  /* HTML */ \`<!-- bar1 -->
+    bar
+    <!-- bar2 -->\`;
+const c = (b) => /* HTML */ \`
+  <!-- bar1 -->
+  bar
+  <!-- bar2 -->
+\`;
+
+================================================================================
+`;
+
+exports[`empty-lines.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+all_verylongcall_verylongcall_verylongcall_verylongcall_verylongcall(
+  (a,
+
+   b) => {
+    console.log()
+  }
+)
+
+=====================================output=====================================
+all_verylongcall_verylongcall_verylongcall_verylongcall_verylongcall(
+  (
+    a,
+
+    b,
+  ) => {
+    console.log();
+  },
+);
+
+================================================================================
+`;
+
+exports[`empty-object.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+func(first, second, third, fourth, fifth, aReallyLongArgumentsListToForceItToBreak, {
+  // comment
+})
+
+func({
+  // comment
+})
+
+func(
+  {} // comment
+)
+
+func(
+  {}
+  // comment
+)
+
+func(
+  // comment
+  {}
+)
+
+=====================================output=====================================
+func(
+  first,
+  second,
+  third,
+  fourth,
+  fifth,
+  aReallyLongArgumentsListToForceItToBreak,
+  {
+    // comment
+  },
+);
+
+func({
+  // comment
+});
+
+func(
+  {}, // comment
+);
+
+func(
+  {},
+  // comment
+);
+
+func(
+  // comment
+  {},
+);
+
+================================================================================
+`;
+
+exports[`function-body-in-mode-break.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+fs.readdirSync(suiteLoc).forEach(function (testName) {
+  (skip ? it.skip : it)(
+    testName,
+    buildTest(binName, testName, opts),
+    2_000_000,
+  );
+});
+
+{
+  (skip ? it.skip : it)(
+    testName,
+    buildTest(binName, testName, opts),
+    2_000_000,
+  );
+}
+
+=====================================output=====================================
+fs.readdirSync(suiteLoc).forEach(function (testName) {
+  (skip ? it.skip : it)(
+    testName,
+    buildTest(binName, testName, opts),
+    2_000_000,
+  );
+});
+
+{
+  (skip ? it.skip : it)(
+    testName,
+    buildTest(binName, testName, opts),
+    2_000_000,
+  );
+}
+
+================================================================================
+`;
+
+exports[`function-expression.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function* mySagas() {
+  yield effects.takeEvery(
+    rexpress.actionTypes.REQUEST_START,
+    function*({ id }) {
+      console.log(id);
+      yield rexpress.actions(store).writeHead(id, 400);
+      yield rexpress.actions(store).end(id, 'pong');
+      console.log('pong');
+    }
+  );
+}
+
+function mySagas2() {
+  return effects.takeEvery(
+    rexpress.actionTypes.REQUEST_START,
+    function({ id }) {
+      console.log(id);
+    }
+  );
+}
+
+=====================================output=====================================
+function* mySagas() {
+  yield effects.takeEvery(
+    rexpress.actionTypes.REQUEST_START,
+    function* ({ id }) {
+      console.log(id);
+      yield rexpress.actions(store).writeHead(id, 400);
+      yield rexpress.actions(store).end(id, "pong");
+      console.log("pong");
+    },
+  );
+}
+
+function mySagas2() {
+  return effects.takeEvery(
+    rexpress.actionTypes.REQUEST_START,
+    function ({ id }) {
+      console.log(id);
+    },
+  );
+}
+
+================================================================================
+`;
+
+exports[`function-expression-issue-2239.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+someFunctionCallWithBigArgumentsAndACallback(thisArgumentIsQuiteLong, function(cool) {
+  return cool
+})
+
+=====================================output=====================================
+someFunctionCallWithBigArgumentsAndACallback(
+  thisArgumentIsQuiteLong,
+  function (cool) {
+    return cool;
+  },
+);
+
+================================================================================
+`;
+
+exports[`issue-7518.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const Broken = React.forwardRef(({
+	children,
+	// 1
+	// 2
+	title,
+	hidden,
+	// 3
+}, ref) => (
+	<div ref={ref}>
+		{children}
+	</div>
+))
+
+=====================================output=====================================
+const Broken = React.forwardRef(
+  (
+    {
+      children,
+      // 1
+      // 2
+      title,
+      hidden,
+      // 3
+    },
+    ref,
+  ) => <div ref={ref}>{children}</div>,
+);
+
+================================================================================
+`;
+
+exports[`issue-10708.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+bob
+	.doL(({ a, b: {
+		// comment
+	}}) => something
+		.else
+      	.else({}))
+
+=====================================output=====================================
+bob.doL(
+  ({
+    a,
+    b: {
+      // comment
+    },
+  }) => something.else.else({}),
+);
+
+================================================================================
+`;
+
+exports[`issue-18143.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+assert.deepStrictEqual(linesCollection.getViewLinesIndentGuides____(-1, -1), []);
+assert.deepStrictEqual(linesCollection.getViewLinesIndentGuides___(-1, -1), [1]);
+assert.deepStrictEqual(linesCollection.getViewLinesIndentGuides(-1, -1), [1, 2]);
+
+=====================================output=====================================
+assert.deepStrictEqual(
+  linesCollection.getViewLinesIndentGuides____(-1, -1),
+  [],
+);
+assert.deepStrictEqual(
+  linesCollection.getViewLinesIndentGuides___(-1, -1),
+  [1],
+);
+assert.deepStrictEqual(
+  linesCollection.getViewLinesIndentGuides(-1, -1),
+  [1, 2],
+);
+
+================================================================================
+`;
+
+exports[`jsx.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const els = items.map(item => (
+  <div className="whatever">
+    <span>{children}</span>
+  </div>
+));
+
+=====================================output=====================================
+const els = items.map((item) => (
+  <div className="whatever">
+    <span>{children}</span>
+  </div>
+));
+
+================================================================================
+`;
+
+exports[`number-only-array.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+instantiate(game, [
+  transform([-0.7, 0.5, 0]),
+  render_colored_diffuse(game.MaterialDiffuse, game.Meshes["monkey_flat"], [1, 1, 0.3, 1]),
+]);
+
+=====================================output=====================================
+instantiate(game, [
+  transform([-0.7, 0.5, 0]),
+  render_colored_diffuse(
+    game.MaterialDiffuse,
+    game.Meshes["monkey_flat"],
+    [1, 1, 0.3, 1],
+  ),
+]);
+
+================================================================================
+`;
+
+exports[`object.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const formatData = pipe(
+  zip,
+  map(([ ref, data ]) => ({
+    nodeId: ref.nodeId.toString(),
+    ...attributeFromDataValue(ref.attributeId, data)
+  })),
+  groupBy(prop('nodeId')),
+  map(mergeAll),
+  values
+);
+
+export const setProp = y => ({
+  ...y,
+  a: 'very, very, very long very, very long text'
+});
+
+export const log = y => {
+  console.log('very, very, very long very, very long text')
+};
+
+=====================================output=====================================
+const formatData = pipe(
+  zip,
+  map(([ref, data]) => ({
+    nodeId: ref.nodeId.toString(),
+    ...attributeFromDataValue(ref.attributeId, data),
+  })),
+  groupBy(prop("nodeId")),
+  map(mergeAll),
+  values,
+);
+
+export const setProp = (y) => ({
+  ...y,
+  a: "very, very, very long very, very long text",
+});
+
+export const log = (y) => {
+  console.log("very, very, very long very, very long text");
+};
+
+================================================================================
+`;
+
+exports[`overflow.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+SuperSuperSuperSuperSuperSuperSuperSuperSuperSuperSuperSuperLongCall((err, result) => {
+  // comment
+});
+
+func(one, two, three, four, five, six, seven, eig, is, this, too, long, no, []);
+func(one, two, three, four, five, six, seven, eig, is, this, too, long, yes, []);
+func(one, two, three, four, five, six, seven, eig, is, this, too, long, yes, [
+  // Comments
+]);
+func(five, six, seven, eig, is, this, too, long, yes, [
+  // Comments
+]);
+
+func(one, two, three, four, five, six, seven, eig, is, this, too, long, no, {});
+func(one, two, three, four, five, six, seven, eig, is, this, too, long, yes, {});
+func(one, two, three, four, five, six, seven, eig, is, this, too, long, yes, {
+  // Comments
+});
+
+foo(
+  (
+    one,
+    two,
+    three,
+    four,
+    five,
+    six,
+    seven,
+    eight,
+    nine,
+    ten,
+    eleven,
+    twelve,
+    thirteen,
+    fourteen,
+  ) => {},
+);
+
+const contentTypes = function(tile, singleSelection) {
+  return compute(
+    function contentTypesContentTypes(
+      tile,
+      searchString = '',
+      filteredContentTypes = [],
+      contentTypesArray = [],
+      selectedGroup,
+      singleSelection) {
+      selectedGroup = (tile.state && tile.state.group) || selectedGroup;
+    }
+  );
+};
+
+=====================================output=====================================
+SuperSuperSuperSuperSuperSuperSuperSuperSuperSuperSuperSuperLongCall(
+  (err, result) => {
+    // comment
+  },
+);
+
+func(one, two, three, four, five, six, seven, eig, is, this, too, long, no, []);
+func(
+  one,
+  two,
+  three,
+  four,
+  five,
+  six,
+  seven,
+  eig,
+  is,
+  this,
+  too,
+  long,
+  yes,
+  [],
+);
+func(one, two, three, four, five, six, seven, eig, is, this, too, long, yes, [
+  // Comments
+]);
+func(five, six, seven, eig, is, this, too, long, yes, [
+  // Comments
+]);
+
+func(one, two, three, four, five, six, seven, eig, is, this, too, long, no, {});
+func(
+  one,
+  two,
+  three,
+  four,
+  five,
+  six,
+  seven,
+  eig,
+  is,
+  this,
+  too,
+  long,
+  yes,
+  {},
+);
+func(one, two, three, four, five, six, seven, eig, is, this, too, long, yes, {
+  // Comments
+});
+
+foo(
+  (
+    one,
+    two,
+    three,
+    four,
+    five,
+    six,
+    seven,
+    eight,
+    nine,
+    ten,
+    eleven,
+    twelve,
+    thirteen,
+    fourteen,
+  ) => {},
+);
+
+const contentTypes = function (tile, singleSelection) {
+  return compute(function contentTypesContentTypes(
+    tile,
+    searchString = "",
+    filteredContentTypes = [],
+    contentTypesArray = [],
+    selectedGroup,
+    singleSelection,
+  ) {
+    selectedGroup = (tile.state && tile.state.group) || selectedGroup;
+  });
+};
+
+================================================================================
+`;

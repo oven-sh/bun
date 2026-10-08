@@ -1,0 +1,429 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`break.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+h(f(g(() => {
+  a
+})))
+
+deepCopyAndAsyncMapLeavesA(
+  { source: sourceValue, destination: destination[sourceKey] },
+  { valueMapper, overwriteExistingKeys }
+)
+
+deepCopyAndAsyncMapLeavesB(
+  1337,
+  { source: sourceValue, destination: destination[sourceKey] },
+  { valueMapper, overwriteExistingKeys }
+)
+
+deepCopyAndAsyncMapLeavesC(
+  { source: sourceValue, destination: destination[sourceKey] },
+  1337,
+  { valueMapper, overwriteExistingKeys }
+)
+
+function someFunction(url) {
+  return get(url)
+    .then(
+      json => dispatch(success(json)),
+      error => dispatch(failed(error))
+    );
+}
+
+const mapChargeItems = fp.flow(
+  l => l < 10 ? l: 1,
+  l => Immutable.Range(l).toMap()
+);
+
+expect(new LongLongLongLongLongRange([0, 0], [0, 0])).toEqualAtomLongLongLongLongRange(new LongLongLongRange([0, 0], [0, 0]));
+
+["red", "white", "blue", "black", "hotpink", "rebeccapurple"].reduce(
+  (allColors, color) => {
+    return allColors.concat(color);
+  },
+  []
+);
+
+
+=====================================output=====================================
+h(
+  f(
+    g(() => {
+      a;
+    }),
+  ),
+);
+
+deepCopyAndAsyncMapLeavesA(
+  { source: sourceValue, destination: destination[sourceKey] },
+  { valueMapper, overwriteExistingKeys },
+);
+
+deepCopyAndAsyncMapLeavesB(
+  1337,
+  { source: sourceValue, destination: destination[sourceKey] },
+  { valueMapper, overwriteExistingKeys },
+);
+
+deepCopyAndAsyncMapLeavesC(
+  { source: sourceValue, destination: destination[sourceKey] },
+  1337,
+  { valueMapper, overwriteExistingKeys },
+);
+
+function someFunction(url) {
+  return get(url).then(
+    (json) => dispatch(success(json)),
+    (error) => dispatch(failed(error)),
+  );
+}
+
+const mapChargeItems = fp.flow(
+  (l) => (l < 10 ? l : 1),
+  (l) => Immutable.Range(l).toMap(),
+);
+
+expect(
+  new LongLongLongLongLongRange([0, 0], [0, 0]),
+).toEqualAtomLongLongLongLongRange(new LongLongLongRange([0, 0], [0, 0]));
+
+["red", "white", "blue", "black", "hotpink", "rebeccapurple"].reduce(
+  (allColors, color) => {
+    return allColors.concat(color);
+  },
+  [],
+);
+
+================================================================================
+`;
+
+exports[`parent.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+runtimeAgent.getProperties(
+  objectId,
+  false, // ownProperties
+  false, // accessorPropertiesOnly
+  false, // generatePreview
+  (error, properties, internalProperties) => {
+    return 1
+  },
+);
+
+=====================================output=====================================
+runtimeAgent.getProperties(
+  objectId,
+  false, // ownProperties
+  false, // accessorPropertiesOnly
+  false, // generatePreview
+  (error, properties, internalProperties) => {
+    return 1;
+  },
+);
+
+================================================================================
+`;
+
+exports[`react.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function helloWorld() {
+  useEffect(() => {
+    // do something
+  }, [props.value])
+  useEffect(() => {
+    // do something
+  }, [props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value])
+}
+
+function helloWorldWithReact() {
+  React.useEffect(() => {
+    // do something
+  }, [props.value])
+  React.useEffect(() => {
+    // do something
+  }, [props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value])
+}
+
+function MyComponent(props) {
+  useEffect(
+    () => {
+      console.log("some code", props.foo);
+    },
+
+    // We need to disable the eslint warning here,
+    // because of some complicated reason.
+    // eslint-disable line react-hooks/exhaustive-deps
+    []
+  );
+
+  return null;
+}
+
+function Comp1() {
+  const { firstName, lastName } = useMemo(
+    () => parseFullName(fullName),
+    [fullName],
+  );
+}
+
+function Comp2() {
+  const { firstName, lastName } = useMemo(
+    () => func(),
+    [props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value]
+  )
+}
+
+function Comp3() {
+  const { firstName, lastName } = useMemo(
+    (aaa, bbb, ccc, ddd, eee, fff, ggg, hhh, iii, jjj, kkk) => func(aaa, bbb, ccc, ddd, eee, fff, ggg, hhh, iii, jjj, kkk),
+    [foo, bar, baz]
+  );
+}
+
+function Comp4() {
+  const { firstName, lastName } = useMemo(
+    () => foo && bar && baz || baz || foo && baz(foo) + bar(foo) + foo && bar && baz || baz || foo && baz(foo) + bar(foo),
+    [foo, bar, baz]
+  )
+}
+
+function Comp5() {
+  const { firstName, lastName } = useMemo(() => func(), [foo]);
+}
+
+function Component1() {
+  useImperativeHandle(ref, () => {
+    /* Function body */
+  }, []);
+  useImperativeHandle(ref, () => {
+    /* Function body */
+  }, [props.value]);
+  useImperativeHandle(ref, () => {
+    /* Function body */
+  }, [props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value]);
+}
+
+function Component2() {
+  React.useImperativeHandle(ref, () => {
+    /* Function body */
+  }, []);
+  React.useImperativeHandle(ref, () => {
+    /* Function body */
+  }, [props.value]);
+  React.useImperativeHandle(ref, () => {
+    /* Function body */
+  }, [props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value, props.value]);
+}
+
+function Component3() {
+  useImperativeHandle(
+    ref,
+    () => {
+      /* Function body */
+    },
+    [],
+  );
+}
+
+=====================================output=====================================
+function helloWorld() {
+  useEffect(() => {
+    // do something
+  }, [props.value]);
+  useEffect(() => {
+    // do something
+  }, [
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+  ]);
+}
+
+function helloWorldWithReact() {
+  React.useEffect(() => {
+    // do something
+  }, [props.value]);
+  React.useEffect(() => {
+    // do something
+  }, [
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+  ]);
+}
+
+function MyComponent(props) {
+  useEffect(
+    () => {
+      console.log("some code", props.foo);
+    },
+
+    // We need to disable the eslint warning here,
+    // because of some complicated reason.
+    // eslint-disable line react-hooks/exhaustive-deps
+    [],
+  );
+
+  return null;
+}
+
+function Comp1() {
+  const { firstName, lastName } = useMemo(
+    () => parseFullName(fullName),
+    [fullName],
+  );
+}
+
+function Comp2() {
+  const { firstName, lastName } = useMemo(
+    () => func(),
+    [
+      props.value,
+      props.value,
+      props.value,
+      props.value,
+      props.value,
+      props.value,
+      props.value,
+      props.value,
+      props.value,
+      props.value,
+      props.value,
+    ],
+  );
+}
+
+function Comp3() {
+  const { firstName, lastName } = useMemo(
+    (aaa, bbb, ccc, ddd, eee, fff, ggg, hhh, iii, jjj, kkk) =>
+      func(aaa, bbb, ccc, ddd, eee, fff, ggg, hhh, iii, jjj, kkk),
+    [foo, bar, baz],
+  );
+}
+
+function Comp4() {
+  const { firstName, lastName } = useMemo(
+    () =>
+      (foo && bar && baz) ||
+      baz ||
+      (foo && baz(foo) + bar(foo) + foo && bar && baz) ||
+      baz ||
+      (foo && baz(foo) + bar(foo)),
+    [foo, bar, baz],
+  );
+}
+
+function Comp5() {
+  const { firstName, lastName } = useMemo(() => func(), [foo]);
+}
+
+function Component1() {
+  useImperativeHandle(ref, () => {
+    /* Function body */
+  }, []);
+  useImperativeHandle(ref, () => {
+    /* Function body */
+  }, [props.value]);
+  useImperativeHandle(ref, () => {
+    /* Function body */
+  }, [
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+  ]);
+}
+
+function Component2() {
+  React.useImperativeHandle(ref, () => {
+    /* Function body */
+  }, []);
+  React.useImperativeHandle(ref, () => {
+    /* Function body */
+  }, [props.value]);
+  React.useImperativeHandle(ref, () => {
+    /* Function body */
+  }, [
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+    props.value,
+  ]);
+}
+
+function Component3() {
+  useImperativeHandle(ref, () => {
+    /* Function body */
+  }, []);
+}
+
+================================================================================
+`;
+
+exports[`reduce.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const [ first1 ] = array.reduce(
+  () => [accumulator, element, accumulator, element],
+  [fullName]
+);
+
+const [ first2 ] = array.reduce(
+  (accumulator, element, ) => [accumulator, element],
+  [fullName]
+);
+
+=====================================output=====================================
+const [first1] = array.reduce(
+  () => [accumulator, element, accumulator, element],
+  [fullName],
+);
+
+const [first2] = array.reduce(
+  (accumulator, element) => [accumulator, element],
+  [fullName],
+);
+
+================================================================================
+`;

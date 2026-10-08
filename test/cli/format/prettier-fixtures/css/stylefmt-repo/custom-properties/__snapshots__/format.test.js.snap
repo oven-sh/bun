@@ -1,0 +1,20 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`custom-properties.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+:root{--mainColor:#123456}
+a{color:var(        --mainColor     )     ; }
+
+=====================================output=====================================
+:root {
+  --mainColor: #123456;
+}
+a {
+  color: var(--mainColor);
+}
+
+================================================================================
+`;

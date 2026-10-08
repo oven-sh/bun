@@ -1,0 +1,30 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`yaml.css - {"embeddedLanguageFormatting":"off"} format 1`] = `
+====================================options=====================================
+embeddedLanguageFormatting: "off"
+parsers: ["css", "scss", "less"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---yaml
+
+title: Hello
+slug: home
+
+---
+
+a {}
+
+=====================================output=====================================
+---yaml
+
+title: Hello
+slug: home
+
+---
+
+a {
+}
+
+================================================================================
+`;

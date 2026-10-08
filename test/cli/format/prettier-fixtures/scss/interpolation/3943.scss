@@ -1,0 +1,119 @@
+.class-#{$var} {
+  #{$var}: #7b3d66;
+  #{$attr}-color: blue;
+  #{$prop}-#{$side}: $value;
+  background-#{$var}: #7b3d66;
+  animation-name: #{var};
+  line-height: #{strip-unit($line-height)}em;
+  height: 1#{$var};
+  width: calc(100% - #{$sidebar-width});
+  max-width: calc(#{$m*100}vw #{$sign} #{$b});
+  font: #{$font-size}/#{$line-height};
+  content: "I have #{8 + 2} books on SASS!";
+  border: #{$var} #{$var} #{$var};
+  filter: #{$var}#{$var}#{$var};
+  prop:  #{  $var  +  $var  }  #{  $var  +  $var  }  #{  $var  +  $var  };
+  prop2:
+      #{
+      $var
+      +
+      $var
+      }
+
+      #{
+      $var
+      +
+      $var
+      }
+
+      #{
+      $var
+      +
+      $var
+      }
+      ;
+  prop3:
+
+      #{
+
+      $var
+
+      +
+
+      $var
+
+      }
+
+      #{
+
+      $var
+
+      +
+
+      $var
+
+      }
+
+      #{
+
+      $var
+
+      +
+
+      $var
+
+      }
+      ;
+  prop4: -#{$loader-icon-duration};
+  prop5: +#{$loader-icon-duration};
+  prop6: calc(-#{$loader-icon-duration} + 10);
+  prop7: calc(10 + -#{$loader-icon-duration});
+}
+
+/* Framework version for the generated CSS is #{$version}. */
+
+.selector {
+  foo: bar;
+  #{$active} {
+    baz: qux;
+  }
+}
+
+.el:nth-of-type(#{$i}) {}
+
+@media #{$value} {}
+
+$foundation-dir: 'foundation';
+@import url('#{$foundation-dir}/components/grid');
+@import url(#{$foundation-dir}/components/grid);
+@import url($foundation-dir/components/grid);
+@import url($foundation-dir+"/components/grid");
+
+@function get-font-family($family) {
+  @return $family;
+}
+@import url("//fonts.googleapis.com/css?family=#{ get-font-family('Roboto') }:100,300,500,700,900&display=swap");
+@import url(//fonts.googleapis.com/css?family=#{ get-font-family('Roboto') }:100,300,500,700,900&display=swap);
+
+
+@keyframes loader {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+
+  #{50% - $loader-icon-duration} {
+    transform: translate3d(0, $bounce-height, 0);
+  }
+
+  50% {
+    transform: translate3d(0, $bounce-height, 0) scale($loader-bounce-horizontal-expansion, $loader-bounce-vertical-compression);
+  }
+}
+
+$icons: wifi "\600", wifi-hotspot "\601", weather "\602";
+
+@each $icon in $icons {
+  .icon-#{nth($icon, 1)}, %icon-#{nth($icon, 1)} {
+    content: "#{nth($icon, 2)}";
+  }
+}

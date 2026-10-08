@@ -1,0 +1,86 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`comments.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import A1 = require("./a/long/long/long/long/long/long/long/long/long/long/long/long/path/to/module");
+const A2 = require("./a/long/long/long/long/long/long/long/long/long/long/long/long/path/to/module");
+
+import B1 = require(
+// 1
+"b");
+const B2 = require(
+// 2
+"b");
+
+=====================================output=====================================
+import A1 = require("./a/long/long/long/long/long/long/long/long/long/long/long/long/path/to/module");
+const A2 = require("./a/long/long/long/long/long/long/long/long/long/long/long/long/path/to/module");
+
+import B1 = require(
+  // 1
+  "b"
+);
+const B2 = require(
+  // 2
+  "b",
+);
+
+================================================================================
+`;
+
+exports[`import-require.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import { IModel } from 'vs/editor/common/editorCommon';
+import JSONContributionRegistry = require('vs/platform/jsonschemas/common/jsonContributionRegistry');
+
+=====================================output=====================================
+import { IModel } from "vs/editor/common/editorCommon";
+import JSONContributionRegistry = require("vs/platform/jsonschemas/common/jsonContributionRegistry");
+
+================================================================================
+`;
+
+exports[`type-imports.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import type A = require("foo");
+export import type = require("A");
+
+import type
+A = require("A");
+
+import
+type
+a = require("a");
+
+export import
+type
+B = require("B");
+
+export
+import
+type
+b = require("b");
+
+=====================================output=====================================
+import type A = require("foo");
+export import type = require("A");
+
+import type A = require("A");
+
+import type a = require("a");
+
+export import type B = require("B");
+
+export import type b = require("b");
+
+================================================================================
+`;

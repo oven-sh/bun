@@ -1,0 +1,881 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`argument-list.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+longArgNamesWithComments(
+
+  // Hello World
+
+  longlonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglong1,
+
+  // Hello World
+
+  longlonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglong2,
+
+  /* Hello World */
+  longlonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglong3,
+
+
+);
+
+shortArgNames(
+
+
+  short,
+
+  short2,
+  short3,
+);
+
+comments(
+
+  // Comment
+
+  /* Some comments */
+  short,
+  /* Another comment */
+
+
+  short2, // Even more comments
+
+
+  /* Another comment */
+
+
+  // Long Long Long Long Long Comment
+
+
+
+  /* Long Long Long Long Long Comment */
+  // Long Long Long Long Long Comment
+
+  short3,
+  // More comments
+
+
+);
+
+differentArgTypes(
+
+  () => {
+    return true
+  },
+
+  isTrue ?
+    doSomething() : 12,
+
+);
+
+moreArgTypes(
+
+  [1, 2,
+    3],
+
+  {
+    name: 'Hello World',
+    age: 29
+  },
+
+  doSomething(
+
+    // Hello world
+
+
+    // Hello world again
+    { name: 'Hello World', age: 34 },
+
+
+    oneThing
+      + anotherThing,
+
+    // Comment
+
+  ),
+
+);
+
+evenMoreArgTypes(
+  doSomething(
+    { name: 'Hello World', age: 34 },
+
+
+    true
+
+  ),
+
+  14,
+
+  1 + 2
+    - 90/80,
+
+  !98 *
+    60 -
+    90,
+
+
+
+)
+
+foo.apply(null,
+
+// Array here
+[1, 2]);
+
+
+bar.on("readable",
+
+() => {
+  doStuff()
+});
+
+foo(['A, B'],
+
+/* function here */
+function doSomething() { return true; });
+
+doSomething.apply(null,
+
+// Comment
+
+[
+  'Hello world 1',
+  'Hello world 2',
+  'Hello world 3',
+]);
+
+
+doAnotherThing("node",
+
+{
+  solution_type,
+  time_frame
+});
+
+stuff.doThing(someStuff,
+
+  -1, {
+  accept: node => doSomething(node)
+});
+
+doThing(
+
+  someOtherStuff,
+
+  // This is important
+  true, {
+  decline: creditCard => takeMoney(creditCard)
+}
+
+);
+
+func(
+  () => {
+   thing();
+  },
+
+  { yes: true, no: 5 }
+);
+
+doSomething(
+
+   { tomorrow: maybe, today: never[always] },
+
+   1337,
+
+   /* Comment */
+
+   // This is important
+   { helloWorld, someImportantStuff }
+
+
+);
+
+function foo(
+  one,
+
+  two,
+  three,
+  four,
+
+
+  five,
+  six,
+  seven,
+  eight,
+  nine,
+  ten,
+
+  eleven
+
+) {}
+
+=====================================output=====================================
+longArgNamesWithComments(
+  // Hello World
+
+  longlonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglong1,
+
+  // Hello World
+
+  longlonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglong2,
+
+  /* Hello World */
+  longlonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglonglong3,
+);
+
+shortArgNames(
+  short,
+
+  short2,
+  short3,
+);
+
+comments(
+  // Comment
+
+  /* Some comments */
+  short,
+  /* Another comment */
+
+  short2, // Even more comments
+
+  /* Another comment */
+
+  // Long Long Long Long Long Comment
+
+  /* Long Long Long Long Long Comment */
+  // Long Long Long Long Long Comment
+
+  short3,
+  // More comments
+);
+
+differentArgTypes(
+  () => {
+    return true;
+  },
+
+  isTrue ? doSomething() : 12,
+);
+
+moreArgTypes(
+  [1, 2, 3],
+
+  {
+    name: "Hello World",
+    age: 29,
+  },
+
+  doSomething(
+    // Hello world
+
+    // Hello world again
+    { name: "Hello World", age: 34 },
+
+    oneThing + anotherThing,
+
+    // Comment
+  ),
+);
+
+evenMoreArgTypes(
+  doSomething(
+    { name: "Hello World", age: 34 },
+
+    true,
+  ),
+
+  14,
+
+  1 + 2 - 90 / 80,
+
+  !98 * 60 - 90,
+);
+
+foo.apply(
+  null,
+
+  // Array here
+  [1, 2],
+);
+
+bar.on(
+  "readable",
+
+  () => {
+    doStuff();
+  },
+);
+
+foo(
+  ["A, B"],
+
+  /* function here */
+  function doSomething() {
+    return true;
+  },
+);
+
+doSomething.apply(
+  null,
+
+  // Comment
+
+  ["Hello world 1", "Hello world 2", "Hello world 3"],
+);
+
+doAnotherThing(
+  "node",
+
+  {
+    solution_type,
+    time_frame,
+  },
+);
+
+stuff.doThing(
+  someStuff,
+
+  -1,
+  {
+    accept: (node) => doSomething(node),
+  },
+);
+
+doThing(
+  someOtherStuff,
+
+  // This is important
+  true,
+  {
+    decline: (creditCard) => takeMoney(creditCard),
+  },
+);
+
+func(
+  () => {
+    thing();
+  },
+
+  { yes: true, no: 5 },
+);
+
+doSomething(
+  { tomorrow: maybe, today: never[always] },
+
+  1337,
+
+  /* Comment */
+
+  // This is important
+  { helloWorld, someImportantStuff },
+);
+
+function foo(
+  one,
+
+  two,
+  three,
+  four,
+
+  five,
+  six,
+  seven,
+  eight,
+  nine,
+  ten,
+
+  eleven,
+) {}
+
+================================================================================
+`;
+
+exports[`comments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function a() {
+  const a = 5; // comment
+
+  return a;
+}
+
+function a() {
+  const a = 5; /* comment */
+
+  return a;
+}
+
+function a() {
+  const a = 5; /* comment */ /* comment */
+
+  return a;
+}
+
+function a() {
+  const a = 5; /* comment */ /* comment */ // comment
+  return a;
+}
+
+function a() {
+  const a = 5; /* comment */ /* comment */ // comment
+
+  return a;
+}
+
+=====================================output=====================================
+function a() {
+  const a = 5; // comment
+
+  return a;
+}
+
+function a() {
+  const a = 5; /* comment */
+
+  return a;
+}
+
+function a() {
+  const a = 5; /* comment */ /* comment */
+
+  return a;
+}
+
+function a() {
+  const a = 5; /* comment */ /* comment */ // comment
+  return a;
+}
+
+function a() {
+  const a = 5; /* comment */ /* comment */ // comment
+
+  return a;
+}
+
+================================================================================
+`;
+
+exports[`member-chain.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+fooBar.doSomething('Hello World').doAnotherThing('Foo', { foo: bar })
+
+  // App configuration.
+  .doOneMoreThing(config)
+
+  .run(() => console.log('Bar'));
+
+bigDeal
+
+  .doSomething('Hello World')
+
+  // Hello world
+  .doAnotherThing('Foo', { foo: bar })
+
+  // App configuration.
+  .doOneMoreThing(config)
+
+  .run(() => console.log('Bar'));
+
+
+foo.bar.baz
+
+  .doSomething('Hello World')
+
+  // Hello world
+  .foo.bar.doAnotherThing('Foo', { foo: bar })
+
+  .doOneMoreThing(config)
+  .bar.run(() => console.log('Bar'));
+
+(
+  somethingGood ? thisIsIt : maybeNot
+)
+
+  // Hello world
+  .doSomething('Hello World')
+
+  .doAnotherThing('Foo', { foo: bar }) // Run this
+  .run(() => console.log('Bar')); // Do this
+
+helloWorld
+
+  .text()
+
+  .then(t => t);
+
+(veryLongVeryLongVeryLong ||
+ anotherVeryLongVeryLongVeryLong ||
+ veryVeryVeryLongError
+)
+
+  .map(tickets => TicketRecord.createFromSomeLongString())
+
+  .filter(obj => !!obj);
+
+const sel = this.connections
+
+  .concat(this.activities.concat(this.operators))
+  .filter(x => x.selected);
+
+Object.entries(obj)
+
+.forEach((e) => console.log(e));
+
+this.fetch("/foo")
+
+	.then(response => response.json());
+
+=====================================output=====================================
+fooBar
+  .doSomething("Hello World")
+  .doAnotherThing("Foo", { foo: bar })
+
+  // App configuration.
+  .doOneMoreThing(config)
+
+  .run(() => console.log("Bar"));
+
+bigDeal
+
+  .doSomething("Hello World")
+
+  // Hello world
+  .doAnotherThing("Foo", { foo: bar })
+
+  // App configuration.
+  .doOneMoreThing(config)
+
+  .run(() => console.log("Bar"));
+
+foo.bar.baz
+
+  .doSomething("Hello World")
+
+  // Hello world
+  .foo.bar.doAnotherThing("Foo", { foo: bar })
+
+  .doOneMoreThing(config)
+  .bar.run(() => console.log("Bar"));
+
+(somethingGood ? thisIsIt : maybeNot)
+
+  // Hello world
+  .doSomething("Hello World")
+
+  .doAnotherThing("Foo", { foo: bar }) // Run this
+  .run(() => console.log("Bar")); // Do this
+
+helloWorld
+
+  .text()
+
+  .then((t) => t);
+
+(
+  veryLongVeryLongVeryLong ||
+  anotherVeryLongVeryLongVeryLong ||
+  veryVeryVeryLongError
+)
+
+  .map((tickets) => TicketRecord.createFromSomeLongString())
+
+  .filter((obj) => !!obj);
+
+const sel = this.connections
+
+  .concat(this.activities.concat(this.operators))
+  .filter((x) => x.selected);
+
+Object.entries(obj)
+
+  .forEach((e) => console.log(e));
+
+this.fetch("/foo")
+
+  .then((response) => response.json());
+
+================================================================================
+`;
+
+exports[`parameter-list.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Foo {
+  constructor(
+    one,
+
+    two,
+    three,
+    four,
+
+
+    five,
+    six,
+    seven,
+    eight,
+    nine,
+    ten,
+
+    eleven
+
+  ) {}
+}
+
+function foo(
+  one,
+
+  two,
+  three,
+  four,
+
+
+  five,
+  six,
+  seven,
+  eight,
+  nine,
+  ten,
+
+  eleven
+
+) {}
+
+call((a, b) => {});
+
+call((
+  one,
+  two,
+  three,
+  four,
+  five,
+  six,
+  seven,
+  eight,
+  nine,
+  ten,
+  eleven
+) => {});
+
+call((
+  one,
+
+  two,
+  three,
+  four,
+
+
+  five,
+  six,
+  seven,
+  eight,
+  nine,
+  ten,
+
+  eleven
+
+) => {});
+
+function test({
+  one,
+
+  two,
+  three,
+  four,
+
+
+  five,
+  six,
+  seven,
+  eight,
+  nine,
+  ten,
+
+  eleven
+
+}) {}
+
+function test({
+  one,
+  two,
+  three,
+  four,
+}) {}
+
+function test({
+  one,
+
+  two,
+  three,
+  four,
+
+}) {}
+
+function test({ one, two, three, four }, $a) {}
+
+
+function test(
+  { one, two, three, four },
+
+  $a
+) {}
+
+function foo(
+
+  ...rest
+
+) {}
+
+function foo(
+  one,
+
+  ...rest
+) {}
+
+function foo(one,...rest) {}
+
+f(
+  superSuperSuperSuperSuperSuperSuperSuperSuperSuperSuperSuperSuperSuperLong,...args
+);
+
+it(
+
+  "does something really long and complicated so I have to write a very long name for the test",
+
+  function(
+
+    done,
+
+    foo
+  ) {
+
+    console.log("hello!");
+  }
+);
+
+=====================================output=====================================
+class Foo {
+  constructor(
+    one,
+
+    two,
+    three,
+    four,
+
+    five,
+    six,
+    seven,
+    eight,
+    nine,
+    ten,
+
+    eleven,
+  ) {}
+}
+
+function foo(
+  one,
+
+  two,
+  three,
+  four,
+
+  five,
+  six,
+  seven,
+  eight,
+  nine,
+  ten,
+
+  eleven,
+) {}
+
+call((a, b) => {});
+
+call((one, two, three, four, five, six, seven, eight, nine, ten, eleven) => {});
+
+call(
+  (
+    one,
+
+    two,
+    three,
+    four,
+
+    five,
+    six,
+    seven,
+    eight,
+    nine,
+    ten,
+
+    eleven,
+  ) => {},
+);
+
+function test({
+  one,
+
+  two,
+  three,
+  four,
+
+  five,
+  six,
+  seven,
+  eight,
+  nine,
+  ten,
+
+  eleven,
+}) {}
+
+function test({ one, two, three, four }) {}
+
+function test({
+  one,
+
+  two,
+  three,
+  four,
+}) {}
+
+function test({ one, two, three, four }, $a) {}
+
+function test(
+  { one, two, three, four },
+
+  $a,
+) {}
+
+function foo(...rest) {}
+
+function foo(
+  one,
+
+  ...rest
+) {}
+
+function foo(one, ...rest) {}
+
+f(
+  superSuperSuperSuperSuperSuperSuperSuperSuperSuperSuperSuperSuperSuperLong,
+  ...args,
+);
+
+it("does something really long and complicated so I have to write a very long name for the test", function (done, foo) {
+  console.log("hello!");
+});
+
+================================================================================
+`;

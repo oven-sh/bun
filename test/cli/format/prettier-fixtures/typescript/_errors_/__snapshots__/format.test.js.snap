@@ -1,0 +1,189 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`declare-getter.ts format[babel-ts] 1`] = `
+"'declare' is not allowed in getters. (2:3)
+  1 | class Foo {
+> 2 |   declare get foo()
+    |   ^
+  3 | }
+  4 |
+Cause: 'declare' is not allowed in getters. (2:2)"
+`;
+
+exports[`declare-getter.ts format[oxc-ts] 1`] = `
+"'declare' modifier cannot be used here. (2:3)
+  1 | class Foo {
+> 2 |   declare get foo()
+    |   ^^^^^^^
+  3 | }
+  4 |"
+`;
+
+exports[`declare-getter.ts format[typescript] 1`] = `
+"'declare' modifier cannot appear on class elements of this kind. (2:3)
+  1 | class Foo {
+> 2 |   declare get foo()
+    |   ^^^^^^^
+  3 | }
+  4 |
+Cause: 'declare' modifier cannot appear on class elements of this kind."
+`;
+
+exports[`declare-setter.ts format[babel-ts] 1`] = `
+"'declare' is not allowed in setters. (2:3)
+  1 | class Foo {
+> 2 |   declare set foo(v)
+    |   ^
+  3 | }
+  4 |
+Cause: 'declare' is not allowed in setters. (2:2)"
+`;
+
+exports[`declare-setter.ts format[oxc-ts] 1`] = `
+"'declare' modifier cannot be used here. (2:3)
+  1 | class Foo {
+> 2 |   declare set foo(v)
+    |   ^^^^^^^
+  3 | }
+  4 |"
+`;
+
+exports[`declare-setter.ts format[typescript] 1`] = `
+"'declare' modifier cannot appear on class elements of this kind. (2:3)
+  1 | class Foo {
+> 2 |   declare set foo(v)
+    |   ^^^^^^^
+  3 | }
+  4 |
+Cause: 'declare' modifier cannot appear on class elements of this kind."
+`;
+
+exports[`export-declare.ts format[babel-ts] 1`] = `
+"'export declare' must be followed by an ambient declaration. (1:16)
+> 1 | export declare foo;
+    |                ^
+  2 |
+Cause: 'export declare' must be followed by an ambient declaration. (1:15)"
+`;
+
+exports[`export-declare.ts format[oxc-ts] 1`] = `
+"Unexpected token (1:16)
+> 1 | export declare foo;
+    |                ^^^
+  2 |"
+`;
+
+exports[`export-declare.ts format[typescript] 1`] = `
+"Declaration or statement expected. (1:1)
+> 1 | export declare foo;
+    | ^
+  2 |
+Cause: Declaration or statement expected."
+`;
+
+exports[`invalid-jsx-1.tsx format[babel-ts] 1`] = `
+"Unexpected token \`>\`. Did you mean \`&gt;\` or \`{'>'}\`? (3:45)
+  1 | // https://www.typescriptlang.org/docs/handbook/release-notes/typescript-3-9.html#-and--are-now-invalid-jsx-text-characters
+  2 |
+> 3 | let directions = <div>Navigate to: Menu Bar > Tools > Options</div>
+    |                                             ^
+  4 |
+Cause: Unexpected token \`>\`. Did you mean \`&gt;\` or \`{'>'}\`? (3:44)"
+`;
+
+exports[`invalid-jsx-1.tsx format[oxc-ts] 1`] = `
+"Unexpected token. Did you mean \`{'>'}\` or \`&gt;\`? (3:45)
+  1 | // https://www.typescriptlang.org/docs/handbook/release-notes/typescript-3-9.html#-and--are-now-invalid-jsx-text-characters
+  2 |
+> 3 | let directions = <div>Navigate to: Menu Bar > Tools > Options</div>
+    |                                             ^
+  4 |"
+`;
+
+exports[`invalid-jsx-1.tsx format[typescript] 1`] = `
+"Unexpected token. Did you mean \`{'>'}\` or \`&gt;\`? (3:45)
+  1 | // https://www.typescriptlang.org/docs/handbook/release-notes/typescript-3-9.html#-and--are-now-invalid-jsx-text-characters
+  2 |
+> 3 | let directions = <div>Navigate to: Menu Bar > Tools > Options</div>
+    |                                             ^
+  4 |
+Cause: Unexpected token. Did you mean \`{'>'}\` or \`&gt;\`?"
+`;
+
+exports[`module-attributes-static.ts format[babel-ts] 1`] = `
+"Unexpected token, expected "{" (1:33)
+> 1 | import foo from "foo.json" with type: "json";
+    |                                 ^
+  2 |
+Cause: Unexpected token, expected "{" (1:32)"
+`;
+
+exports[`module-attributes-static.ts format[oxc-ts] 1`] = `
+"Expected \`{\` but found \`type\` (1:33)
+> 1 | import foo from "foo.json" with type: "json";
+    |                                 ^^^^
+  2 |"
+`;
+
+exports[`module-attributes-static.ts format[typescript] 1`] = `
+"'{' expected. (1:33)
+> 1 | import foo from "foo.json" with type: "json";
+    |                                 ^
+  2 |
+Cause: '{' expected."
+`;
+
+exports[`newline-before-arrow.ts format[babel-ts] 1`] = `
+"No line break is allowed before '=>'. (2:3)
+  1 | async x
+> 2 | => x
+    |   ^
+  3 |
+Cause: No line break is allowed before '=>'. (2:2)"
+`;
+
+exports[`newline-before-arrow.ts format[oxc-ts] 1`] = `
+"Line terminator not permitted before arrow (2:1)
+  1 | async x
+> 2 | => x
+    | ^^
+  3 |"
+`;
+
+exports[`newline-before-arrow.ts format[typescript] 1`] = `
+"Unexpected keyword or identifier. (1:1)
+> 1 | async x
+    | ^
+  2 | => x
+  3 |
+Cause: Unexpected keyword or identifier."
+`;
+
+exports[`value-of-abstract-property.ts format[babel-ts] 1`] = `
+"Property 'prop' cannot have an initializer because it is marked abstract. (2:17)
+  1 | abstract class Foo {
+> 2 |   abstract prop = 3;
+    |                 ^
+  3 | }
+  4 |
+Cause: Property 'prop' cannot have an initializer because it is marked abstract. (2:16)"
+`;
+
+exports[`value-of-abstract-property.ts format[oxc-ts] 1`] = `
+"Property 'prop' cannot have an initializer because it is marked abstract. (2:12)
+  1 | abstract class Foo {
+> 2 |   abstract prop = 3;
+    |            ^^^^
+  3 | }
+  4 |"
+`;
+
+exports[`value-of-abstract-property.ts format[typescript] 1`] = `
+"Abstract property cannot have an initializer. (2:19)
+  1 | abstract class Foo {
+> 2 |   abstract prop = 3;
+    |                   ^
+  3 | }
+  4 |
+Cause: Abstract property cannot have an initializer."
+`;

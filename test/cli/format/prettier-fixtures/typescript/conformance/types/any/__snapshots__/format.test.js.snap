@@ -1,0 +1,117 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`anyAsConstructor.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// any is considered an untyped function call
+// can be called except with type arguments which is an error
+
+var x: any;
+var a = new x();
+var b = new x('hello');
+var c = new x(x);
+
+// grammar allows this for constructors
+var d = new x<any>(x); // no error
+
+=====================================output=====================================
+// any is considered an untyped function call
+// can be called except with type arguments which is an error
+
+var x: any;
+var a = new x();
+var b = new x("hello");
+var c = new x(x);
+
+// grammar allows this for constructors
+var d = new x<any>(x); // no error
+
+================================================================================
+`;
+
+exports[`anyAsFunctionCall.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// any is considered an untyped function call
+// can be called except with type arguments which is an error
+
+var x: any;
+var a = x();
+var b = x('hello');
+var c = x(x);
+
+=====================================output=====================================
+// any is considered an untyped function call
+// can be called except with type arguments which is an error
+
+var x: any;
+var a = x();
+var b = x("hello");
+var c = x(x);
+
+================================================================================
+`;
+
+exports[`anyAsGenericFunctionCall.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// any is considered an untyped function call
+// can be called except with type arguments which is an error
+
+var x: any;
+var a = x<number>();
+var b = x<string>('hello');
+var c = x<object>('hello');
+
+class C { foo: string; }
+var c = x<C>(x);
+var d = x<any>(x);
+
+=====================================output=====================================
+// any is considered an untyped function call
+// can be called except with type arguments which is an error
+
+var x: any;
+var a = x<number>();
+var b = x<string>("hello");
+var c = x<object>("hello");
+
+class C {
+  foo: string;
+}
+var c = x<C>(x);
+var d = x<any>(x);
+
+================================================================================
+`;
+
+exports[`anyPropertyAccess.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var x: any;
+var a = x.foo;
+var b = x['foo'];
+var c = x['fn']();
+var d = x.bar.baz;
+var e = x[0].foo;
+var f = x['0'].bar;
+
+=====================================output=====================================
+var x: any;
+var a = x.foo;
+var b = x["foo"];
+var c = x["fn"]();
+var d = x.bar.baz;
+var e = x[0].foo;
+var f = x["0"].bar;
+
+================================================================================
+`;

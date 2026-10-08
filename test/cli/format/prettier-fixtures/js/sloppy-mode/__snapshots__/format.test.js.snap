@@ -1,0 +1,161 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`delete-variable.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function foo() {
+  var bar = 1;
+  delete bar;}
+
+=====================================output=====================================
+function foo() {
+  var bar = 1;
+  delete bar;
+}
+
+================================================================================
+`;
+
+exports[`eval-arguments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function myfunc() {
+  eval = 1
+  arguments = arguments;
+}
+
+=====================================output=====================================
+function myfunc() {
+  eval = 1;
+  arguments = arguments;
+}
+
+================================================================================
+`;
+
+exports[`eval-arguments.js format[hermes] 1`] = `
+"invalid assignment left-hand side (3:3)
+  1 | function myfunc() {
+  2 |   eval = 1
+> 3 |   arguments = arguments;
+    |   ^
+  4 | }
+  5 |
+Cause: invalid assignment left-hand side (3:2)
+  arguments = arguments;
+  ^~~~~~~~~"
+`;
+
+exports[`eval-arguments-binding.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function myfunc() {
+  var eval
+  var arguments;
+}
+
+=====================================output=====================================
+function myfunc() {
+  var eval;
+  var arguments;
+}
+
+================================================================================
+`;
+
+exports[`function-declaration-in-if.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (false) function foo(){}
+
+=====================================output=====================================
+if (false) function foo() {}
+
+================================================================================
+`;
+
+exports[`function-declaration-in-while.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+while (false) function foo(){}
+
+=====================================output=====================================
+while (false) function foo() {}
+
+================================================================================
+`;
+
+exports[`function-declaration-in-while.js format[acorn] 1`] = `
+"Unexpected token (1:15)
+> 1 | while (false) function foo(){}
+    |               ^
+  2 |
+Cause: Unexpected token (1:14)"
+`;
+
+exports[`function-declaration-in-while.js format[espree] 1`] = `
+"Unexpected token function (1:15)
+> 1 | while (false) function foo(){}
+    |               ^
+  2 |
+Cause: Unexpected token function"
+`;
+
+exports[`function-declaration-in-while.js format[flow] 1`] = `
+"In non-strict mode code, functions can only be declared at top level, inside a block, or as the body of an if statement. (1:15)
+> 1 | while (false) function foo(){}
+    |               ^
+  2 |
+Cause: In non-strict mode code, functions can only be declared at top level, inside a block, or as the body of an if statement. (1:14)"
+`;
+
+exports[`function-declaration-in-while.js format[hermes] 1`] = `
+"declaration not allowed as expression statement (1:15)
+> 1 | while (false) function foo(){}
+    |               ^
+  2 |
+Cause: declaration not allowed as expression statement (1:14)
+while (false) function foo(){}
+              ^~~~~~~~"
+`;
+
+exports[`function-declaration-in-while.js format[meriyah] 1`] = `
+"In strict mode code, functions can only be declared at top level or inside a block (1:15)
+> 1 | while (false) function foo(){}
+    |               ^^^^^^^^
+  2 |
+Cause: [1:14-1:22]: In strict mode code, functions can only be declared at top level or inside a block"
+`;
+
+exports[`labeled-function-declaration.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo: function bar() {}
+
+=====================================output=====================================
+foo: function bar() {}
+
+================================================================================
+`;
+
+exports[`labeled-function-declaration.js format[hermes] 1`] = `
+"Function declaration not allowed as body of labeled statement (1:6)
+> 1 | foo: function bar() {}
+    |      ^
+  2 |
+Cause: Function declaration not allowed as body of labeled statement (1:5)
+foo: function bar() {}
+     ^"
+`;

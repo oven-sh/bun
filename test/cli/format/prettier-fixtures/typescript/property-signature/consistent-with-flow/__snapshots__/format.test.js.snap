@@ -1,0 +1,78 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`comments.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+interface A {
+  property: // Comment
+    B
+}
+
+interface A {
+  property: /* Comment */ B
+}
+
+=====================================output=====================================
+interface A {
+  property: B; // Comment
+}
+
+interface A {
+  property: /* Comment */ B;
+}
+
+================================================================================
+`;
+
+exports[`intersection.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export interface DirectiveArgumentNode extends ArrayExpression {
+  elements: // dir, exp, arg, modifiers
+    & [string]
+    & [string, ExpressionNode]
+    & [string, ExpressionNode, ExpressionNode]
+    & [string, ExpressionNode, ExpressionNode, ObjectExpression]
+}
+
+=====================================output=====================================
+export interface DirectiveArgumentNode extends ArrayExpression {
+  elements: // dir, exp, arg, modifiers
+  [string] &
+    [string, ExpressionNode] &
+    [string, ExpressionNode, ExpressionNode] &
+    [string, ExpressionNode, ExpressionNode, ObjectExpression];
+}
+
+================================================================================
+`;
+
+exports[`union.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export interface DirectiveArgumentNode extends ArrayExpression {
+  elements: // dir, exp, arg, modifiers
+    | [string]
+    | [string, ExpressionNode]
+    | [string, ExpressionNode, ExpressionNode]
+    | [string, ExpressionNode, ExpressionNode, ObjectExpression]
+}
+
+=====================================output=====================================
+export interface DirectiveArgumentNode extends ArrayExpression {
+  elements:
+    // dir, exp, arg, modifiers
+    | [string]
+    | [string, ExpressionNode]
+    | [string, ExpressionNode, ExpressionNode]
+    | [string, ExpressionNode, ExpressionNode, ObjectExpression];
+}
+
+================================================================================
+`;

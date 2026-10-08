@@ -1,0 +1,687 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`comment-tag.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const query = /* GraphQL */\`
+      {
+    user(   id :   5  )  {
+      firstName
+
+      lastName
+    }
+  }
+\`;
+
+/* GraphQL */\`
+      {
+    user(   id :   5 , type:
+    "without variable assignment"  )  {
+      firstName
+
+      lastName
+    }
+  }
+\`;
+
+=====================================output=====================================
+const query = /* GraphQL */ \`
+  {
+    user(id: 5) {
+      firstName
+
+      lastName
+    }
+  }
+\`;
+
+/* GraphQL */ \`
+  {
+    user(id: 5, type: "without variable assignment") {
+      firstName
+
+      lastName
+    }
+  }
+\`;
+
+================================================================================
+`;
+
+exports[`definitions.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+graphql\`
+  fragment x on y {
+    z
+  }
+
+  fragment a on b {
+    c
+  }
+\`;
+
+=====================================output=====================================
+graphql\`
+  fragment x on y {
+    z
+  }
+
+  fragment a on b {
+    c
+  }
+\`;
+
+================================================================================
+`;
+
+exports[`escape.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+gql\`
+  "\\\`foo\\\` mutation payload."
+  type      FooPayload       {
+    	bar: String
+  }
+\`
+
+gql\`
+type Project {
+    "Pattern: \\\`\\\${project}\\\`"
+    pattern: String
+    """
+    Pattern: \\\`\\\${project}\\\`
+    """
+    pattern: String
+
+	# Also: Escaping the first parentheses...
+	"Pattern: \\\`$\\{project}\\\`"
+    pattern: String
+    # Or escaping the first and second parentheses...
+	"Pattern: \\\`$\\{project\\}\\\`"
+    pattern: String
+}
+\`
+
+gql\`
+  """
+  - \\\`
+  - \\\\\\\`
+  - \\\\ a
+  - \\\\\\\\
+  - $
+  - \\$
+  - \\\${
+  - \\\\\\\${
+  - \\u1234
+  """
+  type A {
+    a
+  }
+\`
+
+=====================================output=====================================
+gql\`
+  "\\\`foo\\\` mutation payload."
+  type FooPayload {
+    bar: String
+  }
+\`;
+
+gql\`
+  type Project {
+    "Pattern: \\\`\\\${project}\\\`"
+    pattern: String
+    """
+    Pattern: \\\`\\\${project}\\\`
+    """
+    pattern: String
+
+    # Also: Escaping the first parentheses...
+    "Pattern: \\\`\\\${project}\\\`"
+    pattern: String
+    # Or escaping the first and second parentheses...
+    "Pattern: \\\`\\\${project}\\\`"
+    pattern: String
+  }
+\`;
+
+gql\`
+  """
+  - \\\`
+  - \\\\\\\`
+  - \\\\ a
+  - \\\\\\\\
+  - $
+  - \\$
+  - \\\${
+  - \\\\\\\${
+  - \\u1234
+  """
+  type A {
+    a
+  }
+\`;
+
+================================================================================
+`;
+
+exports[`expressions.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+graphql(schema, \`
+query allPartsByManufacturerName($name: String!) {
+  allParts(filter:{manufacturer: {name: $name}}) {
+...    PartAll
+}}
+\${fragments.all}
+\`)
+
+const veryLongVariableNameToMakeTheLineBreak = graphql(schema, \`
+query allPartsByManufacturerName($name: String!) {
+  allParts(filter:{manufacturer: {name: $name}}) {
+...    PartAll
+}}
+\${fragments.all}
+\`)
+
+=====================================output=====================================
+graphql(
+  schema,
+  \`
+    query allPartsByManufacturerName($name: String!) {
+      allParts(filter: { manufacturer: { name: $name } }) {
+        ...PartAll
+      }
+    }
+    \${fragments.all}
+  \`,
+);
+
+const veryLongVariableNameToMakeTheLineBreak = graphql(
+  schema,
+  \`
+    query allPartsByManufacturerName($name: String!) {
+      allParts(filter: { manufacturer: { name: $name } }) {
+        ...PartAll
+      }
+    }
+    \${fragments.all}
+  \`,
+);
+
+================================================================================
+`;
+
+exports[`graphql.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+graphql(schema, \`
+mutation     MarkReadNotificationMutation(
+    $input
+    : MarkReadNotificationData!
+  )
+{ markReadNotification(data: $input ) { notification {seenState} } }\`)
+
+=====================================output=====================================
+graphql(
+  schema,
+  \`
+    mutation MarkReadNotificationMutation($input: MarkReadNotificationData!) {
+      markReadNotification(data: $input) {
+        notification {
+          seenState
+        }
+      }
+    }
+  \`,
+);
+
+================================================================================
+`;
+
+exports[`graphql-tag.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import gql from "graphql-tag";
+
+const query = gql\`
+      {
+    user(   id :   5  )  {
+      firstName
+
+      lastName
+    }
+  }
+\`;
+
+
+// With interpolations:
+
+gql\`
+query User {
+  user(id:5){
+    ...UserDetails
+    ...Friends
+  }
+}
+
+\${USER_DETAILS_FRAGMENT}\${FRIENDS_FRAGMENT}
+\`
+
+
+// Skip if non-toplevel interpolation:
+
+gql\`
+query User {
+  user(id:\${id}){ name }
+}
+\`
+
+
+// Skip if top-level interpolation within comment:
+
+gql\`
+query User {
+  user(id:5){ name }
+}
+#\${test}
+\`
+
+
+// Comment on last line:
+
+gql\`
+query User {
+  user(id:5){ name }
+}
+# comment\`
+// \` <-- editor syntax highlighting workaround
+
+
+// Preserve up to one blank line between things and enforce linebreak between
+// interpolations:
+
+gql\`
+# comment
+\${one}\${two}  \${three}
+\${four}
+
+\${five}
+# comment
+\${six}
+
+# comment
+\${seven}
+# comment
+
+\${eight}
+
+  # comment with trailing whitespace      
+
+
+# blank line above this comment
+
+
+\`
+
+
+// Interpolation directly before and after query:
+
+gql\`\${one} query Test { test }\${two}\`
+
+
+// Only interpolation:
+
+gql\`\${test}\`
+
+
+// Only comment:
+
+gql\`# comment\`
+// \` <-- editor syntax highlighting workaround
+
+
+// Only whitespace:
+
+gql\`   \`
+
+
+// Empty:
+
+gql\`\`
+
+
+// Comments after other things:
+// Currently, comments after interpolations are moved to the next line.
+// We might want to keep them on the next line in the future.
+
+gql\`
+  \${test} # comment
+
+  query Test { # comment
+    test # comment
+  } # comment
+  \${test} # comment
+  \${test} # comment
+
+  \${test} # comment
+
+  # comment
+  \${test} # comment
+\`
+
+
+// Larger mixed test:
+
+gql\`
+
+
+
+query User {
+  test
+}
+
+    
+	
+\${USER_DETAILS_FRAGMENT}
+
+   # Comment    
+   # that continues on a new line
+
+    
+   # and has a blank line in the middle
+
+    \${FRIENDS_FRAGMENT}
+  \${generateFragment({
+     totally:  "a good idea"
+    })}
+
+\${fragment}#comment
+
+fragment another on User { name
+}\${ fragment }\`
+
+=====================================output=====================================
+import gql from "graphql-tag";
+
+const query = gql\`
+  {
+    user(id: 5) {
+      firstName
+
+      lastName
+    }
+  }
+\`;
+
+// With interpolations:
+
+gql\`
+  query User {
+    user(id: 5) {
+      ...UserDetails
+      ...Friends
+    }
+  }
+
+  \${USER_DETAILS_FRAGMENT}
+  \${FRIENDS_FRAGMENT}
+\`;
+
+// Skip if non-toplevel interpolation:
+
+gql\`
+query User {
+  user(id:\${id}){ name }
+}
+\`;
+
+// Skip if top-level interpolation within comment:
+
+gql\`
+query User {
+  user(id:5){ name }
+}
+#\${test}
+\`;
+
+// Comment on last line:
+
+gql\`
+  query User {
+    user(id: 5) {
+      name
+    }
+  }
+  # comment
+\`;
+// \` <-- editor syntax highlighting workaround
+
+// Preserve up to one blank line between things and enforce linebreak between
+// interpolations:
+
+gql\`
+  # comment
+  \${one}
+  \${two}
+  \${three}
+  \${four}
+
+  \${five}
+  # comment
+  \${six}
+
+  # comment
+  \${seven}
+  # comment
+
+  \${eight}
+
+  # comment with trailing whitespace
+
+  # blank line above this comment
+\`;
+
+// Interpolation directly before and after query:
+
+gql\`
+  \${one}
+  query Test {
+    test
+  }
+  \${two}
+\`;
+
+// Only interpolation:
+
+gql\`
+  \${test}
+\`;
+
+// Only comment:
+
+gql\`
+  # comment
+\`;
+// \` <-- editor syntax highlighting workaround
+
+// Only whitespace:
+
+gql\`\`;
+
+// Empty:
+
+gql\`\`;
+
+// Comments after other things:
+// Currently, comments after interpolations are moved to the next line.
+// We might want to keep them on the next line in the future.
+
+gql\`
+  \${test}
+  # comment
+
+  query Test {
+    # comment
+    test # comment
+  } # comment
+  \${test}
+  # comment
+  \${test}
+  # comment
+
+  \${test}
+  # comment
+
+  # comment
+  \${test}
+  # comment
+\`;
+
+// Larger mixed test:
+
+gql\`
+  query User {
+    test
+  }
+
+  \${USER_DETAILS_FRAGMENT}
+
+  # Comment
+  # that continues on a new line
+
+  # and has a blank line in the middle
+
+  \${FRIENDS_FRAGMENT}
+  \${generateFragment({
+    totally: "a good idea",
+  })}
+
+  \${fragment}
+  #comment
+
+  fragment another on User {
+    name
+  }
+  \${fragment}
+\`;
+
+================================================================================
+`;
+
+exports[`invalid.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// none of the embedded GraphQL should be formatted
+// for they have an invalid escape sequence
+
+gql\`
+  "\\x"
+  type   Foo    {
+      a: string
+  }
+\`;
+
+gql\`
+  type   Foo {
+      a:   string
+  }
+
+  \${stuff}
+
+  "\\x"
+  type  Bar   {
+       b :   string
+  }
+\`;
+
+=====================================output=====================================
+// none of the embedded GraphQL should be formatted
+// for they have an invalid escape sequence
+
+gql\`
+  "\\x"
+  type   Foo    {
+      a: string
+  }
+\`;
+
+gql\`
+  type   Foo {
+      a:   string
+  }
+
+  \${stuff}
+
+  "\\x"
+  type  Bar   {
+       b :   string
+  }
+\`;
+
+================================================================================
+`;
+
+exports[`react-relay.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const { graphql } = require("react-relay");
+
+graphql\`
+ mutation     MarkReadNotificationMutation(
+    $input
+    : MarkReadNotificationData!
+  )
+{ markReadNotification(data: $input ) { notification {seenState} } }
+\`;
+
+graphql.experimental\`
+ mutation     MarkReadNotificationMutation(
+    $input
+    : MarkReadNotificationData!
+  )
+{ markReadNotification(data: $input ) { notification {seenState} } }
+\`;
+
+=====================================output=====================================
+const { graphql } = require("react-relay");
+
+graphql\`
+  mutation MarkReadNotificationMutation($input: MarkReadNotificationData!) {
+    markReadNotification(data: $input) {
+      notification {
+        seenState
+      }
+    }
+  }
+\`;
+
+graphql.experimental\`
+  mutation MarkReadNotificationMutation($input: MarkReadNotificationData!) {
+    markReadNotification(data: $input) {
+      notification {
+        seenState
+      }
+    }
+  }
+\`;
+
+================================================================================
+`;

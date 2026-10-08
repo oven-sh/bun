@@ -1,0 +1,478 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`comments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+switch (true) {
+  case true:
+  // Good luck getting here
+
+  case false:
+}
+
+switch (true) {
+  case true:
+
+  // Good luck getting here
+  case false:
+}
+
+switch(x) {
+  case x: {
+  }
+
+  // other
+
+  case y: {
+  }
+}
+
+switch(x) {
+  default: // comment
+    break;
+}
+
+switch(x) {
+  default: // comment
+    {break;}
+}
+
+switch(x) {
+  default: {// comment
+    break;}
+}
+
+switch(x) {
+  default: /* comment */
+    break;
+}
+
+switch(x) {
+  default: /* comment */
+    {break;}
+}
+
+switch(x) {
+  default: {/* comment */
+    break;}
+}
+
+switch(x) {
+  default: /* comment */ {
+    break;}
+}
+
+=====================================output=====================================
+switch (true) {
+  case true:
+  // Good luck getting here
+
+  case false:
+}
+
+switch (true) {
+  case true:
+
+  // Good luck getting here
+  case false:
+}
+
+switch (x) {
+  case x: {
+  }
+
+  // other
+
+  case y: {
+  }
+}
+
+switch (x) {
+  default: // comment
+    break;
+}
+
+switch (x) {
+  default: {
+    // comment
+    break;
+  }
+}
+
+switch (x) {
+  default: {
+    // comment
+    break;
+  }
+}
+
+switch (x) {
+  default: /* comment */
+    break;
+}
+
+switch (x) {
+  default: /* comment */ {
+    break;
+  }
+}
+
+switch (x) {
+  default: {
+    /* comment */
+    break;
+  }
+}
+
+switch (x) {
+  default: /* comment */ {
+    break;
+  }
+}
+
+================================================================================
+`;
+
+exports[`comments2.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+switch(1){default: // comment1
+}
+
+switch(2){default: // comment2
+//comment2a
+}
+
+switch(3){default: // comment3
+break;// comment3a
+}
+
+switch(4){default: // comment4
+// comment4a
+break;// comment4b
+}
+
+switch(5){default: // comment5
+// comment5a
+foo();bar();//comment5b
+break;// comment5c
+}
+
+=====================================output=====================================
+switch (1) {
+  default: // comment1
+}
+
+switch (2) {
+  default: // comment2
+  //comment2a
+}
+
+switch (3) {
+  default: // comment3
+    break; // comment3a
+}
+
+switch (4) {
+  default: // comment4
+    // comment4a
+    break; // comment4b
+}
+
+switch (5) {
+  default: // comment5
+    // comment5a
+    foo();
+    bar(); //comment5b
+    break; // comment5c
+}
+
+================================================================================
+`;
+
+exports[`empty_lines.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+switch (foo) {
+  case "bar":
+    doSomething();
+
+  case "baz":
+    doOtherThing();
+}
+
+switch (foo) {
+
+  case "bar":
+    doSomething();
+
+  case "baz":
+    doOtherThing();
+}
+
+switch (foo) {
+  case "bar":
+    doSomething();
+
+  case "baz":
+    doOtherThing();
+
+}
+
+switch (foo) {
+  case "bar":
+    doSomething();
+
+
+
+  case "baz":
+    doOtherThing();
+}
+
+switch (x) {
+  case y:
+    call();
+
+    break;
+
+  case z:
+    call();
+
+    break;
+}
+
+switch (a) {
+  case b:
+    if (1) {};
+    c;
+}
+
+switch (a) {
+  case x:
+  case y:
+    call();
+
+  case z:
+    call();
+}
+
+switch (a) {
+  case x: case y:
+    call();
+
+  case z:
+    call();
+}
+
+=====================================output=====================================
+switch (foo) {
+  case "bar":
+    doSomething();
+
+  case "baz":
+    doOtherThing();
+}
+
+switch (foo) {
+  case "bar":
+    doSomething();
+
+  case "baz":
+    doOtherThing();
+}
+
+switch (foo) {
+  case "bar":
+    doSomething();
+
+  case "baz":
+    doOtherThing();
+}
+
+switch (foo) {
+  case "bar":
+    doSomething();
+
+  case "baz":
+    doOtherThing();
+}
+
+switch (x) {
+  case y:
+    call();
+
+    break;
+
+  case z:
+    call();
+
+    break;
+}
+
+switch (a) {
+  case b:
+    if (1) {
+    }
+    c;
+}
+
+switch (a) {
+  case x:
+  case y:
+    call();
+
+  case z:
+    call();
+}
+
+switch (a) {
+  case x:
+  case y:
+    call();
+
+  case z:
+    call();
+}
+
+================================================================================
+`;
+
+exports[`empty_statement.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+switch (error.code) {
+	case ConfigurationEditingErrorCode.ERROR_INVALID_CONFIGURATION: {
+		nls.localize('errorInvalidConfiguration', "Unable to write into settings. Correct errors/warnings in the file and try again.");
+	};
+}
+
+=====================================output=====================================
+switch (error.code) {
+  case ConfigurationEditingErrorCode.ERROR_INVALID_CONFIGURATION: {
+    nls.localize(
+      "errorInvalidConfiguration",
+      "Unable to write into settings. Correct errors/warnings in the file and try again.",
+    );
+  }
+}
+
+================================================================================
+`;
+
+exports[`empty_switch.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+switch (1) { default:; }
+switch (1) {}
+
+=====================================output=====================================
+switch (1) {
+  default:
+}
+switch (1) {
+}
+
+================================================================================
+`;
+
+exports[`switch.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+switch (a) {
+  case 3:
+    alert( '3' );
+    break;
+  case 4:
+    alert( '4' );
+    break;
+  case 5:
+    alert( '5' );
+    break;
+  default:
+    alert( 'default' );
+}
+
+switch (veryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryLong) {
+  case 3:
+    alert( '3' );
+    break;
+  default:
+    alert( 'default' );
+}
+
+switch (veryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryLong > veryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryLong) {
+  case 3:
+    alert( '3' );
+    break;
+  default:
+    alert( 'default' );
+}
+
+switch ($veryLongAndVeryVerboseVariableName && $anotherVeryLongAndVeryVerboseVariableName) {
+}
+
+switch ($longButSlightlyShorterVariableName && $anotherSlightlyShorterVariableName) {
+}
+
+=====================================output=====================================
+switch (a) {
+  case 3:
+    alert("3");
+    break;
+  case 4:
+    alert("4");
+    break;
+  case 5:
+    alert("5");
+    break;
+  default:
+    alert("default");
+}
+
+switch (
+  veryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryLong
+) {
+  case 3:
+    alert("3");
+    break;
+  default:
+    alert("default");
+}
+
+switch (
+  veryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryLong >
+  veryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryVeryLong
+) {
+  case 3:
+    alert("3");
+    break;
+  default:
+    alert("default");
+}
+
+switch (
+  $veryLongAndVeryVerboseVariableName &&
+  $anotherVeryLongAndVeryVerboseVariableName
+) {
+}
+
+switch (
+  $longButSlightlyShorterVariableName &&
+  $anotherSlightlyShorterVariableName
+) {
+}
+
+================================================================================
+`;

@@ -1,0 +1,141 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`15463.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type RepeatedTuple<T extends readonly any[]> =
+    _R<T, _R<T, _R<T, _R<T, _R<T, _R<T, _R<T, _R<T, _R<T, _R<T, _R<T, _R<T, _R<T,
+        _R<T, _R<T, _R<T, _R<T, _R<T, _R<T, _R<T, _R<T, _R<T, _R<T, _R<T, _R<T,
+            _R<T, _R<T, _R<T, _R<T, _R<T, _R<T, _R<T, _R<T, _R<T, _R<T, _R<T,
+                _R<T, _R<T, _R<T, _R<T, readonly []>>>>>
+            >>>>>>>>>>>>>>>>>>>
+        >>>>>>>>>>>>>
+    >>>;
+
+=====================================output=====================================
+type RepeatedTuple<T extends readonly any[]> = _R<
+  T,
+  _R<
+    T,
+    _R<
+      T,
+      _R<
+        T,
+        _R<
+          T,
+          _R<
+            T,
+            _R<
+              T,
+              _R<
+                T,
+                _R<
+                  T,
+                  _R<
+                    T,
+                    _R<
+                      T,
+                      _R<
+                        T,
+                        _R<
+                          T,
+                          _R<
+                            T,
+                            _R<
+                              T,
+                              _R<
+                                T,
+                                _R<
+                                  T,
+                                  _R<
+                                    T,
+                                    _R<
+                                      T,
+                                      _R<
+                                        T,
+                                        _R<
+                                          T,
+                                          _R<
+                                            T,
+                                            _R<
+                                              T,
+                                              _R<
+                                                T,
+                                                _R<
+                                                  T,
+                                                  _R<
+                                                    T,
+                                                    _R<
+                                                      T,
+                                                      _R<
+                                                        T,
+                                                        _R<
+                                                          T,
+                                                          _R<
+                                                            T,
+                                                            _R<
+                                                              T,
+                                                              _R<
+                                                                T,
+                                                                _R<
+                                                                  T,
+                                                                  _R<
+                                                                    T,
+                                                                    _R<
+                                                                      T,
+                                                                      _R<
+                                                                        T,
+                                                                        _R<
+                                                                          T,
+                                                                          _R<
+                                                                            T,
+                                                                            _R<
+                                                                              T,
+                                                                              _R<
+                                                                                T,
+                                                                                readonly []
+                                                                              >
+                                                                            >
+                                                                          >
+                                                                        >
+                                                                      >
+                                                                    >
+                                                                  >
+                                                                >
+                                                              >
+                                                            >
+                                                          >
+                                                        >
+                                                      >
+                                                    >
+                                                  >
+                                                >
+                                              >
+                                            >
+                                          >
+                                        >
+                                      >
+                                    >
+                                  >
+                                >
+                              >
+                            >
+                          >
+                        >
+                      >
+                    >
+                  >
+                >
+              >
+            >
+          >
+        >
+      >
+    >
+  >
+>;
+
+================================================================================
+`;

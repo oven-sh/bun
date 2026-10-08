@@ -1,0 +1,30 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`empty.less format 1`] = `
+====================================options=====================================
+parsers: ["less"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.ui-syntax-color();
+
+details[open] {
+}
+
+div {
+  box-sizing: border-box;;
+  color: red;
+}
+
+=====================================output=====================================
+.ui-syntax-color();
+
+details[open] {
+}
+
+div {
+  box-sizing: border-box;
+  color: red;
+}
+
+================================================================================
+`;

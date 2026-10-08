@@ -1,0 +1,60 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`interfaceWithMultipleBaseTypes2.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+interface Base {
+    x: {
+        a?: string; b: string;
+    }
+}
+
+interface Base2 {
+    x: {
+        b: string; c?: number;
+    }
+}
+
+interface Derived extends Base, Base2 {
+    x: { b: string }
+}
+
+interface Derived2 extends Base, Base2 {
+    x: { a: number; b: string }
+}
+
+interface Derived3 extends Base, Base2 {
+    x: { a: string; b: string }
+}
+
+=====================================output=====================================
+interface Base {
+  x: {
+    a?: string;
+    b: string;
+  };
+}
+
+interface Base2 {
+  x: {
+    b: string;
+    c?: number;
+  };
+}
+
+interface Derived extends Base, Base2 {
+  x: { b: string };
+}
+
+interface Derived2 extends Base, Base2 {
+  x: { a: number; b: string };
+}
+
+interface Derived3 extends Base, Base2 {
+  x: { a: string; b: string };
+}
+
+================================================================================
+`;

@@ -1,0 +1,18 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`jsx_namespaced_name.js format 1`] = `
+====================================options=====================================
+parsers: ["flow", "babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<jsx:namespacedname />;
+
+<jsx:namespacedname>1</jsx:namespacedname>;
+
+=====================================output=====================================
+<jsx:namespacedname />;
+
+<jsx:namespacedname>1</jsx:namespacedname>;
+
+================================================================================
+`;

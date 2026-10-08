@@ -1,0 +1,21 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format[babel-ts] 1`] = `
+"An implementation cannot be declared in ambient contexts. (1:24)
+> 1 | declare function foo() {}
+    |                        ^
+Cause: An implementation cannot be declared in ambient contexts. (1:23)"
+`;
+
+exports[`snippet: #0 format[oxc-ts] 1`] = `
+"An implementation cannot be declared in ambient contexts. (1:24)
+> 1 | declare function foo() {}
+    |                        ^"
+`;
+
+exports[`snippet: #0 format[typescript] 1`] = `
+"An implementation cannot be declared in ambient contexts. (1:1)
+> 1 | declare function foo() {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^
+Cause: An implementation cannot be declared in ambient contexts."
+`;

@@ -1,0 +1,55 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`function-rest-trailing-comma.ts - {"trailingComma":"all"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+trailingComma: "all"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare function foo(...args: any[], )
+declare function foo(...long_long_long_long_long_long_long_long_long_long_long_long_long_long_long_args: any[], )
+
+=====================================output=====================================
+declare function foo(...args: any[]);
+declare function foo(
+  ...long_long_long_long_long_long_long_long_long_long_long_long_long_long_long_args: any[]
+);
+
+================================================================================
+`;
+
+exports[`function-rest-trailing-comma.ts - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare function foo(...args: any[], )
+declare function foo(...long_long_long_long_long_long_long_long_long_long_long_long_long_long_long_args: any[], )
+
+=====================================output=====================================
+declare function foo(...args: any[]);
+declare function foo(
+  ...long_long_long_long_long_long_long_long_long_long_long_long_long_long_long_args: any[]
+);
+
+================================================================================
+`;
+
+exports[`function-rest-trailing-comma.ts - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare function foo(...args: any[], )
+declare function foo(...long_long_long_long_long_long_long_long_long_long_long_long_long_long_long_args: any[], )
+
+=====================================output=====================================
+declare function foo(...args: any[]);
+declare function foo(
+  ...long_long_long_long_long_long_long_long_long_long_long_long_long_long_long_args: any[]
+);
+
+================================================================================
+`;

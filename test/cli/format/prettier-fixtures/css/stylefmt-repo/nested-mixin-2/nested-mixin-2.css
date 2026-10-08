@@ -1,0 +1,16 @@
+@mixin test() {
+  $values: blue red;
+@each $val   in $values {
+  color  : $val;
+  @for $i   from  2   through    10 {
+   background: $i;
+  }
+}
+@for $i from   2 through 10 {
+  color: $i;
+}
+ @while $k   >   0 {
+  color: $k;
+}
+
+}

@@ -1,0 +1,121 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format[babel-ts] 1`] = `
+"Accessibility modifier already seen: 'protected'. (1:18)
+> 1 | class A {private protected method(){}}
+    |                  ^
+Cause: Accessibility modifier already seen: 'protected'. (1:17)"
+`;
+
+exports[`snippet: #0 format[oxc-ts] 1`] = `
+"Accessibility modifier already seen. (1:18)
+> 1 | class A {private protected method(){}}
+    |                  ^^^^^^^^^"
+`;
+
+exports[`snippet: #0 format[typescript] 1`] = `
+"Accessibility modifier already seen. (1:18)
+> 1 | class A {private protected method(){}}
+    |                  ^^^^^^^^^
+Cause: Accessibility modifier already seen."
+`;
+
+exports[`snippet: #1 format[babel-ts] 1`] = `
+"Accessibility modifier already seen: 'public'. (1:20)
+> 1 | class A {protected public method(){}}
+    |                    ^
+Cause: Accessibility modifier already seen: 'public'. (1:19)"
+`;
+
+exports[`snippet: #1 format[oxc-ts] 1`] = `
+"Accessibility modifier already seen. (1:20)
+> 1 | class A {protected public method(){}}
+    |                    ^^^^^^"
+`;
+
+exports[`snippet: #1 format[typescript] 1`] = `
+"Accessibility modifier already seen. (1:20)
+> 1 | class A {protected public method(){}}
+    |                    ^^^^^^
+Cause: Accessibility modifier already seen."
+`;
+
+exports[`snippet: #2 format[babel-ts] 1`] = `
+"Accessibility modifier already seen: 'private'. (1:18)
+> 1 | class A {private private method(){}}
+    |                  ^
+Cause: Accessibility modifier already seen: 'private'. (1:17)"
+`;
+
+exports[`snippet: #2 format[oxc-ts] 1`] = `
+"Accessibility modifier already seen. (1:18)
+> 1 | class A {private private method(){}}
+    |                  ^^^^^^^"
+`;
+
+exports[`snippet: #2 format[typescript] 1`] = `
+"Accessibility modifier already seen. (1:18)
+> 1 | class A {private private method(){}}
+    |                  ^^^^^^^
+Cause: Accessibility modifier already seen."
+`;
+
+exports[`snippet: #3 format[babel-ts] 1`] = `
+"Accessibility modifier already seen: 'protected'. (1:18)
+> 1 | class A {private protected property}
+    |                  ^
+Cause: Accessibility modifier already seen: 'protected'. (1:17)"
+`;
+
+exports[`snippet: #3 format[oxc-ts] 1`] = `
+"Accessibility modifier already seen. (1:18)
+> 1 | class A {private protected property}
+    |                  ^^^^^^^^^"
+`;
+
+exports[`snippet: #3 format[typescript] 1`] = `
+"Accessibility modifier already seen. (1:18)
+> 1 | class A {private protected property}
+    |                  ^^^^^^^^^
+Cause: Accessibility modifier already seen."
+`;
+
+exports[`snippet: #4 format[babel-ts] 1`] = `
+"Accessibility modifier already seen: 'public'. (1:20)
+> 1 | class A {protected public property}
+    |                    ^
+Cause: Accessibility modifier already seen: 'public'. (1:19)"
+`;
+
+exports[`snippet: #4 format[oxc-ts] 1`] = `
+"Accessibility modifier already seen. (1:20)
+> 1 | class A {protected public property}
+    |                    ^^^^^^"
+`;
+
+exports[`snippet: #4 format[typescript] 1`] = `
+"Accessibility modifier already seen. (1:20)
+> 1 | class A {protected public property}
+    |                    ^^^^^^
+Cause: Accessibility modifier already seen."
+`;
+
+exports[`snippet: #5 format[babel-ts] 1`] = `
+"Accessibility modifier already seen: 'private'. (1:18)
+> 1 | class A {private private property}
+    |                  ^
+Cause: Accessibility modifier already seen: 'private'. (1:17)"
+`;
+
+exports[`snippet: #5 format[oxc-ts] 1`] = `
+"Accessibility modifier already seen. (1:18)
+> 1 | class A {private private property}
+    |                  ^^^^^^^"
+`;
+
+exports[`snippet: #5 format[typescript] 1`] = `
+"Accessibility modifier already seen. (1:18)
+> 1 | class A {private private property}
+    |                  ^^^^^^^
+Cause: Accessibility modifier already seen."
+`;

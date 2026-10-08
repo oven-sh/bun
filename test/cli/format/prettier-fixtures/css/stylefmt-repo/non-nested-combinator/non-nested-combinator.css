@@ -1,0 +1,9 @@
+.card-meta {
+  @include padding(null 1rem 1rem);background-color: $card-base-background-color;
+  color: $meta-font-color;
+  .card-content--with-image+&
+  {padding-top: 1rem;
+  }a {
+    color: inherit;
+  }
+}

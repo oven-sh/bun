@@ -1,0 +1,122 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`comment.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export function match(): string /* the matching pattern */
+a
+
+=====================================output=====================================
+export function match(): string; /* the matching pattern */
+a;
+
+================================================================================
+`;
+
+exports[`default.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export default interface Foo {
+  readonly bar?: string;
+}
+
+=====================================output=====================================
+export default interface Foo {
+  readonly bar?: string;
+}
+
+================================================================================
+`;
+
+exports[`export.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare module "hello" {
+    export default Hello;
+}
+
+declare module "hello" {
+    export = Hello;
+}
+
+=====================================output=====================================
+declare module "hello" {
+  export default Hello;
+}
+
+declare module "hello" {
+  export = Hello;
+}
+
+================================================================================
+`;
+
+exports[`export-as-ns.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export * as utilities from "./utilities.js";
+
+=====================================output=====================================
+export * as utilities from "./utilities.js";
+
+================================================================================
+`;
+
+exports[`export-class.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export class A {}
+export default class B {}
+export abstract class C {}
+export default abstract class D {}
+
+=====================================output=====================================
+export class A {}
+export default class B {}
+export abstract class C {}
+export default abstract class D {}
+
+================================================================================
+`;
+
+exports[`export-type-star-from.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export type * from './mod';
+export type * as ns from './mod';
+
+=====================================output=====================================
+export type * from "./mod";
+export type * as ns from "./mod";
+
+================================================================================
+`;
+
+exports[`export-type-star-from-2.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Note: TSC doesn't support string module specifiers yet,
+// but it's easier for us to support them than not.
+export type * as "ns2" from './mod';
+
+=====================================output=====================================
+// Note: TSC doesn't support string module specifiers yet,
+// but it's easier for us to support them than not.
+export type * as "ns2" from "./mod";
+
+================================================================================
+`;

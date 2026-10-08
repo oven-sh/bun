@@ -1,0 +1,1043 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`classAbstractAccessor.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+abstract class A {
+   abstract get a();
+   abstract set b(x: string);
+}
+
+=====================================output=====================================
+abstract class A {
+  abstract get a();
+  abstract set b(x: string);
+}
+
+================================================================================
+`;
+
+exports[`classAbstractAsIdentifier.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class abstract {
+    foo() { return 1; }
+}
+
+new abstract;
+=====================================output=====================================
+class abstract {
+  foo() {
+    return 1;
+  }
+}
+
+new abstract();
+
+================================================================================
+`;
+
+exports[`classAbstractAssignabilityConstructorFunction.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+abstract class A { }
+
+var AAA: new() => A;
+
+AAA = A;
+AAA = "asdf";
+=====================================output=====================================
+abstract class A {}
+
+var AAA: new () => A;
+
+AAA = A;
+AAA = "asdf";
+
+================================================================================
+`;
+
+exports[`classAbstractClinterfaceAssignability.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+var I: IConstructor;
+
+abstract class A {
+    x: number;
+    static y: number;
+}
+
+var AA: typeof A;
+AA = I;
+
+var AAA: typeof I;
+AAA = A;
+=====================================output=====================================
+var I: IConstructor;
+
+abstract class A {
+  x: number;
+  static y: number;
+}
+
+var AA: typeof A;
+AA = I;
+
+var AAA: typeof I;
+AAA = A;
+
+================================================================================
+`;
+
+exports[`classAbstractConstructorAssignability.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+class A {}
+
+abstract class B extends A {}
+
+class C extends B {}
+
+var AA : typeof A = B;
+var BB : typeof B = A;
+var CC : typeof C = B;
+
+new AA;
+new BB;
+new CC;
+=====================================output=====================================
+class A {}
+
+abstract class B extends A {}
+
+class C extends B {}
+
+var AA: typeof A = B;
+var BB: typeof B = A;
+var CC: typeof C = B;
+
+new AA();
+new BB();
+new CC();
+
+================================================================================
+`;
+
+exports[`classAbstractCrashedOnce.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+abstract class foo {
+    protected abstract test();
+}
+
+class bar extends foo {
+    test() {
+    }
+}
+var x = new bar();
+=====================================output=====================================
+abstract class foo {
+  protected abstract test();
+}
+
+class bar extends foo {
+  test() {}
+}
+var x = new bar();
+
+================================================================================
+`;
+
+exports[`classAbstractExtends.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+class A {
+    foo() {}
+}
+
+abstract class B extends A {
+    abstract bar();
+}
+
+class C extends B { }
+
+abstract class D extends B {}
+
+class E extends B {
+    bar() {}
+}
+=====================================output=====================================
+class A {
+  foo() {}
+}
+
+abstract class B extends A {
+  abstract bar();
+}
+
+class C extends B {}
+
+abstract class D extends B {}
+
+class E extends B {
+  bar() {}
+}
+
+================================================================================
+`;
+
+exports[`classAbstractFactoryFunction.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+class A {}
+abstract class B extends A {}
+
+function NewA(Factory: typeof A) {
+    return new A;
+}
+
+function NewB(Factory: typeof B) {
+    return new B;
+}
+
+NewA(A);
+NewA(B);
+
+NewB(A);
+NewB(B);
+=====================================output=====================================
+class A {}
+abstract class B extends A {}
+
+function NewA(Factory: typeof A) {
+  return new A();
+}
+
+function NewB(Factory: typeof B) {
+  return new B();
+}
+
+NewA(A);
+NewA(B);
+
+NewB(A);
+NewB(B);
+
+================================================================================
+`;
+
+exports[`classAbstractGeneric.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+abstract class A<T> {
+    t: T;
+
+    abstract foo(): T;
+    abstract bar(t: T);
+}
+
+abstract class B<T> extends A {}
+
+class C<T> extends A {}
+
+class D extends A {}
+
+class E<T> extends A {
+    foo() { return this.t; }
+}
+
+class F<T> extends A {
+    bar(t : T) {}
+}
+
+class G<T> extends A {
+    foo() { return this.t; }
+    bar(t: T) { }
+}
+=====================================output=====================================
+abstract class A<T> {
+  t: T;
+
+  abstract foo(): T;
+  abstract bar(t: T);
+}
+
+abstract class B<T> extends A {}
+
+class C<T> extends A {}
+
+class D extends A {}
+
+class E<T> extends A {
+  foo() {
+    return this.t;
+  }
+}
+
+class F<T> extends A {
+  bar(t: T) {}
+}
+
+class G<T> extends A {
+  foo() {
+    return this.t;
+  }
+  bar(t: T) {}
+}
+
+================================================================================
+`;
+
+exports[`classAbstractImportInstantiation.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+export abstract class A {}
+
+new A;
+
+
+new myA;
+
+=====================================output=====================================
+export abstract class A {}
+
+new A();
+
+new myA();
+
+================================================================================
+`;
+
+exports[`classAbstractInAModule.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+export abstract class A {}
+export class B extends A {}
+
+
+new M.A;
+new M.B;
+=====================================output=====================================
+export abstract class A {}
+export class B extends A {}
+
+new M.A();
+new M.B();
+
+================================================================================
+`;
+
+exports[`classAbstractInheritance.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+abstract class A {}
+
+abstract class B extends A {}
+
+class C extends A {}
+
+abstract class AA {
+    abstract foo();
+}
+
+abstract class BB extends AA {}
+
+class CC extends AA {}
+
+class DD extends BB {}
+
+abstract class EE extends BB {}
+
+class FF extends CC {}
+
+abstract class GG extends CC {}
+=====================================output=====================================
+abstract class A {}
+
+abstract class B extends A {}
+
+class C extends A {}
+
+abstract class AA {
+  abstract foo();
+}
+
+abstract class BB extends AA {}
+
+class CC extends AA {}
+
+class DD extends BB {}
+
+abstract class EE extends BB {}
+
+class FF extends CC {}
+
+abstract class GG extends CC {}
+
+================================================================================
+`;
+
+exports[`classAbstractInstantiations1.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+abstract class A {}
+
+class B extends A {}
+
+abstract class C extends B {}
+
+new A;
+new A(1);
+new B;
+new C;
+
+var a : A;
+var b : B;
+var c : C;
+
+a = new B;
+b = new B;
+c = new B;
+
+=====================================output=====================================
+abstract class A {}
+
+class B extends A {}
+
+abstract class C extends B {}
+
+new A();
+new A(1);
+new B();
+new C();
+
+var a: A;
+var b: B;
+var c: C;
+
+a = new B();
+b = new B();
+c = new B();
+
+================================================================================
+`;
+
+exports[`classAbstractInstantiations2.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+}
+
+abstract class B {
+    foo(): number { return this.bar(); }
+    abstract bar() : number;
+}
+
+new B;
+
+var BB: typeof B = B;
+var AA: typeof A = BB;
+new AA;
+
+function constructB(Factory : typeof B) {
+    new Factory;
+}
+
+var BB = B;
+new BB;
+
+var x : any = C;
+new x;
+
+class C extends B { }
+
+abstract class D extends B { }
+
+class E extends B {
+    bar() { return 1; }
+}
+
+abstract class F extends B {
+    abstract foo() : number;
+    bar() { return 2; }
+}
+
+abstract class G {
+    abstract qux(x : number) : string;
+    abstract qux() : number;
+    y : number;
+    abstract quz(x : number, y : string) : boolean;
+
+    abstract nom(): boolean;
+    nom(x : number): boolean;
+}
+
+class H {
+    abstract baz() : number;
+}
+=====================================output=====================================
+class A {}
+
+abstract class B {
+  foo(): number {
+    return this.bar();
+  }
+  abstract bar(): number;
+}
+
+new B();
+
+var BB: typeof B = B;
+var AA: typeof A = BB;
+new AA();
+
+function constructB(Factory: typeof B) {
+  new Factory();
+}
+
+var BB = B;
+new BB();
+
+var x: any = C;
+new x();
+
+class C extends B {}
+
+abstract class D extends B {}
+
+class E extends B {
+  bar() {
+    return 1;
+  }
+}
+
+abstract class F extends B {
+  abstract foo(): number;
+  bar() {
+    return 2;
+  }
+}
+
+abstract class G {
+  abstract qux(x: number): string;
+  abstract qux(): number;
+  y: number;
+  abstract quz(x: number, y: string): boolean;
+
+  abstract nom(): boolean;
+  nom(x: number): boolean;
+}
+
+class H {
+  abstract baz(): number;
+}
+
+================================================================================
+`;
+
+exports[`classAbstractMethodInNonAbstractClass.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+    abstract foo();
+}
+=====================================output=====================================
+class A {
+  abstract foo();
+}
+
+================================================================================
+`;
+
+exports[`classAbstractMixedWithModifiers.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+abstract class A {
+    abstract foo_a();
+    
+    public abstract foo_b();
+    protected abstract foo_c();
+    private abstract foo_d();
+    
+    abstract public foo_bb();
+    abstract protected foo_cc();
+    abstract private foo_dd();
+    
+    abstract static foo_d();
+    
+    static abstract foo_e();
+}
+=====================================output=====================================
+abstract class A {
+  abstract foo_a();
+
+  public abstract foo_b();
+  protected abstract foo_c();
+  private abstract foo_d();
+
+  public abstract foo_bb();
+  protected abstract foo_cc();
+  private abstract foo_dd();
+
+  static abstract foo_d();
+
+  static abstract foo_e();
+}
+
+================================================================================
+`;
+
+exports[`classAbstractMixedWithModifiers.ts format[babel-ts] 1`] = `
+"'static' modifier cannot be used with 'abstract' modifier. (12:14)
+  10 |     abstract private foo_dd();
+  11 |     
+> 12 |     abstract static foo_d();
+     |              ^
+  13 |     
+  14 |     static abstract foo_e();
+  15 | }
+Cause: 'static' modifier cannot be used with 'abstract' modifier. (12:13)"
+`;
+
+exports[`classAbstractMixedWithModifiers.ts format[oxc-ts] 1`] = `
+"'private' modifier cannot be used with 'abstract' modifier. (6:13)
+  4 |     public abstract foo_b();
+  5 |     protected abstract foo_c();
+> 6 |     private abstract foo_d();
+    |             ^^^^^^^^
+  7 |     
+  8 |     abstract public foo_bb();
+  9 |     abstract protected foo_cc();"
+`;
+
+exports[`classAbstractOverloads.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+abstract class A {
+    abstract foo();
+    abstract foo() : number;
+    abstract foo();
+    
+    abstract bar();
+    bar();
+    abstract bar();
+    
+    abstract baz();
+    baz();
+    abstract baz();
+    baz() {}
+    
+    qux();
+}
+
+abstract class B {
+    abstract foo() : number;
+    abstract foo();
+    x : number;
+    abstract foo();
+    abstract foo();
+}
+=====================================output=====================================
+abstract class A {
+  abstract foo();
+  abstract foo(): number;
+  abstract foo();
+
+  abstract bar();
+  bar();
+  abstract bar();
+
+  abstract baz();
+  baz();
+  abstract baz();
+  baz() {}
+
+  qux();
+}
+
+abstract class B {
+  abstract foo(): number;
+  abstract foo();
+  x: number;
+  abstract foo();
+  abstract foo();
+}
+
+================================================================================
+`;
+
+exports[`classAbstractOverrideWithAbstract.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+    foo() {}
+}
+
+abstract class B extends A {
+    abstract foo();
+}
+
+abstract class AA {
+    foo() {}
+    abstract bar();
+}
+
+abstract class BB extends AA {
+    abstract foo();
+    bar () {}
+}
+
+class CC extends BB {}
+
+class DD extends BB {
+    foo() {}
+}
+=====================================output=====================================
+class A {
+  foo() {}
+}
+
+abstract class B extends A {
+  abstract foo();
+}
+
+abstract class AA {
+  foo() {}
+  abstract bar();
+}
+
+abstract class BB extends AA {
+  abstract foo();
+  bar() {}
+}
+
+class CC extends BB {}
+
+class DD extends BB {
+  foo() {}
+}
+
+================================================================================
+`;
+
+exports[`classAbstractProperties.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+abstract class A {
+    abstract x : number;
+    public abstract y : number;
+    protected abstract z : number;
+    private abstract w : number;
+    
+    abstract m: () => void; 
+    
+    abstract foo_x() : number;
+    public abstract foo_y() : number;
+    protected abstract foo_z() : number;
+    private abstract foo_w() : number;
+}
+=====================================output=====================================
+abstract class A {
+  abstract x: number;
+  public abstract y: number;
+  protected abstract z: number;
+  private abstract w: number;
+
+  abstract m: () => void;
+
+  abstract foo_x(): number;
+  public abstract foo_y(): number;
+  protected abstract foo_z(): number;
+  private abstract foo_w(): number;
+}
+
+================================================================================
+`;
+
+exports[`classAbstractProperties.ts format[oxc-ts] 1`] = `
+"'private' modifier cannot be used with 'abstract' modifier. (5:13)
+  3 |     public abstract y : number;
+  4 |     protected abstract z : number;
+> 5 |     private abstract w : number;
+    |             ^^^^^^^^
+  6 |     
+  7 |     abstract m: () => void; 
+  8 |     "
+`;
+
+exports[`classAbstractSingleLineDecl.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+abstract class A {}
+
+abstract
+class B {}
+
+abstract
+
+class C {}
+
+new A;
+new B;
+new C;
+=====================================output=====================================
+abstract class A {}
+
+abstract;
+class B {}
+
+abstract;
+
+class C {}
+
+new A();
+new B();
+new C();
+
+================================================================================
+`;
+
+exports[`classAbstractSuperCalls.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+class A {
+    foo() { return 1; }
+}
+
+abstract class B extends A {
+    abstract foo();
+    bar() { super.foo(); }
+    baz() { return this.foo; }
+}
+
+class C extends B {
+    foo() { return 2; }
+    qux() { return super.foo() || super.foo; }
+    norf() { return super.bar(); }
+}
+
+class AA {
+    foo() { return 1; }
+    bar() { return this.foo(); }
+}
+
+abstract class BB extends AA {
+    abstract foo();
+}
+
+=====================================output=====================================
+class A {
+  foo() {
+    return 1;
+  }
+}
+
+abstract class B extends A {
+  abstract foo();
+  bar() {
+    super.foo();
+  }
+  baz() {
+    return this.foo;
+  }
+}
+
+class C extends B {
+  foo() {
+    return 2;
+  }
+  qux() {
+    return super.foo() || super.foo;
+  }
+  norf() {
+    return super.bar();
+  }
+}
+
+class AA {
+  foo() {
+    return 1;
+  }
+  bar() {
+    return this.foo();
+  }
+}
+
+abstract class BB extends AA {
+  abstract foo();
+}
+
+================================================================================
+`;
+
+exports[`classAbstractUsingAbstractMethod1.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+abstract class A {
+    abstract foo() : number;
+}
+
+class B extends A {
+    foo() { return 1; }
+}
+
+abstract class C extends A  {
+    abstract foo() : number;
+}
+
+var a = new B;
+a.foo();
+
+a = new C;
+a.foo();
+=====================================output=====================================
+abstract class A {
+  abstract foo(): number;
+}
+
+class B extends A {
+  foo() {
+    return 1;
+  }
+}
+
+abstract class C extends A {
+  abstract foo(): number;
+}
+
+var a = new B();
+a.foo();
+
+a = new C();
+a.foo();
+
+================================================================================
+`;
+
+exports[`classAbstractUsingAbstractMethods2.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+    abstract foo();
+}
+
+class B extends A  {}
+
+abstract class C extends A {}
+
+class D extends A {
+    foo() {}
+}
+
+abstract class E extends A {
+    foo() {}
+}
+
+abstract class AA {
+    abstract foo();
+}
+
+class BB extends AA  {}
+
+abstract class CC extends AA {}
+
+class DD extends AA {
+    foo() {}
+}
+=====================================output=====================================
+class A {
+  abstract foo();
+}
+
+class B extends A {}
+
+abstract class C extends A {}
+
+class D extends A {
+  foo() {}
+}
+
+abstract class E extends A {
+  foo() {}
+}
+
+abstract class AA {
+  abstract foo();
+}
+
+class BB extends AA {}
+
+abstract class CC extends AA {}
+
+class DD extends AA {
+  foo() {}
+}
+
+================================================================================
+`;
+
+exports[`classAbstractWithInterface.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+=====================================output=====================================
+
+================================================================================
+`;

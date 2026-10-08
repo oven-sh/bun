@@ -1,0 +1,1225 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`colons-after-substitutions.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const Icon = styled.div\`
+  flex: none;
+  transition:    fill 0.25s;
+  width: 48px;
+  height: 48px;
+
+  \${Link}:hover {
+    fill:   rebeccapurple;
+  }
+
+  \${Link} :hover {
+    fill: yellow;
+  }
+
+  \${media.smallDown}::before {}
+\`
+
+=====================================output=====================================
+const Icon = styled.div\`
+  flex: none;
+  transition: fill 0.25s;
+  width: 48px;
+  height: 48px;
+
+  \${Link}:hover {
+    fill: rebeccapurple;
+  }
+
+  \${Link} :hover {
+    fill: yellow;
+  }
+
+  \${media.smallDown}::before {
+  }
+\`;
+
+================================================================================
+`;
+
+exports[`colons-after-substitutions2.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const Icon = styled.div\`
+  height: 48px;
+
+  \${Link}:nth-child(2) {
+    fill: rebeccapurple;
+  }
+\`;
+
+const Icon2 = styled.div\`
+  height: 48px;
+
+  \${Link}:empty:before{
+    fill: rebeccapurple;
+  }
+\`;
+
+const Icon3 = styled.div\`
+  height: 48px;
+
+  \${Link}:not(:first-child) {
+    fill: rebeccapurple;
+  }
+\`;
+
+=====================================output=====================================
+const Icon = styled.div\`
+  height: 48px;
+
+  \${Link}:nth-child(2) {
+    fill: rebeccapurple;
+  }
+\`;
+
+const Icon2 = styled.div\`
+  height: 48px;
+
+  \${Link}:empty:before {
+    fill: rebeccapurple;
+  }
+\`;
+
+const Icon3 = styled.div\`
+  height: 48px;
+
+  \${Link}:not(:first-child) {
+    fill: rebeccapurple;
+  }
+\`;
+
+================================================================================
+`;
+
+exports[`issue-2636.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export const ButtonWrapper = styled.button\`
+  \${base}
+  \${hover}
+  \${opaque}
+  \${block}
+  \${active}
+  \${disabled}
+  \${outline}
+  \${dashed}
+  \${spacing}
+\`;
+
+export const ButtonWrapper2 = styled.button\`
+  \${base} \${hover} \${opaque} \${block} \${active} \${disabled} \${outline} \${dashed} \${spacing}
+\`;
+
+=====================================output=====================================
+export const ButtonWrapper = styled.button\`
+  \${base}
+  \${hover}
+  \${opaque}
+  \${block}
+  \${active}
+  \${disabled}
+  \${outline}
+  \${dashed}
+  \${spacing}
+\`;
+
+export const ButtonWrapper2 = styled.button\`
+  \${base} \${hover} \${opaque} \${block} \${active} \${disabled} \${outline} \${dashed} \${spacing}
+\`;
+
+================================================================================
+`;
+
+exports[`issue-2883.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export const foo = css\`
+&.foo .\${bar}::before,&.foo[value="hello"] .\${bar}::before {
+	position: absolute;
+}
+\`;
+
+export const foo2 = css\`
+a.\${bar}:focus,a.\${bar}:hover {
+  color: red;
+}
+\`;
+
+export const global = css\`
+button.\${foo}.\${bar} {
+  color: #fff;
+}
+\`;
+
+=====================================output=====================================
+export const foo = css\`
+  &.foo .\${bar}::before,&.foo[value="hello"] .\${bar}::before {
+    position: absolute;
+  }
+\`;
+
+export const foo2 = css\`
+  a.\${bar}:focus,a.\${bar}:hover {
+    color: red;
+  }
+\`;
+
+export const global = css\`
+  button.\${foo}.\${bar} {
+    color: #fff;
+  }
+\`;
+
+================================================================================
+`;
+
+exports[`issue-5697.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const StyledH1 = styled.div\`
+  font-size: 2.5em;
+  font-weight: \${(props) => (props.strong ? 500 : 100)};
+  font-family: \${constants.text.displayFont.fontFamily};
+  letter-spacing: \${(props) => (props.light ? '0.04em' : 0)};
+  color: \${(props) => props.textColor};
+  \${(props) =>
+    props.center
+      ? \` display: flex;
+                align-items: center;
+                justify-content: center;
+                text-align: center;\`
+      : ''}
+  @media (max-width: \${(props) => (props.noBreakPoint ? '0' : constants.layout.breakpoint.break1)}px) {
+    font-size: 2em;
+  }
+\`;
+
+=====================================output=====================================
+const StyledH1 = styled.div\`
+  font-size: 2.5em;
+  font-weight: \${(props) => (props.strong ? 500 : 100)};
+  font-family: \${constants.text.displayFont.fontFamily};
+  letter-spacing: \${(props) => (props.light ? "0.04em" : 0)};
+  color: \${(props) => props.textColor};
+  \${(props) =>
+    props.center
+      ? \` display: flex;
+                align-items: center;
+                justify-content: center;
+                text-align: center;\`
+      : ""}
+  @media (max-width: \${(props) => (props.noBreakPoint ? "0" : constants.layout.breakpoint.break1)}px) {
+    font-size: 2em;
+  }
+\`;
+
+================================================================================
+`;
+
+exports[`issue-5961.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const Steps = styled.div\`
+  @media (min-width: 1px) {
+    \${Step}:nth-child(odd) {}
+  }
+\`;
+
+const Steps2 = styled.div\`
+  @media (min-width: \${breakpoints.lg}) {
+    \${Step} {
+      margin-bottom: 90px;
+    }
+
+    \${Step}:nth-child(odd) {
+      \${StepItemDescription} {
+        grid-row: 1;
+        grid-column: 3 / span 3;
+      }
+      \${Image} {
+        grid-row: 1;
+        grid-column: 7 / span 6;
+      }
+    }
+
+    \${Step}:nth-child(even) {
+      \${Image} {
+        grid-row: 1;
+        grid-column: 3 / span 6;
+      }
+      \${StepItemDescription} {
+        grid-row: 1;
+        grid-column: 10 / span 3;
+      }
+    }
+  }
+\`;
+
+=====================================output=====================================
+const Steps = styled.div\`
+  @media (min-width: 1px) {
+    \${Step}:nth-child(odd) {
+    }
+  }
+\`;
+
+const Steps2 = styled.div\`
+  @media (min-width: \${breakpoints.lg}) {
+    \${Step} {
+      margin-bottom: 90px;
+    }
+
+    \${Step}:nth-child(odd) {
+      \${StepItemDescription} {
+        grid-row: 1;
+        grid-column: 3 / span 3;
+      }
+      \${Image} {
+        grid-row: 1;
+        grid-column: 7 / span 6;
+      }
+    }
+
+    \${Step}:nth-child(even) {
+      \${Image} {
+        grid-row: 1;
+        grid-column: 3 / span 6;
+      }
+      \${StepItemDescription} {
+        grid-row: 1;
+        grid-column: 10 / span 3;
+      }
+    }
+  }
+\`;
+
+================================================================================
+`;
+
+exports[`issue-6259.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export const Group = styled.div\`
+  margin: 0;
+
+  .input {
+    margin: 0;
+  }
+
+  \${StyledInput}:not(:first-child) {
+    margin: 0;
+  }
+
+  & > :not(.\${inputWrap}):not(\${Button}) {
+    display: flex;
+  }
+\`
+
+=====================================output=====================================
+export const Group = styled.div\`
+  margin: 0;
+
+  .input {
+    margin: 0;
+  }
+
+  \${StyledInput}:not(:first-child) {
+    margin: 0;
+  }
+
+  & > :not(.\${inputWrap}):not(\${Button}) {
+    display: flex;
+  }
+\`;
+
+================================================================================
+`;
+
+exports[`issue-8352.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const StyledComponent = styled.div\`
+  margin-right: -4px;
+
+  \${Container}.isExpanded & {
+    transform: rotate(-180deg);
+  }
+\`;
+
+const StyledComponent2 = styled.div\`
+  margin-right: -4px;
+
+  \${abc}.camelCase + \${def}.camelCase & {
+    transform: rotate(-180deg);
+  }
+\`;
+
+=====================================output=====================================
+const StyledComponent = styled.div\`
+  margin-right: -4px;
+
+  \${Container}.isExpanded & {
+    transform: rotate(-180deg);
+  }
+\`;
+
+const StyledComponent2 = styled.div\`
+  margin-right: -4px;
+
+  \${abc}.camelCase + \${def}.camelCase & {
+    transform: rotate(-180deg);
+  }
+\`;
+
+================================================================================
+`;
+
+exports[`issue-9072.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const style1 = css\`
+  width:\${size+10}\${sizeUnit};
+  border:\${size/10} \${sizeUnit} solid \${color};
+\`;
+
+const style2 = css\`
+  width: \${size + 10}\${sizeUnit};
+  border: \${size / 10} \${sizeUnit} solid \${color};
+\`;
+
+const style3 = css\`
+  foo: \${foo}\${bar}       \${baz};
+\`;
+
+=====================================output=====================================
+const style1 = css\`
+  width: \${size + 10}\${sizeUnit};
+  border: \${size / 10} \${sizeUnit} solid \${color};
+\`;
+
+const style2 = css\`
+  width: \${size + 10}\${sizeUnit};
+  border: \${size / 10} \${sizeUnit} solid \${color};
+\`;
+
+const style3 = css\`
+  foo: \${foo}\${bar} \${baz};
+\`;
+
+================================================================================
+`;
+
+exports[`issue-11400.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+css\`foo:bar {}\`;
+css\`foo:\${bar} {}\`;
+css\`foo:\${bar}:\${baz} {}\`;
+css\`foo:bar { color: \${baz} }\`;
+
+=====================================output=====================================
+css\`
+  foo:bar {
+  }
+\`;
+css\`
+  foo:\${bar} {
+  }
+\`;
+css\`
+  foo:\${bar}:\${baz} {
+  }
+\`;
+css\`
+  foo:bar {
+    color: \${baz};
+  }
+\`;
+
+================================================================================
+`;
+
+exports[`issue-11797.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const paragraph1 = css\`
+  font-size: 12px;
+  transform: \${vert ? 'translateY' : 'translateX'}(\${translation + handleOffset}px);
+\`;
+
+const paragraph2 = css\`
+  transform: \${expr}(30px);
+\`;
+
+const paragraph3 = css\`
+  transform: \${expr} (30px);
+\`;
+
+=====================================output=====================================
+const paragraph1 = css\`
+  font-size: 12px;
+  transform: \${vert ? "translateY" : "translateX"}
+    (\${translation + handleOffset}px);
+\`;
+
+const paragraph2 = css\`
+  transform: \${expr}(30px);
+\`;
+
+const paragraph3 = css\`
+  transform: \${expr} (30px);
+\`;
+
+================================================================================
+`;
+
+exports[`issue-16692.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const c1 = styled.div\`
+    border:    1px     \${solid}      red;
+\`;
+
+const c2 = styled.div\`
+ font-size:      var(--font-size-h\${level});
+\`;
+
+const c3 = styled.div\`
+    grid-area:       area-\${area};
+\`;
+
+const c4 = styled.div\`
+    grid-area:       var(--\${one});
+\`;
+
+const c5 = styled.div\`
+ font-size:      var(--font-size-h \${level});
+\`;
+
+=====================================output=====================================
+const c1 = styled.div\`
+  border: 1px \${solid} red;
+\`;
+
+const c2 = styled.div\`
+  font-size: var(--font-size-h\${level});
+\`;
+
+const c3 = styled.div\`
+  grid-area: area-\${area};
+\`;
+
+const c4 = styled.div\`
+  grid-area: var(--\${one});
+\`;
+
+const c5 = styled.div\`
+  font-size: var(--font-size-h \${level});
+\`;
+
+================================================================================
+`;
+
+exports[`styled-components.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const ListItem1 = styled.li\`\`;
+
+const ListItem2 = styled.li\` \`;
+
+const Dropdown = styled.div\`position: relative;\`
+
+const Button = styled.button\`
+	  color:   palevioletred ;
+
+	font-size : 1em   ;
+\`;
+
+const TomatoButton = Button.extend\`
+	color  : tomato  ;
+
+border-color : tomato
+    ;
+
+\`;
+
+Button.extend.attr({})\`
+border-color : black;
+\`
+
+styled(ExistingComponent)\`
+       color : papayawhip ; background-color: firebrick\`;
+
+
+styled.button.attr({})\`
+border : rebeccapurple\`;
+
+styled(ExistingComponent).attr({})\`
+border : rebeccapurple\`;
+
+styled.div\`
+  color: \${props => props.theme.colors.paragraph};
+  /* prettier-ignore */
+  \${props => props.small ? 'font-size: 0.8em;' : ''};
+\`
+
+styled.div\`
+  color: \${props => props.theme.colors.paragraph};
+  /* prettier-ignore */
+  \${props => props.small ? 'font-size: 0.8em;' : ''}
+\`
+
+styled.div\`
+   /* prettier-ignore */
+  color: \${props => props.theme.colors.paragraph};
+  \${props => props.small ? 'font-size: 0.8em;' : ''};
+\`
+
+styled.div\`
+  color: \${props => props.theme.colors.paragraph};
+  /* prettier-ignore */
+  \${props => props.small ? 'font-size: 0.8em;' : ''};
+  /* prettier-ignore */
+  \${props => props.red ? 'color: red;' : ''};
+\`
+
+styled.div\`
+  /* prettier-ignore */
+  color: \${props => props.theme.colors.paragraph};
+  /* prettier-ignore */
+  \${props => props.small ? 'font-size: 0.8em;' : ''};
+  /* prettier-ignore */
+  \${props => props.red ? 'color: red;' : ''};
+  /* prettier-ignore */
+\`
+
+styled.div\`
+ \${sanitize} \${fonts}
+  html {
+    margin: 0;
+  }
+\`
+
+styled.div\`
+  \${bar}
+  baz
+\`
+
+styled.span\`
+  foo
+  \${bar}
+  baz
+\`
+
+styled.div\`
+  foo
+  \${bar}
+  \${baz}
+\`
+
+styled.span\`
+  \${foo}
+  \${bar}
+\`
+
+styled.div\`
+  \${foo} bar
+\`
+
+styled.span\`
+  \${foo} \${bar}
+  baz: \${foo}
+\`
+
+styled.span\`
+\${foo};
+\${bar};
+\`
+
+styled.span\`
+\${foo}: \${bar};
+\`
+
+styled.span\`
+\${foo}: \${bar}
+\`
+
+styled.span\`
+\${foo}:
+\${bar}
+\`
+
+styled.span\`
+\${foo}:
+\${bar};
+\`
+
+styled.a\`
+  \${feedbackCountBlockCss}
+  text-decoration: none;
+
+  \${FeedbackCount} {
+    margin: 0;
+  }
+\`
+
+const StyledComponent1 = styled.div\`
+  \${anInterpolation}
+  /* a comment */
+
+  .aRule {
+    color: red
+  }
+\`;
+
+const StyledComponent2 = styled.div\`
+  \${anInterpolation}
+
+  /* a comment */
+
+  .aRule {
+    color: red
+  }
+\`;
+
+const Direction = styled.span\`
+  \${({ up }) => up && \`color: \${color.positive};\`}
+  \${({ down }) => down && \`color: \${color.negative};\`}
+\`;
+
+const Direction2 = styled.span\`
+  \${({ up }) => up && \`color: \${color.positive}\`};
+  \${({ down }) => down && \`color: \${color.negative}\`};
+\`;
+
+const mixin = css\`
+  color: \${props => props.color};
+  \${props => props.otherProperty}: \${props => props.otherValue};
+\`;
+
+const foo = styled.div\`
+  display: flex;
+  \${props => props.useMixin && mixin}
+\`;
+
+const Single1 = styled.div\`
+  color: red
+\`;
+
+const Single2 = styled.div\`
+  color: red;
+\`;
+
+const Dropdown2 = styled.div\`
+  /* A comment to avoid the prettier issue: https://github.com/prettier/prettier/issues/2291 */
+  position: relative;
+\`;
+
+const bar = styled.div\`
+  border-radius: 50%;
+  border: 5px solid rgba(var(--green-rgb), 0);
+  display: inline-block;
+  height: 40px;
+  width: 40px;
+
+  \${props =>
+    (props.complete || props.inProgress) &&
+    css\`
+      border-color: rgba(var(--green-rgb), 0.15);
+    \`}
+
+  div {
+    background-color: var(--purpleTT);
+    border-radius: 50%;
+    border: 4px solid rgba(var(--purple-rgb), 0.2);
+    color: var(--purpleTT);
+    display: inline-flex;
+
+    \${props =>
+    props.complete &&
+    css\`
+        background-color: var(--green);
+        border-width: 7px;
+      \`}
+
+    \${props =>
+    (props.complete || props.inProgress) &&
+    css\`
+        border-color: var(--green);
+      \`}
+  }
+\`;
+
+const A = styled.a\`
+  display: inline-block;
+  color: #fff;
+  \${props => props.a &&css\`
+    display: none;
+  \`}
+   height: 30px;
+\`;
+
+const Foo = styled.p\`
+  max-width: 980px;
+  \${mediaBreakpointOnlyXs\`
+    && {
+      font-size: 0.8rem;
+    }
+  \`}
+
+  &.bottom {
+    margin-top: 3rem;
+  }
+\`;
+
+styled(A)\`
+  // prettier-ignore
+  @media (aaaaaaaaaaaaa) {
+	z-index: \${(props) => (props.isComplete ? '1' : '0')};
+  }
+\`;
+
+const StyledDiv = styled.div\`
+  \${props => getSize(props.$size.xs)}
+  \${props => getSize(props.$size.sm, 'sm')}
+  \${props => getSize(props.$size.md, 'md')}
+\`;
+
+=====================================output=====================================
+const ListItem1 = styled.li\`\`;
+
+const ListItem2 = styled.li\`\`;
+
+const Dropdown = styled.div\`
+  position: relative;
+\`;
+
+const Button = styled.button\`
+  color: palevioletred;
+
+  font-size: 1em;
+\`;
+
+const TomatoButton = Button.extend\`
+  color: tomato;
+
+  border-color: tomato;
+\`;
+
+Button.extend.attr({})\`
+  border-color: black;
+\`;
+
+styled(ExistingComponent)\`
+  color: papayawhip;
+  background-color: firebrick;
+\`;
+
+styled.button.attr({})\`
+  border: rebeccapurple;
+\`;
+
+styled(ExistingComponent).attr({})\`
+  border: rebeccapurple;
+\`;
+
+styled.div\`
+  color: \${(props) => props.theme.colors.paragraph};
+  /* prettier-ignore */
+  \${(props) => (props.small ? "font-size: 0.8em;" : "")};
+\`;
+
+styled.div\`
+  color: \${(props) => props.theme.colors.paragraph};
+  /* prettier-ignore */
+  \${(props) => (props.small ? "font-size: 0.8em;" : "")}
+\`;
+
+styled.div\`
+  /* prettier-ignore */
+  color: \${(props) => props.theme.colors.paragraph};
+  \${(props) => (props.small ? "font-size: 0.8em;" : "")};
+\`;
+
+styled.div\`
+  color: \${(props) => props.theme.colors.paragraph};
+  /* prettier-ignore */
+  \${(props) => (props.small ? "font-size: 0.8em;" : "")};
+  /* prettier-ignore */
+  \${(props) => (props.red ? "color: red;" : "")};
+\`;
+
+styled.div\`
+  /* prettier-ignore */
+  color: \${(props) => props.theme.colors.paragraph};
+  /* prettier-ignore */
+  \${(props) => (props.small ? "font-size: 0.8em;" : "")};
+  /* prettier-ignore */
+  \${(props) => (props.red ? "color: red;" : "")};
+  /* prettier-ignore */
+\`;
+
+styled.div\`
+  \${sanitize} \${fonts}
+  html {
+    margin: 0;
+  }
+\`;
+
+styled.div\`
+  \${bar}
+  baz
+\`;
+
+styled.span\`
+  foo
+  \${bar}
+  baz
+\`;
+
+styled.div\`
+  foo
+  \${bar}
+  \${baz}
+\`;
+
+styled.span\`
+  \${foo}
+  \${bar}
+\`;
+
+styled.div\`
+  \${foo} bar
+\`;
+
+styled.span\`
+  \${foo} \${bar}
+  baz: \${foo}
+\`;
+
+styled.span\`
+  \${foo};
+  \${bar};
+\`;
+
+styled.span\`
+  \${foo}: \${bar};
+\`;
+
+styled.span\`
+  \${foo}: \${bar}
+\`;
+
+styled.span\`
+  \${foo}: \${bar}
+\`;
+
+styled.span\`
+  \${foo}: \${bar};
+\`;
+
+styled.a\`
+  \${feedbackCountBlockCss}
+  text-decoration: none;
+
+  \${FeedbackCount} {
+    margin: 0;
+  }
+\`;
+
+const StyledComponent1 = styled.div\`
+  \${anInterpolation}
+  /* a comment */
+
+  .aRule {
+    color: red;
+  }
+\`;
+
+const StyledComponent2 = styled.div\`
+  \${anInterpolation}
+
+  /* a comment */
+
+  .aRule {
+    color: red;
+  }
+\`;
+
+const Direction = styled.span\`
+  \${({ up }) => up && \`color: \${color.positive};\`}
+  \${({ down }) => down && \`color: \${color.negative};\`}
+\`;
+
+const Direction2 = styled.span\`
+  \${({ up }) => up && \`color: \${color.positive}\`};
+  \${({ down }) => down && \`color: \${color.negative}\`};
+\`;
+
+const mixin = css\`
+  color: \${(props) => props.color};
+  \${(props) => props.otherProperty}: \${(props) => props.otherValue};
+\`;
+
+const foo = styled.div\`
+  display: flex;
+  \${(props) => props.useMixin && mixin}
+\`;
+
+const Single1 = styled.div\`
+  color: red;
+\`;
+
+const Single2 = styled.div\`
+  color: red;
+\`;
+
+const Dropdown2 = styled.div\`
+  /* A comment to avoid the prettier issue: https://github.com/prettier/prettier/issues/2291 */
+  position: relative;
+\`;
+
+const bar = styled.div\`
+  border-radius: 50%;
+  border: 5px solid rgba(var(--green-rgb), 0);
+  display: inline-block;
+  height: 40px;
+  width: 40px;
+
+  \${(props) =>
+    (props.complete || props.inProgress) &&
+    css\`
+      border-color: rgba(var(--green-rgb), 0.15);
+    \`}
+
+  div {
+    background-color: var(--purpleTT);
+    border-radius: 50%;
+    border: 4px solid rgba(var(--purple-rgb), 0.2);
+    color: var(--purpleTT);
+    display: inline-flex;
+
+    \${(props) =>
+      props.complete &&
+      css\`
+        background-color: var(--green);
+        border-width: 7px;
+      \`}
+
+    \${(props) =>
+      (props.complete || props.inProgress) &&
+      css\`
+        border-color: var(--green);
+      \`}
+  }
+\`;
+
+const A = styled.a\`
+  display: inline-block;
+  color: #fff;
+  \${(props) =>
+    props.a &&
+    css\`
+      display: none;
+    \`}
+  height: 30px;
+\`;
+
+const Foo = styled.p\`
+  max-width: 980px;
+  \${mediaBreakpointOnlyXs\`
+    && {
+      font-size: 0.8rem;
+    }
+  \`}
+
+  &.bottom {
+    margin-top: 3rem;
+  }
+\`;
+
+styled(A)\`
+  // prettier-ignore
+  @media (aaaaaaaaaaaaa) {
+	z-index: \${(props) => (props.isComplete ? "1" : "0")};
+  }
+\`;
+
+const StyledDiv = styled.div\`
+  \${(props) => getSize(props.$size.xs)}
+  \${(props) => getSize(props.$size.sm, "sm")}
+  \${(props) => getSize(props.$size.md, "md")}
+\`;
+
+================================================================================
+`;
+
+exports[`styled-components-multiple-expressions.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const Header = styled.div\`
+  \${something()}
+  & > \${Child}:not(:first-child) {
+margin-left:5px;
+}
+\`
+
+const Header2 = styled.div\`
+  \${something()}
+  & > \${Child}\${Child2}:not(:first-child) {
+margin-left:5px;
+}
+\`
+
+styled.div\`\${foo}-idle { }\`
+
+styled.div\`\${foo}-0-idle { }\`
+
+styled.div\`
+font-family: "\${a}", "\${b}";
+\`
+
+=====================================output=====================================
+const Header = styled.div\`
+  \${something()}
+  & > \${Child}:not(:first-child) {
+    margin-left: 5px;
+  }
+\`;
+
+const Header2 = styled.div\`
+  \${something()}
+  & > \${Child}\${Child2}:not(:first-child) {
+    margin-left: 5px;
+  }
+\`;
+
+styled.div\`
+  \${foo}-idle {
+  }
+\`;
+
+styled.div\`
+  \${foo}-0-idle {
+  }
+\`;
+
+styled.div\`
+  font-family: "\${a}", "\${b}";
+\`;
+
+================================================================================
+`;
+
+exports[`url.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+styled.div\`color:red;background: url(http://example.com?q=\${foo})\`
+
+=====================================output=====================================
+styled.div\`
+  color: red;
+  background: url(http://example.com?q=\${foo});
+\`;
+
+================================================================================
+`;
+
+exports[`var.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const Something = styled.div\`
+  background: var(--\${one}); /* ... */
+  border: 1px solid var(--\${two}); /* ... */
+\`;
+
+const StyledPurchaseCard = styled(Card)\`
+  min-width: 200px;
+  background-color: var(--\${props => props.color});
+  color: #fff;
+\`;
+
+const v1 =  css\`
+prop: var(--global--color--\${props.variant});
+\`;
+
+const v2 = css\`
+        background-color: var(--global--color--\${props.variant});
+
+        &:hover {
+          background-color: var(--global--color--\${props.variant}__one);
+        }
+      \`
+
+export const StyledComponent = styled.div\`
+  grid-area:  area-\${props => props.propName};
+\`
+
+=====================================output=====================================
+const Something = styled.div\`
+  background: var(--\${one}); /* ... */
+  border: 1px solid var(--\${two}); /* ... */
+\`;
+
+const StyledPurchaseCard = styled(Card)\`
+  min-width: 200px;
+  background-color: var(--\${(props) => props.color});
+  color: #fff;
+\`;
+
+const v1 = css\`
+  prop: var(--global--color--\${props.variant});
+\`;
+
+const v2 = css\`
+  background-color: var(--global--color--\${props.variant});
+
+  &:hover {
+    background-color: var(--global--color--\${props.variant}__one);
+  }
+\`;
+
+export const StyledComponent = styled.div\`
+  grid-area: area-\${(props) => props.propName};
+\`;
+
+================================================================================
+`;

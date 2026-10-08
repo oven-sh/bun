@@ -1,0 +1,126 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`lookup.less format 1`] = `
+====================================options=====================================
+parsers: ["less"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+.average(@x, @y) {
+  @result: ((@x + @y) / 2);
+}
+
+div {
+  padding: .average(16px, 50px)   [   @result   ];
+}
+
+div {
+  padding: @foo   [   @bar   ];
+}
+
+=====================================output=====================================
+.average(@x, @y) {
+  @result: ((@x + @y) / 2);
+}
+
+div {
+  padding: .average(16px, 50px)[@result];
+}
+
+div {
+  padding: @foo[@bar];
+}
+
+================================================================================
+`;
+
+exports[`lookup-1.less format 1`] = `
+====================================options=====================================
+parsers: ["less"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/* https://lesscss.org/features/#detached-rulesets-feature-property-variable-accessors */
+
+@config: {
+  option1: true;
+  option2: false;
+}
+
+/*
+TODO[prettier]:
+The \`@config   [   option1]\` part should format as \`@config[option1]\`
+**/
+.mixin() when (@config   [   option1] = true) {
+  selected: value;
+}
+
+.box {
+  .mixin();
+}
+
+=====================================output=====================================
+/* https://lesscss.org/features/#detached-rulesets-feature-property-variable-accessors */
+
+@config: {
+  option1: true;
+  option2: false;
+};
+
+/*
+TODO[prettier]:
+The \`@config   [   option1]\` part should format as \`@config[option1]\`
+**/
+.mixin() when (@config   [   option1] = true) {
+  selected: value;
+}
+
+.box {
+  .mixin();
+}
+
+================================================================================
+`;
+
+exports[`lookup-2.less format 1`] = `
+====================================options=====================================
+parsers: ["less"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/* https://lesscss.org/features/#detached-rulesets-feature-property-variable-accessors */
+
+@config: {
+  @dark: {
+    primary: darkblue;
+  }
+  @light: {
+    primary: lightblue;
+  }
+}
+
+.box {
+  @lookup: dark;
+  color: @config[@@lookup][primary];
+  color: @config   [   @@lookup   ][   primary   ];
+  color: @config   [   @@lookup   ]   [   primary   ];
+}
+
+=====================================output=====================================
+/* https://lesscss.org/features/#detached-rulesets-feature-property-variable-accessors */
+
+@config: {
+  @dark: {
+    primary: darkblue;
+  };
+  @light: {
+    primary: lightblue;
+  };
+};
+
+.box {
+  @lookup: dark;
+  color: @config[@@lookup][primary];
+  color: @config[@@lookup][primary];
+  color: @config[@@lookup][primary];
+}
+
+================================================================================
+`;

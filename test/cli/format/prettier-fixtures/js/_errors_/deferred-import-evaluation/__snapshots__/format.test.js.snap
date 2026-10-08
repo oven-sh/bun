@@ -1,0 +1,353 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`no-default.js format[acorn] 1`] = `
+"Unexpected token (1:14)
+> 1 | import defer x from "x";
+    |              ^
+  2 |
+Cause: Unexpected token (1:13)"
+`;
+
+exports[`no-default.js format[babel] 1`] = `
+"Only \`import defer * as x from "./module"\` is valid. (1:14)
+> 1 | import defer x from "x";
+    |              ^
+  2 |
+Cause: Only \`import defer * as x from "./module"\` is valid. (1:13)"
+`;
+
+exports[`no-default.js format[babel-ts] 1`] = `
+"Only \`import defer * as x from "./module"\` is valid. (1:14)
+> 1 | import defer x from "x";
+    |              ^
+  2 |
+Cause: Only \`import defer * as x from "./module"\` is valid. (1:13)"
+`;
+
+exports[`no-default.js format[espree] 1`] = `
+"Unexpected token x (1:14)
+> 1 | import defer x from "x";
+    |              ^
+  2 |
+Cause: Unexpected token x"
+`;
+
+exports[`no-default.js format[flow] 1`] = `
+"Unexpected identifier, expected the keyword \`from\` (1:14)
+> 1 | import defer x from "x";
+    |              ^
+  2 |
+Cause: Unexpected identifier, expected the keyword \`from\` (1:13)"
+`;
+
+exports[`no-default.js format[hermes] 1`] = `
+"'from' expected (1:14)
+> 1 | import defer x from "x";
+    |              ^
+  2 |
+Cause: 'from' expected (1:13)
+import defer x from "x";
+             ^"
+`;
+
+exports[`no-default.js format[meriyah] 1`] = `
+"Expected 'from' (1:14)
+> 1 | import defer x from "x";
+    |              ^
+  2 |
+Cause: [1:13-1:14]: Expected 'from'"
+`;
+
+exports[`no-default.js format[oxc] 1`] = `
+"Default imports are not allowed in a deferred import. (1:8)
+> 1 | import defer x from "x";
+    |        ^^^^^
+  2 |"
+`;
+
+exports[`no-default.js format[oxc-ts] 1`] = `
+"Default imports are not allowed in a deferred import. (1:8)
+> 1 | import defer x from "x";
+    |        ^^^^^
+  2 |"
+`;
+
+exports[`no-default.js format[typescript] 1`] = `
+"Default imports are not allowed in a deferred import. (1:8)
+> 1 | import defer x from "x";
+    |        ^^^^^^^
+  2 |
+Cause: Default imports are not allowed in a deferred import."
+`;
+
+exports[`no-default.js format[yuku] 1`] = `
+"'import defer' only supports a namespace import (1:8)
+> 1 | import defer x from "x";
+    |        ^^^^^
+  2 |"
+`;
+
+exports[`no-default.js format[yuku-ts] 1`] = `
+"'import defer' only supports a namespace import (1:8)
+> 1 | import defer x from "x";
+    |        ^^^^^
+  2 |"
+`;
+
+exports[`no-named.js format[acorn] 1`] = `
+"Unexpected token (1:14)
+> 1 | import defer { x } from "x";
+    |              ^
+  2 |
+Cause: Unexpected token (1:13)"
+`;
+
+exports[`no-named.js format[babel] 1`] = `
+"Only \`import defer * as x from "./module"\` is valid. (1:16)
+> 1 | import defer { x } from "x";
+    |                ^
+  2 |
+Cause: Only \`import defer * as x from "./module"\` is valid. (1:15)"
+`;
+
+exports[`no-named.js format[babel-ts] 1`] = `
+"Only \`import defer * as x from "./module"\` is valid. (1:16)
+> 1 | import defer { x } from "x";
+    |                ^
+  2 |
+Cause: Only \`import defer * as x from "./module"\` is valid. (1:15)"
+`;
+
+exports[`no-named.js format[espree] 1`] = `
+"Unexpected token { (1:14)
+> 1 | import defer { x } from "x";
+    |              ^
+  2 |
+Cause: Unexpected token {"
+`;
+
+exports[`no-named.js format[flow] 1`] = `
+"Unexpected token \`{\`, expected the keyword \`from\` (1:14)
+> 1 | import defer { x } from "x";
+    |              ^
+  2 |
+Cause: Unexpected token \`{\`, expected the keyword \`from\` (1:13)"
+`;
+
+exports[`no-named.js format[hermes] 1`] = `
+"'from' expected (1:14)
+> 1 | import defer { x } from "x";
+    |              ^
+  2 |
+Cause: 'from' expected (1:13)
+import defer { x } from "x";
+             ^"
+`;
+
+exports[`no-named.js format[meriyah] 1`] = `
+"Expected 'from' (1:14)
+> 1 | import defer { x } from "x";
+    |              ^
+  2 |
+Cause: [1:13-1:14]: Expected 'from'"
+`;
+
+exports[`no-named.js format[oxc] 1`] = `
+"Named imports are not allowed in a deferred import. (1:8)
+> 1 | import defer { x } from "x";
+    |        ^^^^^
+  2 |"
+`;
+
+exports[`no-named.js format[oxc-ts] 1`] = `
+"Named imports are not allowed in a deferred import. (1:8)
+> 1 | import defer { x } from "x";
+    |        ^^^^^
+  2 |"
+`;
+
+exports[`no-named.js format[typescript] 1`] = `
+"Named imports are not allowed in a deferred import. (1:8)
+> 1 | import defer { x } from "x";
+    |        ^^^^^^^^^^^
+  2 |
+Cause: Named imports are not allowed in a deferred import."
+`;
+
+exports[`no-named.js format[yuku] 1`] = `
+"Expected 'from' after import clause, but found '{' (1:14)
+> 1 | import defer { x } from "x";
+    |              ^
+  2 |"
+`;
+
+exports[`no-named.js format[yuku-ts] 1`] = `
+"Expected 'from' after import clause, but found '{' (1:14)
+> 1 | import defer { x } from "x";
+    |              ^
+  2 |"
+`;
+
+exports[`snippet: #0 format[acorn] 1`] = `
+"Unexpected token (1:14)
+> 1 | import defer { x } from "x";
+    |              ^
+Cause: Unexpected token (1:13)"
+`;
+
+exports[`snippet: #0 format[babel] 1`] = `
+"Only \`import defer * as x from "./module"\` is valid. (1:16)
+> 1 | import defer { x } from "x";
+    |                ^
+Cause: Only \`import defer * as x from "./module"\` is valid. (1:15)"
+`;
+
+exports[`snippet: #0 format[babel-ts] 1`] = `
+"Only \`import defer * as x from "./module"\` is valid. (1:16)
+> 1 | import defer { x } from "x";
+    |                ^
+Cause: Only \`import defer * as x from "./module"\` is valid. (1:15)"
+`;
+
+exports[`snippet: #0 format[espree] 1`] = `
+"Unexpected token { (1:14)
+> 1 | import defer { x } from "x";
+    |              ^
+Cause: Unexpected token {"
+`;
+
+exports[`snippet: #0 format[flow] 1`] = `
+"Unexpected token \`{\`, expected the keyword \`from\` (1:14)
+> 1 | import defer { x } from "x";
+    |              ^
+Cause: Unexpected token \`{\`, expected the keyword \`from\` (1:13)"
+`;
+
+exports[`snippet: #0 format[hermes] 1`] = `
+"'from' expected (1:14)
+> 1 | import defer { x } from "x";
+    |              ^
+Cause: 'from' expected (1:13)
+import defer { x } from "x";
+             ^"
+`;
+
+exports[`snippet: #0 format[meriyah] 1`] = `
+"Expected 'from' (1:14)
+> 1 | import defer { x } from "x";
+    |              ^
+Cause: [1:13-1:14]: Expected 'from'"
+`;
+
+exports[`snippet: #0 format[oxc] 1`] = `
+"Named imports are not allowed in a deferred import. (1:8)
+> 1 | import defer { x } from "x";
+    |        ^^^^^"
+`;
+
+exports[`snippet: #0 format[oxc-ts] 1`] = `
+"Named imports are not allowed in a deferred import. (1:8)
+> 1 | import defer { x } from "x";
+    |        ^^^^^"
+`;
+
+exports[`snippet: #0 format[typescript] 1`] = `
+"Named imports are not allowed in a deferred import. (1:8)
+> 1 | import defer { x } from "x";
+    |        ^^^^^^^^^^^
+Cause: Named imports are not allowed in a deferred import."
+`;
+
+exports[`snippet: #0 format[yuku] 1`] = `
+"Expected 'from' after import clause, but found '{' (1:14)
+> 1 | import defer { x } from "x";
+    |              ^"
+`;
+
+exports[`snippet: #0 format[yuku-ts] 1`] = `
+"Expected 'from' after import clause, but found '{' (1:14)
+> 1 | import defer { x } from "x";
+    |              ^"
+`;
+
+exports[`snippet: #1 format[acorn] 1`] = `
+"Unexpected token (1:14)
+> 1 | import defer x from "x";
+    |              ^
+Cause: Unexpected token (1:13)"
+`;
+
+exports[`snippet: #1 format[babel] 1`] = `
+"Only \`import defer * as x from "./module"\` is valid. (1:14)
+> 1 | import defer x from "x";
+    |              ^
+Cause: Only \`import defer * as x from "./module"\` is valid. (1:13)"
+`;
+
+exports[`snippet: #1 format[babel-ts] 1`] = `
+"Only \`import defer * as x from "./module"\` is valid. (1:14)
+> 1 | import defer x from "x";
+    |              ^
+Cause: Only \`import defer * as x from "./module"\` is valid. (1:13)"
+`;
+
+exports[`snippet: #1 format[espree] 1`] = `
+"Unexpected token x (1:14)
+> 1 | import defer x from "x";
+    |              ^
+Cause: Unexpected token x"
+`;
+
+exports[`snippet: #1 format[flow] 1`] = `
+"Unexpected identifier, expected the keyword \`from\` (1:14)
+> 1 | import defer x from "x";
+    |              ^
+Cause: Unexpected identifier, expected the keyword \`from\` (1:13)"
+`;
+
+exports[`snippet: #1 format[hermes] 1`] = `
+"'from' expected (1:14)
+> 1 | import defer x from "x";
+    |              ^
+Cause: 'from' expected (1:13)
+import defer x from "x";
+             ^"
+`;
+
+exports[`snippet: #1 format[meriyah] 1`] = `
+"Expected 'from' (1:14)
+> 1 | import defer x from "x";
+    |              ^
+Cause: [1:13-1:14]: Expected 'from'"
+`;
+
+exports[`snippet: #1 format[oxc] 1`] = `
+"Default imports are not allowed in a deferred import. (1:8)
+> 1 | import defer x from "x";
+    |        ^^^^^"
+`;
+
+exports[`snippet: #1 format[oxc-ts] 1`] = `
+"Default imports are not allowed in a deferred import. (1:8)
+> 1 | import defer x from "x";
+    |        ^^^^^"
+`;
+
+exports[`snippet: #1 format[typescript] 1`] = `
+"Default imports are not allowed in a deferred import. (1:8)
+> 1 | import defer x from "x";
+    |        ^^^^^^^
+Cause: Default imports are not allowed in a deferred import."
+`;
+
+exports[`snippet: #1 format[yuku] 1`] = `
+"'import defer' only supports a namespace import (1:8)
+> 1 | import defer x from "x";
+    |        ^^^^^"
+`;
+
+exports[`snippet: #1 format[yuku-ts] 1`] = `
+"'import defer' only supports a namespace import (1:8)
+> 1 | import defer x from "x";
+    |        ^^^^^"
+`;

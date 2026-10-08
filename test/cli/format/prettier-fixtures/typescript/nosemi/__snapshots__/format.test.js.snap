@@ -1,0 +1,78 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`index-signature.ts - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class LocalStorage implements Storage {
+  [index: number]: string;
+  [key: string]: any;
+}
+
+=====================================output=====================================
+class LocalStorage implements Storage {
+  [index: number]: string
+  [key: string]: any
+}
+
+================================================================================
+`;
+
+exports[`interface.ts - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+interface Inline { x: string }
+
+interface MultiLine {
+    x: string;
+    y: string;
+}
+
+interface InlineMultiple { x: string; y: string }
+
+=====================================output=====================================
+interface Inline {
+  x: string
+}
+
+interface MultiLine {
+  x: string
+  y: string
+}
+
+interface InlineMultiple {
+  x: string
+  y: string
+}
+
+================================================================================
+`;
+
+exports[`type.ts - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+type A = {disabled?: boolean, error?: string}
+
+const foo: {aasdf?: string; asdf?: number; foob?: string; zzz?: string; yyy: string}  = {}
+
+=====================================output=====================================
+type A = { disabled?: boolean; error?: string }
+
+const foo: {
+  aasdf?: string
+  asdf?: number
+  foob?: string
+  zzz?: string
+  yyy: string
+} = {}
+
+================================================================================
+`;

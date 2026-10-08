@@ -1,0 +1,50 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`relational-operators.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+(<div />) < 5;
+<div /> > 5;
+(<div></div>) < 5;
+<div></div> > 5;
+
+<div /> <= 5;
+<div /> >= 5;
+<div></div> <= 5;
+<div></div> >= 5;
+
+(<div />) < <div />;
+<div /> > <div />;
+(<div></div>) < <div></div>;
+<div></div> > <div></div>;
+
+<div /> <= <div />;
+<div /> >= <div />;
+<div></div> <= <div></div>;
+<div></div> >= <div></div>;
+
+=====================================output=====================================
+(<div />) < 5;
+<div /> > 5;
+(<div></div>) < 5;
+<div></div> > 5;
+
+<div /> <= 5;
+<div /> >= 5;
+<div></div> <= 5;
+<div></div> >= 5;
+
+(<div />) < <div />;
+<div /> > <div />;
+(<div></div>) < <div></div>;
+<div></div> > <div></div>;
+
+<div /> <= <div />;
+<div /> >= <div />;
+<div></div> <= <div></div>;
+<div></div> >= <div></div>;
+
+================================================================================
+`;

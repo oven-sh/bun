@@ -1,0 +1,217 @@
+@each $animal in puma, sea-slug, egret, salamander {}
+@each $animal in puma,sea-slug,egret,salamander{}
+@each  $animal  in  puma  ,  sea-slug  ,  egret  ,  salamander  {}
+@each $animal in
+    puma, sea-slug, egret, salamander {}
+@each
+    $animal
+    in
+    puma
+    ,
+    sea-slug
+    ,
+    egret
+    ,
+    salamander
+    {
+    }
+@each
+$animal
+in
+puma
+,
+sea-slug
+,
+egret
+,
+salamander
+{
+}
+@each
+
+$animal
+
+in
+
+puma
+
+,
+
+sea-slug
+
+,
+
+egret
+
+,
+
+salamander
+
+{
+
+}
+@each $animal in ((puma), (sea-slug), (egret), (salamander)) {}
+@each $animal in((puma),(sea-slug),(egret),(salamander)){}
+@each  $animal  in  (  (  puma  )  ,  (  sea-slug  )  ,  (  egret  )  ,  (  salamander  )  )  {}
+@each $animal
+    in ((puma), (sea-slug), (egret), (salamander)) {}
+@each
+    $animal
+    in (
+        (puma),
+        (sea-slug),
+        (egret),
+        (salamander)
+    ) {  }
+@each
+    $animal
+    in
+    (
+    (
+    puma
+    )
+    ,
+    (
+    sea-slug
+    )
+    ,
+    (
+    egret
+    )
+    ,
+    (
+    salamander
+    )
+    )
+    {
+    }
+@each
+
+    $animal
+
+    in
+
+    (
+
+    (
+
+    puma
+
+    )
+
+    ,
+
+    (
+
+    sea-slug
+
+    )
+
+    ,
+
+    (
+
+    egret
+
+    )
+
+    ,
+
+    (
+
+    salamander
+
+    )
+
+    )
+
+    {
+
+    }
+@each $animal, $color, $cursor in (puma, black, default), (sea-slug, blue, pointer), (egret, white, move) {}
+@each $animal,$color,$cursor in (puma,black,default),(sea-slug,blue,pointer),(egret,white,move){}
+@each $animal, $color, $cursor in
+    (puma, black, default),
+    (sea-slug, blue, pointer),
+    (egret, white, move) {}
+@each $very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-var in puma, sea-slug, egret, salamander {}
+@each $very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-var, $very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-var1, $very-very-very-very-very-very-very-very-very-very-very-very-very-very-very-long-var-2 in (puma, black, default), (sea-slug, blue, pointer), (egret, white, move) {}
+@each $element, $size in (h1: 20px, h2: 16px, h3: 14px) {}
+@each $element,$size in(h1:20px,h2:16px,h3:14px){}
+@each  $element  ,  $size  in  (  h1  :  20px  ,  h2  :  16px  ,  h3  :  14px  )  {}
+@each $element,
+    $size in (h1: 20px, h2: 16px, h3: 14px) {}
+@each
+    $element,
+    $size
+    in
+    (
+    h1
+    :
+    20px
+    ,
+    h2
+    :
+    16px
+    ,
+    h3
+    :
+    14px
+    )
+    {
+    }
+@each
+$element,
+$size
+in
+(
+h1
+:
+20px
+,
+h2
+:
+16px
+,
+h3
+:
+14px
+)
+{
+}
+@each
+$element,
+
+$size
+
+in
+
+(
+
+h1
+
+:
+
+20px
+
+,
+
+h2
+
+:
+
+16px
+
+,
+
+h3
+
+:
+
+14px
+
+)
+
+{
+
+}

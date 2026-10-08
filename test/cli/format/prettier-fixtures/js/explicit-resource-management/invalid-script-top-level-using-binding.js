@@ -1,0 +1,1 @@
+using x = bar();

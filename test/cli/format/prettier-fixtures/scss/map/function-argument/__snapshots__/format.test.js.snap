@@ -1,0 +1,198 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`function-argument-2.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+$display-breakpoints: map-deep-merge(
+  (
+    "sm-only": "only screen and (min-width: #{$map-get + $grid-breakpoints + "hogehoge"}) and (max-width: #{$a})",
+    "sm-only": "inside a long long long long long long long long long long long long long long string #{call("")}",
+    "sm-only": "inside a long long long long long long long long long long long long long long string #{$foo} and #{call("")}",
+    "sm-only": "inside a long long long long long long long long long long long long long long string #{call($a)}",
+  ),
+  $display-breakpoints
+);
+
+@each $name, $hue in $hues {
+  $map: map.merge(
+    $map,
+    (
+      '#{$prefix}-#{$name}': blend.set($base, $hue: $hue),
+    )
+  );
+}
+
+=====================================output=====================================
+$display-breakpoints: map-deep-merge(
+  (
+    "sm-only":
+      "only screen and (min-width: #{$map-get + $grid-breakpoints + "hogehoge"}) and (max-width: #{$a})",
+    "sm-only":
+      "inside a long long long long long long long long long long long long long long string #{call("")}",
+    "sm-only":
+      "inside a long long long long long long long long long long long long long long string #{$foo} and #{call("")}",
+    "sm-only":
+      "inside a long long long long long long long long long long long long long long string #{call($a)}",
+  ),
+  $display-breakpoints
+);
+
+@each $name, $hue in $hues {
+  $map: map.merge(
+    $map,
+    (
+      "#{$prefix}-#{$name}": blend.set($base, $hue: $hue),
+    )
+  );
+}
+
+================================================================================
+`;
+
+exports[`functional-argument.scss format 1`] = `
+====================================options=====================================
+parsers: ["scss"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+//simple test
+$display-breakpoints: map-deep-merge(
+  (
+    "print-only": "only print",
+    "screen-only": "only screen",
+    "xs-only": "only screen and (max-width: #{map-get($grid-breakpoints, "sm") - 1})",
+    "sm-only": "only screen and (min-width: #{map-get($grid-breakpoints, "sm")}) and (max-width: #{map-get($grid-breakpoints, "md") - 1})",
+  ),
+  $display-breakpoints
+);
+
+
+//list test
+@each
+$size
+in
+$sizes {
+.icon
+#{$size}
+{
+border
+:
+"#{$size + "px"}"
+solid
+red;
+}
+}
+
+@each
+$size
+in
+$sizes {
+.icon-#{$size}
+{
+border
+:
+"#{$size + "px"}"
+solid
+red;
+}
+}
+
+//map test
+$font-weights
+:
+("regular": 400
+,
+"medium": 500,
+"bold":
+700);
+@each
+$name,
+$boldness
+in
+$icons {
+.text
+#{
+$name
+} {
+color: red;
+font-weight:
+"#{$boldness}"
+}
+}
+
+$font-weights
+:
+("regular": 400
+,
+"medium": 500,
+"bold":
+700);
+@each
+$name,
+$boldness
+in
+$icons {
+.text-#{
+$name
+} {
+color: red;
+font-weight:
+"#{$boldness}"
+}
+}
+
+=====================================output=====================================
+//simple test
+$display-breakpoints: map-deep-merge(
+  (
+    "print-only": "only print",
+    "screen-only": "only screen",
+    "xs-only":
+      "only screen and (max-width: #{map-get($grid-breakpoints, "sm") - 1})",
+    "sm-only":
+      "only screen and (min-width: #{map-get($grid-breakpoints, "sm")}) and (max-width: #{map-get($grid-breakpoints, "md") - 1})",
+  ),
+  $display-breakpoints
+);
+
+//list test
+@each $size in $sizes {
+  .icon #{$size} {
+    border: "#{$size + "px"}" solid red;
+  }
+}
+
+@each $size in $sizes {
+  .icon-#{$size} {
+    border: "#{$size + "px"}" solid red;
+  }
+}
+
+//map test
+$font-weights: (
+  "regular": 400,
+  "medium": 500,
+  "bold": 700,
+);
+@each $name, $boldness in $icons {
+  .text #{ $name } {
+    color: red;
+    font-weight: "#{$boldness}";
+  }
+}
+
+$font-weights: (
+  "regular": 400,
+  "medium": 500,
+  "bold": 700,
+);
+@each $name, $boldness in $icons {
+  .text-#{ $name } {
+    color: red;
+    font-weight: "#{$boldness}";
+  }
+}
+
+================================================================================
+`;

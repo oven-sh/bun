@@ -1,0 +1,34 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`17192.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export type ErrorLike =
+  SerializedProps<Error> &
+  // cause is a new addition to Error that is not yet available in all runtimes. We have added
+  // it to try and pinpoint additional reasoning for failures such as Node's fetch.
+  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/cause
+  { cause?: unknown };
+
+export type ErrorLike2 =
+  SerializedProps<Error> & // cause is a new addition to Error that is not yet available in all runtimes. We have added
+  // it to try and pinpoint additional reasoning for failures such as Node's fetch.
+  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/cause
+  { cause?: unknown };
+
+=====================================output=====================================
+export type ErrorLike = SerializedProps<Error> &
+  // cause is a new addition to Error that is not yet available in all runtimes. We have added
+  // it to try and pinpoint additional reasoning for failures such as Node's fetch.
+  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/cause
+  { cause?: unknown };
+
+export type ErrorLike2 = SerializedProps<Error> & // cause is a new addition to Error that is not yet available in all runtimes. We have added
+  // it to try and pinpoint additional reasoning for failures such as Node's fetch.
+  // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Error/cause
+  { cause?: unknown };
+
+================================================================================
+`;

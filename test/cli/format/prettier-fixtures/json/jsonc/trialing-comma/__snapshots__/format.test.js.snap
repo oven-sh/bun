@@ -1,0 +1,136 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`test.jsonc - {"trailingComma":"all"} format 1`] = `
+====================================options=====================================
+parsers: ["jsonc"]
+trailingComma: "all"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+[
+  ["omit-if-short"],
+  ["long","long","long","long","long","long","enough","to","break","into","multiple","lines"],
+  {"short":"object"},
+  {"long":"","enough":"","to":"","break":"","into":"","multiple":"","lines":""}
+]
+
+=====================================output=====================================
+[
+  ["omit-if-short"],
+  [
+    "long",
+    "long",
+    "long",
+    "long",
+    "long",
+    "long",
+    "enough",
+    "to",
+    "break",
+    "into",
+    "multiple",
+    "lines",
+  ],
+  { "short": "object" },
+  {
+    "long": "",
+    "enough": "",
+    "to": "",
+    "break": "",
+    "into": "",
+    "multiple": "",
+    "lines": "",
+  },
+]
+
+================================================================================
+`;
+
+exports[`test.jsonc - {"trailingComma":"es5"} format 1`] = `
+====================================options=====================================
+parsers: ["jsonc"]
+trailingComma: "es5"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+[
+  ["omit-if-short"],
+  ["long","long","long","long","long","long","enough","to","break","into","multiple","lines"],
+  {"short":"object"},
+  {"long":"","enough":"","to":"","break":"","into":"","multiple":"","lines":""}
+]
+
+=====================================output=====================================
+[
+  ["omit-if-short"],
+  [
+    "long",
+    "long",
+    "long",
+    "long",
+    "long",
+    "long",
+    "enough",
+    "to",
+    "break",
+    "into",
+    "multiple",
+    "lines",
+  ],
+  { "short": "object" },
+  {
+    "long": "",
+    "enough": "",
+    "to": "",
+    "break": "",
+    "into": "",
+    "multiple": "",
+    "lines": "",
+  },
+]
+
+================================================================================
+`;
+
+exports[`test.jsonc - {"trailingComma":"none"} format 1`] = `
+====================================options=====================================
+parsers: ["jsonc"]
+trailingComma: "none"
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+[
+  ["omit-if-short"],
+  ["long","long","long","long","long","long","enough","to","break","into","multiple","lines"],
+  {"short":"object"},
+  {"long":"","enough":"","to":"","break":"","into":"","multiple":"","lines":""}
+]
+
+=====================================output=====================================
+[
+  ["omit-if-short"],
+  [
+    "long",
+    "long",
+    "long",
+    "long",
+    "long",
+    "long",
+    "enough",
+    "to",
+    "break",
+    "into",
+    "multiple",
+    "lines"
+  ],
+  { "short": "object" },
+  {
+    "long": "",
+    "enough": "",
+    "to": "",
+    "break": "",
+    "into": "",
+    "multiple": "",
+    "lines": ""
+  }
+]
+
+================================================================================
+`;

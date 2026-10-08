@@ -1,0 +1,545 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`expression-2nd-arg.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+call(
+  function() {
+    return 1;
+  },
+  200_000_000_000n * askTrovenaBeenaDependsRowans
+);
+
+call(
+  function() {
+    return 1;
+  },
+  200_000_000_000n * askTrovenaBeenaDependsRowans / glimseGlyphsHazardNoopsTieTie
+);
+
+call(
+  function() {
+    return 1;
+  },
+  askTrovenaBeenaDependsRowans = glimseGlyphsHazardNoopsTieTie = 200_000_000_000n
+);
+
+=====================================output=====================================
+call(function () {
+  return 1;
+}, 200_000_000_000n * askTrovenaBeenaDependsRowans);
+
+call(
+  function () {
+    return 1;
+  },
+  (200_000_000_000n * askTrovenaBeenaDependsRowans) /
+    glimseGlyphsHazardNoopsTieTie,
+);
+
+call(
+  function () {
+    return 1;
+  },
+  (askTrovenaBeenaDependsRowans = glimseGlyphsHazardNoopsTieTie =
+    200_000_000_000n),
+);
+
+================================================================================
+`;
+
+exports[`issue-2456.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+f(x => { y }, err.message.includes("asd") && err.message.includes("id") &&
+  err.message.includes('"1"') && err.message.includes("Model") &&
+  err.message.includes("/id") && err.message.includes("identifier(number)")
+)
+
+=====================================output=====================================
+f(
+  (x) => {
+    y;
+  },
+  err.message.includes("asd") &&
+    err.message.includes("id") &&
+    err.message.includes('"1"') &&
+    err.message.includes("Model") &&
+    err.message.includes("/id") &&
+    err.message.includes("identifier(number)"),
+);
+
+================================================================================
+`;
+
+exports[`issue-4401.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export function test() {
+  setTimeout(
+    () => { console.warn({}, 'Lambda approaching timeout.') },
+    Math.max(context.getRemainingTimeInMillis() - WARN_TIMEOUT_MS, 0),
+  );
+}
+
+=====================================output=====================================
+export function test() {
+  setTimeout(
+    () => {
+      console.warn({}, "Lambda approaching timeout.");
+    },
+    Math.max(context.getRemainingTimeInMillis() - WARN_TIMEOUT_MS, 0),
+  );
+}
+
+================================================================================
+`;
+
+exports[`issue-5172.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+call(
+    function() {
+        return 1;
+    },
+    $var ?? $var ?? $var ?? $var ?? $var ?? $var ?? $var ?? $var ?? $var ?? 'test'
+);
+
+call(function () {
+  return 1;
+}, $var || ($var ?? $var ?? $var ?? $var ?? $var ?? $var ?? $var ?? $var ?? "test"));
+
+=====================================output=====================================
+call(
+  function () {
+    return 1;
+  },
+  $var ??
+    $var ??
+    $var ??
+    $var ??
+    $var ??
+    $var ??
+    $var ??
+    $var ??
+    $var ??
+    "test",
+);
+
+call(
+  function () {
+    return 1;
+  },
+  $var ||
+    ($var ?? $var ?? $var ?? $var ?? $var ?? $var ?? $var ?? $var ?? "test"),
+);
+
+================================================================================
+`;
+
+exports[`issue-12892.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+setTimeout(() => {
+  console.log('test');
+}, someFunctionCall(
+  veryLongParameterName1,
+  veryLongParameterName2,
+  veryLongParameterName3,
+  veryLongParameterName4,
+));
+
+=====================================output=====================================
+setTimeout(
+  () => {
+    console.log("test");
+  },
+  someFunctionCall(
+    veryLongParameterName1,
+    veryLongParameterName2,
+    veryLongParameterName3,
+    veryLongParameterName4,
+  ),
+);
+
+================================================================================
+`;
+
+exports[`issue-13237.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/* version 1 */
+
+exportDefaultWhatever(function (
+  aaaaaaaaaaaString,
+  bbbbbbbbbbbString,
+  cccccccccccString,
+) {
+  return null;
+}, "xyz");
+
+/* version 2 (only difference is that \`//\`) */
+
+exportDefaultWhatever(function (
+  aaaaaaaaaaaString,  //
+  bbbbbbbbbbbString,
+  cccccccccccString,
+) {
+  return null;
+}, "xyz");
+
+=====================================output=====================================
+/* version 1 */
+
+exportDefaultWhatever(function (
+  aaaaaaaaaaaString,
+  bbbbbbbbbbbString,
+  cccccccccccString,
+) {
+  return null;
+}, "xyz");
+
+/* version 2 (only difference is that \`//\`) */
+
+exportDefaultWhatever(function (
+  aaaaaaaaaaaString, //
+  bbbbbbbbbbbString,
+  cccccccccccString,
+) {
+  return null;
+}, "xyz");
+
+================================================================================
+`;
+
+exports[`issue-14454.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+f(() => {}, scroller.qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq)
+
+=====================================output=====================================
+f(
+  () => {},
+  scroller.qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq,
+);
+
+================================================================================
+`;
+
+exports[`jsx.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<elem onFlip={wrap(function () {flop('!'); }, arg2)}>content</elem>
+
+=====================================output=====================================
+<elem
+  onFlip={wrap(function () {
+    flop("!");
+  }, arg2)}
+>
+  content
+</elem>;
+
+================================================================================
+`;
+
+exports[`test.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+setTimeout(function() {
+  thing();
+}, 500);
+
+["a","b","c"].reduce(function(item, thing) {
+  return thing + " " + item;
+}, "letters:")
+
+func(() => {
+  thing();
+}, identifier);
+
+func(function() {
+  thing();
+}, this.props.timeout * 1000);
+
+func((that) => {
+  thing();
+}, this.props.getTimeout());
+
+func(() => {
+  thing();
+}, true);
+
+func(() => {
+  thing();
+}, null);
+
+func(() => {
+  thing();
+}, undefined);
+
+func(() => {
+  thing();
+}, /regex.*?/);
+
+func(() => {
+  thing();
+}, 1 ? 2 : 3);
+
+func(function() {
+  return thing()
+}, 1 ? 2 : 3);
+
+func(() => {
+  thing();
+}, something() ? someOtherThing() : somethingElse(true, 0));
+
+
+func(() => {
+  thing();
+}, something(longArgumentName, anotherLongArgumentName) ? someOtherThing() : somethingElse(true, 0));
+
+
+func(() => {
+  thing();
+}, something(longArgumentName, anotherLongArgumentName, anotherLongArgumentName, anotherLongArgumentName) ? someOtherThing() : somethingElse(true, 0));
+
+compose((a) => {
+  return a.thing;
+}, b => b * b);
+
+somthing.reduce(function(item, thing) {
+  return thing.blah =  item;
+}, {})
+
+somthing.reduce(function(item, thing) {
+  return thing.push(item);
+}, [])
+
+reallyLongLongLongLongLongLongLongLongLongLongLongLongLongLongMethod((f, g, h) => {
+  return f.pop();
+}, true);
+
+// Don't do the rest of these
+
+func(function() {
+  thing();
+}, true, false);
+
+func(() => {
+  thing();
+}, {yes: true, cats: 5});
+
+compose((a) => {
+  return a.thing;
+}, b => {
+  return b + "";
+});
+
+compose((a) => {
+  return a.thing;
+}, b => [1, 2, 3, 4, 5]);
+
+renderThing(a =>
+  <div>Content. So much to say. Oh my. Are we done yet?</div>
+,args);
+
+setTimeout(
+  // Something
+  function() {
+    thing();
+  },
+  500
+);
+
+setTimeout(/* blip */ function() {
+  thing();
+}, 500);
+
+func((args) => {
+  execute(args);
+}, result => result && console.log("success"))
+
+=====================================output=====================================
+setTimeout(function () {
+  thing();
+}, 500);
+
+["a", "b", "c"].reduce(function (item, thing) {
+  return thing + " " + item;
+}, "letters:");
+
+func(() => {
+  thing();
+}, identifier);
+
+func(function () {
+  thing();
+}, this.props.timeout * 1000);
+
+func((that) => {
+  thing();
+}, this.props.getTimeout());
+
+func(() => {
+  thing();
+}, true);
+
+func(() => {
+  thing();
+}, null);
+
+func(() => {
+  thing();
+}, undefined);
+
+func(() => {
+  thing();
+}, /regex.*?/);
+
+func(
+  () => {
+    thing();
+  },
+  1 ? 2 : 3,
+);
+
+func(
+  function () {
+    return thing();
+  },
+  1 ? 2 : 3,
+);
+
+func(
+  () => {
+    thing();
+  },
+  something() ? someOtherThing() : somethingElse(true, 0),
+);
+
+func(
+  () => {
+    thing();
+  },
+  something(longArgumentName, anotherLongArgumentName)
+    ? someOtherThing()
+    : somethingElse(true, 0),
+);
+
+func(
+  () => {
+    thing();
+  },
+  something(
+    longArgumentName,
+    anotherLongArgumentName,
+    anotherLongArgumentName,
+    anotherLongArgumentName,
+  )
+    ? someOtherThing()
+    : somethingElse(true, 0),
+);
+
+compose(
+  (a) => {
+    return a.thing;
+  },
+  (b) => b * b,
+);
+
+somthing.reduce(function (item, thing) {
+  return (thing.blah = item);
+}, {});
+
+somthing.reduce(function (item, thing) {
+  return thing.push(item);
+}, []);
+
+reallyLongLongLongLongLongLongLongLongLongLongLongLongLongLongMethod(
+  (f, g, h) => {
+    return f.pop();
+  },
+  true,
+);
+
+// Don't do the rest of these
+
+func(
+  function () {
+    thing();
+  },
+  true,
+  false,
+);
+
+func(
+  () => {
+    thing();
+  },
+  { yes: true, cats: 5 },
+);
+
+compose(
+  (a) => {
+    return a.thing;
+  },
+  (b) => {
+    return b + "";
+  },
+);
+
+compose(
+  (a) => {
+    return a.thing;
+  },
+  (b) => [1, 2, 3, 4, 5],
+);
+
+renderThing(
+  (a) => <div>Content. So much to say. Oh my. Are we done yet?</div>,
+  args,
+);
+
+setTimeout(
+  // Something
+  function () {
+    thing();
+  },
+  500,
+);
+
+setTimeout(
+  /* blip */ function () {
+    thing();
+  },
+  500,
+);
+
+func(
+  (args) => {
+    execute(args);
+  },
+  (result) => result && console.log("success"),
+);
+
+================================================================================
+`;

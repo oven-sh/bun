@@ -1,0 +1,162 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`no-semi.ts - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+  bar: A;
+  [baz]
+
+  // none of the semicolons above this comment can be omitted.
+  // none of the semicolons below this comment are necessary.
+
+  bar: A;
+  private [baz]
+  readonly [qux]
+}
+
+=====================================output=====================================
+class A {
+  bar: A;
+  [baz]
+
+  // none of the semicolons above this comment can be omitted.
+  // none of the semicolons below this comment are necessary.
+
+  bar: A
+  private [baz]
+  readonly [qux]
+}
+
+================================================================================
+`;
+
+exports[`no-semi.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class A {
+  bar: A;
+  [baz]
+
+  // none of the semicolons above this comment can be omitted.
+  // none of the semicolons below this comment are necessary.
+
+  bar: A;
+  private [baz]
+  readonly [qux]
+}
+
+=====================================output=====================================
+class A {
+  bar: A;
+  [baz];
+
+  // none of the semicolons above this comment can be omitted.
+  // none of the semicolons below this comment are necessary.
+
+  bar: A;
+  private [baz];
+  readonly [qux];
+}
+
+================================================================================
+`;
+
+exports[`non-null.ts - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// the 2nd line needs ASI protection
+const el = ReactDOM.findDOMNode(ref)
+;(el as HTMLElement)!.style.cursor = 'pointer'
+
+=====================================output=====================================
+// the 2nd line needs ASI protection
+const el = ReactDOM.findDOMNode(ref)
+;(el as HTMLElement)!.style.cursor = "pointer"
+
+================================================================================
+`;
+
+exports[`non-null.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// the 2nd line needs ASI protection
+const el = ReactDOM.findDOMNode(ref)
+;(el as HTMLElement)!.style.cursor = 'pointer'
+
+=====================================output=====================================
+// the 2nd line needs ASI protection
+const el = ReactDOM.findDOMNode(ref);
+(el as HTMLElement)!.style.cursor = "pointer";
+
+================================================================================
+`;
+
+exports[`type-assertion.ts - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// #14039
+a;
+<b>c;
+
+a;
+(<b>c).foo();
+
+a;
+<b>c + 1;
+
+=====================================output=====================================
+// #14039
+a
+;<b>c
+
+a
+;(<b>c).foo()
+
+a
+;<b>c + 1
+
+================================================================================
+`;
+
+exports[`type-assertion.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// #14039
+a;
+<b>c;
+
+a;
+(<b>c).foo();
+
+a;
+<b>c + 1;
+
+=====================================output=====================================
+// #14039
+a;
+<b>c;
+
+a;
+(<b>c).foo();
+
+a;
+<b>c + 1;
+
+================================================================================
+`;

@@ -1,0 +1,40 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`nested.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+     .foo {font-size   :12px      ;
+
+
+  >.nested-1
+ 
+  {
+padding: 10px;   .nested-2-1{
+      color       :      red     ;
+    }
+           +      .nested-2-2      {
+  color:blue;  }}
+
+
+
+}
+
+=====================================output=====================================
+.foo {
+  font-size: 12px;
+
+  > .nested-1 {
+    padding: 10px;
+    .nested-2-1 {
+      color: red;
+    }
+    + .nested-2-2 {
+      color: blue;
+    }
+  }
+}
+
+================================================================================
+`;

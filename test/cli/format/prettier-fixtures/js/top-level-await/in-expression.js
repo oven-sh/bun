@@ -1,0 +1,3 @@
+call(
+await something()
+)

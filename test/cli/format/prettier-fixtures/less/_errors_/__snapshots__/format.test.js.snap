@@ -1,0 +1,41 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`inline-comment.less format 1`] = `
+"CssSyntaxError: Unknown word inline (5:4)
+  3 | a{
+  4 | 	prop
+> 5 | // inline
+    |    ^
+  6 | :
+  7 | value;
+  8 | }
+Cause: <css input>:5:4: Unknown word inline"
+`;
+
+exports[`open-double-quote.less format 1`] = `
+"CssSyntaxError: Unclosed string (2:17)
+  1 | a {
+> 2 | background: url("
+    |                 ^
+  3 | }
+  4 |
+Cause: <css input>:2:17: Unclosed string"
+`;
+
+exports[`open-sigle-quote.less format 1`] = `
+"CssSyntaxError: Unclosed string (2:17)
+  1 | a {
+> 2 | background: url('
+    |                 ^
+  3 | }
+  4 |
+Cause: <css input>:2:17: Unclosed string"
+`;
+
+exports[`scss-syntax.unknown format 1`] = `
+"CssSyntaxError: Unknown word $foo (1:15)
+> 1 | a {content: #{$foo}}
+    |               ^
+  2 |
+Cause: <css input>:1:15: Unknown word $foo"
+`;

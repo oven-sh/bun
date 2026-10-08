@@ -1,0 +1,25 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`attr-selector.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+[  data-sizes~="m:0" ]    {
+  color:pink;
+}
+
+[ class*="test" ]{
+  color: silver}
+
+=====================================output=====================================
+[data-sizes~="m:0"] {
+  color: pink;
+}
+
+[class*="test"] {
+  color: silver;
+}
+
+================================================================================
+`;

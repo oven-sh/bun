@@ -1,0 +1,53 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`valid-flow-default-import.mts format[babel-ts] 1`] = `
+"Unexpected token, expected "from" (1:15)
+> 1 | import module foo from "./module.wasm";
+    |               ^
+  2 | import bar from "./module.wasm";
+  3 |
+Cause: Unexpected token, expected "from" (1:14)"
+`;
+
+exports[`valid-flow-default-import.mts format[oxc-ts] 1`] = `
+"Expected \`from\` but found \`Identifier\` (1:15)
+> 1 | import module foo from "./module.wasm";
+    |               ^^^
+  2 | import bar from "./module.wasm";
+  3 |"
+`;
+
+exports[`valid-flow-default-import.mts format[typescript] 1`] = `
+"'=' expected. (1:15)
+> 1 | import module foo from "./module.wasm";
+    |               ^
+  2 | import bar from "./module.wasm";
+  3 |
+Cause: '=' expected."
+`;
+
+exports[`valid-ts-default-import.mts format[babel-ts] 1`] = `
+"Unexpected token, expected "from" (1:15)
+> 1 | import module foo from "./module.wasm";
+    |               ^
+  2 | import bar from "./module.wasm";
+  3 |
+Cause: Unexpected token, expected "from" (1:14)"
+`;
+
+exports[`valid-ts-default-import.mts format[oxc-ts] 1`] = `
+"Expected \`from\` but found \`Identifier\` (1:15)
+> 1 | import module foo from "./module.wasm";
+    |               ^^^
+  2 | import bar from "./module.wasm";
+  3 |"
+`;
+
+exports[`valid-ts-default-import.mts format[typescript] 1`] = `
+"'=' expected. (1:15)
+> 1 | import module foo from "./module.wasm";
+    |               ^
+  2 | import bar from "./module.wasm";
+  3 |
+Cause: '=' expected."
+`;

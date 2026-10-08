@@ -1,0 +1,29 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`format-anyway.json - {"checkIgnorePragma":true} format 1`] = `
+====================================options=====================================
+checkIgnorePragma: true
+parsers: ["json"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+{"allOn": "Single", "Line": "example",
+"noSpace":true,
+  "quote": {
+     "singleQuote": "example",
+                  "indented": true,
+  }
+}
+
+=====================================output=====================================
+{
+  "allOn": "Single",
+  "Line": "example",
+  "noSpace": true,
+  "quote": {
+    "singleQuote": "example",
+    "indented": true
+  }
+}
+
+================================================================================
+`;

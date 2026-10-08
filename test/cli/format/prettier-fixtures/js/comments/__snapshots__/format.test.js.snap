@@ -1,0 +1,7516 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`11273.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+1;
+/**/ /*
+x */
+
+=====================================output=====================================
+1
+/**/ /*
+x */
+
+================================================================================
+`;
+
+exports[`11273.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+1;
+/**/ /*
+x */
+
+=====================================output=====================================
+1;
+/**/ /*
+x */
+
+================================================================================
+`;
+
+exports[`15661.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+!(
+    x || // foo
+    y || // bar
+    z /*
+    * comment
+    */
+)
+
+!(
+    cond1 || // foo
+    cond2 || // bar
+    cond3 // baz
+);
+
+!(
+    a && // alpha
+    b || // bravo
+    c // charlie
+);
+
+!(
+    x || // foo
+    (y && z) // bar
+);
+
+!(
+    a || // first condition
+    (b || c) // second condition
+    || d // third condition
+);
+
+void(
+    p && // first
+    q || // second
+    r && // third
+    s // fourth
+);
+
+void(
+    cond1 || // foo
+    cond2 && // bar
+    cond3 || // baz
+    cond4 // qux
+);
+
+!(
+    (cond1 && cond2) || // multi-cond1
+    (cond3 || cond4) // multi-cond2
+);
+
+!(
+    (cond1 || cond2) && // complex-cond1
+    (cond3 || cond4) || // complex-cond2
+    cond5 // complex-cond3
+);
+
+void(
+    (condA || condB) && // test A
+    (condC || condD) || // test B
+    condE // test C
+);
+
+void(
+    (x || y) && ( // nested
+    z || w) // comment for w
+);
+
+!(
+    a && ( // begin nested
+    b || c) // end nested
+);
+
+=====================================output=====================================
+!(
+  x || // foo
+  y || // bar
+  z /*
+   * comment
+   */
+)
+
+!(
+  cond1 || // foo
+  cond2 || // bar
+  cond3 // baz
+)
+
+!(
+  (a && // alpha
+    b) || // bravo
+  c // charlie
+)
+
+!(
+  x || // foo
+  (y && z) // bar
+)
+
+!(
+  a || // first condition
+  b ||
+  c || // second condition
+  d // third condition
+)
+
+void (
+  (p && // first
+    q) || // second
+  (r && // third
+    s) // fourth
+)
+
+void (
+  cond1 || // foo
+  (cond2 && // bar
+    cond3) || // baz
+  cond4 // qux
+)
+
+!(
+  (cond1 && cond2) || // multi-cond1
+  cond3 ||
+  cond4 // multi-cond2
+)
+
+!(
+  ((cond1 || cond2) && // complex-cond1
+    (cond3 || cond4)) || // complex-cond2
+  cond5 // complex-cond3
+)
+
+void (
+  ((condA || condB) && // test A
+    (condC || condD)) || // test B
+  condE // test C
+)
+
+void (
+  (x || y) && // nested
+  (z || w) // comment for w
+)
+
+!(
+  a && // begin nested
+  (b || c) // end nested
+)
+
+================================================================================
+`;
+
+exports[`15661.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+!(
+    x || // foo
+    y || // bar
+    z /*
+    * comment
+    */
+)
+
+!(
+    cond1 || // foo
+    cond2 || // bar
+    cond3 // baz
+);
+
+!(
+    a && // alpha
+    b || // bravo
+    c // charlie
+);
+
+!(
+    x || // foo
+    (y && z) // bar
+);
+
+!(
+    a || // first condition
+    (b || c) // second condition
+    || d // third condition
+);
+
+void(
+    p && // first
+    q || // second
+    r && // third
+    s // fourth
+);
+
+void(
+    cond1 || // foo
+    cond2 && // bar
+    cond3 || // baz
+    cond4 // qux
+);
+
+!(
+    (cond1 && cond2) || // multi-cond1
+    (cond3 || cond4) // multi-cond2
+);
+
+!(
+    (cond1 || cond2) && // complex-cond1
+    (cond3 || cond4) || // complex-cond2
+    cond5 // complex-cond3
+);
+
+void(
+    (condA || condB) && // test A
+    (condC || condD) || // test B
+    condE // test C
+);
+
+void(
+    (x || y) && ( // nested
+    z || w) // comment for w
+);
+
+!(
+    a && ( // begin nested
+    b || c) // end nested
+);
+
+=====================================output=====================================
+!(
+  x || // foo
+  y || // bar
+  z /*
+   * comment
+   */
+);
+
+!(
+  cond1 || // foo
+  cond2 || // bar
+  cond3 // baz
+);
+
+!(
+  (a && // alpha
+    b) || // bravo
+  c // charlie
+);
+
+!(
+  x || // foo
+  (y && z) // bar
+);
+
+!(
+  a || // first condition
+  b ||
+  c || // second condition
+  d // third condition
+);
+
+void (
+  (p && // first
+    q) || // second
+  (r && // third
+    s) // fourth
+);
+
+void (
+  cond1 || // foo
+  (cond2 && // bar
+    cond3) || // baz
+  cond4 // qux
+);
+
+!(
+  (cond1 && cond2) || // multi-cond1
+  cond3 ||
+  cond4 // multi-cond2
+);
+
+!(
+  ((cond1 || cond2) && // complex-cond1
+    (cond3 || cond4)) || // complex-cond2
+  cond5 // complex-cond3
+);
+
+void (
+  ((condA || condB) && // test A
+    (condC || condD)) || // test B
+  condE // test C
+);
+
+void (
+  (x || y) && // nested
+  (z || w) // comment for w
+);
+
+!(
+  a && // begin nested
+  (b || c) // end nested
+);
+
+================================================================================
+`;
+
+exports[`16398.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (foo) a = b;
+/* foo */ else foo.split;
+
+if (foo) a = b;
+else /* foo */ foo.split;
+
+=====================================output=====================================
+if (foo) a = b
+/* foo */ else foo.split
+
+if (foo) a = b
+else /* foo */ foo.split
+
+================================================================================
+`;
+
+exports[`16398.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (foo) a = b;
+/* foo */ else foo.split;
+
+if (foo) a = b;
+else /* foo */ foo.split;
+
+=====================================output=====================================
+if (foo) a = b;
+/* foo */ else foo.split;
+
+if (foo) a = b;
+else /* foo */ foo.split;
+
+================================================================================
+`;
+
+exports[`array-and-object.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let object = // Comment
+{
+  key: 'value'
+}
+
+let array = // Comment
+[
+  'value'
+]
+
+=====================================output=====================================
+let object =
+  // Comment
+  {
+    key: "value",
+  }
+
+let array =
+  // Comment
+  ["value"]
+
+================================================================================
+`;
+
+exports[`array-and-object.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let object = // Comment
+{
+  key: 'value'
+}
+
+let array = // Comment
+[
+  'value'
+]
+
+=====================================output=====================================
+let object =
+  // Comment
+  {
+    key: "value",
+  };
+
+let array =
+  // Comment
+  ["value"];
+
+================================================================================
+`;
+
+exports[`arrow.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const fn = (/*event, data*/) => doSomething();
+
+const fn2 = (/*event, data*/) => doSomething(anything);
+
+=====================================output=====================================
+const fn = (/*event, data*/) => doSomething()
+
+const fn2 = (/*event, data*/) => doSomething(anything)
+
+================================================================================
+`;
+
+exports[`arrow.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const fn = (/*event, data*/) => doSomething();
+
+const fn2 = (/*event, data*/) => doSomething(anything);
+
+=====================================output=====================================
+const fn = (/*event, data*/) => doSomething();
+
+const fn2 = (/*event, data*/) => doSomething(anything);
+
+================================================================================
+`;
+
+exports[`assignment-pattern.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const { a /* comment */ = 1 } = b;
+
+const { c = 1 /* comment */ } = d;
+
+let {d //comment
+= b} = c
+
+=====================================output=====================================
+const { a /* comment */ = 1 } = b
+
+const { c = 1 /* comment */ } = d
+
+let {
+  d = b, //comment
+} = c
+
+================================================================================
+`;
+
+exports[`assignment-pattern.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const { a /* comment */ = 1 } = b;
+
+const { c = 1 /* comment */ } = d;
+
+let {d //comment
+= b} = c
+
+=====================================output=====================================
+const { a /* comment */ = 1 } = b;
+
+const { c = 1 /* comment */ } = d;
+
+let {
+  d = b, //comment
+} = c;
+
+================================================================================
+`;
+
+exports[`before-comma.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const foo = {
+  a: 'a' /* comment for this line */,
+
+  /* Section B */
+  b: 'b',
+};
+
+=====================================output=====================================
+const foo = {
+  a: "a" /* comment for this line */,
+
+  /* Section B */
+  b: "b",
+}
+
+================================================================================
+`;
+
+exports[`before-comma.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const foo = {
+  a: 'a' /* comment for this line */,
+
+  /* Section B */
+  b: 'b',
+};
+
+=====================================output=====================================
+const foo = {
+  a: "a" /* comment for this line */,
+
+  /* Section B */
+  b: "b",
+};
+
+================================================================================
+`;
+
+exports[`binary-expressions.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function addition() {
+	0
+	// Comment
+	+ x
+}
+
+function multiplication() {
+	0
+	// Comment
+	* x
+}
+
+function division() {
+	0
+	// Comment
+	/ x
+}
+
+function substraction() {
+	0
+	// Comment
+	- x
+}
+
+function remainder() {
+	0
+	// Comment
+	% x
+}
+
+function exponentiation() {
+	0
+	// Comment
+	** x
+}
+
+function leftShift() {
+	0
+	// Comment
+	<< x
+}
+
+function rightShift() {
+	0
+	// Comment
+	>> x
+}
+
+function unsignedRightShift() {
+	0
+	// Comment
+	>>> x
+}
+
+function bitwiseAnd() {
+	0
+	// Comment
+	& x
+}
+
+function bitwiseOr() {
+	0
+	// Comment
+	| x
+}
+
+function bitwiseXor() {
+	0
+	// Comment
+	^ x
+}
+
+=====================================output=====================================
+function addition() {
+  0 +
+    // Comment
+    x
+}
+
+function multiplication() {
+  0 *
+    // Comment
+    x
+}
+
+function division() {
+  0 /
+    // Comment
+    x
+}
+
+function substraction() {
+  0 -
+    // Comment
+    x
+}
+
+function remainder() {
+  0 %
+    // Comment
+    x
+}
+
+function exponentiation() {
+  0 **
+    // Comment
+    x
+}
+
+function leftShift() {
+  0 <<
+    // Comment
+    x
+}
+
+function rightShift() {
+  0 >>
+    // Comment
+    x
+}
+
+function unsignedRightShift() {
+  0 >>>
+    // Comment
+    x
+}
+
+function bitwiseAnd() {
+  0 &
+    // Comment
+    x
+}
+
+function bitwiseOr() {
+  0 |
+    // Comment
+    x
+}
+
+function bitwiseXor() {
+  0 ^
+    // Comment
+    x
+}
+
+================================================================================
+`;
+
+exports[`binary-expressions.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function addition() {
+	0
+	// Comment
+	+ x
+}
+
+function multiplication() {
+	0
+	// Comment
+	* x
+}
+
+function division() {
+	0
+	// Comment
+	/ x
+}
+
+function substraction() {
+	0
+	// Comment
+	- x
+}
+
+function remainder() {
+	0
+	// Comment
+	% x
+}
+
+function exponentiation() {
+	0
+	// Comment
+	** x
+}
+
+function leftShift() {
+	0
+	// Comment
+	<< x
+}
+
+function rightShift() {
+	0
+	// Comment
+	>> x
+}
+
+function unsignedRightShift() {
+	0
+	// Comment
+	>>> x
+}
+
+function bitwiseAnd() {
+	0
+	// Comment
+	& x
+}
+
+function bitwiseOr() {
+	0
+	// Comment
+	| x
+}
+
+function bitwiseXor() {
+	0
+	// Comment
+	^ x
+}
+
+=====================================output=====================================
+function addition() {
+  0 +
+    // Comment
+    x;
+}
+
+function multiplication() {
+  0 *
+    // Comment
+    x;
+}
+
+function division() {
+  0 /
+    // Comment
+    x;
+}
+
+function substraction() {
+  0 -
+    // Comment
+    x;
+}
+
+function remainder() {
+  0 %
+    // Comment
+    x;
+}
+
+function exponentiation() {
+  0 **
+    // Comment
+    x;
+}
+
+function leftShift() {
+  0 <<
+    // Comment
+    x;
+}
+
+function rightShift() {
+  0 >>
+    // Comment
+    x;
+}
+
+function unsignedRightShift() {
+  0 >>>
+    // Comment
+    x;
+}
+
+function bitwiseAnd() {
+  0 &
+    // Comment
+    x;
+}
+
+function bitwiseOr() {
+  0 |
+    // Comment
+    x;
+}
+
+function bitwiseXor() {
+  0 ^
+    // Comment
+    x;
+}
+
+================================================================================
+`;
+
+exports[`binary-expressions-block-comments.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = b || /** Comment */
+c;
+
+a = b /** Comment */ ||
+c;
+
+a = b || /** TODO this is a very very very very long comment that makes it go > 80 columns */
+c;
+
+a = b /** TODO this is a very very very very long comment that makes it go > 80 columns */ ||
+c;
+
+a = b || /** TODO this is a very very very very long comment that makes it go > 80 columns */ c;
+
+a = b && /** Comment */
+c;
+
+a = b /** Comment */ &&
+c;
+
+a = b && /** TODO this is a very very very very long comment that makes it go > 80 columns */
+c;
+
+a = b /** TODO this is a very very very very long comment that makes it go > 80 columns */ &&
+c;
+
+a = b && /** TODO this is a very very very very long comment that makes it go > 80 columns */ c;
+
+a = b + /** Comment */
+c;
+
+a = b /** Comment */ +
+c;
+
+a = b + /** TODO this is a very very very very long comment that makes it go > 80 columns */
+c;
+
+a = b /** TODO this is a very very very very long comment that makes it go > 80 columns */ +
+c;
+
+a = b + /** TODO this is a very very very very long comment that makes it go > 80 columns */ c;
+=====================================output=====================================
+a = b /** Comment */ || c
+
+a = b /** Comment */ || c
+
+a =
+  b /** TODO this is a very very very very long comment that makes it go > 80 columns */ ||
+  c
+
+a =
+  b /** TODO this is a very very very very long comment that makes it go > 80 columns */ ||
+  c
+
+a =
+  b ||
+  /** TODO this is a very very very very long comment that makes it go > 80 columns */ c
+
+a = b /** Comment */ && c
+
+a = b /** Comment */ && c
+
+a =
+  b /** TODO this is a very very very very long comment that makes it go > 80 columns */ &&
+  c
+
+a =
+  b /** TODO this is a very very very very long comment that makes it go > 80 columns */ &&
+  c
+
+a =
+  b &&
+  /** TODO this is a very very very very long comment that makes it go > 80 columns */ c
+
+a = b /** Comment */ + c
+
+a = b /** Comment */ + c
+
+a =
+  b /** TODO this is a very very very very long comment that makes it go > 80 columns */ +
+  c
+
+a =
+  b /** TODO this is a very very very very long comment that makes it go > 80 columns */ +
+  c
+
+a =
+  b +
+  /** TODO this is a very very very very long comment that makes it go > 80 columns */ c
+
+================================================================================
+`;
+
+exports[`binary-expressions-block-comments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = b || /** Comment */
+c;
+
+a = b /** Comment */ ||
+c;
+
+a = b || /** TODO this is a very very very very long comment that makes it go > 80 columns */
+c;
+
+a = b /** TODO this is a very very very very long comment that makes it go > 80 columns */ ||
+c;
+
+a = b || /** TODO this is a very very very very long comment that makes it go > 80 columns */ c;
+
+a = b && /** Comment */
+c;
+
+a = b /** Comment */ &&
+c;
+
+a = b && /** TODO this is a very very very very long comment that makes it go > 80 columns */
+c;
+
+a = b /** TODO this is a very very very very long comment that makes it go > 80 columns */ &&
+c;
+
+a = b && /** TODO this is a very very very very long comment that makes it go > 80 columns */ c;
+
+a = b + /** Comment */
+c;
+
+a = b /** Comment */ +
+c;
+
+a = b + /** TODO this is a very very very very long comment that makes it go > 80 columns */
+c;
+
+a = b /** TODO this is a very very very very long comment that makes it go > 80 columns */ +
+c;
+
+a = b + /** TODO this is a very very very very long comment that makes it go > 80 columns */ c;
+=====================================output=====================================
+a = b /** Comment */ || c;
+
+a = b /** Comment */ || c;
+
+a =
+  b /** TODO this is a very very very very long comment that makes it go > 80 columns */ ||
+  c;
+
+a =
+  b /** TODO this is a very very very very long comment that makes it go > 80 columns */ ||
+  c;
+
+a =
+  b ||
+  /** TODO this is a very very very very long comment that makes it go > 80 columns */ c;
+
+a = b /** Comment */ && c;
+
+a = b /** Comment */ && c;
+
+a =
+  b /** TODO this is a very very very very long comment that makes it go > 80 columns */ &&
+  c;
+
+a =
+  b /** TODO this is a very very very very long comment that makes it go > 80 columns */ &&
+  c;
+
+a =
+  b &&
+  /** TODO this is a very very very very long comment that makes it go > 80 columns */ c;
+
+a = b /** Comment */ + c;
+
+a = b /** Comment */ + c;
+
+a =
+  b /** TODO this is a very very very very long comment that makes it go > 80 columns */ +
+  c;
+
+a =
+  b /** TODO this is a very very very very long comment that makes it go > 80 columns */ +
+  c;
+
+a =
+  b +
+  /** TODO this is a very very very very long comment that makes it go > 80 columns */ c;
+
+================================================================================
+`;
+
+exports[`binary-expressions-parens.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+Math.min(
+  (
+    /* $FlowFixMe(>=0.38.0 site=www) - Flow error detected during the
+     * deployment of v0.38.0. To see the error, remove this comment and
+     * run flow */
+    document.body.scrollHeight -
+    (window.scrollY + window.innerHeight)
+  ) - devsite_footer_height,
+  0,
+)
+
+=====================================output=====================================
+Math.min(
+  /* $FlowFixMe(>=0.38.0 site=www) - Flow error detected during the
+   * deployment of v0.38.0. To see the error, remove this comment and
+   * run flow */
+  document.body.scrollHeight -
+    (window.scrollY + window.innerHeight) -
+    devsite_footer_height,
+  0,
+)
+
+================================================================================
+`;
+
+exports[`binary-expressions-parens.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+Math.min(
+  (
+    /* $FlowFixMe(>=0.38.0 site=www) - Flow error detected during the
+     * deployment of v0.38.0. To see the error, remove this comment and
+     * run flow */
+    document.body.scrollHeight -
+    (window.scrollY + window.innerHeight)
+  ) - devsite_footer_height,
+  0,
+)
+
+=====================================output=====================================
+Math.min(
+  /* $FlowFixMe(>=0.38.0 site=www) - Flow error detected during the
+   * deployment of v0.38.0. To see the error, remove this comment and
+   * run flow */
+  document.body.scrollHeight -
+    (window.scrollY + window.innerHeight) -
+    devsite_footer_height,
+  0,
+);
+
+================================================================================
+`;
+
+exports[`binary-expressions-single-comments.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = b || // Comment
+c;
+
+a = b || // TODO this is a very very very very long comment that makes it go > 80 columns
+c;
+
+a = b && // Comment
+c;
+
+a = b && // TODO this is a very very very very long comment that makes it go > 80 columns
+c;
+
+a = b + // Comment
+c;
+
+a = b + // TODO this is a very very very very long comment that makes it go > 80 columns
+c;
+=====================================output=====================================
+a =
+  b || // Comment
+  c
+
+a =
+  b || // TODO this is a very very very very long comment that makes it go > 80 columns
+  c
+
+a =
+  b && // Comment
+  c
+
+a =
+  b && // TODO this is a very very very very long comment that makes it go > 80 columns
+  c
+
+a =
+  b + // Comment
+  c
+
+a =
+  b + // TODO this is a very very very very long comment that makes it go > 80 columns
+  c
+
+================================================================================
+`;
+
+exports[`binary-expressions-single-comments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = b || // Comment
+c;
+
+a = b || // TODO this is a very very very very long comment that makes it go > 80 columns
+c;
+
+a = b && // Comment
+c;
+
+a = b && // TODO this is a very very very very long comment that makes it go > 80 columns
+c;
+
+a = b + // Comment
+c;
+
+a = b + // TODO this is a very very very very long comment that makes it go > 80 columns
+c;
+=====================================output=====================================
+a =
+  b || // Comment
+  c;
+
+a =
+  b || // TODO this is a very very very very long comment that makes it go > 80 columns
+  c;
+
+a =
+  b && // Comment
+  c;
+
+a =
+  b && // TODO this is a very very very very long comment that makes it go > 80 columns
+  c;
+
+a =
+  b + // Comment
+  c;
+
+a =
+  b + // TODO this is a very very very very long comment that makes it go > 80 columns
+  c;
+
+================================================================================
+`;
+
+exports[`blank.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// This file only
+// has comments. This comment
+// should still exist
+//
+// when printed.
+
+/**
+ * @typedef {DataDrivenMapping|ConstantMapping} Mapping
+ */
+/**
+ * @typedef {Object.<String, Mapping>} ConfigurationMapping
+ */
+
+/**
+ * @typedef {Function} D3Scale - a D3 scale
+ * @property {Function} ticks
+ * @property {Function} tickFormat
+ */
+// comment
+
+// comment
+
+=====================================output=====================================
+// This file only
+// has comments. This comment
+// should still exist
+//
+// when printed.
+
+/**
+ * @typedef {DataDrivenMapping|ConstantMapping} Mapping
+ */
+/**
+ * @typedef {Object.<String, Mapping>} ConfigurationMapping
+ */
+
+/**
+ * @typedef {Function} D3Scale - a D3 scale
+ * @property {Function} ticks
+ * @property {Function} tickFormat
+ */
+// comment
+
+// comment
+
+================================================================================
+`;
+
+exports[`blank.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// This file only
+// has comments. This comment
+// should still exist
+//
+// when printed.
+
+/**
+ * @typedef {DataDrivenMapping|ConstantMapping} Mapping
+ */
+/**
+ * @typedef {Object.<String, Mapping>} ConfigurationMapping
+ */
+
+/**
+ * @typedef {Function} D3Scale - a D3 scale
+ * @property {Function} ticks
+ * @property {Function} tickFormat
+ */
+// comment
+
+// comment
+
+=====================================output=====================================
+// This file only
+// has comments. This comment
+// should still exist
+//
+// when printed.
+
+/**
+ * @typedef {DataDrivenMapping|ConstantMapping} Mapping
+ */
+/**
+ * @typedef {Object.<String, Mapping>} ConfigurationMapping
+ */
+
+/**
+ * @typedef {Function} D3Scale - a D3 scale
+ * @property {Function} ticks
+ * @property {Function} tickFormat
+ */
+// comment
+
+// comment
+
+================================================================================
+`;
+
+exports[`break-continue-statements.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for (;;) {
+  break /* comment */;
+  continue /* comment */;
+}
+
+loop: for (;;) {
+  break /* comment */ loop;
+  break loop /* comment */;
+  continue /* comment */ loop;
+  continue loop /* comment */;
+}
+
+=====================================output=====================================
+for (;;) {
+  break /* comment */
+  continue /* comment */
+}
+
+loop: for (;;) {
+  break /* comment */ loop
+  break loop /* comment */
+  continue /* comment */ loop
+  continue loop /* comment */
+}
+
+================================================================================
+`;
+
+exports[`break-continue-statements.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for (;;) {
+  break /* comment */;
+  continue /* comment */;
+}
+
+loop: for (;;) {
+  break /* comment */ loop;
+  break loop /* comment */;
+  continue /* comment */ loop;
+  continue loop /* comment */;
+}
+
+=====================================output=====================================
+for (;;) {
+  break; /* comment */
+  continue; /* comment */
+}
+
+loop: for (;;) {
+  break /* comment */ loop;
+  break loop; /* comment */
+  continue /* comment */ loop;
+  continue loop; /* comment */
+}
+
+================================================================================
+`;
+
+exports[`break-continue-statements-2.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/prettier/prettier/issues/7126
+for (;;) {
+  if (condition) continue
+
+  // breaking comment
+  ;(possibleArray || []).sort()
+}
+
+lbl: for (;;) {
+  if (condition) continue lbl
+
+  // breaking comment
+  ;(possibleArray || []).sort()
+}
+
+for (;;) {
+  break // comment
+  ;
+  continue // comment
+  ;
+}
+
+for (;;) {
+  break
+  // comment
+  ;
+  continue
+  // comment
+  ;
+}
+
+for (;;) {
+  break /* comment */
+  ;
+  continue /* comment */
+  ;
+}
+
+for (;;) {
+  break
+  /* comment */
+  ;
+  continue
+  /* comment */
+  ;
+}
+
+=====================================output=====================================
+// https://github.com/prettier/prettier/issues/7126
+for (;;) {
+  if (condition) continue
+
+  // breaking comment
+  ;(possibleArray || []).sort()
+}
+
+lbl: for (;;) {
+  if (condition) continue lbl
+
+  // breaking comment
+  ;(possibleArray || []).sort()
+}
+
+for (;;) {
+  break // comment
+  continue // comment
+}
+
+for (;;) {
+  break
+  // comment
+  continue
+  // comment
+}
+
+for (;;) {
+  break /* comment */
+  continue /* comment */
+}
+
+for (;;) {
+  break
+  /* comment */
+  continue
+  /* comment */
+}
+
+================================================================================
+`;
+
+exports[`break-continue-statements-2.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/prettier/prettier/issues/7126
+for (;;) {
+  if (condition) continue
+
+  // breaking comment
+  ;(possibleArray || []).sort()
+}
+
+lbl: for (;;) {
+  if (condition) continue lbl
+
+  // breaking comment
+  ;(possibleArray || []).sort()
+}
+
+for (;;) {
+  break // comment
+  ;
+  continue // comment
+  ;
+}
+
+for (;;) {
+  break
+  // comment
+  ;
+  continue
+  // comment
+  ;
+}
+
+for (;;) {
+  break /* comment */
+  ;
+  continue /* comment */
+  ;
+}
+
+for (;;) {
+  break
+  /* comment */
+  ;
+  continue
+  /* comment */
+  ;
+}
+
+=====================================output=====================================
+// https://github.com/prettier/prettier/issues/7126
+for (;;) {
+  if (condition) continue;
+
+  // breaking comment
+  (possibleArray || []).sort();
+}
+
+lbl: for (;;) {
+  if (condition) continue lbl;
+
+  // breaking comment
+  (possibleArray || []).sort();
+}
+
+for (;;) {
+  break; // comment
+  continue; // comment
+}
+
+for (;;) {
+  break;
+  // comment
+  continue;
+  // comment
+}
+
+for (;;) {
+  break; /* comment */
+  continue; /* comment */
+}
+
+for (;;) {
+  break;
+  /* comment */
+  continue;
+  /* comment */
+}
+
+================================================================================
+`;
+
+exports[`break-continue-statements-3.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/prettier/prettier/issues/7126
+for (;;) {
+  if (condition){ continue
+
+  // breaking comment
+  ;(possibleArray || []).sort()
+  }
+}
+
+lbl: for (;;) {
+  if (condition){ continue lbl
+
+  // breaking comment
+  ;(possibleArray || []).sort()
+  }
+}
+
+lbl: for (;;) {
+  if (condition){
+    // prettier-ignore
+    continue                   lbl
+
+    // breaking comment
+    ;(possibleArray || []).sort()
+  }
+  if (condition){
+    // prettier-ignore
+    break                   lbl;
+
+    // breaking comment
+    ;(possibleArray || []).sort()
+  }
+}
+
+=====================================output=====================================
+// https://github.com/prettier/prettier/issues/7126
+for (;;) {
+  if (condition) {
+    continue
+
+    // breaking comment
+    ;(possibleArray || []).sort()
+  }
+}
+
+lbl: for (;;) {
+  if (condition) {
+    continue lbl
+
+    // breaking comment
+    ;(possibleArray || []).sort()
+  }
+}
+
+lbl: for (;;) {
+  if (condition) {
+    // prettier-ignore
+    continue                   lbl
+
+    // breaking comment
+    ;(possibleArray || []).sort()
+  }
+  if (condition) {
+    // prettier-ignore
+    break                   lbl
+
+    // breaking comment
+    ;(possibleArray || []).sort()
+  }
+}
+
+================================================================================
+`;
+
+exports[`break-continue-statements-3.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// https://github.com/prettier/prettier/issues/7126
+for (;;) {
+  if (condition){ continue
+
+  // breaking comment
+  ;(possibleArray || []).sort()
+  }
+}
+
+lbl: for (;;) {
+  if (condition){ continue lbl
+
+  // breaking comment
+  ;(possibleArray || []).sort()
+  }
+}
+
+lbl: for (;;) {
+  if (condition){
+    // prettier-ignore
+    continue                   lbl
+
+    // breaking comment
+    ;(possibleArray || []).sort()
+  }
+  if (condition){
+    // prettier-ignore
+    break                   lbl;
+
+    // breaking comment
+    ;(possibleArray || []).sort()
+  }
+}
+
+=====================================output=====================================
+// https://github.com/prettier/prettier/issues/7126
+for (;;) {
+  if (condition) {
+    continue;
+
+    // breaking comment
+    (possibleArray || []).sort();
+  }
+}
+
+lbl: for (;;) {
+  if (condition) {
+    continue lbl;
+
+    // breaking comment
+    (possibleArray || []).sort();
+  }
+}
+
+lbl: for (;;) {
+  if (condition) {
+    // prettier-ignore
+    continue                   lbl;
+
+    // breaking comment
+    (possibleArray || []).sort();
+  }
+  if (condition) {
+    // prettier-ignore
+    break                   lbl;
+
+    // breaking comment
+    (possibleArray || []).sort();
+  }
+}
+
+================================================================================
+`;
+
+exports[`call_comment.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+render( // Warm any cache
+  <ChildUpdates renderAnchor={true} anchorClassOn={true} />,
+  container
+);
+
+React.render( // Warm any cache
+  <ChildUpdates renderAnchor={true} anchorClassOn={true} />,
+  container
+);
+
+render?.( // Warm any cache
+  <ChildUpdates renderAnchor={true} anchorClassOn={true} />,
+  container
+);
+
+=====================================output=====================================
+render(
+  // Warm any cache
+  <ChildUpdates renderAnchor={true} anchorClassOn={true} />,
+  container,
+)
+
+React.render(
+  // Warm any cache
+  <ChildUpdates renderAnchor={true} anchorClassOn={true} />,
+  container,
+)
+
+render?.(
+  // Warm any cache
+  <ChildUpdates renderAnchor={true} anchorClassOn={true} />,
+  container,
+)
+
+================================================================================
+`;
+
+exports[`call_comment.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+render( // Warm any cache
+  <ChildUpdates renderAnchor={true} anchorClassOn={true} />,
+  container
+);
+
+React.render( // Warm any cache
+  <ChildUpdates renderAnchor={true} anchorClassOn={true} />,
+  container
+);
+
+render?.( // Warm any cache
+  <ChildUpdates renderAnchor={true} anchorClassOn={true} />,
+  container
+);
+
+=====================================output=====================================
+render(
+  // Warm any cache
+  <ChildUpdates renderAnchor={true} anchorClassOn={true} />,
+  container,
+);
+
+React.render(
+  // Warm any cache
+  <ChildUpdates renderAnchor={true} anchorClassOn={true} />,
+  container,
+);
+
+render?.(
+  // Warm any cache
+  <ChildUpdates renderAnchor={true} anchorClassOn={true} />,
+  container,
+);
+
+================================================================================
+`;
+
+exports[`class.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// #8718
+class C {
+    ma() {} /* D */ /* E */
+    mb() {}
+}
+
+class D {
+    ma() {} /* D */ /* E */ /* F */
+    mb() {}
+}
+
+=====================================output=====================================
+// #8718
+class C {
+  ma() {} /* D */ /* E */
+  mb() {}
+}
+
+class D {
+  ma() {} /* D */ /* E */ /* F */
+  mb() {}
+}
+
+================================================================================
+`;
+
+exports[`class.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// #8718
+class C {
+    ma() {} /* D */ /* E */
+    mb() {}
+}
+
+class D {
+    ma() {} /* D */ /* E */ /* F */
+    mb() {}
+}
+
+=====================================output=====================================
+// #8718
+class C {
+  ma() {} /* D */ /* E */
+  mb() {}
+}
+
+class D {
+  ma() {} /* D */ /* E */ /* F */
+  mb() {}
+}
+
+================================================================================
+`;
+
+exports[`dangling.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var a = {/* dangling */};
+var b = {
+  // dangling
+};
+var b = [/* dangling */];
+function d() {
+  /* dangling */
+}
+new Thing(/* dangling */);
+Thing(/* dangling */);
+export /* dangling */{};
+
+=====================================output=====================================
+var a = {/* dangling */}
+var b = {
+  // dangling
+}
+var b = [/* dangling */]
+function d() {
+  /* dangling */
+}
+new Thing(/* dangling */)
+Thing(/* dangling */)
+export /* dangling */ {}
+
+================================================================================
+`;
+
+exports[`dangling.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var a = {/* dangling */};
+var b = {
+  // dangling
+};
+var b = [/* dangling */];
+function d() {
+  /* dangling */
+}
+new Thing(/* dangling */);
+Thing(/* dangling */);
+export /* dangling */{};
+
+=====================================output=====================================
+var a = {/* dangling */};
+var b = {
+  // dangling
+};
+var b = [/* dangling */];
+function d() {
+  /* dangling */
+}
+new Thing(/* dangling */);
+Thing(/* dangling */);
+export /* dangling */ {};
+
+================================================================================
+`;
+
+exports[`dangling_array.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+expect(() => {}).toTriggerReadyStateChanges([
+  // Nothing.
+]);
+
+[1 /* first comment */, 2 /* second comment */, 3];
+
+=====================================output=====================================
+expect(() => {}).toTriggerReadyStateChanges([
+  // Nothing.
+])
+
+;[1 /* first comment */, 2 /* second comment */, 3]
+
+================================================================================
+`;
+
+exports[`dangling_array.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+expect(() => {}).toTriggerReadyStateChanges([
+  // Nothing.
+]);
+
+[1 /* first comment */, 2 /* second comment */, 3];
+
+=====================================output=====================================
+expect(() => {}).toTriggerReadyStateChanges([
+  // Nothing.
+]);
+
+[1 /* first comment */, 2 /* second comment */, 3];
+
+================================================================================
+`;
+
+exports[`dangling_for.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for // comment
+(;;);
+
+for /* comment */(;;);
+
+=====================================output=====================================
+for (;;) // comment
+;
+
+for (;;) /* comment */ ;
+
+================================================================================
+`;
+
+exports[`dangling_for.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for // comment
+(;;);
+
+for /* comment */(;;);
+
+=====================================output=====================================
+for (;;) // comment
+;
+
+for (;;) /* comment */ ;
+
+================================================================================
+`;
+
+exports[`dynamic_imports.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import(/* Hello */ 'something')
+
+import('something' /* Hello */)
+
+import(/* Hello */ 'something' /* Hello */)
+
+import('something' /* Hello */ + 'else')
+
+import(
+  /* Hello */
+  'something'
+  /* Hello */
+)
+
+wrap(
+  import(/* Hello */
+    'something'
+  )
+)
+
+=====================================output=====================================
+import(/* Hello */ "something")
+
+import("something" /* Hello */)
+
+import(/* Hello */ "something" /* Hello */)
+
+import("something" /* Hello */ + "else")
+
+import(
+  /* Hello */
+  "something"
+  /* Hello */
+)
+
+wrap(import(/* Hello */ "something"))
+
+================================================================================
+`;
+
+exports[`dynamic_imports.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import(/* Hello */ 'something')
+
+import('something' /* Hello */)
+
+import(/* Hello */ 'something' /* Hello */)
+
+import('something' /* Hello */ + 'else')
+
+import(
+  /* Hello */
+  'something'
+  /* Hello */
+)
+
+wrap(
+  import(/* Hello */
+    'something'
+  )
+)
+
+=====================================output=====================================
+import(/* Hello */ "something");
+
+import("something" /* Hello */);
+
+import(/* Hello */ "something" /* Hello */);
+
+import("something" /* Hello */ + "else");
+
+import(
+  /* Hello */
+  "something"
+  /* Hello */
+);
+
+wrap(import(/* Hello */ "something"));
+
+================================================================================
+`;
+
+exports[`emoji.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/* #2091 */
+
+const test = '💖'
+// This comment
+// should not get collapsed
+
+=====================================output=====================================
+/* #2091 */
+
+const test = "💖"
+// This comment
+// should not get collapsed
+
+================================================================================
+`;
+
+exports[`emoji.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/* #2091 */
+
+const test = '💖'
+// This comment
+// should not get collapsed
+
+=====================================output=====================================
+/* #2091 */
+
+const test = "💖";
+// This comment
+// should not get collapsed
+
+================================================================================
+`;
+
+exports[`empty-statements.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a; /* a */ // b
+; /* c */
+
+foo; // first
+;// second
+;// third
+
+function x() {
+} // first
+; // second
+
+a = (
+  b // 1
+  + // 2
+  c // 3
+  + // 4
+  d // 5
+  + /* 6 */
+  e // 7
+);
+
+=====================================output=====================================
+a /* a */ // b
+/* c */
+foo // first
+// second
+// third
+function x() {} // first
+// second
+a =
+  b + // 1
+  // 2
+  c + // 3
+  // 4
+  d + // 5
+  /* 6 */
+  e // 7
+
+================================================================================
+`;
+
+exports[`empty-statements.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a; /* a */ // b
+; /* c */
+
+foo; // first
+;// second
+;// third
+
+function x() {
+} // first
+; // second
+
+a = (
+  b // 1
+  + // 2
+  c // 3
+  + // 4
+  d // 5
+  + /* 6 */
+  e // 7
+);
+
+=====================================output=====================================
+a; /* a */ // b
+/* c */
+foo; // first
+// second
+// third
+function x() {} // first
+// second
+a =
+  b + // 1
+  // 2
+  c + // 3
+  // 4
+  d + // 5
+  /* 6 */
+  e; // 7
+
+================================================================================
+`;
+
+exports[`export.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export //comment
+{}
+
+export /* comment */ {};
+
+const foo = ''
+export {
+  foo // comment
+}
+
+const bar = ''
+export {
+  // comment
+  bar
+}
+
+const fooo = ''
+const barr = ''
+export {
+  fooo, // comment
+  barr, // comment
+}
+
+const foooo = ''
+const barrr = ''
+export {
+  foooo,
+
+  barrr as  // comment
+		 baz,
+} from 'foo'
+
+const fooooo = ''
+const barrrr = ''
+export {
+  fooooo,
+
+  barrrr as  // comment
+		 bazz,
+}
+
+=====================================output=====================================
+export //comment
+ {}
+
+export /* comment */ {}
+
+const foo = ""
+export {
+  foo, // comment
+}
+
+const bar = ""
+export {
+  // comment
+  bar,
+}
+
+const fooo = ""
+const barr = ""
+export {
+  fooo, // comment
+  barr, // comment
+}
+
+const foooo = ""
+const barrr = ""
+export {
+  foooo,
+  // comment
+  barrr as baz,
+} from "foo"
+
+const fooooo = ""
+const barrrr = ""
+export {
+  fooooo,
+  // comment
+  barrrr as bazz,
+}
+
+================================================================================
+`;
+
+exports[`export.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export //comment
+{}
+
+export /* comment */ {};
+
+const foo = ''
+export {
+  foo // comment
+}
+
+const bar = ''
+export {
+  // comment
+  bar
+}
+
+const fooo = ''
+const barr = ''
+export {
+  fooo, // comment
+  barr, // comment
+}
+
+const foooo = ''
+const barrr = ''
+export {
+  foooo,
+
+  barrr as  // comment
+		 baz,
+} from 'foo'
+
+const fooooo = ''
+const barrrr = ''
+export {
+  fooooo,
+
+  barrrr as  // comment
+		 bazz,
+}
+
+=====================================output=====================================
+export //comment
+ {};
+
+export /* comment */ {};
+
+const foo = "";
+export {
+  foo, // comment
+};
+
+const bar = "";
+export {
+  // comment
+  bar,
+};
+
+const fooo = "";
+const barr = "";
+export {
+  fooo, // comment
+  barr, // comment
+};
+
+const foooo = "";
+const barrr = "";
+export {
+  foooo,
+  // comment
+  barrr as baz,
+} from "foo";
+
+const fooooo = "";
+const barrrr = "";
+export {
+  fooooo,
+  // comment
+  barrrr as bazz,
+};
+
+================================================================================
+`;
+
+exports[`export-and-import.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// These are tests to compare comment formats in \`export\` and \`import\`.
+
+export {
+  foo,
+
+  bar as  // comment
+		 baz,
+} from 'foo'
+
+const fooo = ""
+const barr = ""
+
+export {
+  fooo,
+
+  barr as  // comment
+		 bazz,
+}
+
+import {
+  foo,
+
+  bar as  // comment
+		 baz,
+} from 'foo'
+
+=====================================output=====================================
+// These are tests to compare comment formats in \`export\` and \`import\`.
+
+export {
+  foo,
+  // comment
+  bar as baz,
+} from "foo"
+
+const fooo = ""
+const barr = ""
+
+export {
+  fooo,
+  // comment
+  barr as bazz,
+}
+
+import {
+  foo,
+  // comment
+  bar as baz,
+} from "foo"
+
+================================================================================
+`;
+
+exports[`export-and-import.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// These are tests to compare comment formats in \`export\` and \`import\`.
+
+export {
+  foo,
+
+  bar as  // comment
+		 baz,
+} from 'foo'
+
+const fooo = ""
+const barr = ""
+
+export {
+  fooo,
+
+  barr as  // comment
+		 bazz,
+}
+
+import {
+  foo,
+
+  bar as  // comment
+		 baz,
+} from 'foo'
+
+=====================================output=====================================
+// These are tests to compare comment formats in \`export\` and \`import\`.
+
+export {
+  foo,
+  // comment
+  bar as baz,
+} from "foo";
+
+const fooo = "";
+const barr = "";
+
+export {
+  fooo,
+  // comment
+  barr as bazz,
+};
+
+import {
+  foo,
+  // comment
+  bar as baz,
+} from "foo";
+
+================================================================================
+`;
+
+exports[`first-line.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a // comment
+b
+
+=====================================output=====================================
+a // comment
+b
+
+================================================================================
+`;
+
+exports[`first-line.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a // comment
+b
+
+=====================================output=====================================
+a; // comment
+b;
+
+================================================================================
+`;
+
+exports[`function-declaration.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function a(/* comment */) {} // comment
+function b() {} // comment
+function c(/* comment */ argA, argB, argC) {} // comment
+call((/*object*/ row) => {});
+KEYPAD_NUMBERS.map(num => ( // Buttons 0-9
+  <div />
+));
+
+function f1 /* f */() {}
+function f2 (/* args */) {}
+function f3 () /* returns */ {}
+function f4 /* f */(/* args */) /* returns */ {}
+
+function f5 /* f */(/* a */ a) {}
+function f6 /* f */(a /* a */) {}
+function f7 /* f */(/* a */ a) /* returns */ {}
+
+const obj = {
+  f1 /* f */() {},
+  f2 (/* args */) {},
+  f3 () /* returns */ {},
+  f4 /* f */(/* args */) /* returns */ {},
+};
+
+(function f /* f */() {})();
+(function f (/* args */) {})();
+(function f () /* returns */ {})();
+(function f /* f */(/* args */) /* returns */ {})();
+
+class C1 {
+  f/* f */() {}
+}
+class C2 {
+  f(/* args */) {}
+}
+class C3 {
+  f() /* returns */ {}
+}
+class C4 {
+  f/* f */(/* args */) /* returns */ {}
+}
+
+function foo1() 
+// this is a function
+{
+  return 42
+}
+
+function foo2() // this is a function
+{
+  return 42
+}
+
+function foo3() { // this is a function
+  return 42
+}
+
+function foo4() {
+  // this is a function
+  return 42;
+}
+
+=====================================output=====================================
+function a(/* comment */) {} // comment
+function b() {} // comment
+function c(/* comment */ argA, argB, argC) {} // comment
+call((/*object*/ row) => {})
+KEYPAD_NUMBERS.map((num) => (
+  // Buttons 0-9
+  <div />
+))
+
+function f1 /* f */() {}
+function f2(/* args */) {}
+function f3() /* returns */ {}
+function f4 /* f */(/* args */) /* returns */ {}
+
+function f5 /* f */(/* a */ a) {}
+function f6 /* f */(a /* a */) {}
+function f7 /* f */(/* a */ a) /* returns */ {}
+
+const obj = {
+  f1 /* f */() {},
+  f2(/* args */) {},
+  f3() /* returns */ {},
+  f4 /* f */(/* args */) /* returns */ {},
+}
+
+;(function f /* f */() {})()
+;(function f(/* args */) {})()
+;(function f() /* returns */ {})()
+;(function f /* f */(/* args */) /* returns */ {})()
+
+class C1 {
+  f /* f */() {}
+}
+class C2 {
+  f(/* args */) {}
+}
+class C3 {
+  f() /* returns */ {}
+}
+class C4 {
+  f /* f */(/* args */) /* returns */ {}
+}
+
+function foo1() {
+  // this is a function
+  return 42
+}
+
+function foo2() {
+  // this is a function
+  return 42
+}
+
+function foo3() {
+  // this is a function
+  return 42
+}
+
+function foo4() {
+  // this is a function
+  return 42
+}
+
+================================================================================
+`;
+
+exports[`function-declaration.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function a(/* comment */) {} // comment
+function b() {} // comment
+function c(/* comment */ argA, argB, argC) {} // comment
+call((/*object*/ row) => {});
+KEYPAD_NUMBERS.map(num => ( // Buttons 0-9
+  <div />
+));
+
+function f1 /* f */() {}
+function f2 (/* args */) {}
+function f3 () /* returns */ {}
+function f4 /* f */(/* args */) /* returns */ {}
+
+function f5 /* f */(/* a */ a) {}
+function f6 /* f */(a /* a */) {}
+function f7 /* f */(/* a */ a) /* returns */ {}
+
+const obj = {
+  f1 /* f */() {},
+  f2 (/* args */) {},
+  f3 () /* returns */ {},
+  f4 /* f */(/* args */) /* returns */ {},
+};
+
+(function f /* f */() {})();
+(function f (/* args */) {})();
+(function f () /* returns */ {})();
+(function f /* f */(/* args */) /* returns */ {})();
+
+class C1 {
+  f/* f */() {}
+}
+class C2 {
+  f(/* args */) {}
+}
+class C3 {
+  f() /* returns */ {}
+}
+class C4 {
+  f/* f */(/* args */) /* returns */ {}
+}
+
+function foo1() 
+// this is a function
+{
+  return 42
+}
+
+function foo2() // this is a function
+{
+  return 42
+}
+
+function foo3() { // this is a function
+  return 42
+}
+
+function foo4() {
+  // this is a function
+  return 42;
+}
+
+=====================================output=====================================
+function a(/* comment */) {} // comment
+function b() {} // comment
+function c(/* comment */ argA, argB, argC) {} // comment
+call((/*object*/ row) => {});
+KEYPAD_NUMBERS.map((num) => (
+  // Buttons 0-9
+  <div />
+));
+
+function f1 /* f */() {}
+function f2(/* args */) {}
+function f3() /* returns */ {}
+function f4 /* f */(/* args */) /* returns */ {}
+
+function f5 /* f */(/* a */ a) {}
+function f6 /* f */(a /* a */) {}
+function f7 /* f */(/* a */ a) /* returns */ {}
+
+const obj = {
+  f1 /* f */() {},
+  f2(/* args */) {},
+  f3() /* returns */ {},
+  f4 /* f */(/* args */) /* returns */ {},
+};
+
+(function f /* f */() {})();
+(function f(/* args */) {})();
+(function f() /* returns */ {})();
+(function f /* f */(/* args */) /* returns */ {})();
+
+class C1 {
+  f /* f */() {}
+}
+class C2 {
+  f(/* args */) {}
+}
+class C3 {
+  f() /* returns */ {}
+}
+class C4 {
+  f /* f */(/* args */) /* returns */ {}
+}
+
+function foo1() {
+  // this is a function
+  return 42;
+}
+
+function foo2() {
+  // this is a function
+  return 42;
+}
+
+function foo3() {
+  // this is a function
+  return 42;
+}
+
+function foo4() {
+  // this is a function
+  return 42;
+}
+
+================================================================================
+`;
+
+exports[`if.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (1)
+// 11
+{
+  false
+}
+// comment
+else if (2)
+  true
+// multi
+// ple
+// lines
+else if (3)
+  // existing comment
+  true
+// okay?
+else if (4) {
+  // empty with existing comment
+}
+// comment
+else {
+}
+
+if (5) // comment
+true
+
+if (6) // comment
+{true}
+else if (7) // comment
+true
+else // comment
+{true}
+
+if (8) // comment
+// comment
+{true}
+else if (9) // comment
+// comment
+true
+else // comment
+// comment
+{true}
+
+if (10) /* comment */ // comment
+{true}
+else if (11) /* comment */
+true
+else if (12) // comment /* comment */ // comment
+true
+else if (13) /* comment */ /* comment */ // comment
+true
+else /* comment */
+{true}
+
+if (14) // comment 1
+/* comment 2 */
+// comment 3
+{true}
+else if (15) // comment
+/* comment */
+/* comment */ // comment
+true
+
+=====================================output=====================================
+if (1)
+// 11
+{
+  false
+}
+// comment
+else if (2) true
+// multi
+// ple
+// lines
+else if (3)
+  // existing comment
+  true
+// okay?
+else if (4) {
+  // empty with existing comment
+}
+// comment
+else {
+}
+
+if (5)
+  // comment
+  true
+
+if (6) // comment
+{
+  true
+} else if (7)
+  // comment
+  true
+else // comment
+{
+  true
+}
+
+if (8) // comment
+// comment
+{
+  true
+} else if (9)
+  // comment
+  // comment
+  true
+else // comment
+// comment
+{
+  true
+}
+
+if (10) /* comment */ // comment
+{
+  true
+} else if (11) /* comment */ true
+else if (12)
+  // comment /* comment */ // comment
+  true
+else if (13)
+  /* comment */ /* comment */ // comment
+  true
+else /* comment */
+{
+  true
+}
+
+if (14) // comment 1
+/* comment 2 */
+// comment 3
+{
+  true
+} else if (15)
+  // comment
+  /* comment */
+  /* comment */ // comment
+  true
+
+================================================================================
+`;
+
+exports[`if.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+if (1)
+// 11
+{
+  false
+}
+// comment
+else if (2)
+  true
+// multi
+// ple
+// lines
+else if (3)
+  // existing comment
+  true
+// okay?
+else if (4) {
+  // empty with existing comment
+}
+// comment
+else {
+}
+
+if (5) // comment
+true
+
+if (6) // comment
+{true}
+else if (7) // comment
+true
+else // comment
+{true}
+
+if (8) // comment
+// comment
+{true}
+else if (9) // comment
+// comment
+true
+else // comment
+// comment
+{true}
+
+if (10) /* comment */ // comment
+{true}
+else if (11) /* comment */
+true
+else if (12) // comment /* comment */ // comment
+true
+else if (13) /* comment */ /* comment */ // comment
+true
+else /* comment */
+{true}
+
+if (14) // comment 1
+/* comment 2 */
+// comment 3
+{true}
+else if (15) // comment
+/* comment */
+/* comment */ // comment
+true
+
+=====================================output=====================================
+if (1)
+// 11
+{
+  false;
+}
+// comment
+else if (2) true;
+// multi
+// ple
+// lines
+else if (3)
+  // existing comment
+  true;
+// okay?
+else if (4) {
+  // empty with existing comment
+}
+// comment
+else {
+}
+
+if (5)
+  // comment
+  true;
+
+if (6) // comment
+{
+  true;
+} else if (7)
+  // comment
+  true;
+else // comment
+{
+  true;
+}
+
+if (8) // comment
+// comment
+{
+  true;
+} else if (9)
+  // comment
+  // comment
+  true;
+else // comment
+// comment
+{
+  true;
+}
+
+if (10) /* comment */ // comment
+{
+  true;
+} else if (11) /* comment */ true;
+else if (12)
+  // comment /* comment */ // comment
+  true;
+else if (13)
+  /* comment */ /* comment */ // comment
+  true;
+else /* comment */
+{
+  true;
+}
+
+if (14) // comment 1
+/* comment 2 */
+// comment 3
+{
+  true;
+} else if (15)
+  // comment
+  /* comment */
+  /* comment */ // comment
+  true;
+
+================================================================================
+`;
+
+exports[`issue-3532.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import React from 'react';
+
+/*
+import styled from 'react-emotion';
+
+const AspectRatioBox = styled.div\`
+  &::before {
+    content: '';
+    width: 1px;
+    margin-left: -1px;
+    float: left;
+    height: 0;
+    padding-top: \${props => 100 / props.aspectRatio}%;
+  }
+
+  &::after {
+    /* To clear float *//*
+    content: '';
+    display: table;
+    clear: both;
+  }
+\`;
+*/
+
+const AspectRatioBox = ({
+  aspectRatio,
+  children,
+  ...props
+}) => (
+  <div
+    className={\`height: 0;
+  overflow: hidden;
+  padding-top: \${props => 100 / props.aspectRatio}%;
+  background: white;
+  position: relative;\`}
+  >
+    <div>{children}</div>
+  </div>
+);
+
+export default AspectRatioBox;
+
+=====================================output=====================================
+import React from "react"
+
+/*
+import styled from 'react-emotion';
+
+const AspectRatioBox = styled.div\`
+  &::before {
+    content: '';
+    width: 1px;
+    margin-left: -1px;
+    float: left;
+    height: 0;
+    padding-top: \${props => 100 / props.aspectRatio}%;
+  }
+
+  &::after {
+    /* To clear float */ /*
+    content: '';
+    display: table;
+    clear: both;
+  }
+\`;
+*/
+
+const AspectRatioBox = ({ aspectRatio, children, ...props }) => (
+  <div
+    className={\`height: 0;
+  overflow: hidden;
+  padding-top: \${(props) => 100 / props.aspectRatio}%;
+  background: white;
+  position: relative;\`}
+  >
+    <div>{children}</div>
+  </div>
+)
+
+export default AspectRatioBox
+
+================================================================================
+`;
+
+exports[`issue-3532.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import React from 'react';
+
+/*
+import styled from 'react-emotion';
+
+const AspectRatioBox = styled.div\`
+  &::before {
+    content: '';
+    width: 1px;
+    margin-left: -1px;
+    float: left;
+    height: 0;
+    padding-top: \${props => 100 / props.aspectRatio}%;
+  }
+
+  &::after {
+    /* To clear float *//*
+    content: '';
+    display: table;
+    clear: both;
+  }
+\`;
+*/
+
+const AspectRatioBox = ({
+  aspectRatio,
+  children,
+  ...props
+}) => (
+  <div
+    className={\`height: 0;
+  overflow: hidden;
+  padding-top: \${props => 100 / props.aspectRatio}%;
+  background: white;
+  position: relative;\`}
+  >
+    <div>{children}</div>
+  </div>
+);
+
+export default AspectRatioBox;
+
+=====================================output=====================================
+import React from "react";
+
+/*
+import styled from 'react-emotion';
+
+const AspectRatioBox = styled.div\`
+  &::before {
+    content: '';
+    width: 1px;
+    margin-left: -1px;
+    float: left;
+    height: 0;
+    padding-top: \${props => 100 / props.aspectRatio}%;
+  }
+
+  &::after {
+    /* To clear float */ /*
+    content: '';
+    display: table;
+    clear: both;
+  }
+\`;
+*/
+
+const AspectRatioBox = ({ aspectRatio, children, ...props }) => (
+  <div
+    className={\`height: 0;
+  overflow: hidden;
+  padding-top: \${(props) => 100 / props.aspectRatio}%;
+  background: white;
+  position: relative;\`}
+  >
+    <div>{children}</div>
+  </div>
+);
+
+export default AspectRatioBox;
+
+================================================================================
+`;
+
+exports[`issue-11050.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+test =
+  /* @ts-ignore */
+  (arg1, arg2, arg3, arg4, arg5) => (arg6, art7, arg8, arg9, arg10, arg11, arg12) => 'blah'
+
+test =
+  /* @ts-ignore */
+
+    (arg1, arg2, arg3, arg4, arg5) =>
+    (arg6, art7, arg8, arg9, arg10, arg11, arg12) =>
+      "blah";
+
+testFunction =
+  // @ts-ignore ts-migrate(7031) FIXME: Binding element 'terms' implicitly has an 'any' ty... Remove this comment to see the full error message
+    ({ foo1 }, { foo2 }) =>
+    (foo3, foo4) => {
+      return null;
+    };
+
+=====================================output=====================================
+test =
+  /* @ts-ignore */
+  (arg1, arg2, arg3, arg4, arg5) =>
+    (arg6, art7, arg8, arg9, arg10, arg11, arg12) =>
+      "blah"
+
+test =
+  /* @ts-ignore */
+
+  (arg1, arg2, arg3, arg4, arg5) =>
+    (arg6, art7, arg8, arg9, arg10, arg11, arg12) =>
+      "blah"
+
+testFunction =
+  // @ts-ignore ts-migrate(7031) FIXME: Binding element 'terms' implicitly has an 'any' ty... Remove this comment to see the full error message
+  ({ foo1 }, { foo2 }) =>
+    (foo3, foo4) => {
+      return null
+    }
+
+================================================================================
+`;
+
+exports[`issue-11050.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+test =
+  /* @ts-ignore */
+  (arg1, arg2, arg3, arg4, arg5) => (arg6, art7, arg8, arg9, arg10, arg11, arg12) => 'blah'
+
+test =
+  /* @ts-ignore */
+
+    (arg1, arg2, arg3, arg4, arg5) =>
+    (arg6, art7, arg8, arg9, arg10, arg11, arg12) =>
+      "blah";
+
+testFunction =
+  // @ts-ignore ts-migrate(7031) FIXME: Binding element 'terms' implicitly has an 'any' ty... Remove this comment to see the full error message
+    ({ foo1 }, { foo2 }) =>
+    (foo3, foo4) => {
+      return null;
+    };
+
+=====================================output=====================================
+test =
+  /* @ts-ignore */
+  (arg1, arg2, arg3, arg4, arg5) =>
+    (arg6, art7, arg8, arg9, arg10, arg11, arg12) =>
+      "blah";
+
+test =
+  /* @ts-ignore */
+
+  (arg1, arg2, arg3, arg4, arg5) =>
+    (arg6, art7, arg8, arg9, arg10, arg11, arg12) =>
+      "blah";
+
+testFunction =
+  // @ts-ignore ts-migrate(7031) FIXME: Binding element 'terms' implicitly has an 'any' ty... Remove this comment to see the full error message
+  ({ foo1 }, { foo2 }) =>
+    (foo3, foo4) => {
+      return null;
+    };
+
+================================================================================
+`;
+
+exports[`issues.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Does not need to break as it fits in 80 columns
+this.call(a, /* comment */ b);
+
+// Comments should either stay at the end of the line or always before, but
+// not one before and one after.
+throw new ProcessSystemError({
+  code: acc.error.code, // Alias of errno
+  originalError: acc.error, // Just in case.
+});
+
+// Missing one level of indentation because of the comment
+const rootEpic = (actions, store) => (
+  combineEpics(...epics)(actions, store)
+    // Log errors and continue.
+    .catch((err, stream) => {
+      getLogger().error(err);
+      return stream;
+    })
+);
+
+// optional trailing comma gets moved all the way to the beginning
+const regex = new RegExp(
+  '^\\\\s*' + // beginning of the line
+  'name\\\\s*=\\\\s*' + // name =
+  '[\\'"]' + // opening quotation mark
+  escapeStringRegExp(target.name) + // target name
+  '[\\'"]' + // closing quotation mark
+  ',?$', // optional trailing comma
+);
+
+// The comment is moved and doesn't trigger the eslint rule anymore
+import path from 'path'; // eslint-disable-line nuclide-internal/prefer-nuclide-uri
+
+// Comments disappear in-between MemberExpressions
+Observable.of(process)
+  // Don't complete until we say so!
+  .merge(Observable.never())
+  // Get the errors.
+  .takeUntil(throwOnError ? errors.flatMap(Observable.throw) : errors)
+  .takeUntil(exit);
+
+// Comments disappear inside of JSX
+<div>
+  {/* Some comment */}
+</div>;
+
+// Comments in JSX tag are placed in a non optimal way
+<div
+  // comment
+/>;
+
+// Comments disappear in empty blocks
+if (1) {
+  // Comment
+}
+
+// Comments trigger invalid JavaScript in-between else if
+if (1) {
+}
+// Comment
+else {
+
+}
+
+// The comment makes the line break in a weird way
+const result = asyncExecute('non_existing_command', /* args */ []);
+
+// The closing paren is printed on the same line as the comment
+foo({}
+  // Hi
+);
+
+=====================================output=====================================
+// Does not need to break as it fits in 80 columns
+this.call(a, /* comment */ b)
+
+// Comments should either stay at the end of the line or always before, but
+// not one before and one after.
+throw new ProcessSystemError({
+  code: acc.error.code, // Alias of errno
+  originalError: acc.error, // Just in case.
+})
+
+// Missing one level of indentation because of the comment
+const rootEpic = (actions, store) =>
+  combineEpics(...epics)(actions, store)
+    // Log errors and continue.
+    .catch((err, stream) => {
+      getLogger().error(err)
+      return stream
+    })
+
+// optional trailing comma gets moved all the way to the beginning
+const regex = new RegExp(
+  "^\\\\s*" + // beginning of the line
+    "name\\\\s*=\\\\s*" + // name =
+    "['\\"]" + // opening quotation mark
+    escapeStringRegExp(target.name) + // target name
+    "['\\"]" + // closing quotation mark
+    ",?$", // optional trailing comma
+)
+
+// The comment is moved and doesn't trigger the eslint rule anymore
+import path from "path" // eslint-disable-line nuclide-internal/prefer-nuclide-uri
+
+// Comments disappear in-between MemberExpressions
+Observable.of(process)
+  // Don't complete until we say so!
+  .merge(Observable.never())
+  // Get the errors.
+  .takeUntil(throwOnError ? errors.flatMap(Observable.throw) : errors)
+  .takeUntil(exit)
+
+// Comments disappear inside of JSX
+;<div>{/* Some comment */}</div>
+
+// Comments in JSX tag are placed in a non optimal way
+;<div
+// comment
+/>
+
+// Comments disappear in empty blocks
+if (1) {
+  // Comment
+}
+
+// Comments trigger invalid JavaScript in-between else if
+if (1) {
+}
+// Comment
+else {
+}
+
+// The comment makes the line break in a weird way
+const result = asyncExecute("non_existing_command", /* args */ [])
+
+// The closing paren is printed on the same line as the comment
+foo(
+  {},
+  // Hi
+)
+
+================================================================================
+`;
+
+exports[`issues.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Does not need to break as it fits in 80 columns
+this.call(a, /* comment */ b);
+
+// Comments should either stay at the end of the line or always before, but
+// not one before and one after.
+throw new ProcessSystemError({
+  code: acc.error.code, // Alias of errno
+  originalError: acc.error, // Just in case.
+});
+
+// Missing one level of indentation because of the comment
+const rootEpic = (actions, store) => (
+  combineEpics(...epics)(actions, store)
+    // Log errors and continue.
+    .catch((err, stream) => {
+      getLogger().error(err);
+      return stream;
+    })
+);
+
+// optional trailing comma gets moved all the way to the beginning
+const regex = new RegExp(
+  '^\\\\s*' + // beginning of the line
+  'name\\\\s*=\\\\s*' + // name =
+  '[\\'"]' + // opening quotation mark
+  escapeStringRegExp(target.name) + // target name
+  '[\\'"]' + // closing quotation mark
+  ',?$', // optional trailing comma
+);
+
+// The comment is moved and doesn't trigger the eslint rule anymore
+import path from 'path'; // eslint-disable-line nuclide-internal/prefer-nuclide-uri
+
+// Comments disappear in-between MemberExpressions
+Observable.of(process)
+  // Don't complete until we say so!
+  .merge(Observable.never())
+  // Get the errors.
+  .takeUntil(throwOnError ? errors.flatMap(Observable.throw) : errors)
+  .takeUntil(exit);
+
+// Comments disappear inside of JSX
+<div>
+  {/* Some comment */}
+</div>;
+
+// Comments in JSX tag are placed in a non optimal way
+<div
+  // comment
+/>;
+
+// Comments disappear in empty blocks
+if (1) {
+  // Comment
+}
+
+// Comments trigger invalid JavaScript in-between else if
+if (1) {
+}
+// Comment
+else {
+
+}
+
+// The comment makes the line break in a weird way
+const result = asyncExecute('non_existing_command', /* args */ []);
+
+// The closing paren is printed on the same line as the comment
+foo({}
+  // Hi
+);
+
+=====================================output=====================================
+// Does not need to break as it fits in 80 columns
+this.call(a, /* comment */ b);
+
+// Comments should either stay at the end of the line or always before, but
+// not one before and one after.
+throw new ProcessSystemError({
+  code: acc.error.code, // Alias of errno
+  originalError: acc.error, // Just in case.
+});
+
+// Missing one level of indentation because of the comment
+const rootEpic = (actions, store) =>
+  combineEpics(...epics)(actions, store)
+    // Log errors and continue.
+    .catch((err, stream) => {
+      getLogger().error(err);
+      return stream;
+    });
+
+// optional trailing comma gets moved all the way to the beginning
+const regex = new RegExp(
+  "^\\\\s*" + // beginning of the line
+    "name\\\\s*=\\\\s*" + // name =
+    "['\\"]" + // opening quotation mark
+    escapeStringRegExp(target.name) + // target name
+    "['\\"]" + // closing quotation mark
+    ",?$", // optional trailing comma
+);
+
+// The comment is moved and doesn't trigger the eslint rule anymore
+import path from "path"; // eslint-disable-line nuclide-internal/prefer-nuclide-uri
+
+// Comments disappear in-between MemberExpressions
+Observable.of(process)
+  // Don't complete until we say so!
+  .merge(Observable.never())
+  // Get the errors.
+  .takeUntil(throwOnError ? errors.flatMap(Observable.throw) : errors)
+  .takeUntil(exit);
+
+// Comments disappear inside of JSX
+<div>{/* Some comment */}</div>;
+
+// Comments in JSX tag are placed in a non optimal way
+<div
+// comment
+/>;
+
+// Comments disappear in empty blocks
+if (1) {
+  // Comment
+}
+
+// Comments trigger invalid JavaScript in-between else if
+if (1) {
+}
+// Comment
+else {
+}
+
+// The comment makes the line break in a weird way
+const result = asyncExecute("non_existing_command", /* args */ []);
+
+// The closing paren is printed on the same line as the comment
+foo(
+  {},
+  // Hi
+);
+
+================================================================================
+`;
+
+exports[`jsdoc.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/** @type {any} */
+const x = (
+    <div>
+        <div />
+    </div>
+);
+
+/**
+ * @type {object}
+ */
+() => (
+    <div>
+        sajdfpoiasdjfpoiasdjfpoiasdjfpoiadsjfpaoisdjfapsdiofjapioisadfaskfaspiofjp
+    </div>
+);
+
+/**
+ * @type {object}
+ */
+function HelloWorld() {
+    return (
+        <div>
+           <span>Test</span>
+        </div>
+    );
+}
+
+=====================================output=====================================
+/** @type {any} */
+const x = (
+  <div>
+    <div />
+  </div>
+)
+
+;/**
+ * @type {object}
+ */
+() => (
+  <div>
+    sajdfpoiasdjfpoiasdjfpoiasdjfpoiadsjfpaoisdjfapsdiofjapioisadfaskfaspiofjp
+  </div>
+)
+
+/**
+ * @type {object}
+ */
+function HelloWorld() {
+  return (
+    <div>
+      <span>Test</span>
+    </div>
+  )
+}
+
+================================================================================
+`;
+
+exports[`jsdoc.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/** @type {any} */
+const x = (
+    <div>
+        <div />
+    </div>
+);
+
+/**
+ * @type {object}
+ */
+() => (
+    <div>
+        sajdfpoiasdjfpoiasdjfpoiasdjfpoiadsjfpaoisdjfapsdiofjapioisadfaskfaspiofjp
+    </div>
+);
+
+/**
+ * @type {object}
+ */
+function HelloWorld() {
+    return (
+        <div>
+           <span>Test</span>
+        </div>
+    );
+}
+
+=====================================output=====================================
+/** @type {any} */
+const x = (
+  <div>
+    <div />
+  </div>
+);
+
+/**
+ * @type {object}
+ */
+() => (
+  <div>
+    sajdfpoiasdjfpoiasdjfpoiasdjfpoiadsjfpaoisdjfapsdiofjapioisadfaskfaspiofjp
+  </div>
+);
+
+/**
+ * @type {object}
+ */
+function HelloWorld() {
+  return (
+    <div>
+      <span>Test</span>
+    </div>
+  );
+}
+
+================================================================================
+`;
+
+exports[`jsdoc-nestled.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const issues = {
+  see: "#7724 and #12653"
+  /** Trailing comment 1 (not nestled as both comments should be multiline for that) *//**
+  * Trailing comment 2
+  */
+};
+
+/**
+ * @template T
+ * @param {Type} type
+ * @param {T} value
+ * @return {Value}
+ *//**
+ * @param {Type} type
+ * @return {Value}
+ */
+function value(type, value) {
+  if (arguments.length === 2) {
+    return new ConcreteValue(type, value);
+  } else {
+    return new Value(type);
+  }
+}
+
+/** Trailing nestled comment 1
+ *//** Trailing nestled comment 2
+ *//** Trailing nestled comment 3
+ */
+
+=====================================output=====================================
+const issues = {
+  see: "#7724 and #12653",
+  /** Trailing comment 1 (not nestled as both comments should be multiline for that) */ /**
+   * Trailing comment 2
+   */
+}
+
+/**
+ * @template T
+ * @param {Type} type
+ * @param {T} value
+ * @return {Value}
+ *//**
+ * @param {Type} type
+ * @return {Value}
+ */
+function value(type, value) {
+  if (arguments.length === 2) {
+    return new ConcreteValue(type, value)
+  } else {
+    return new Value(type)
+  }
+}
+
+/** Trailing nestled comment 1
+ *//** Trailing nestled comment 2
+ *//** Trailing nestled comment 3
+ */
+
+================================================================================
+`;
+
+exports[`jsdoc-nestled.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const issues = {
+  see: "#7724 and #12653"
+  /** Trailing comment 1 (not nestled as both comments should be multiline for that) *//**
+  * Trailing comment 2
+  */
+};
+
+/**
+ * @template T
+ * @param {Type} type
+ * @param {T} value
+ * @return {Value}
+ *//**
+ * @param {Type} type
+ * @return {Value}
+ */
+function value(type, value) {
+  if (arguments.length === 2) {
+    return new ConcreteValue(type, value);
+  } else {
+    return new Value(type);
+  }
+}
+
+/** Trailing nestled comment 1
+ *//** Trailing nestled comment 2
+ *//** Trailing nestled comment 3
+ */
+
+=====================================output=====================================
+const issues = {
+  see: "#7724 and #12653",
+  /** Trailing comment 1 (not nestled as both comments should be multiline for that) */ /**
+   * Trailing comment 2
+   */
+};
+
+/**
+ * @template T
+ * @param {Type} type
+ * @param {T} value
+ * @return {Value}
+ *//**
+ * @param {Type} type
+ * @return {Value}
+ */
+function value(type, value) {
+  if (arguments.length === 2) {
+    return new ConcreteValue(type, value);
+  } else {
+    return new Value(type);
+  }
+}
+
+/** Trailing nestled comment 1
+ *//** Trailing nestled comment 2
+ *//** Trailing nestled comment 3
+ */
+
+================================================================================
+`;
+
+exports[`jsdoc-nestled-dangling.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+{{{{{{{
+o={
+  /**
+   * A
+   *//**
+   * B
+   */
+
+}
+}}}}}}}
+
+=====================================output=====================================
+{
+  {
+    {
+      {
+        {
+          {
+            {
+              o = {
+                /**
+                 * A
+                 *//**
+                 * B
+                 */
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+================================================================================
+`;
+
+exports[`jsdoc-nestled-dangling.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+{{{{{{{
+o={
+  /**
+   * A
+   *//**
+   * B
+   */
+
+}
+}}}}}}}
+
+=====================================output=====================================
+{
+  {
+    {
+      {
+        {
+          {
+            {
+              o = {
+                /**
+                 * A
+                 *//**
+                 * B
+                 */
+              };
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+================================================================================
+`;
+
+exports[`jsx.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div>
+  {
+    /* comment */
+  }
+</div>;
+
+<div>
+  {/* comment */
+  }
+</div>;
+
+<div>
+  {/* comment
+*/
+  }
+</div>;
+
+<div>
+  {a/* comment
+*/
+  }
+</div>;
+
+<div>
+  {/* comment
+*/
+  a
+  }
+</div>;
+
+<div>
+  {/* comment */
+  }
+</div>;
+
+<div>
+  {/* comment */}
+</div>;
+
+<div>
+  {
+    // single line comment
+  }
+</div>;
+
+<div>
+  {
+    // multiple line comments 1
+    // multiple line comments 2
+  }
+</div>;
+
+<div>
+  {
+    // multiple mixed comments 1
+    /* multiple mixed comments 2 */
+    /* multiple mixed comments 3 */
+    // multiple mixed comments 4
+  }
+</div>;
+
+<div>
+  {
+    // Some very v  ery very very merry (xmas) very very long line to break line width limit
+  }
+</div>;
+
+<div>{/*<div>  Some very v  ery very very long line to break line width limit </div>*/}</div>;
+
+<div>
+  {/**
+   * JSDoc-y comment in JSX. I wonder what will happen to it?
+  */}
+</div>;
+
+<div>
+  {
+    /**
+   * Another JSDoc comment in JSX.
+  */
+  }
+</div>;
+
+<div
+  /**
+ * Handles clicks.
+*/
+onClick={() => {}}>
+
+</div>;
+
+<div
+  // comment
+>
+  {foo}
+</div>;
+
+<div
+  className="foo" // comment
+>
+  {foo}
+</div>;
+
+<div
+  className="foo"
+  // comment
+>
+  {foo}
+</div>;
+
+<div // comment
+  id="foo"
+>
+  {children}
+</div>;
+
+<Wrapper>
+  {}
+  <Component />
+</Wrapper>
+
+=====================================output=====================================
+;<div>{/* comment */}</div>
+
+;<div>{/* comment */}</div>
+
+;<div>
+  {/* comment
+   */}
+</div>
+
+;<div>
+  {
+    a /* comment
+     */
+  }
+</div>
+
+;<div>
+  {
+    /* comment
+     */
+    a
+  }
+</div>
+
+;<div>{/* comment */}</div>
+
+;<div>{/* comment */}</div>
+
+;<div>
+  {
+    // single line comment
+  }
+</div>
+
+;<div>
+  {
+    // multiple line comments 1
+    // multiple line comments 2
+  }
+</div>
+
+;<div>
+  {
+    // multiple mixed comments 1
+    /* multiple mixed comments 2 */
+    /* multiple mixed comments 3 */
+    // multiple mixed comments 4
+  }
+</div>
+
+;<div>
+  {
+    // Some very v  ery very very merry (xmas) very very long line to break line width limit
+  }
+</div>
+
+;<div>
+  {/*<div>  Some very v  ery very very long line to break line width limit </div>*/}
+</div>
+
+;<div>
+  {/**
+   * JSDoc-y comment in JSX. I wonder what will happen to it?
+   */}
+</div>
+
+;<div>
+  {/**
+   * Another JSDoc comment in JSX.
+   */}
+</div>
+
+;<div
+  /**
+   * Handles clicks.
+   */
+  onClick={() => {}}
+></div>
+
+;<div
+// comment
+>
+  {foo}
+</div>
+
+;<div
+  className="foo" // comment
+>
+  {foo}
+</div>
+
+;<div
+  className="foo"
+  // comment
+>
+  {foo}
+</div>
+
+;<div // comment
+  id="foo"
+>
+  {children}
+</div>
+
+;<Wrapper>
+  {}
+  <Component />
+</Wrapper>
+
+================================================================================
+`;
+
+exports[`jsx.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<div>
+  {
+    /* comment */
+  }
+</div>;
+
+<div>
+  {/* comment */
+  }
+</div>;
+
+<div>
+  {/* comment
+*/
+  }
+</div>;
+
+<div>
+  {a/* comment
+*/
+  }
+</div>;
+
+<div>
+  {/* comment
+*/
+  a
+  }
+</div>;
+
+<div>
+  {/* comment */
+  }
+</div>;
+
+<div>
+  {/* comment */}
+</div>;
+
+<div>
+  {
+    // single line comment
+  }
+</div>;
+
+<div>
+  {
+    // multiple line comments 1
+    // multiple line comments 2
+  }
+</div>;
+
+<div>
+  {
+    // multiple mixed comments 1
+    /* multiple mixed comments 2 */
+    /* multiple mixed comments 3 */
+    // multiple mixed comments 4
+  }
+</div>;
+
+<div>
+  {
+    // Some very v  ery very very merry (xmas) very very long line to break line width limit
+  }
+</div>;
+
+<div>{/*<div>  Some very v  ery very very long line to break line width limit </div>*/}</div>;
+
+<div>
+  {/**
+   * JSDoc-y comment in JSX. I wonder what will happen to it?
+  */}
+</div>;
+
+<div>
+  {
+    /**
+   * Another JSDoc comment in JSX.
+  */
+  }
+</div>;
+
+<div
+  /**
+ * Handles clicks.
+*/
+onClick={() => {}}>
+
+</div>;
+
+<div
+  // comment
+>
+  {foo}
+</div>;
+
+<div
+  className="foo" // comment
+>
+  {foo}
+</div>;
+
+<div
+  className="foo"
+  // comment
+>
+  {foo}
+</div>;
+
+<div // comment
+  id="foo"
+>
+  {children}
+</div>;
+
+<Wrapper>
+  {}
+  <Component />
+</Wrapper>
+
+=====================================output=====================================
+<div>{/* comment */}</div>;
+
+<div>{/* comment */}</div>;
+
+<div>
+  {/* comment
+   */}
+</div>;
+
+<div>
+  {
+    a /* comment
+     */
+  }
+</div>;
+
+<div>
+  {
+    /* comment
+     */
+    a
+  }
+</div>;
+
+<div>{/* comment */}</div>;
+
+<div>{/* comment */}</div>;
+
+<div>
+  {
+    // single line comment
+  }
+</div>;
+
+<div>
+  {
+    // multiple line comments 1
+    // multiple line comments 2
+  }
+</div>;
+
+<div>
+  {
+    // multiple mixed comments 1
+    /* multiple mixed comments 2 */
+    /* multiple mixed comments 3 */
+    // multiple mixed comments 4
+  }
+</div>;
+
+<div>
+  {
+    // Some very v  ery very very merry (xmas) very very long line to break line width limit
+  }
+</div>;
+
+<div>
+  {/*<div>  Some very v  ery very very long line to break line width limit </div>*/}
+</div>;
+
+<div>
+  {/**
+   * JSDoc-y comment in JSX. I wonder what will happen to it?
+   */}
+</div>;
+
+<div>
+  {/**
+   * Another JSDoc comment in JSX.
+   */}
+</div>;
+
+<div
+  /**
+   * Handles clicks.
+   */
+  onClick={() => {}}
+></div>;
+
+<div
+// comment
+>
+  {foo}
+</div>;
+
+<div
+  className="foo" // comment
+>
+  {foo}
+</div>;
+
+<div
+  className="foo"
+  // comment
+>
+  {foo}
+</div>;
+
+<div // comment
+  id="foo"
+>
+  {children}
+</div>;
+
+<Wrapper>
+  {}
+  <Component />
+</Wrapper>;
+
+================================================================================
+`;
+
+exports[`last-arg.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+class Foo {
+  a(lol /*string*/) {}
+
+  b(lol /*string*/
+  ) {}
+
+  d(
+    lol /*string*/,
+    lol2 /*string*/,
+    lol3 /*string*/,
+    lol4 /*string*/
+  ) {}
+
+  d(
+    lol /*string*/,
+    lol2 /*string*/,
+    lol3 /*string*/,
+    lol4 /*string*/
+  ) /*string*/ {}
+
+  // prettier-ignore
+  c(lol /*string*/
+  ) {}
+
+  // prettier-ignore
+  d(
+    lol /*string*/,
+    lol2 /*string*/,
+    lol3 /*string*/,
+    lol4 /*string*/
+  ) {}
+
+  // prettier-ignore
+  e(
+    lol /*string*/,
+    lol2 /*string*/,
+    lol3 /*string*/,
+    lol4 /*string*/
+  ) {} /* string*/
+}
+
+=====================================output=====================================
+class Foo {
+  a(lol /*string*/) {}
+
+  b(lol /*string*/) {}
+
+  d(lol /*string*/, lol2 /*string*/, lol3 /*string*/, lol4 /*string*/) {}
+
+  d(
+    lol /*string*/,
+    lol2 /*string*/,
+    lol3 /*string*/,
+    lol4 /*string*/,
+  ) /*string*/ {}
+
+  // prettier-ignore
+  c(lol /*string*/
+  ) {}
+
+  // prettier-ignore
+  d(
+    lol /*string*/,
+    lol2 /*string*/,
+    lol3 /*string*/,
+    lol4 /*string*/
+  ) {}
+
+  // prettier-ignore
+  e(
+    lol /*string*/,
+    lol2 /*string*/,
+    lol3 /*string*/,
+    lol4 /*string*/
+  ) {} /* string*/
+}
+
+================================================================================
+`;
+
+exports[`last-arg.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+
+class Foo {
+  a(lol /*string*/) {}
+
+  b(lol /*string*/
+  ) {}
+
+  d(
+    lol /*string*/,
+    lol2 /*string*/,
+    lol3 /*string*/,
+    lol4 /*string*/
+  ) {}
+
+  d(
+    lol /*string*/,
+    lol2 /*string*/,
+    lol3 /*string*/,
+    lol4 /*string*/
+  ) /*string*/ {}
+
+  // prettier-ignore
+  c(lol /*string*/
+  ) {}
+
+  // prettier-ignore
+  d(
+    lol /*string*/,
+    lol2 /*string*/,
+    lol3 /*string*/,
+    lol4 /*string*/
+  ) {}
+
+  // prettier-ignore
+  e(
+    lol /*string*/,
+    lol2 /*string*/,
+    lol3 /*string*/,
+    lol4 /*string*/
+  ) {} /* string*/
+}
+
+=====================================output=====================================
+class Foo {
+  a(lol /*string*/) {}
+
+  b(lol /*string*/) {}
+
+  d(lol /*string*/, lol2 /*string*/, lol3 /*string*/, lol4 /*string*/) {}
+
+  d(
+    lol /*string*/,
+    lol2 /*string*/,
+    lol3 /*string*/,
+    lol4 /*string*/,
+  ) /*string*/ {}
+
+  // prettier-ignore
+  c(lol /*string*/
+  ) {}
+
+  // prettier-ignore
+  d(
+    lol /*string*/,
+    lol2 /*string*/,
+    lol3 /*string*/,
+    lol4 /*string*/
+  ) {}
+
+  // prettier-ignore
+  e(
+    lol /*string*/,
+    lol2 /*string*/,
+    lol3 /*string*/,
+    lol4 /*string*/
+  ) {} /* string*/
+}
+
+================================================================================
+`;
+
+exports[`multi-comments.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// #8323
+
+import { MapViewProps } from 'react-native-maps'; /*
+comment 14
+*/ /* comment1
+10
+*/ /*/ comment 13 */
+/*
+ comment 9
+ ****/
+import * as ts from 'typescript';
+
+x; /*
+1 */ /* 2 */
+
+y
+
+x; /*1*//*2*/
+y;
+
+=====================================output=====================================
+// #8323
+
+import { MapViewProps } from "react-native-maps" /*
+comment 14
+*/ /* comment1
+10
+*/ /*/ comment 13 */
+/*
+ comment 9
+ ****/
+import * as ts from "typescript"
+
+x /*
+1 */ /* 2 */
+
+y
+
+x /*1*/ /*2*/
+y
+
+================================================================================
+`;
+
+exports[`multi-comments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// #8323
+
+import { MapViewProps } from 'react-native-maps'; /*
+comment 14
+*/ /* comment1
+10
+*/ /*/ comment 13 */
+/*
+ comment 9
+ ****/
+import * as ts from 'typescript';
+
+x; /*
+1 */ /* 2 */
+
+y
+
+x; /*1*//*2*/
+y;
+
+=====================================output=====================================
+// #8323
+
+import { MapViewProps } from "react-native-maps"; /*
+comment 14
+*/ /* comment1
+10
+*/ /*/ comment 13 */
+/*
+ comment 9
+ ****/
+import * as ts from "typescript";
+
+x; /*
+1 */ /* 2 */
+
+y;
+
+x; /*1*/ /*2*/
+y;
+
+================================================================================
+`;
+
+exports[`multi-comments-2.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+  const x = 0;
+  
+  /* istanbul ignore if */ // debug case currently not triggered
+  if (true) {
+    x;
+  }
+
+=====================================output=====================================
+const x = 0
+
+/* istanbul ignore if */ // debug case currently not triggered
+if (true) {
+  x
+}
+
+================================================================================
+`;
+
+exports[`multi-comments-2.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+  const x = 0;
+  
+  /* istanbul ignore if */ // debug case currently not triggered
+  if (true) {
+    x;
+  }
+
+=====================================output=====================================
+const x = 0;
+
+/* istanbul ignore if */ // debug case currently not triggered
+if (true) {
+  x;
+}
+
+================================================================================
+`;
+
+exports[`multi-comments-on-same-line.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/*========= All on same line =========*/
+a;
+/*1*//*2*//*3*/
+b;
+
+a;/*1*//*2*//*3*/
+b;
+
+a;
+/*1*//*2*//*3*/b;
+
+a;
+/*
+1*//*2*//*3
+*/
+b;
+
+a;/*
+1*//*2*//*3
+*/
+b;
+
+a;/*
+1*//*2*//*3
+*/b;
+
+/*========= First two on same line =========*/
+a;
+/*1*//*2*/
+/*3*/
+b;
+
+a;/*1*//*2*/
+/*3*/
+b;
+
+a;
+/*1*//*2*/
+/*3*/b;
+
+a;
+/*
+1*//*2*/
+/*3
+*/
+b;
+
+a;/*
+1*//*2*/
+/*3
+*/
+b;
+
+a;/*
+1*//*2*/
+/*3
+*/b;
+
+/*========= Last two on same line =========*/
+a;
+/*1*/
+/*2*//*3*/
+b;
+
+a;/*1*/
+/*2*//*3*/
+b;
+
+a;
+/*1*/
+/*2*//*3*/b;
+
+a;
+/*
+1*/
+/*2*//*3
+*/
+b;
+
+a;/*
+1*/
+/*2*//*3
+*/
+b;
+
+a;/*
+1*/
+/*2*//*3
+*/b;
+
+=====================================output=====================================
+/*========= All on same line =========*/
+a
+/*1*/ /*2*/ /*3*/
+b
+
+a /*1*/ /*2*/ /*3*/
+b
+
+a
+/*1*/ /*2*/ /*3*/ b
+
+a
+/*
+1*/ /*2*/ /*3
+ */
+b
+
+a /*
+1*/ /*2*/ /*3
+ */
+b
+
+a
+/*
+1*/ /*2*/ /*3
+ */ b
+
+/*========= First two on same line =========*/
+a
+/*1*/ /*2*/
+/*3*/
+b
+
+a /*1*/ /*2*/
+/*3*/
+b
+
+a
+/*1*/ /*2*/
+/*3*/ b
+
+a
+/*
+1*/ /*2*/
+/*3
+ */
+b
+
+a /*
+1*/ /*2*/
+/*3
+ */
+b
+
+a /*
+1*/ /*2*/
+/*3
+ */ b
+
+/*========= Last two on same line =========*/
+a
+/*1*/
+/*2*/ /*3*/
+b
+
+a /*1*/
+/*2*/ /*3*/
+b
+
+a
+/*1*/
+/*2*/ /*3*/ b
+
+a
+/*
+1*/
+/*2*/ /*3
+ */
+b
+
+a /*
+1*/
+/*2*/ /*3
+ */
+b
+
+a /*
+1*/
+/*2*/ /*3
+ */ b
+
+================================================================================
+`;
+
+exports[`multi-comments-on-same-line.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/*========= All on same line =========*/
+a;
+/*1*//*2*//*3*/
+b;
+
+a;/*1*//*2*//*3*/
+b;
+
+a;
+/*1*//*2*//*3*/b;
+
+a;
+/*
+1*//*2*//*3
+*/
+b;
+
+a;/*
+1*//*2*//*3
+*/
+b;
+
+a;/*
+1*//*2*//*3
+*/b;
+
+/*========= First two on same line =========*/
+a;
+/*1*//*2*/
+/*3*/
+b;
+
+a;/*1*//*2*/
+/*3*/
+b;
+
+a;
+/*1*//*2*/
+/*3*/b;
+
+a;
+/*
+1*//*2*/
+/*3
+*/
+b;
+
+a;/*
+1*//*2*/
+/*3
+*/
+b;
+
+a;/*
+1*//*2*/
+/*3
+*/b;
+
+/*========= Last two on same line =========*/
+a;
+/*1*/
+/*2*//*3*/
+b;
+
+a;/*1*/
+/*2*//*3*/
+b;
+
+a;
+/*1*/
+/*2*//*3*/b;
+
+a;
+/*
+1*/
+/*2*//*3
+*/
+b;
+
+a;/*
+1*/
+/*2*//*3
+*/
+b;
+
+a;/*
+1*/
+/*2*//*3
+*/b;
+
+=====================================output=====================================
+/*========= All on same line =========*/
+a;
+/*1*/ /*2*/ /*3*/
+b;
+
+a; /*1*/ /*2*/ /*3*/
+b;
+
+a;
+/*1*/ /*2*/ /*3*/ b;
+
+a;
+/*
+1*/ /*2*/ /*3
+ */
+b;
+
+a; /*
+1*/ /*2*/ /*3
+ */
+b;
+
+a;
+/*
+1*/ /*2*/ /*3
+ */ b;
+
+/*========= First two on same line =========*/
+a;
+/*1*/ /*2*/
+/*3*/
+b;
+
+a; /*1*/ /*2*/
+/*3*/
+b;
+
+a;
+/*1*/ /*2*/
+/*3*/ b;
+
+a;
+/*
+1*/ /*2*/
+/*3
+ */
+b;
+
+a; /*
+1*/ /*2*/
+/*3
+ */
+b;
+
+a; /*
+1*/ /*2*/
+/*3
+ */ b;
+
+/*========= Last two on same line =========*/
+a;
+/*1*/
+/*2*/ /*3*/
+b;
+
+a; /*1*/
+/*2*/ /*3*/
+b;
+
+a;
+/*1*/
+/*2*/ /*3*/ b;
+
+a;
+/*
+1*/
+/*2*/ /*3
+ */
+b;
+
+a; /*
+1*/
+/*2*/ /*3
+ */
+b;
+
+a; /*
+1*/
+/*2*/ /*3
+ */ b;
+
+================================================================================
+`;
+
+exports[`multi-comments-on-same-line-2.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/* 1 */ /* 2 */ /* 3 */ a;
+a; /* 4 */ /* 5 */ /* 6 */
+
+=====================================output=====================================
+/* 1 */ /* 2 */ /* 3 */ a
+a /* 4 */ /* 5 */ /* 6 */
+
+================================================================================
+`;
+
+exports[`multi-comments-on-same-line-2.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/* 1 */ /* 2 */ /* 3 */ a;
+a; /* 4 */ /* 5 */ /* 6 */
+
+=====================================output=====================================
+/* 1 */ /* 2 */ /* 3 */ a;
+a; /* 4 */ /* 5 */ /* 6 */
+
+================================================================================
+`;
+
+exports[`preserve-new-line-last.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function f() {
+  a
+  /* eslint-disable */
+}
+
+function f() {
+  a
+
+  /* eslint-disable */
+}
+
+function name() {
+  // comment1
+  func1()
+
+  // comment2
+  func2()
+
+  // comment3 why func3 commented
+  // func3()
+}
+
+=====================================output=====================================
+function f() {
+  a
+  /* eslint-disable */
+}
+
+function f() {
+  a
+
+  /* eslint-disable */
+}
+
+function name() {
+  // comment1
+  func1()
+
+  // comment2
+  func2()
+
+  // comment3 why func3 commented
+  // func3()
+}
+
+================================================================================
+`;
+
+exports[`preserve-new-line-last.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function f() {
+  a
+  /* eslint-disable */
+}
+
+function f() {
+  a
+
+  /* eslint-disable */
+}
+
+function name() {
+  // comment1
+  func1()
+
+  // comment2
+  func2()
+
+  // comment3 why func3 commented
+  // func3()
+}
+
+=====================================output=====================================
+function f() {
+  a;
+  /* eslint-disable */
+}
+
+function f() {
+  a;
+
+  /* eslint-disable */
+}
+
+function name() {
+  // comment1
+  func1();
+
+  // comment2
+  func2();
+
+  // comment3 why func3 commented
+  // func3()
+}
+
+================================================================================
+`;
+
+exports[`return-statement.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function jsx() {
+  return (
+    // Comment
+    <div />
+  );
+}
+
+function unary() {
+  return (
+    // Comment
+    !!x
+  );
+}
+
+function numericLiteralNoParen() {
+  return 1337; // Comment
+}
+
+function logical() {
+  return (
+    // Reason for 42
+    42
+  ) && 84
+}
+
+function binary() {
+  return (
+    // Reason for 42
+    42
+  ) * 84
+}
+
+function binaryInBinaryLeft() {
+  return (
+    // Reason for 42
+    42
+  ) * 84 + 2
+}
+
+function binaryInBinaryRight() {
+  return (
+    // Reason for 42
+    42
+  ) + 84 * 2
+}
+
+function conditional() {
+  return (
+    // Reason for 42
+    42
+  ) ? 1 : 2
+}
+
+function binaryInConditional() {
+  return (
+    // Reason for 42
+    42
+  ) * 3 ? 1 : 2
+}
+
+function call() {
+  return (
+    // Reason for a
+    a
+  )()
+}
+
+function memberInside() {
+  return (
+    // Reason for a.b
+    a.b
+  ).c
+}
+
+function memberOutside() {
+  return (
+    // Reason for a
+    a
+  ).b.c
+}
+
+function memberInAndOutWithCalls() {
+  return (
+    // Reason for a
+    aFunction.b()
+  ).c.d()
+}
+
+function excessiveEverything() {
+  return (
+    // Reason for stuff
+    a.b() * 3 + 4 ? (a\`hi\`, 1) ? 1 : 1 : 1
+  )
+}
+
+// See https://github.com/prettier/prettier/issues/2392
+// function sequenceExpression() {
+//   return (
+//     // Reason for a
+//     a
+//   ), b
+// }
+
+function sequenceExpressionInside() {
+  return ( // Reason for a
+    a, b
+  );
+  throw ( // Reason for a
+    a, b
+  );
+  return ( // Reason for a
+    a = 1
+  );
+}
+
+function taggedTemplate() {
+  return (
+    // Reason for a
+    a
+  )\`b\`
+}
+
+function inlineComment() {
+  return (
+    /* hi */ 42
+  ) || 42
+}
+
+function multilineBlockSameLine() {
+  return (
+    /**
+    * @type {string}
+    */ 'result'
+  )
+}
+
+function multilineBlockNextLine() {
+  return (
+    /**
+    * @type {string}
+    */
+    'result'
+  )
+}
+
+function multilineBlockSameLineJsx() {
+  return (
+    /**
+    * JSX Same line
+    */ <div></div>
+  )
+}
+
+function multilineBlockNextLineJsx() {
+  return (
+    /**
+    * JSX Next line
+    */
+    <div></div>
+  )
+}
+
+function singleLineBlockSameLine() {
+  return (
+    /** Result -> */ 'result'
+  )
+}
+
+function singleLineBlockNextLine() {
+  return (
+    /** Result below */
+    'result'
+  )
+}
+
+=====================================output=====================================
+function jsx() {
+  return (
+    // Comment
+    <div />
+  )
+}
+
+function unary() {
+  return (
+    // Comment
+    !!x
+  )
+}
+
+function numericLiteralNoParen() {
+  return 1337 // Comment
+}
+
+function logical() {
+  return (
+    // Reason for 42
+    42 && 84
+  )
+}
+
+function binary() {
+  return (
+    // Reason for 42
+    42 * 84
+  )
+}
+
+function binaryInBinaryLeft() {
+  return (
+    // Reason for 42
+    42 *
+      84 +
+    2
+  )
+}
+
+function binaryInBinaryRight() {
+  return (
+    // Reason for 42
+    42 +
+    84 * 2
+  )
+}
+
+function conditional() {
+  return (
+    // Reason for 42
+    42
+      ? 1
+      : 2
+  )
+}
+
+function binaryInConditional() {
+  return (
+    // Reason for 42
+    42 * 3
+      ? 1
+      : 2
+  )
+}
+
+function call() {
+  return (
+    // Reason for a
+    a()
+  )
+}
+
+function memberInside() {
+  return (
+    // Reason for a.b
+    a.b.c
+  )
+}
+
+function memberOutside() {
+  return (
+    // Reason for a
+    a.b.c
+  )
+}
+
+function memberInAndOutWithCalls() {
+  return (
+    aFunction
+      .b// Reason for a
+      ()
+      .c.d()
+  )
+}
+
+function excessiveEverything() {
+  return (
+    // Reason for stuff
+    a.b() * 3 + 4 ? ((a\`hi\`, 1) ? 1 : 1) : 1
+  )
+}
+
+// See https://github.com/prettier/prettier/issues/2392
+// function sequenceExpression() {
+//   return (
+//     // Reason for a
+//     a
+//   ), b
+// }
+
+function sequenceExpressionInside() {
+  return (
+    // Reason for a
+    a, b
+  )
+  throw (
+    // Reason for a
+    a, b
+  )
+  return (
+    // Reason for a
+    a = 1
+  )
+}
+
+function taggedTemplate() {
+  return (
+    // Reason for a
+    a\`b\`
+  )
+}
+
+function inlineComment() {
+  return /* hi */ 42 || 42
+}
+
+function multilineBlockSameLine() {
+  return (
+    /**
+     * @type {string}
+     */ "result"
+  )
+}
+
+function multilineBlockNextLine() {
+  return (
+    /**
+     * @type {string}
+     */
+    "result"
+  )
+}
+
+function multilineBlockSameLineJsx() {
+  return (
+    /**
+     * JSX Same line
+     */ <div></div>
+  )
+}
+
+function multilineBlockNextLineJsx() {
+  return (
+    /**
+     * JSX Next line
+     */
+    <div></div>
+  )
+}
+
+function singleLineBlockSameLine() {
+  return /** Result -> */ "result"
+}
+
+function singleLineBlockNextLine() {
+  return (
+    /** Result below */
+    "result"
+  )
+}
+
+================================================================================
+`;
+
+exports[`return-statement.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function jsx() {
+  return (
+    // Comment
+    <div />
+  );
+}
+
+function unary() {
+  return (
+    // Comment
+    !!x
+  );
+}
+
+function numericLiteralNoParen() {
+  return 1337; // Comment
+}
+
+function logical() {
+  return (
+    // Reason for 42
+    42
+  ) && 84
+}
+
+function binary() {
+  return (
+    // Reason for 42
+    42
+  ) * 84
+}
+
+function binaryInBinaryLeft() {
+  return (
+    // Reason for 42
+    42
+  ) * 84 + 2
+}
+
+function binaryInBinaryRight() {
+  return (
+    // Reason for 42
+    42
+  ) + 84 * 2
+}
+
+function conditional() {
+  return (
+    // Reason for 42
+    42
+  ) ? 1 : 2
+}
+
+function binaryInConditional() {
+  return (
+    // Reason for 42
+    42
+  ) * 3 ? 1 : 2
+}
+
+function call() {
+  return (
+    // Reason for a
+    a
+  )()
+}
+
+function memberInside() {
+  return (
+    // Reason for a.b
+    a.b
+  ).c
+}
+
+function memberOutside() {
+  return (
+    // Reason for a
+    a
+  ).b.c
+}
+
+function memberInAndOutWithCalls() {
+  return (
+    // Reason for a
+    aFunction.b()
+  ).c.d()
+}
+
+function excessiveEverything() {
+  return (
+    // Reason for stuff
+    a.b() * 3 + 4 ? (a\`hi\`, 1) ? 1 : 1 : 1
+  )
+}
+
+// See https://github.com/prettier/prettier/issues/2392
+// function sequenceExpression() {
+//   return (
+//     // Reason for a
+//     a
+//   ), b
+// }
+
+function sequenceExpressionInside() {
+  return ( // Reason for a
+    a, b
+  );
+  throw ( // Reason for a
+    a, b
+  );
+  return ( // Reason for a
+    a = 1
+  );
+}
+
+function taggedTemplate() {
+  return (
+    // Reason for a
+    a
+  )\`b\`
+}
+
+function inlineComment() {
+  return (
+    /* hi */ 42
+  ) || 42
+}
+
+function multilineBlockSameLine() {
+  return (
+    /**
+    * @type {string}
+    */ 'result'
+  )
+}
+
+function multilineBlockNextLine() {
+  return (
+    /**
+    * @type {string}
+    */
+    'result'
+  )
+}
+
+function multilineBlockSameLineJsx() {
+  return (
+    /**
+    * JSX Same line
+    */ <div></div>
+  )
+}
+
+function multilineBlockNextLineJsx() {
+  return (
+    /**
+    * JSX Next line
+    */
+    <div></div>
+  )
+}
+
+function singleLineBlockSameLine() {
+  return (
+    /** Result -> */ 'result'
+  )
+}
+
+function singleLineBlockNextLine() {
+  return (
+    /** Result below */
+    'result'
+  )
+}
+
+=====================================output=====================================
+function jsx() {
+  return (
+    // Comment
+    <div />
+  );
+}
+
+function unary() {
+  return (
+    // Comment
+    !!x
+  );
+}
+
+function numericLiteralNoParen() {
+  return 1337; // Comment
+}
+
+function logical() {
+  return (
+    // Reason for 42
+    42 && 84
+  );
+}
+
+function binary() {
+  return (
+    // Reason for 42
+    42 * 84
+  );
+}
+
+function binaryInBinaryLeft() {
+  return (
+    // Reason for 42
+    42 *
+      84 +
+    2
+  );
+}
+
+function binaryInBinaryRight() {
+  return (
+    // Reason for 42
+    42 +
+    84 * 2
+  );
+}
+
+function conditional() {
+  return (
+    // Reason for 42
+    42
+      ? 1
+      : 2
+  );
+}
+
+function binaryInConditional() {
+  return (
+    // Reason for 42
+    42 * 3
+      ? 1
+      : 2
+  );
+}
+
+function call() {
+  return (
+    // Reason for a
+    a()
+  );
+}
+
+function memberInside() {
+  return (
+    // Reason for a.b
+    a.b.c
+  );
+}
+
+function memberOutside() {
+  return (
+    // Reason for a
+    a.b.c
+  );
+}
+
+function memberInAndOutWithCalls() {
+  return (
+    aFunction
+      .b// Reason for a
+      ()
+      .c.d()
+  );
+}
+
+function excessiveEverything() {
+  return (
+    // Reason for stuff
+    a.b() * 3 + 4 ? ((a\`hi\`, 1) ? 1 : 1) : 1
+  );
+}
+
+// See https://github.com/prettier/prettier/issues/2392
+// function sequenceExpression() {
+//   return (
+//     // Reason for a
+//     a
+//   ), b
+// }
+
+function sequenceExpressionInside() {
+  return (
+    // Reason for a
+    a, b
+  );
+  throw (
+    // Reason for a
+    a, b
+  );
+  return (
+    // Reason for a
+    a = 1
+  );
+}
+
+function taggedTemplate() {
+  return (
+    // Reason for a
+    a\`b\`
+  );
+}
+
+function inlineComment() {
+  return /* hi */ 42 || 42;
+}
+
+function multilineBlockSameLine() {
+  return (
+    /**
+     * @type {string}
+     */ "result"
+  );
+}
+
+function multilineBlockNextLine() {
+  return (
+    /**
+     * @type {string}
+     */
+    "result"
+  );
+}
+
+function multilineBlockSameLineJsx() {
+  return (
+    /**
+     * JSX Same line
+     */ <div></div>
+  );
+}
+
+function multilineBlockNextLineJsx() {
+  return (
+    /**
+     * JSX Next line
+     */
+    <div></div>
+  );
+}
+
+function singleLineBlockSameLine() {
+  return /** Result -> */ "result";
+}
+
+function singleLineBlockNextLine() {
+  return (
+    /** Result below */
+    "result"
+  );
+}
+
+================================================================================
+`;
+
+exports[`return-statement-2.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function foo() {
+  return ( // Comment
+    a, b
+  );
+  return (
+    // Comment
+    a, b
+  );
+  return /* Comment*/ (
+    a, b
+  );
+  return (/* Comment*/
+    a, b
+  );
+  return (
+    /* Comment*/
+    a, b
+  );
+
+  return ( // Comment
+    a = b
+  );
+  return (
+    // Comment
+    a = b
+  );
+
+  throw (
+    // Comment
+    a, b
+  );
+
+  throw (
+    // Comment
+    a = b
+  );
+}
+
+// #4032
+function transitionedFromBleepToBloop() {
+  return !!(
+    // Start with a bloop.
+    thing != null && (thing.foo && thing.foo.bar === 'bloop') &&
+    // End up with a bleep.
+    (thing.foo && thing.foo.bar === 'bleep')
+  );
+
+  return Boolean(
+    // Start with a bloop.
+    thing != null && (thing.foo && thing.foo.bar === 'bloop') &&
+    // End up with a bleep.
+    (thing.foo && thing.foo.bar === 'bleep')
+  );
+
+  return foo(
+    // Start with a bloop.
+    thing != null && (thing.foo && thing.foo.bar === 'bloop') &&
+    // End up with a bleep.
+    (thing.foo && thing.foo.bar === 'bleep')
+  );
+}
+
+=====================================output=====================================
+function foo() {
+  return (
+    // Comment
+    a, b
+  )
+  return (
+    // Comment
+    a, b
+  )
+  return /* Comment*/ (a, b)
+  return (
+    /* Comment*/
+    a, b
+  )
+  return (
+    /* Comment*/
+    a, b
+  )
+
+  return (
+    // Comment
+    a = b
+  )
+  return (
+    // Comment
+    a = b
+  )
+
+  throw (
+    // Comment
+    a, b
+  )
+
+  throw (
+    // Comment
+    a = b
+  )
+}
+
+// #4032
+function transitionedFromBleepToBloop() {
+  return !!(
+    // Start with a bloop.
+    thing != null &&
+    thing.foo &&
+    thing.foo.bar === "bloop" &&
+    // End up with a bleep.
+    thing.foo &&
+    thing.foo.bar === "bleep"
+  )
+
+  return Boolean(
+    // Start with a bloop.
+    thing != null &&
+    thing.foo &&
+    thing.foo.bar === "bloop" &&
+    // End up with a bleep.
+    thing.foo &&
+    thing.foo.bar === "bleep",
+  )
+
+  return foo(
+    // Start with a bloop.
+    thing != null &&
+      thing.foo &&
+      thing.foo.bar === "bloop" &&
+      // End up with a bleep.
+      thing.foo &&
+      thing.foo.bar === "bleep",
+  )
+}
+
+================================================================================
+`;
+
+exports[`return-statement-2.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function foo() {
+  return ( // Comment
+    a, b
+  );
+  return (
+    // Comment
+    a, b
+  );
+  return /* Comment*/ (
+    a, b
+  );
+  return (/* Comment*/
+    a, b
+  );
+  return (
+    /* Comment*/
+    a, b
+  );
+
+  return ( // Comment
+    a = b
+  );
+  return (
+    // Comment
+    a = b
+  );
+
+  throw (
+    // Comment
+    a, b
+  );
+
+  throw (
+    // Comment
+    a = b
+  );
+}
+
+// #4032
+function transitionedFromBleepToBloop() {
+  return !!(
+    // Start with a bloop.
+    thing != null && (thing.foo && thing.foo.bar === 'bloop') &&
+    // End up with a bleep.
+    (thing.foo && thing.foo.bar === 'bleep')
+  );
+
+  return Boolean(
+    // Start with a bloop.
+    thing != null && (thing.foo && thing.foo.bar === 'bloop') &&
+    // End up with a bleep.
+    (thing.foo && thing.foo.bar === 'bleep')
+  );
+
+  return foo(
+    // Start with a bloop.
+    thing != null && (thing.foo && thing.foo.bar === 'bloop') &&
+    // End up with a bleep.
+    (thing.foo && thing.foo.bar === 'bleep')
+  );
+}
+
+=====================================output=====================================
+function foo() {
+  return (
+    // Comment
+    a, b
+  );
+  return (
+    // Comment
+    a, b
+  );
+  return /* Comment*/ (a, b);
+  return (
+    /* Comment*/
+    a, b
+  );
+  return (
+    /* Comment*/
+    a, b
+  );
+
+  return (
+    // Comment
+    a = b
+  );
+  return (
+    // Comment
+    a = b
+  );
+
+  throw (
+    // Comment
+    a, b
+  );
+
+  throw (
+    // Comment
+    a = b
+  );
+}
+
+// #4032
+function transitionedFromBleepToBloop() {
+  return !!(
+    // Start with a bloop.
+    thing != null &&
+    thing.foo &&
+    thing.foo.bar === "bloop" &&
+    // End up with a bleep.
+    thing.foo &&
+    thing.foo.bar === "bleep"
+  );
+
+  return Boolean(
+    // Start with a bloop.
+    thing != null &&
+    thing.foo &&
+    thing.foo.bar === "bloop" &&
+    // End up with a bleep.
+    thing.foo &&
+    thing.foo.bar === "bleep",
+  );
+
+  return foo(
+    // Start with a bloop.
+    thing != null &&
+      thing.foo &&
+      thing.foo.bar === "bloop" &&
+      // End up with a bleep.
+      thing.foo &&
+      thing.foo.bar === "bleep",
+  );
+}
+
+================================================================================
+`;
+
+exports[`single-star-jsdoc.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/*
+ * Looking good!
+ */
+
+if(true) {
+    /*
+     * Oh no
+     */
+}
+
+  /** first line
+* second line
+   * third line */
+
+  /* first line
+* second line
+   * third line */
+
+  /*! first line
+*second line
+   *  third line */
+
+/*!
+* Extracted from vue codebase
+* https://github.com/vuejs/vue/blob/cfd73c2386623341fdbb3ac636c4baf84ea89c2c/src/compiler/parser/html-parser.js
+* HTML Parser By John Resig (ejohn.org)
+* Modified by Juriy "kangax" Zaytsev
+* Original code by Erik Arvidsson, Mozilla Public License
+* http://erik.eae.net/simplehtmlparser/simplehtmlparser.js
+*/
+
+=====================================output=====================================
+/*
+ * Looking good!
+ */
+
+if (true) {
+  /*
+   * Oh no
+   */
+}
+
+/** first line
+ * second line
+ * third line */
+
+/* first line
+ * second line
+ * third line */
+
+/*! first line
+ *second line
+ *  third line */
+
+/*!
+ * Extracted from vue codebase
+ * https://github.com/vuejs/vue/blob/cfd73c2386623341fdbb3ac636c4baf84ea89c2c/src/compiler/parser/html-parser.js
+ * HTML Parser By John Resig (ejohn.org)
+ * Modified by Juriy "kangax" Zaytsev
+ * Original code by Erik Arvidsson, Mozilla Public License
+ * http://erik.eae.net/simplehtmlparser/simplehtmlparser.js
+ */
+
+================================================================================
+`;
+
+exports[`single-star-jsdoc.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/*
+ * Looking good!
+ */
+
+if(true) {
+    /*
+     * Oh no
+     */
+}
+
+  /** first line
+* second line
+   * third line */
+
+  /* first line
+* second line
+   * third line */
+
+  /*! first line
+*second line
+   *  third line */
+
+/*!
+* Extracted from vue codebase
+* https://github.com/vuejs/vue/blob/cfd73c2386623341fdbb3ac636c4baf84ea89c2c/src/compiler/parser/html-parser.js
+* HTML Parser By John Resig (ejohn.org)
+* Modified by Juriy "kangax" Zaytsev
+* Original code by Erik Arvidsson, Mozilla Public License
+* http://erik.eae.net/simplehtmlparser/simplehtmlparser.js
+*/
+
+=====================================output=====================================
+/*
+ * Looking good!
+ */
+
+if (true) {
+  /*
+   * Oh no
+   */
+}
+
+/** first line
+ * second line
+ * third line */
+
+/* first line
+ * second line
+ * third line */
+
+/*! first line
+ *second line
+ *  third line */
+
+/*!
+ * Extracted from vue codebase
+ * https://github.com/vuejs/vue/blob/cfd73c2386623341fdbb3ac636c4baf84ea89c2c/src/compiler/parser/html-parser.js
+ * HTML Parser By John Resig (ejohn.org)
+ * Modified by Juriy "kangax" Zaytsev
+ * Original code by Erik Arvidsson, Mozilla Public License
+ * http://erik.eae.net/simplehtmlparser/simplehtmlparser.js
+ */
+
+================================================================================
+`;
+
+exports[`snippet: #0 - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var a = { /* comment */      
+b };
+=====================================output=====================================
+var a = {
+  /* comment */
+  b,
+}
+
+================================================================================
+`;
+
+exports[`snippet: #0 format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var a = { /* comment */      
+b };
+=====================================output=====================================
+var a = {
+  /* comment */
+  b,
+};
+
+================================================================================
+`;
+
+exports[`snippet: #1 - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var a = { /* comment */
+b };
+=====================================output=====================================
+var a = {
+  /* comment */
+  b,
+}
+
+================================================================================
+`;
+
+exports[`snippet: #1 format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+var a = { /* comment */
+b };
+=====================================output=====================================
+var a = {
+  /* comment */
+  b,
+};
+
+================================================================================
+`;
+
+exports[`switch.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+switch (node && node.type) {
+  case "Property":
+  case "MethodDefinition":
+    prop = node.key;
+    break;
+
+  case "MemberExpression":
+    prop = node.property;
+    break;
+
+  // no default
+}
+
+switch (foo) {
+  case "bar":
+    doThing()
+
+  // no default
+}
+
+switch (foo) {
+  case "bar": //comment
+    doThing(); //comment
+
+  case "baz":
+    doOtherThing(); //comment
+
+}
+
+switch (foo) {
+  case "bar": {
+    doThing();
+  } //comment
+
+  case "baz": {
+    doThing();
+  } //comment
+}
+
+=====================================output=====================================
+switch (node && node.type) {
+  case "Property":
+  case "MethodDefinition":
+    prop = node.key
+    break
+
+  case "MemberExpression":
+    prop = node.property
+    break
+
+  // no default
+}
+
+switch (foo) {
+  case "bar":
+    doThing()
+
+  // no default
+}
+
+switch (foo) {
+  case "bar": //comment
+    doThing() //comment
+
+  case "baz":
+    doOtherThing() //comment
+}
+
+switch (foo) {
+  case "bar": {
+    doThing()
+  } //comment
+
+  case "baz": {
+    doThing()
+  } //comment
+}
+
+================================================================================
+`;
+
+exports[`switch.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+switch (node && node.type) {
+  case "Property":
+  case "MethodDefinition":
+    prop = node.key;
+    break;
+
+  case "MemberExpression":
+    prop = node.property;
+    break;
+
+  // no default
+}
+
+switch (foo) {
+  case "bar":
+    doThing()
+
+  // no default
+}
+
+switch (foo) {
+  case "bar": //comment
+    doThing(); //comment
+
+  case "baz":
+    doOtherThing(); //comment
+
+}
+
+switch (foo) {
+  case "bar": {
+    doThing();
+  } //comment
+
+  case "baz": {
+    doThing();
+  } //comment
+}
+
+=====================================output=====================================
+switch (node && node.type) {
+  case "Property":
+  case "MethodDefinition":
+    prop = node.key;
+    break;
+
+  case "MemberExpression":
+    prop = node.property;
+    break;
+
+  // no default
+}
+
+switch (foo) {
+  case "bar":
+    doThing();
+
+  // no default
+}
+
+switch (foo) {
+  case "bar": //comment
+    doThing(); //comment
+
+  case "baz":
+    doOtherThing(); //comment
+}
+
+switch (foo) {
+  case "bar": {
+    doThing();
+  } //comment
+
+  case "baz": {
+    doThing();
+  } //comment
+}
+
+================================================================================
+`;
+
+exports[`tagged-template-literal.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo\`\`; // comment 1
+
+foo // comment 2
+\`\`;
+
+foo // comment 3
+\`
+\`;
+
+foo /* comment 4 */\`
+\`;
+
+foo /* comment 5 */
+\`
+\`;
+
+=====================================output=====================================
+foo\`\` // comment 1
+
+foo // comment 2
+\`\`
+
+foo // comment 3
+\`
+\`
+
+foo /* comment 4 */ \`
+\`
+
+foo /* comment 5 */\`
+\`
+
+================================================================================
+`;
+
+exports[`tagged-template-literal.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+foo\`\`; // comment 1
+
+foo // comment 2
+\`\`;
+
+foo // comment 3
+\`
+\`;
+
+foo /* comment 4 */\`
+\`;
+
+foo /* comment 5 */
+\`
+\`;
+
+=====================================output=====================================
+foo\`\`; // comment 1
+
+foo // comment 2
+\`\`;
+
+foo // comment 3
+\`
+\`;
+
+foo /* comment 4 */ \`
+\`;
+
+foo /* comment 5 */\`
+\`;
+
+================================================================================
+`;
+
+exports[`template-literal.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+\`
+\${a // comment
+}
+
+\${b /* comment */}
+
+\${/* comment */ c /* comment */}
+
+\${// comment
+d //comment
+};
+\`
+
+=====================================output=====================================
+;\`
+\${
+  a // comment
+}
+
+\${b /* comment */}
+
+\${/* comment */ c /* comment */}
+
+\${
+  // comment
+  d //comment
+};
+\`
+
+================================================================================
+`;
+
+exports[`template-literal.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+\`
+\${a // comment
+}
+
+\${b /* comment */}
+
+\${/* comment */ c /* comment */}
+
+\${// comment
+d //comment
+};
+\`
+
+=====================================output=====================================
+\`
+\${
+  a // comment
+}
+
+\${b /* comment */}
+
+\${/* comment */ c /* comment */}
+
+\${
+  // comment
+  d //comment
+};
+\`;
+
+================================================================================
+`;
+
+exports[`trailing_space.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+#!/there/is-space-here->         
+
+// Do not trim trailing whitespace from this source file!
+
+// There is some space here ->                        
+
+=====================================output=====================================
+#!/there/is-space-here->
+
+// Do not trim trailing whitespace from this source file!
+
+// There is some space here ->
+
+================================================================================
+`;
+
+exports[`trailing_space.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+#!/there/is-space-here->         
+
+// Do not trim trailing whitespace from this source file!
+
+// There is some space here ->                        
+
+=====================================output=====================================
+#!/there/is-space-here->
+
+// Do not trim trailing whitespace from this source file!
+
+// There is some space here ->
+
+================================================================================
+`;
+
+exports[`trailing-jsdocs.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const CONNECTION_STATUS = exports.CONNECTION_STATUS = {
+  CLOSED: Object.freeze({ kind: 'CLOSED' }),
+  CONNECTED: Object.freeze({ kind: 'CONNECTED' }),
+  CONNECTING: Object.freeze({ kind: 'CONNECTING' }),
+  NOT_CONNECTED: Object.freeze({ kind: 'NOT_CONNECTED' }) };
+
+/* A comment */ /**
+* A type that can be written to a buffer.
+*/ /**
+* Describes the connection status of a ReactiveSocket/DuplexConnection.
+* - NOT_CONNECTED: no connection established or pending.
+* - CONNECTING: when \`connect()\` has been called but a connection is not yet
+*   established.
+* - CONNECTED: when a connection is established.
+* - CLOSED: when the connection has been explicitly closed via \`close()\`.
+* - ERROR: when the connection has been closed for any other reason.
+*/ /**
+* A contract providing different interaction models per the [ReactiveSocket protocol]
+* (https://github.com/ReactiveSocket/reactivesocket/blob/master/Protocol.md).
+*/ /**
+* A single unit of data exchanged between the peers of a \`ReactiveSocket\`.
+*/
+
+=====================================output=====================================
+const CONNECTION_STATUS = (exports.CONNECTION_STATUS = {
+  CLOSED: Object.freeze({ kind: "CLOSED" }),
+  CONNECTED: Object.freeze({ kind: "CONNECTED" }),
+  CONNECTING: Object.freeze({ kind: "CONNECTING" }),
+  NOT_CONNECTED: Object.freeze({ kind: "NOT_CONNECTED" }),
+})
+
+/* A comment */ /**
+ * A type that can be written to a buffer.
+ */ /**
+ * Describes the connection status of a ReactiveSocket/DuplexConnection.
+ * - NOT_CONNECTED: no connection established or pending.
+ * - CONNECTING: when \`connect()\` has been called but a connection is not yet
+ *   established.
+ * - CONNECTED: when a connection is established.
+ * - CLOSED: when the connection has been explicitly closed via \`close()\`.
+ * - ERROR: when the connection has been closed for any other reason.
+ */ /**
+ * A contract providing different interaction models per the [ReactiveSocket protocol]
+ * (https://github.com/ReactiveSocket/reactivesocket/blob/master/Protocol.md).
+ */ /**
+ * A single unit of data exchanged between the peers of a \`ReactiveSocket\`.
+ */
+
+================================================================================
+`;
+
+exports[`trailing-jsdocs.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const CONNECTION_STATUS = exports.CONNECTION_STATUS = {
+  CLOSED: Object.freeze({ kind: 'CLOSED' }),
+  CONNECTED: Object.freeze({ kind: 'CONNECTED' }),
+  CONNECTING: Object.freeze({ kind: 'CONNECTING' }),
+  NOT_CONNECTED: Object.freeze({ kind: 'NOT_CONNECTED' }) };
+
+/* A comment */ /**
+* A type that can be written to a buffer.
+*/ /**
+* Describes the connection status of a ReactiveSocket/DuplexConnection.
+* - NOT_CONNECTED: no connection established or pending.
+* - CONNECTING: when \`connect()\` has been called but a connection is not yet
+*   established.
+* - CONNECTED: when a connection is established.
+* - CLOSED: when the connection has been explicitly closed via \`close()\`.
+* - ERROR: when the connection has been closed for any other reason.
+*/ /**
+* A contract providing different interaction models per the [ReactiveSocket protocol]
+* (https://github.com/ReactiveSocket/reactivesocket/blob/master/Protocol.md).
+*/ /**
+* A single unit of data exchanged between the peers of a \`ReactiveSocket\`.
+*/
+
+=====================================output=====================================
+const CONNECTION_STATUS = (exports.CONNECTION_STATUS = {
+  CLOSED: Object.freeze({ kind: "CLOSED" }),
+  CONNECTED: Object.freeze({ kind: "CONNECTED" }),
+  CONNECTING: Object.freeze({ kind: "CONNECTING" }),
+  NOT_CONNECTED: Object.freeze({ kind: "NOT_CONNECTED" }),
+});
+
+/* A comment */ /**
+ * A type that can be written to a buffer.
+ */ /**
+ * Describes the connection status of a ReactiveSocket/DuplexConnection.
+ * - NOT_CONNECTED: no connection established or pending.
+ * - CONNECTING: when \`connect()\` has been called but a connection is not yet
+ *   established.
+ * - CONNECTED: when a connection is established.
+ * - CLOSED: when the connection has been explicitly closed via \`close()\`.
+ * - ERROR: when the connection has been closed for any other reason.
+ */ /**
+ * A contract providing different interaction models per the [ReactiveSocket protocol]
+ * (https://github.com/ReactiveSocket/reactivesocket/blob/master/Protocol.md).
+ */ /**
+ * A single unit of data exchanged between the peers of a \`ReactiveSocket\`.
+ */
+
+================================================================================
+`;
+
+exports[`try.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Comment 1
+try { // Comment 2
+  // Comment 3
+}
+// Comment 4
+catch(e) { // Comment 5
+  // Comment 6
+}
+// Comment 7
+finally { // Comment 8
+  // Comment 9
+}
+// Comment 10
+
+=====================================output=====================================
+// Comment 1
+try {
+  // Comment 2
+  // Comment 3
+} catch (e) {
+  // Comment 4
+  // Comment 5
+  // Comment 6
+} finally {
+  // Comment 7
+  // Comment 8
+  // Comment 9
+}
+// Comment 10
+
+================================================================================
+`;
+
+exports[`try.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Comment 1
+try { // Comment 2
+  // Comment 3
+}
+// Comment 4
+catch(e) { // Comment 5
+  // Comment 6
+}
+// Comment 7
+finally { // Comment 8
+  // Comment 9
+}
+// Comment 10
+
+=====================================output=====================================
+// Comment 1
+try {
+  // Comment 2
+  // Comment 3
+} catch (e) {
+  // Comment 4
+  // Comment 5
+  // Comment 6
+} finally {
+  // Comment 7
+  // Comment 8
+  // Comment 9
+}
+// Comment 10
+
+================================================================================
+`;
+
+exports[`variable-declarator.js - {"semi":false} format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+semi: false
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let obj1 = // Comment
+{
+  key: 'val'
+}
+
+let obj2 // Comment
+= {
+  key: 'val'
+}
+
+let obj3 = { // Comment
+  key: 'val'
+}
+
+let obj4 = {
+  // Comment
+  key: 'val'
+}
+
+let obj5 = // Comment
+[
+  'val'
+]
+
+let obj6 // Comment
+= [
+  'val'
+]
+
+let obj7 = [ // Comment
+  'val'
+]
+
+let obj8 = [
+  // Comment
+  'val'
+]
+
+let obj9 = // Comment
+\`val\`;
+
+let obj10 = // Comment
+\`
+val
+val
+\`;
+
+let obj11 = // Comment
+tag\`val\`;
+
+let obj12 = // Comment
+tag\`
+val
+val
+\`;
+
+let // Comment
+  foo1 = 'val';
+
+let // Comment
+  foo2 = 'val',
+  bar = 'val';
+
+const foo3 = 123
+// Nothing to see here.
+;["2", "3"].forEach(x => console.log(x))
+
+=====================================output=====================================
+let obj1 =
+  // Comment
+  {
+    key: "val",
+  }
+
+let obj2 =
+  // Comment
+  {
+    key: "val",
+  }
+
+let obj3 = {
+  // Comment
+  key: "val",
+}
+
+let obj4 = {
+  // Comment
+  key: "val",
+}
+
+let obj5 =
+  // Comment
+  ["val"]
+
+let obj6 =
+  // Comment
+  ["val"]
+
+let obj7 = [
+  // Comment
+  "val",
+]
+
+let obj8 = [
+  // Comment
+  "val",
+]
+
+let obj9 =
+  // Comment
+  \`val\`
+
+let obj10 =
+  // Comment
+  \`
+val
+val
+\`
+
+let obj11 =
+  // Comment
+  tag\`val\`
+
+let obj12 =
+  // Comment
+  tag\`
+val
+val
+\`
+
+let // Comment
+  foo1 = "val"
+
+let // Comment
+  foo2 = "val",
+  bar = "val"
+
+const foo3 = 123
+// Nothing to see here.
+;["2", "3"].forEach((x) => console.log(x))
+
+================================================================================
+`;
+
+exports[`variable-declarator.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+let obj1 = // Comment
+{
+  key: 'val'
+}
+
+let obj2 // Comment
+= {
+  key: 'val'
+}
+
+let obj3 = { // Comment
+  key: 'val'
+}
+
+let obj4 = {
+  // Comment
+  key: 'val'
+}
+
+let obj5 = // Comment
+[
+  'val'
+]
+
+let obj6 // Comment
+= [
+  'val'
+]
+
+let obj7 = [ // Comment
+  'val'
+]
+
+let obj8 = [
+  // Comment
+  'val'
+]
+
+let obj9 = // Comment
+\`val\`;
+
+let obj10 = // Comment
+\`
+val
+val
+\`;
+
+let obj11 = // Comment
+tag\`val\`;
+
+let obj12 = // Comment
+tag\`
+val
+val
+\`;
+
+let // Comment
+  foo1 = 'val';
+
+let // Comment
+  foo2 = 'val',
+  bar = 'val';
+
+const foo3 = 123
+// Nothing to see here.
+;["2", "3"].forEach(x => console.log(x))
+
+=====================================output=====================================
+let obj1 =
+  // Comment
+  {
+    key: "val",
+  };
+
+let obj2 =
+  // Comment
+  {
+    key: "val",
+  };
+
+let obj3 = {
+  // Comment
+  key: "val",
+};
+
+let obj4 = {
+  // Comment
+  key: "val",
+};
+
+let obj5 =
+  // Comment
+  ["val"];
+
+let obj6 =
+  // Comment
+  ["val"];
+
+let obj7 = [
+  // Comment
+  "val",
+];
+
+let obj8 = [
+  // Comment
+  "val",
+];
+
+let obj9 =
+  // Comment
+  \`val\`;
+
+let obj10 =
+  // Comment
+  \`
+val
+val
+\`;
+
+let obj11 =
+  // Comment
+  tag\`val\`;
+
+let obj12 =
+  // Comment
+  tag\`
+val
+val
+\`;
+
+let // Comment
+  foo1 = "val";
+
+let // Comment
+  foo2 = "val",
+  bar = "val";
+
+const foo3 = 123;
+// Nothing to see here.
+["2", "3"].forEach((x) => console.log(x));
+
+================================================================================
+`;

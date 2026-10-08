@@ -1,0 +1,157 @@
+.powerPathNavigator .helm button.pressedButton, /* comment 1 */
+.powerPathNavigator .helm button:active:not(.disabledButton),
+.powerPathNavigator table.powerPathInfo th:active,
+.powerPathNavigator table.powerPathInfo th:active + th:last-child {
+}
+
+/* comment 2 */
+.powerPathNavigator .helm button.pressedButton,
+.powerPathNavigator .helm button:active:not(.disabledButton) {
+}
+
+.foo,
+/* comment 3 */
+.bar {
+   display: block;
+}
+
+/* comment 4 */
+/* comment 5 */ .field /* comment 6 */
+/* comment 7 */
+/* comment 8 */ { /* comment 9 */
+    /* comment 10 */
+    background: green;
+    /* comment 11 */
+/* comment 12 */ } /* comment 13 */
+/* comment 14 */
+
+/* comment 15 */ .element /* comment 16 */ , /* comment 17 */ .element /* comment 18 */ {}
+/* comment 19 */
+.element
+/* comment 20 */
+,
+/* comment 21 */
+.element
+/* comment 22 */
+{}
+
+/* comment 23 */ .element /* comment 24 */ .element /* comment 25 */ {}
+/* comment 26 */
+.element
+/* comment 27 */
+.element
+/* comment 28 */
+{}
+
+/* comment 29 */ .element /* comment 30 */ > /* comment 31 */ .element /* comment 32 */ {}
+/* comment 33 */
+.element
+/* comment 34 */
+>
+/* comment 35 */
+.element
+/* comment 36 */
+{}
+
+/* comment 37 */ .element /* comment 38 */ + /* comment 39 */ .element /* comment 40 */ {}
+/* comment 41 */
+.element
+/* comment 42 */
++
+/* comment 43 */
+.element
+/* comment 44 */
+{}
+
+/* comment 45 */ .element /* comment 46 */ ~ /* comment 47 */ .element /* comment 48 */ {}
+/* comment 49 */
+.element
+/* comment 50 */
+~
+/* comment 51 */
+.element
+/* comment 52 */
+{}
+
+/* comment 53 */ .element /* comment 54 */ >>> /* comment 55 */ .element /* comment 56 */ {}
+/* comment 57 */
+.element
+/* comment 58 */
+>>>
+/* comment 59 */
+.element
+/* comment 60 */
+{}
+
+a[/* comment 61 */target/* comment 62 */] {}
+a[/* comment 63 */target/* comment 64 */=/* comment 65 */"_blank"/* comment 66 */] {}
+a[/* comment 67 */target/* comment 68 */~=/* comment 69 */"_blank"/* comment 70 */] {}
+a[/* comment 71 */target/* comment 72 */|=/* comment 73 */"_blank"/* comment 74 */] {}
+a[/* comment 75 */target/* comment 76 */^=/* comment 77 */"_blank"/* comment 78 */] {}
+a[/* comment 79 */target/* comment 80 */$=/* comment 81 */"_blank"/* comment 82 */] {}
+a[/* comment 83 */target/* comment 84 */*=/* comment 85 */"_blank"/* comment 86 */] {}
+
+[/* comment 87 */foo/* comment 88 */|/* comment 89 */att/* comment 90 */=/* comment 91 */val/* comment 92 */] {}
+[/* comment 93 */*/* comment 94 */|/* comment 95 */att/* comment 96 */] {}
+[/* comment 97 */|/* comment 98 */att/* comment 99 */] {}
+
+a/* comment 100 */:/* comment 101 */active {}
+
+a/* comment 102 */::/* comment 103 */after {}
+
+p:lang(/* comment 104 */it/* comment 105 */) {}
+
+span:nth-child(/* comment 106 */2n/* comment 107 */+/* comment 108 */1/* comment 109 */) {}
+
+/* comment 110 */::-webkit-progress-bar {}
+
+/* comment 111 */:matches(/* comment 112 */section/* comment 113 */,/* comment 114 */ article/* comment 115 */) /* comment 116 */ h1 {}
+
+/* comment 117 */*/* comment 118 */ {}
+
+/* comment 119 */#container/* comment 120 */{}
+
+/* comment 121 */.error/* comment 122 */{}
+
+/* comment 123 */a/* comment 124 */{}
+
+input:not(/* comment 125 */[/* comment 126 */disabled/* comment 127 */]/* comment 128 */) {}
+
+/* comment 129 */h1/* comment 130 */, /* comment 131 */h2/* comment 132 */,/* comment 133 */ h3/* comment 134 */ {}
+
+/* comment 135 */.phone/* comment 136 */ { /* comment 137 */
+        /* comment 138 */&_title/* comment 139 */ { /* comment 140 */
+        width: 500px;
+        /* comment 141 */body.is_dark/* comment 142 */ & /* comment 143 */{ /* comment 144 */
+            color: white;
+        /* comment 145 */ } /* comment 146 */
+    /* comment 147 */ } /* comment 148 */
+
+    /* comment 149 */ img/* comment 150 */ { /* comment 151 */
+        display: block;
+    /* comment 152 */ } /* comment 153 */
+/* comment 154 */
+} /* comment 155 */
+
+@media (max-width: 500px) {
+    /* comment 156 */ a /* comment 157 */ { /* comment 158 */
+        /* comment 159 */b/* comment 160 */ {/* comment 161 */} /* comment 162 */
+    /* comment 163 */ } /* comment 164 */
+/* comment 165 */ } /* comment 166 */
+
+/* comment 167 */ article /* comment 168 */ :--heading /* comment 169 */ + /* comment 170 */ p /* comment 171 */ {}
+
+/* comment 172 */ .foo /* comment 173 */ :global /* comment 174 */.bar /* comment 175 */{}
+/* comment 176 */ .foo /* comment 177 */ :global(/* comment 178 */.bar/* comment 179 */) /* comment 180 */ .baz /* comment 181 */ {}
+
+/* comment 182 */ .foo /* comment 183 */ :local /* comment 184 */ .bar /* comment 185 */ {}
+/* comment 186 */ .foo /* comment 187 */ :local(/* comment 188 */.foo/* comment 189 */) /* comment 190 */ .bar /* comment 191 */ {}
+
+/* custom properties set & @apply rule */
+:root {
+    /* comments 192 */ --centered /* comments 193 */ : /* comments 194 */ {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    };
+}

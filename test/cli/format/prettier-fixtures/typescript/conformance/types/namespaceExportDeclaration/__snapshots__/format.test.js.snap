@@ -1,0 +1,20 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`exportAsNamespace.d.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// issue: https://github.com/Microsoft/TypeScript/issues/11545
+
+export var X;
+export as namespace N
+
+=====================================output=====================================
+// issue: https://github.com/Microsoft/TypeScript/issues/11545
+
+export var X;
+export as namespace N;
+
+================================================================================
+`;

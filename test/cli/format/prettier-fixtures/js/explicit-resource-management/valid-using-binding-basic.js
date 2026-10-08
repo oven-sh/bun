@@ -1,0 +1,3 @@
+{
+  using basic = getReader();
+}

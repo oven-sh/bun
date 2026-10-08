@@ -1,0 +1,88 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`test.js - {"embeddedLanguageFormatting":"off"} format 1`] = `
+====================================options=====================================
+embeddedLanguageFormatting: "off"
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+css\`a { }\`
+
+md\`\`
+
+graphql(\`{id}\`)
+
+html\`<a>\`
+
+@Component({
+  template: \`<a>\`,
+  styles: [\`a { }\`]
+})
+class TestComponent {}
+
+=====================================output=====================================
+css\`a { }\`;
+
+md\`\`;
+
+graphql(\`{id}\`);
+
+html\`<a>\`;
+
+@Component({
+  template: \`<a>\`,
+  styles: [\`a { }\`],
+})
+class TestComponent {}
+
+================================================================================
+`;
+
+exports[`test.js format 1`] = `
+====================================options=====================================
+parsers: ["babel"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+css\`a { }\`
+
+md\`\`
+
+graphql(\`{id}\`)
+
+html\`<a>\`
+
+@Component({
+  template: \`<a>\`,
+  styles: [\`a { }\`]
+})
+class TestComponent {}
+
+=====================================output=====================================
+css\`
+  a {
+  }
+\`;
+
+md\`\`;
+
+graphql(\`
+  {
+    id
+  }
+\`);
+
+html\`<a></a>\`;
+
+@Component({
+  template: \`<a></a>\`,
+  styles: [
+    \`
+      a {
+      }
+    \`,
+  ],
+})
+class TestComponent {}
+
+================================================================================
+`;

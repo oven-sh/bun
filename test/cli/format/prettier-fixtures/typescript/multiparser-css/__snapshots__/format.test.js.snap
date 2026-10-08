@@ -1,0 +1,26 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`issue-6259.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+const yesFrame = (
+    ...args: Interpolation<ThemedStyledProps<{}, Theme>>[]
+) => css\`
+    \${ChatRoot}[data-frame="yes"] & {
+        \${css({}, ...args)}
+    }
+\`
+
+=====================================output=====================================
+const yesFrame = (
+  ...args: Interpolation<ThemedStyledProps<{}, Theme>>[]
+) => css\`
+  \${ChatRoot}[data-frame="yes"] & {
+    \${css({}, ...args)}
+  }
+\`;
+
+================================================================================
+`;

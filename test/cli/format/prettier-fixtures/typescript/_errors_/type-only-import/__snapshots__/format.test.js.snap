@@ -1,0 +1,54 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format[babel-ts] 1`] = `
+"A type-only import can specify a default import or named bindings, but not both. (1:1)
+> 1 | import type foo, {named} from "foo"
+    | ^
+Cause: A type-only import can specify a default import or named bindings, but not both. (1:0)"
+`;
+
+exports[`snippet: #0 format[oxc-ts] 1`] = `
+"A type-only import can specify a default import or named bindings, but not both. (1:13)
+> 1 | import type foo, {} from "foo"
+    |             ^^^"
+`;
+
+exports[`snippet: #0 format[oxc-ts] 2`] = `
+"A type-only import can specify a default import or named bindings, but not both. (1:13)
+> 1 | import type foo, {named} from "foo"
+    |             ^^^"
+`;
+
+exports[`snippet: #0 format[typescript] 1`] = `
+"A type-only import can specify a default import or named bindings, but not both. (1:8)
+> 1 | import type foo, {} from "foo"
+    |        ^^^^^^^^^^^^
+Cause: A type-only import can specify a default import or named bindings, but not both."
+`;
+
+exports[`snippet: #0 format[typescript] 2`] = `
+"A type-only import can specify a default import or named bindings, but not both. (1:8)
+> 1 | import type foo, {named} from "foo"
+    |        ^^^^^^^^^^^^^^^^^
+Cause: A type-only import can specify a default import or named bindings, but not both."
+`;
+
+exports[`snippet: #1 format[babel-ts] 1`] = `
+"A type-only import can specify a default import or named bindings, but not both. (1:1)
+> 1 | import type foo, * as namespace from "foo"
+    | ^
+Cause: A type-only import can specify a default import or named bindings, but not both. (1:0)"
+`;
+
+exports[`snippet: #1 format[oxc-ts] 1`] = `
+"A type-only import can specify a default import or named bindings, but not both. (1:13)
+> 1 | import type foo, * as namespace from "foo"
+    |             ^^^"
+`;
+
+exports[`snippet: #1 format[typescript] 1`] = `
+"A type-only import can specify a default import or named bindings, but not both. (1:8)
+> 1 | import type foo, * as namespace from "foo"
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^
+Cause: A type-only import can specify a default import or named bindings, but not both."
+`;

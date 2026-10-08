@@ -1,0 +1,42 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`basic.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+class Person {
+  #name: string;
+  constructor(name: string) {
+    this.#name = name;
+  }
+  
+  equals(other: unknown) {
+    return (
+      other &&
+      typeof other === "object" &&
+      #name in other && // <- this is new!
+      this.#name === other.#name
+    );
+  }
+}
+
+=====================================output=====================================
+class Person {
+  #name: string;
+  constructor(name: string) {
+    this.#name = name;
+  }
+
+  equals(other: unknown) {
+    return (
+      other &&
+      typeof other === "object" &&
+      #name in other && // <- this is new!
+      this.#name === other.#name
+    );
+  }
+}
+
+================================================================================
+`;

@@ -1,0 +1,27 @@
+$map: (
+  /* comment */
+  key1: value,
+
+  // comment
+  key2: value,
+
+  /* comment */ /* comment */
+  key3: value,
+
+  /* comment */
+  key4: (
+    key: value,
+    key: value,
+    key: value,
+    key: value,
+    key: value,
+  ),
+);
+
+$map: (
+  /* comment */
+);
+
+$map: (
+  // comment
+);

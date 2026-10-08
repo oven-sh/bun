@@ -1,0 +1,14 @@
+.foo {
+  --#{$prop}: 10px;
+  #{$prop}: 10px;
+  prop1: var(--#{$var});
+  prop2: var(#{$var}, --my-#{$var}, pink);
+  prop3: calc(var(--#{$var}) * 1px);
+  prop4: var(--spacer#{(1) + 2});
+}
+
+@supports (--#{$prop}: green) {
+  body {
+    color: var(--#{$var});
+  }
+}

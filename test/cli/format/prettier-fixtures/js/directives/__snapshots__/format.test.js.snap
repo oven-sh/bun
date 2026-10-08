@@ -1,0 +1,238 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`escaped.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+// Unnecessary escapes. (adapted from tests/quotes/strings.js)
+// Note that in directives, unnecessary escapes should be preserved.
+// See https://github.com/prettier/prettier/issues/1555
+'\\'';
+'\\"';
+"\\'";
+"\\"";
+'\\\\';
+'\\a';
+"hol\\a"
+'hol\\a'
+"hol\\\\a (the a is not escaped)"
+'hol\\\\a (the a is not escaped)'
+"multiple \\a unnecessary \\a escapes"
+'multiple \\a unnecessary \\a escapes'
+"unnecessarily escaped character preceded by escaped backslash \\\\\\a"
+'unnecessarily escaped character preceded by escaped backslash \\\\\\a'
+"unescaped character preceded by two escaped backslashes       \\\\\\\\a"
+'unescaped character preceded by two escaped backslashes       \\\\\\\\a'
+"\\a\\a" // consecutive unnecessarily escaped characters
+'\\a\\a' // consecutive unnecessarily escaped characters
+'escaped \\u2030 \\‰ (should still stay escaped)'
+
+// Meaningful escapes
+// Commented out to avoid \`SyntaxError: Octal literals are not allowed in strict mode.\`
+// "octal escapes \\0 \\1 \\2 \\3 \\4 \\5 \\6 \\7"
+// 'octal escapes \\0 \\1 \\2 \\3 \\4 \\5 \\6 \\7'
+"meaningfully escaped alphabetical characters \\n \\r \\v \\t \\b \\f \\u2713 \\x61"
+'meaningfully escaped alphabetical characters \\n \\r \\v \\t \\b \\f \\u2713 \\x61'
+'escaped newline \\
+'
+'escaped carriage return \\
+'
+'escaped \\u2028 \\ '
+'escaped \\u2029 \\ '
+
+=====================================output=====================================
+// Unnecessary escapes. (adapted from tests/quotes/strings.js)
+// Note that in directives, unnecessary escapes should be preserved.
+// See https://github.com/prettier/prettier/issues/1555
+'\\'';
+'\\"';
+"\\'";
+"\\"";
+"\\\\";
+"\\a";
+"hol\\a";
+"hol\\a";
+"hol\\\\a (the a is not escaped)";
+"hol\\\\a (the a is not escaped)";
+"multiple \\a unnecessary \\a escapes";
+"multiple \\a unnecessary \\a escapes";
+"unnecessarily escaped character preceded by escaped backslash \\\\\\a";
+"unnecessarily escaped character preceded by escaped backslash \\\\\\a";
+"unescaped character preceded by two escaped backslashes       \\\\\\\\a";
+"unescaped character preceded by two escaped backslashes       \\\\\\\\a";
+"\\a\\a"; // consecutive unnecessarily escaped characters
+"\\a\\a"; // consecutive unnecessarily escaped characters
+"escaped \\u2030 \\‰ (should still stay escaped)";
+
+// Meaningful escapes
+// Commented out to avoid \`SyntaxError: Octal literals are not allowed in strict mode.\`
+// "octal escapes \\0 \\1 \\2 \\3 \\4 \\5 \\6 \\7"
+// 'octal escapes \\0 \\1 \\2 \\3 \\4 \\5 \\6 \\7'
+"meaningfully escaped alphabetical characters \\n \\r \\v \\t \\b \\f \\u2713 \\x61";
+"meaningfully escaped alphabetical characters \\n \\r \\v \\t \\b \\f \\u2713 \\x61";
+"escaped newline \\
+";
+"escaped carriage return \\
+";
+"escaped \\u2028 \\ ";
+"escaped \\u2029 \\ ";
+
+================================================================================
+`;
+
+exports[`issue-7346.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+('bar'); // parens should not be removed to avoid becoming a directive
+\`foo\`;
+'bar'; // parens should be added, see https://github.com/prettier/prettier/issues/7346#issuecomment-574823604
+'"';
+
+=====================================output=====================================
+("bar"); // parens should not be removed to avoid becoming a directive
+\`foo\`;
+("bar"); // parens should be added, see https://github.com/prettier/prettier/issues/7346#issuecomment-574823604
+('"');
+
+================================================================================
+`;
+
+exports[`last-line-0.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+'use strict';
+=====================================output=====================================
+"use strict";
+
+================================================================================
+`;
+
+exports[`last-line-1.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+'use strict';
+
+=====================================output=====================================
+"use strict";
+
+================================================================================
+`;
+
+exports[`last-line-2.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+'use strict';
+
+
+=====================================output=====================================
+"use strict";
+
+================================================================================
+`;
+
+exports[`newline.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+/* @flow */
+
+"use strict";
+
+import a from "a";
+
+a();
+
+=====================================output=====================================
+/* @flow */
+
+"use strict";
+
+import a from "a";
+
+a();
+
+================================================================================
+`;
+
+exports[`no-newline.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+"use strict";
+a
+
+=====================================output=====================================
+"use strict";
+a;
+
+================================================================================
+`;
+
+exports[`test.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+"use strict";
+
+function f1() {
+  "use strict";
+}
+
+function f2() {
+  'ngInject';
+  Object.assign(this, { $log, $uibModal });
+}
+
+function f3() {
+
+  'ngInject';
+
+  Object.assign(this, { $log, $uibModal });
+
+}
+
+function f4() {
+  'ngInject';
+
+
+  Object.assign(this, { $log, $uibModal });
+}
+
+=====================================output=====================================
+"use strict";
+
+function f1() {
+  "use strict";
+}
+
+function f2() {
+  "ngInject";
+  Object.assign(this, { $log, $uibModal });
+}
+
+function f3() {
+  "ngInject";
+
+  Object.assign(this, { $log, $uibModal });
+}
+
+function f4() {
+  "ngInject";
+
+  Object.assign(this, { $log, $uibModal });
+}
+
+================================================================================
+`;

@@ -1,0 +1,38 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`long-type-parameters.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript", "flow"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export interface MarkDef<
+  M extends string | Mark = Mark,
+  ES extends ExprRef | SignalRef = ExprRef | SignalRef
+> extends
+    A,
+    B,
+    C {}
+
+declare class MarkDef<
+  M extends string | Mark = Mark,
+  ES extends ExprRef | SignalRef = ExprRef | SignalRef
+> implements
+    A,
+    B,
+    C {}
+
+=====================================output=====================================
+export interface MarkDef<
+  M extends string | Mark = Mark,
+  ES extends ExprRef | SignalRef = ExprRef | SignalRef,
+>
+  extends A, B, C {}
+
+declare class MarkDef<
+  M extends string | Mark = Mark,
+  ES extends ExprRef | SignalRef = ExprRef | SignalRef,
+>
+  implements A, B, C {}
+
+================================================================================
+`;

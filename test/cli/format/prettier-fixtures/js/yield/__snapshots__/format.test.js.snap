@@ -1,0 +1,117 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`arrow.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function *f() {
+  (yield a => a);
+  (yield async a => a);
+  (yield async (a) => a);
+}
+
+=====================================output=====================================
+function* f() {
+  yield (a) => a;
+  yield async (a) => a;
+  yield async (a) => a;
+}
+
+================================================================================
+`;
+
+exports[`conditional.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function* f1() {
+  a = (yield) ? 1 : 1;
+  a = yield 1 ? 1 : 1;
+  a = (yield 1) ? 1 : 1;
+  a = 1 ? yield : yield;
+  a = 1 ? yield 1 : yield 1;
+}
+
+function* f2() {
+  a = yield* 1 ? 1 : 1;
+  a = (yield* 1) ? 1 : 1;
+  a = 1 ? yield* 1 : yield* 1;
+}
+
+async function f3() {
+  a = await 1 ? 1 : 1;
+  a = (await 1) ? 1 : 1;
+  a = 1 ? await 1 : await 1;
+}
+
+=====================================output=====================================
+function* f1() {
+  a = (yield) ? 1 : 1;
+  a = yield 1 ? 1 : 1;
+  a = (yield 1) ? 1 : 1;
+  a = 1 ? yield : yield;
+  a = 1 ? yield 1 : yield 1;
+}
+
+function* f2() {
+  a = yield* 1 ? 1 : 1;
+  a = (yield* 1) ? 1 : 1;
+  a = 1 ? yield* 1 : yield* 1;
+}
+
+async function f3() {
+  a = (await 1) ? 1 : 1;
+  a = (await 1) ? 1 : 1;
+  a = 1 ? await 1 : await 1;
+}
+
+================================================================================
+`;
+
+exports[`jsx.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function* f() {
+  yield (<div>generator</div>)
+  yield (<div><p>generator</p></div>)
+}
+
+=====================================output=====================================
+function* f() {
+  yield <div>generator</div>;
+  yield (
+    <div>
+      <p>generator</p>
+    </div>
+  );
+}
+
+================================================================================
+`;
+
+exports[`jsx-without-parenthesis.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+function* f() {
+  yield <div>generator</div>
+  yield <div><p>generator</p></div>
+}
+
+=====================================output=====================================
+function* f() {
+  yield <div>generator</div>;
+  yield (
+    <div>
+      <p>generator</p>
+    </div>
+  );
+}
+
+================================================================================
+`;

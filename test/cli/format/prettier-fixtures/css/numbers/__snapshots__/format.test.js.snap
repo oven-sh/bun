@@ -1,0 +1,160 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`numbers.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@supports (margin: .5px ".30px" 1E+2px) {
+  a {
+    a: 0;
+    a: 1;
+
+    a: 0.1;
+    a: 1.1;
+
+    a: .1;
+    a: 1.;
+    a: +.1;
+    a: -.1;
+
+    a: 1e1;
+    a: 1e+1;
+    a: 1e-1;
+    a: 1.e1;
+    a: .1e1;
+    a: 1.1e1;
+    a: 1.1e0010;
+    a: +1.1e0010;
+    a: -1.1e0010;
+    a: .1e+0010;
+    a: .1e-0010;
+
+    a: 1E1;
+    a: 1E+1;
+    a: 1E-1;
+    a: 1.E1;
+    a: .1E1;
+    a: 1.1E1;
+    a: 1.1E0010;
+    a: .1E+0010;
+    a: .1E-0010;
+
+    a: 0.5e0;
+    a: 0.5e00;
+    a: 0.5e+0;
+    a: 0.5e+00;
+    a: 0.5e-0;
+    a: 0.5e-00;
+    a: +0.5e0;
+    a: -0.5e0;
+
+    a: 1;
+    a: 1.00500;
+    a: 1.0;
+    a: 1.5;
+    a: 1.50;
+
+    a: 0.00500;
+    a: 0.0;
+    a: 0.0000;
+
+    a: 500600.001230045000;
+    a: 1.00500e60;
+    a: 1.0e60;
+    a: 0.00500e60;
+    a: 0.0e60;
+    a: 0.0000e60;
+    a: .0e60;
+    a: 0.e60;
+    a: 0e60;
+    a: 500600.001230045000e60;
+    a: 10;
+    a: 9700;
+    a: 10e100;
+    height: attr(data-size em, .01);
+  }
+}
+
+@media only screen and (-webkit-min-device-pixel-ratio : .5), only screen and (min-device-pixel-ratio : .5) { }
+@include single-transition(transform, .5s ease);
+
+=====================================output=====================================
+@supports (margin: 0.5px ".30px" 1e2px) {
+  a {
+    a: 0;
+    a: 1;
+
+    a: 0.1;
+    a: 1.1;
+
+    a: 0.1;
+    a: 1;
+    a: +0.1;
+    a: -0.1;
+
+    a: 1e1;
+    a: 1e1;
+    a: 1e-1;
+    a: 1e1;
+    a: 0.1e1;
+    a: 1.1e1;
+    a: 1.1e10;
+    a: +1.1e10;
+    a: -1.1e10;
+    a: 0.1e10;
+    a: 0.1e-10;
+
+    a: 1e1;
+    a: 1e1;
+    a: 1e-1;
+    a: 1e1;
+    a: 0.1e1;
+    a: 1.1e1;
+    a: 1.1e10;
+    a: 0.1e10;
+    a: 0.1e-10;
+
+    a: 0.5;
+    a: 0.5;
+    a: 0.5;
+    a: 0.5;
+    a: 0.5;
+    a: 0.5;
+    a: +0.5;
+    a: -0.5;
+
+    a: 1;
+    a: 1.005;
+    a: 1;
+    a: 1.5;
+    a: 1.5;
+
+    a: 0.005;
+    a: 0;
+    a: 0;
+
+    a: 500600.001230045;
+    a: 1.005e60;
+    a: 1e60;
+    a: 0.005e60;
+    a: 0e60;
+    a: 0e60;
+    a: 0e60;
+    a: 0e60;
+    a: 0e60;
+    a: 500600.001230045e60;
+    a: 10;
+    a: 9700;
+    a: 10e100;
+    height: attr(data-size em, 0.01);
+  }
+}
+
+@media only screen and (-webkit-min-device-pixel-ratio: 0.5),
+  only screen and (min-device-pixel-ratio: 0.5) {
+}
+@include single-transition(transform, 0.5s ease);
+
+================================================================================
+`;

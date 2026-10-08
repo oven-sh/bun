@@ -1,0 +1,15 @@
+@warn "Warn (#{$message}).";
+@warn  "Warn (#{$message}).";
+@warn   "Warn (#{$message}).";
+@warn #{$message};
+@warn "Very long long long long long long long long long long long long long line (#{$message}).";
+@warn
+  "Very long long long long long long long long long long long long long line (#{$message}).";
+@error "Error (#{$message}).";
+@error  "Error (#{$message}).";
+@error   "Error (#{$message}).";
+@error #{$message};
+@error "Very long long long long long long long long long long long long long line Error (#{$message}).";
+@error
+  "Very long long long long long long long long long long long long long line Error (#{$message}).";
+

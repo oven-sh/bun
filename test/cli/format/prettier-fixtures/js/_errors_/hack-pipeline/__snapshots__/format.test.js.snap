@@ -1,0 +1,79 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format 1`] = `
+"Hack-style pipe body does not contain a topic reference; Hack-style pipes must use topic at least once. (1:39)
+> 1 | async function * a() { a |> foo(%) |> (yield y)}
+    |                                       ^
+Cause: Hack-style pipe body does not contain a topic reference; Hack-style pipes must use topic at least once. (1:38)"
+`;
+
+exports[`snippet: #1 format 1`] = `
+"Hack-style pipe body does not contain a topic reference; Hack-style pipes must use topic at least once. (1:39)
+> 1 | async function * a() { a |> foo(%) |> (yield)}
+    |                                       ^
+Cause: Hack-style pipe body does not contain a topic reference; Hack-style pipes must use topic at least once. (1:38)"
+`;
+
+exports[`snippet: #2 format 1`] = `
+"Hack-style pipe body does not contain a topic reference; Hack-style pipes must use topic at least once. (1:39)
+> 1 | async function * a() { a |> foo(%) |> (await y)}
+    |                                       ^
+Cause: Hack-style pipe body does not contain a topic reference; Hack-style pipes must use topic at least once. (1:38)"
+`;
+
+exports[`snippet: #3 format 1`] = `
+"Hack-style pipe body does not contain a topic reference; Hack-style pipes must use topic at least once. (1:39)
+> 1 | async function * a() { a |> foo(%) |> (a?.b)}
+    |                                       ^
+Cause: Hack-style pipe body does not contain a topic reference; Hack-style pipes must use topic at least once. (1:38)"
+`;
+
+exports[`snippet: #4 format 1`] = `
+"Hack-style pipe body does not contain a topic reference; Hack-style pipes must use topic at least once. (1:39)
+> 1 | async function * a() { a |> foo(%) |> a?.b}
+    |                                       ^
+Cause: Hack-style pipe body does not contain a topic reference; Hack-style pipes must use topic at least once. (1:38)"
+`;
+
+exports[`snippet: #5 format 1`] = `
+"Hack-style pipe body does not contain a topic reference; Hack-style pipes must use topic at least once. (1:39)
+> 1 | async function * a() { a |> foo(%) |> (a.b())}
+    |                                       ^
+Cause: Hack-style pipe body does not contain a topic reference; Hack-style pipes must use topic at least once. (1:38)"
+`;
+
+exports[`snippet: #6 format 1`] = `
+"Hack-style pipe body does not contain a topic reference; Hack-style pipes must use topic at least once. (1:39)
+> 1 | async function * a() { a |> foo(%) |> a.b()}
+    |                                       ^
+Cause: Hack-style pipe body does not contain a topic reference; Hack-style pipes must use topic at least once. (1:38)"
+`;
+
+exports[`snippet: #7 format 1`] = `
+"Hack-style pipe body does not contain a topic reference; Hack-style pipes must use topic at least once. (1:39)
+> 1 | async function * a() { a |> foo(%) |> (a.b?.())}
+    |                                       ^
+Cause: Hack-style pipe body does not contain a topic reference; Hack-style pipes must use topic at least once. (1:38)"
+`;
+
+exports[`snippet: #8 format 1`] = `
+"Hack-style pipe body does not contain a topic reference; Hack-style pipes must use topic at least once. (1:39)
+> 1 | async function * a() { a |> foo(%) |> a.b?.()}
+    |                                       ^
+Cause: Hack-style pipe body does not contain a topic reference; Hack-style pipes must use topic at least once. (1:38)"
+`;
+
+exports[`snippet: #9 format 1`] = `
+"Hack-style pipe body cannot be an unparenthesized yield expression; please wrap it in parentheses. (1:39)
+> 1 | async function * a() { a |> foo(%) |> yield}
+    |                                       ^
+Cause: Hack-style pipe body cannot be an unparenthesized yield expression; please wrap it in parentheses. (1:38)"
+`;
+
+exports[`v8intrinsic.js format 1`] = `
+"Topic reference is unbound; it must be inside a pipe body. (1:16)
+> 1 | const status = %GetOptimizationStatus(fn) |> console.log(%);
+    |                ^
+  2 |
+Cause: Topic reference is unbound; it must be inside a pipe body. (1:15)"
+`;

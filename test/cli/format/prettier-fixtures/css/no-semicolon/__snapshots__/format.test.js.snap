@@ -1,0 +1,16 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`url.css format 1`] = `
+====================================options=====================================
+parsers: ["css"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+@import ur
+  l(//fonts.googleapis.com/css?family=Open+Sans:400,400italic);
+
+=====================================output=====================================
+@import ur
+  l(//fonts.googleapis.com/css?family=Open+Sans:400,400italic);
+
+================================================================================
+`;

@@ -1,0 +1,165 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`front-matter-toml.html - {"embeddedLanguageFormatting":"off"} format 1`] = `
+====================================options=====================================
+embeddedLanguageFormatting: "off"
+parsers: ["html"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
++++
+  
+title: Hello
+slug: home
+
++++
+
+<h1>
+  Hello world!</h1>
+
+=====================================output=====================================
++++
+  
+title: Hello
+slug: home
+
++++
+
+<h1>Hello world!</h1>
+
+================================================================================
+`;
+
+exports[`front-matter-toml.html format 1`] = `
+====================================options=====================================
+parsers: ["html"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
++++
+  
+title: Hello
+slug: home
+
++++
+
+<h1>
+  Hello world!</h1>
+
+=====================================output=====================================
++++
+  
+title: Hello
+slug: home
+
++++
+
+<h1>Hello world!</h1>
+
+================================================================================
+`;
+
+exports[`front-matter-yaml.html - {"embeddedLanguageFormatting":"off"} format 1`] = `
+====================================options=====================================
+embeddedLanguageFormatting: "off"
+parsers: ["html"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---yaml
+  
+title: Hello
+slug: home
+
+---
+
+<h1>
+  Hello world!</h1>
+
+=====================================output=====================================
+---yaml
+  
+title: Hello
+slug: home
+
+---
+
+<h1>Hello world!</h1>
+
+================================================================================
+`;
+
+exports[`front-matter-yaml.html format 1`] = `
+====================================options=====================================
+parsers: ["html"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---yaml
+  
+title: Hello
+slug: home
+
+---
+
+<h1>
+  Hello world!</h1>
+
+=====================================output=====================================
+---yaml
+title: Hello
+slug: home
+---
+
+<h1>Hello world!</h1>
+
+================================================================================
+`;
+
+exports[`test.html - {"embeddedLanguageFormatting":"off"} format 1`] = `
+====================================options=====================================
+embeddedLanguageFormatting: "off"
+parsers: ["html"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<!doctype html>
+<head>
+  <style>a {}</style>
+  <script>1  + 2</script>
+</head>
+
+=====================================output=====================================
+<!doctype html>
+<head>
+  <style>
+    a {}
+  </style>
+  <script>
+    1  + 2
+  </script>
+</head>
+
+================================================================================
+`;
+
+exports[`test.html format 1`] = `
+====================================options=====================================
+parsers: ["html"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<!doctype html>
+<head>
+  <style>a {}</style>
+  <script>1  + 2</script>
+</head>
+
+=====================================output=====================================
+<!doctype html>
+<head>
+  <style>
+    a {
+    }
+  </style>
+  <script>
+    1 + 2;
+  </script>
+</head>
+
+================================================================================
+`;

@@ -1,0 +1,64 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`snippet: #0 format[acorn] 1`] = `
+"'import' and 'export' may appear only with 'sourceType: module' (1:1)
+> 1 | import "foo"
+    | ^
+Cause: 'import' and 'export' may appear only with 'sourceType: module' (1:0)"
+`;
+
+exports[`snippet: #0 format[espree] 1`] = `
+"'import' and 'export' may appear only with 'sourceType: module' (1:1)
+> 1 | import "foo"
+    | ^
+Cause: 'import' and 'export' may appear only with 'sourceType: module'"
+`;
+
+exports[`snippet: #0 format[meriyah] 1`] = `
+"The import keyword can only be used with the module goal (1:8)
+> 1 | import "foo"
+    |        ^^^^^
+Cause: [1:7-1:12]: The import keyword can only be used with the module goal"
+`;
+
+exports[`snippet: #1 format[acorn] 1`] = `
+"'with' in strict mode (1:1)
+> 1 | with(foo) {}
+    | ^
+Cause: 'with' in strict mode (1:0)"
+`;
+
+exports[`snippet: #1 format[espree] 1`] = `
+"'with' in strict mode (1:1)
+> 1 | with(foo) {}
+    | ^
+Cause: 'with' in strict mode"
+`;
+
+exports[`snippet: #1 format[meriyah] 1`] = `
+"Strict mode code may not include a with statement (1:5)
+> 1 | with(foo) {}
+    |     ^
+Cause: [1:4-1:5]: Strict mode code may not include a with statement"
+`;
+
+exports[`snippet: #2 format[acorn] 1`] = `
+"Deleting local variable in strict mode (1:1)
+> 1 | delete foo
+    | ^
+Cause: Deleting local variable in strict mode (1:0)"
+`;
+
+exports[`snippet: #2 format[espree] 1`] = `
+"Deleting local variable in strict mode (1:1)
+> 1 | delete foo
+    | ^
+Cause: Deleting local variable in strict mode"
+`;
+
+exports[`snippet: #2 format[meriyah] 1`] = `
+"Calling delete on expression not allowed in strict mode (1:8)
+> 1 | delete foo
+    |        ^^^
+Cause: [1:7-1:10]: Calling delete on expression not allowed in strict mode"
+`;

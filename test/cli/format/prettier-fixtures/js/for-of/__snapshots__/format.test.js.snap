@@ -1,0 +1,119 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`async-identifier.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for ((async) of []);
+for ((foo) of async);
+for ((foo) of []) async;
+
+async function f() {
+  for await (async of []);
+  for await ((async) of []);
+  for await ((foo) of async);
+  for await ((foo) of []) async;
+}
+
+=====================================output=====================================
+for ((async) of []);
+for (foo of async);
+for (foo of []) async;
+
+async function f() {
+  for await (async of []);
+  for await (async of []);
+  for await (foo of async);
+  for await (foo of []) async;
+}
+
+================================================================================
+`;
+
+exports[`async-identifier.js format[meriyah] 1`] = `
+"Expected '=>' (6:23)
+  4 |
+  5 | async function f() {
+> 6 |   for await (async of []);
+    |                       ^
+  7 |   for await ((async) of []);
+  8 |   for await ((foo) of async);
+  9 |   for await ((foo) of []) async;
+Cause: [6:22-6:23]: Expected '=>'"
+`;
+
+exports[`comments.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+for (x
+/*1a*/
+in //1b
+y) //1c
+;
+
+for (x in /*2a*/ //2b
+y); //2c
+
+for (x /*3a*/ in y); //3b //3c
+
+for (x
+//4a
+in y);
+
+for(x in
+//5a
+y);
+
+for (x
+/*6a*/
+of //6b
+y) //6c
+;
+
+for (x of /*7a*/ //7b
+y); //7c
+
+for (x /*8a*/ of y); //8b //8c
+
+for (x
+//9a
+of y);
+
+for(x of
+//10a
+y);
+
+=====================================output=====================================
+for (x in /*1a*/ //1b
+y) //1c
+;
+
+for (x /*2a*/ in y); //2b //2c
+
+for (x /*3a*/ in y); //3b //3c
+
+for (x in //4a
+y);
+
+for (x in //5a
+y);
+
+for (x of /*6a*/ //6b
+y) //6c
+;
+
+for (x /*7a*/ of y); //7b //7c
+
+for (x /*8a*/ of y); //8b //8c
+
+for (x of //9a
+y);
+
+for (x of //10a
+y);
+
+================================================================================
+`;

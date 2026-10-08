@@ -1,0 +1,89 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`assignment_expression.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+this.size = this._origin = this._capacity = 0;
+
+=====================================output=====================================
+this.size = this._origin = this._capacity = 0;
+
+================================================================================
+`;
+
+exports[`property-key.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = {
+  [this.resource = resource]: 1,
+}
+
+class A {
+  [this.resource = resource] = 1;
+
+  [this.resource = resource]() {
+
+  }
+}
+
+=====================================output=====================================
+a = {
+  [(this.resource = resource)]: 1,
+};
+
+class A {
+  [(this.resource = resource)] = 1;
+
+  [(this.resource = resource)]() {}
+}
+
+================================================================================
+`;
+
+exports[`property-value.js format 1`] = `
+====================================options=====================================
+parsers: ["babel", "flow", "typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+a = {
+  resource: (this.resource = resource),
+}
+
+class A {
+  property = (this.resource = resource)
+}
+
+map(([resource]) => ({
+  resource: (this.resource = resource),
+}))
+
+map(([resource]) => class A{
+  resource = (this.resource = resource)
+})
+
+=====================================output=====================================
+a = {
+  resource: (this.resource = resource),
+};
+
+class A {
+  property = (this.resource = resource);
+}
+
+map(([resource]) => ({
+  resource: (this.resource = resource),
+}));
+
+map(
+  ([resource]) =>
+    class A {
+      resource = (this.resource = resource);
+    },
+);
+
+================================================================================
+`;

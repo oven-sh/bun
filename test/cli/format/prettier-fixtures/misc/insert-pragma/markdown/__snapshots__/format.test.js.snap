@@ -1,0 +1,73 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`front-matter.md - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["markdown"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+---
+something
+---
+
+# hello world
+
+some content some content some content some content
+
+=====================================output=====================================
+---
+something
+---
+
+<!-- @format -->
+
+# hello world
+
+some content some content some content some content
+
+================================================================================
+`;
+
+exports[`simple.md - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["markdown"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+# hello world
+
+some content some content some content some content
+
+=====================================output=====================================
+<!-- @format -->
+
+# hello world
+
+some content some content some content some content
+
+================================================================================
+`;
+
+exports[`start-with-comment.md - {"insertPragma":true} format 1`] = `
+====================================options=====================================
+insertPragma: true
+parsers: ["markdown"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+<!-- something -->
+
+# hello world
+
+some content some content some content some content
+
+=====================================output=====================================
+<!-- @format -->
+
+<!-- something -->
+
+# hello world
+
+some content some content some content some content
+
+================================================================================
+`;

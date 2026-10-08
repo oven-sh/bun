@@ -1,0 +1,156 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`empty-import.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+import type { } from '@types/googlemaps';
+import 'a';
+import /* comment */ 'a';
+import // comment
+'a';
+import type { /* comment */ } from 'a';
+import /* comment */ type {} from 'a';
+import type {} /* comment */ from 'a';
+import type {} from /* comment */ 'a';
+import /* comment */ type {/* comment */} /* comment */ from /* comment */ 'a';
+import type {
+  // comment
+} from 'a';
+import // comment
+type {} from 'a';
+import type {}
+// comment
+from 'a';
+import type {} from
+// comment
+'a';
+import type
+// comment
+{
+// comment
+}
+// comment
+from
+// comment
+'a';
+
+import // {} from
+'a';
+import  type {} from // comment ends with from
+'a';
+import type {} from /* comment ends with from */ 'a';
+import type {} from // comment not ends with from ___
+'a';
+import type {} from /* comment not ends with from ___ */ 'a';
+
+import // comment ends with from
+'a';
+import /* comment ends with from */ 'a';
+import // comment not ends with from ___
+'a';
+import /* comment not ends with from ___ */ 'a';
+
+=====================================output=====================================
+import type {} from "@types/googlemaps";
+import "a";
+import /* comment */ "a";
+import // comment
+"a";
+import type {} from /* comment */ "a";
+import type {} from /* comment */ "a";
+import type {} from /* comment */ "a";
+import type {} from /* comment */ "a";
+import type {} from /* comment */ /* comment */ /* comment */ /* comment */ "a";
+import type {} from // comment
+"a";
+import type {} from // comment
+"a";
+import type {} from // comment
+"a";
+import type {} from // comment
+"a";
+import type {} from // comment
+// comment
+// comment
+// comment
+"a";
+
+import // {} from
+"a";
+import type {} from // comment ends with from
+"a";
+import type {} from /* comment ends with from */ "a";
+import type {} from // comment not ends with from ___
+"a";
+import type {} from /* comment not ends with from ___ */ "a";
+
+import // comment ends with from
+"a";
+import /* comment ends with from */ "a";
+import // comment not ends with from ___
+"a";
+import /* comment not ends with from ___ */ "a";
+
+================================================================================
+`;
+
+exports[`type-modifier.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export type { SomeThing };
+export type { A as B };
+export type { B as C } from './a';
+export type { foo } from 'bar';
+export type { foo };
+
+// this should be treated as a normal import statement
+import type from './foo';
+
+import type { SomeThing } from "./some-module.js";
+import type { foo, bar } from 'baz';
+import type { foo as bar } from 'baz';
+import type * as foo from './bar';
+import type foo from 'bar';
+
+// https://github.com/prettier/prettier/issues/19564
+export { type /* comment */ T } from 'foo';
+import { type /* comment */ T } from 'foo';
+
+export { /* e1 */ type /* e2 */ T /* e3 */ } from 'foo';
+import { /* i1 */ type /* i2 */ T /* i3 */ } from 'foo';
+
+export { /* e1 */ type /* e2 */ T /* e3 */ as /* e4 */ U /* e5 */ } from 'foo';
+import { /* i1 */ type /* i2 */ T /* i3 */ as /* i4 */ U /* i5 */ } from 'foo';
+
+=====================================output=====================================
+export type { SomeThing };
+export type { A as B };
+export type { B as C } from "./a";
+export type { foo } from "bar";
+export type { foo };
+
+// this should be treated as a normal import statement
+import type from "./foo";
+
+import type { SomeThing } from "./some-module.js";
+import type { foo, bar } from "baz";
+import type { foo as bar } from "baz";
+import type * as foo from "./bar";
+import type foo from "bar";
+
+// https://github.com/prettier/prettier/issues/19564
+export { type /* comment */ T } from "foo";
+import { type /* comment */ T } from "foo";
+
+export { /* e1 */ type /* e2 */ T /* e3 */ } from "foo";
+import { /* i1 */ type /* i2 */ T /* i3 */ } from "foo";
+
+export { /* e1 */ type /* e2 */ T /* e3 */ as /* e4 */ U /* e5 */ } from "foo";
+import { /* i1 */ type /* i2 */ T /* i3 */ as /* i4 */ U /* i5 */ } from "foo";
+
+================================================================================
+`;

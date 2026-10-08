@@ -1,0 +1,13 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`async-printer.txt format 1`] = `
+====================================options=====================================
+parsers: ["async-printer"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+{ "preprocess": "Lorem    Ipsum", "print": "Lorem    Ipsum" }
+
+=====================================output=====================================
+{"preprocess":"lorem    ipsum","print":"Lorem Ipsum"}
+================================================================================
+`;

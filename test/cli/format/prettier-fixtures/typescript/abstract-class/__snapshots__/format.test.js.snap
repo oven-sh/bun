@@ -1,0 +1,16 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`export-default.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+export default abstract class C5 { abstract foo(): void; }
+
+=====================================output=====================================
+export default abstract class C5 {
+  abstract foo(): void;
+}
+
+================================================================================
+`;

@@ -1,0 +1,74 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`enum.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+enum Direction {
+    Up = 1,
+    Down,
+    Left,
+    Right
+}
+
+enum FileAccess {
+    // constant members
+    None,
+    Read    = 1 << 1,
+    Write   = 1 << 2,
+    ReadWrite  = Read | Write,
+    // computed member
+    G = "123".length
+}
+
+enum Empty {
+}
+
+const enum Enum {
+    A = 1,
+    B = A * 2
+}
+
+=====================================output=====================================
+enum Direction {
+  Up = 1,
+  Down,
+  Left,
+  Right,
+}
+
+enum FileAccess {
+  // constant members
+  None,
+  Read = 1 << 1,
+  Write = 1 << 2,
+  ReadWrite = Read | Write,
+  // computed member
+  G = "123".length,
+}
+
+enum Empty {}
+
+const enum Enum {
+  A = 1,
+  B = A * 2,
+}
+
+================================================================================
+`;
+
+exports[`multiline.ts format 1`] = `
+====================================options=====================================
+parsers: ["typescript"]
+                                                      printWidth: 80 (default) |
+=====================================input======================================
+declare enum
+E
+{}
+
+=====================================output=====================================
+declare enum E {}
+
+================================================================================
+`;

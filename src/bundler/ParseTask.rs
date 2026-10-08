@@ -163,6 +163,7 @@ pub(crate) enum ResultValue {
     Success(Success),
     Err(ResultError),
     Empty { source_index: Index },
+    ClientBoundary(ClientBoundary),
 }
 
 impl ResultValue {
@@ -171,8 +172,28 @@ impl ResultValue {
             ResultValue::Empty { source_index } => source_index.get(),
             ResultValue::Err(data) => data.source_index.get(),
             ResultValue::Success(val) => val.source.index.0,
+            ResultValue::ClientBoundary(boundary) => boundary.source_index.get(),
         }
     }
+}
+
+/// A "use client" file that the server graph asked for, with a separate SSR graph. It is loaded
+/// and not parsed: the bundle thread gives the file its Browser source and its SSR source, and
+/// this slot becomes the client reference proxy.
+pub(crate) struct ClientBoundary {
+    pub(crate) source_index: Index,
+    pub(crate) loader: Loader,
+    /// The loaded bytes. The `ParseTask` owns them for the bundle pass.
+    pub(crate) contents: &'static [u8],
+    /// The settings the resolver gave this file. Its other sources are parsed with them.
+    pub(crate) jsx: options::jsx::Pragma,
+    pub(crate) module_type: options::ModuleType,
+    pub(crate) side_effects: bun_ast::SideEffects,
+    pub(crate) emit_decorator_metadata: bool,
+    pub(crate) experimental_decorators: bool,
+    pub(crate) use_define_for_class_fields: bool,
+    pub(crate) package_version: ast::StoreStr,
+    pub(crate) package_name: ast::StoreStr,
 }
 
 pub(crate) struct WatcherData {
@@ -2292,13 +2313,24 @@ pub mod parse_worker {
     // runWithSourceCode
     // ───────────────────────────────────────────────────────────────────────────
 
+    /// What `run_with_source_code` made of a loaded file.
+    #[allow(clippy::large_enum_variant)]
+    enum Parsed {
+        Module(Success),
+        /// See `ClientBoundary`. The file is not parsed.
+        ClientBoundary {
+            loader: Loader,
+            contents: &'static [u8],
+        },
+    }
+
     fn run_with_source_code(
         task: &mut ParseTask,
         this: &mut crate::Worker,
         step: &mut Step,
         log: &mut Log,
         entry: &mut CacheEntry,
-    ) -> core::result::Result<Success, AnyError> {
+    ) -> core::result::Result<Parsed, AnyError> {
         // reshaped for borrowck — `transpiler_for_target` borrows `this`
         // mutably; we may need to call it again below (server-components branch),
         // so hold it as a raw pointer and reborrow per use site.
@@ -2396,24 +2428,29 @@ pub mod parse_worker {
             UseDirective::None
         };
 
-        if (use_directive == UseDirective::Client
-        && task.known_target != options::Target::ServerComponentsSsr
-        && worker_ctx.framework.is_some()
-        && worker_ctx
-            .framework
-            .as_ref()
-            .unwrap()
-            .server_components
-            .as_ref()
-            .unwrap()
-            .separate_ssr_graph)
-        ||
-        // set the target to the client when bundling client-side files
-        ((topts.server_components || topts.has_dev_server())
-            && task.known_target == options::Target::Browser)
+        // With a separate SSR graph, the server graph holds a "use client" file as a generated
+        // client reference proxy. The file is parsed for the Browser and SSR graphs only.
+        if use_directive == UseDirective::Client
+            && !matches!(
+                task.known_target,
+                options::Target::Browser | options::Target::ServerComponentsSsr
+            )
+            && worker_ctx
+                .framework
+                .as_ref()
+                .and_then(|framework| framework.server_components.as_ref())
+                .is_some_and(|server_components| server_components.separate_ssr_graph)
         {
-            // separate_ssr_graph makes boundaries switch to client because the server file uses that generated file as input.
-            // this is not done when there is one server graph because it is easier for plugins to deal with.
+            return Ok(Parsed::ClientBoundary {
+                loader,
+                contents: ast::StoreStr::new(entry_contents).slice(),
+            });
+        }
+
+        // set the target to the client when bundling client-side files
+        if (topts.server_components || topts.has_dev_server())
+            && task.known_target == options::Target::Browser
+        {
             // SAFETY: route through `worker_raw` (see top-of-function note)
             // so this call's `&mut self` is a child of the same raw and does not
             // pop the SharedRW tag backing `resolver` (which still points into the
@@ -2729,7 +2766,7 @@ pub mod parse_worker {
 
         *step = Step::Resolve;
 
-        Ok(Success {
+        Ok(Parsed::Module(Success {
             ast,
             source: source.clone(),
             log: core::mem::take(log),
@@ -2741,7 +2778,7 @@ pub mod parse_worker {
 
             // Hash the files in here so that we do it in parallel.
             content_hash_for_additional_file: unique_key_for_additional_file.content_hash,
-        })
+        }))
     }
 
     // ───────────────────────────────────────────────────────────────────────────
@@ -2825,7 +2862,22 @@ pub mod parse_worker {
             let parsed = run_with_source_code(this, worker, &mut step, &mut log, &mut entry);
             this.stage = ParseTaskStage::NeedsParse(entry);
             match parsed {
-                Ok(ast) => {
+                Ok(Parsed::ClientBoundary { loader, contents }) => {
+                    break 'value ResultValue::ClientBoundary(ClientBoundary {
+                        source_index: this.source_index,
+                        loader,
+                        contents,
+                        jsx: core::mem::take(&mut this.jsx),
+                        module_type: this.module_type,
+                        side_effects: this.side_effects,
+                        emit_decorator_metadata: this.emit_decorator_metadata,
+                        experimental_decorators: this.experimental_decorators,
+                        use_define_for_class_fields: this.use_define_for_class_fields,
+                        package_version: this.package_version,
+                        package_name: this.package_name,
+                    });
+                }
+                Ok(Parsed::Module(ast)) => {
                     // When using HMR, always flag asts with errors as parse failures.
                     // Not done outside of the dev server out of fear of breaking existing code.
                     if ctx.transpiler().options.has_dev_server() && ast.log.has_errors() {
@@ -2931,6 +2983,7 @@ pub mod parse_worker {
         match &mut result.value {
             ResultValue::Success(s) => drop(core::mem::take(&mut s.log)),
             ResultValue::Err(e) => drop(core::mem::take(&mut e.log)),
+            ResultValue::ClientBoundary(boundary) => drop(core::mem::take(&mut boundary.jsx)),
             ResultValue::Empty { .. } => {}
         }
     }

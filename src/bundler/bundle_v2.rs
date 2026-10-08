@@ -1423,7 +1423,6 @@ pub mod bv2_impl {
     use crate::DeferredBatchTask::DeferredBatchTask;
     use crate::Graph::Graph;
     use crate::LinkerContext;
-    use crate::PathToSourceIndexMap::PathToSourceIndexMap;
     use crate::ServerComponentParseTask::ServerComponentParseTask;
     use crate::barrel_imports;
 
@@ -2673,21 +2672,12 @@ pub mod bv2_impl {
                 ) {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
-                    // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
-                    // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
-                    // type-check. SAFETY: `path_to_source_index_map(target)` is not mutated again
-                    // until after the last `*value_ptr` access below.
-                    let (found_existing, value_ptr): (bool, *mut u32) = {
-                        let entry = self
-                            .path_to_source_index_map(target)
-                            .get_or_put(path_primary.text)
-                            .expect("oom");
-                        (
-                            entry.found_existing,
-                            std::ptr::from_mut::<u32>(entry.value_ptr),
-                        )
-                    };
-                    if !found_existing {
+                    let existing = self
+                        .path_to_source_index_map(target)
+                        .get(path_primary.text);
+                    let idx = if let Some(existing) = existing {
+                        existing
+                    } else {
                         let loader: Loader = 'brk: {
                             let record: &mut ImportRecord =
                                 &mut self.graph.ast.items_import_records_mut()
@@ -2709,31 +2699,19 @@ pub mod bv2_impl {
                             contents: std::borrow::Cow::Borrowed(&b""[..]),
                             ..Default::default()
                         };
-                        let idx = self
-                            .enqueue_parse_task(
-                                &file_map_result,
-                                &mut tmp_source,
-                                loader,
-                                import_record.original_target,
-                            )
-                            .expect("oom");
-                        // SAFETY: see `value_ptr` note above.
-                        unsafe { *value_ptr = idx };
-                        let record: &mut ImportRecord =
-                            &mut self.graph.ast.items_import_records_mut()
-                                [import_record.importer_source_index as usize]
-                                .as_mut_slice()
-                                [import_record.import_record_index as usize];
-                        record.source_index = Index::init(idx);
-                    } else {
-                        let record: &mut ImportRecord =
-                            &mut self.graph.ast.items_import_records_mut()
-                                [import_record.importer_source_index as usize]
-                                .as_mut_slice()
-                                [import_record.import_record_index as usize];
-                        // SAFETY: see `value_ptr` note above.
-                        record.source_index = Index::init(unsafe { *value_ptr });
-                    }
+                        self.enqueue_parse_task(
+                            &file_map_result,
+                            &mut tmp_source,
+                            loader,
+                            import_record.original_target,
+                        )
+                        .expect("oom")
+                        .index()
+                    };
+                    let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
+                        [import_record.importer_source_index as usize]
+                        .as_mut_slice()[import_record.import_record_index as usize];
+                    record.source_index = Index::init(idx);
                     return;
                 }
             }
@@ -2931,8 +2909,6 @@ pub mod bv2_impl {
             path.assert_pretty_is_valid();
             path.assert_file_path_is_absolute();
 
-            // borrowck: get-then-put (instead of a single get-or-put) so the map
-            // borrow doesn't span `enqueue_parse_task` (which needs `&mut self`).
             if let Some(existing) = self.path_to_source_index_map(target).get(path.text) {
                 out_source_index = Some(Index::init(existing));
             } else {
@@ -2971,10 +2947,8 @@ pub mod bv2_impl {
                         loader,
                         import_record.original_target,
                     )
-                    .expect("oom");
-                self.path_to_source_index_map(target)
-                    .put(path.text, idx)
-                    .expect("oom");
+                    .expect("oom")
+                    .index();
                 out_source_index = Some(Index::init(idx));
 
                 if let Some(secondary) = &resolve_result.path_pair.secondary {
@@ -3052,8 +3026,6 @@ pub mod bv2_impl {
                 Err(_) => return Ok(()),
             };
             let mut path = result.path_pair.primary;
-            self.increment_scan_counter();
-            let source_index = Index::source(self.graph.input_files.len() as u32);
             let loader = self.requested_file_loader(&path, loader);
 
             path = self.path_with_pretty_initialized(&path, target)?;
@@ -3062,22 +3034,25 @@ pub mod bv2_impl {
             // into `result` so `ParseTask::init(&result, ..)` reads the relativized
             // `pretty`.
             result.path_pair.primary = path;
-            self.path_to_source_index_map(target)
-                .put(path_slice, source_index.get())
-                .expect("oom");
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
-
-            self.graph.input_files.append(crate::Graph::InputFile {
-                source: bun_ast::Source {
-                    path: path_as_static(&path),
-                    contents: std::borrow::Cow::Borrowed(&b""[..]),
-                    index: bun_ast::Index(source_index.get()),
-                    ..Default::default()
-                },
-                loader,
-                side_effects: result.primary_side_effects_data,
-                ..Default::default()
-            })?;
+            let side_effects = result.primary_side_effects_data;
+            let crate::Graph::SourceSlot::New(source_index) =
+                self.graph
+                    .get_or_put_source(path_slice, target, |index| crate::Graph::InputFile {
+                        source: bun_ast::Source {
+                            path: path_as_static(&path),
+                            contents: std::borrow::Cow::Borrowed(&b""[..]),
+                            index,
+                            ..Default::default()
+                        },
+                        loader,
+                        side_effects,
+                        ..Default::default()
+                    })?
+            else {
+                return Ok(());
+            };
+            let source_index = Index::source(source_index);
+            self.increment_scan_counter();
             // Arena-owned; freed on heap reset.
             let task_val = ParseTask::init(&result, source_index, self);
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
@@ -3140,8 +3115,6 @@ pub mod bv2_impl {
             {
                 return Ok(None);
             }
-            self.increment_scan_counter();
-            let source_index = Index::source(self.graph.input_files.len() as u32);
 
             let loader = self.requested_file_loader(&path, loader);
 
@@ -3172,23 +3145,25 @@ pub mod bv2_impl {
             if let Some(p) = result.path() {
                 *p = path;
             }
-            self.path_to_source_index_map(target)
-                .put(path.text, source_index.get())
-                .expect("oom");
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
-
             let side_effects = result.primary_side_effects_data;
-            self.graph.input_files.append(crate::Graph::InputFile {
-                source: bun_ast::Source {
-                    path: path_as_static(&path),
-                    contents: std::borrow::Cow::Borrowed(&b""[..]),
-                    index: bun_ast::Index(source_index.get()),
-                    ..Default::default()
-                },
-                loader,
-                side_effects,
-                ..Default::default()
-            })?;
+            let crate::Graph::SourceSlot::New(source_index) =
+                self.graph
+                    .get_or_put_source(path.text, target, |index| crate::Graph::InputFile {
+                        source: bun_ast::Source {
+                            path: path_as_static(&path),
+                            contents: std::borrow::Cow::Borrowed(&b""[..]),
+                            index,
+                            ..Default::default()
+                        },
+                        loader,
+                        side_effects,
+                        ..Default::default()
+                    })?
+            else {
+                return Ok(None);
+            };
+            let source_index = Index::source(source_index);
+            self.increment_scan_counter();
             // Arena-owned; freed on heap reset.
             let task_val = ParseTask::init(result, source_index, self);
             // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
@@ -4084,22 +4059,31 @@ pub mod bv2_impl {
             Ok(())
         }
 
+        /// Gives `source.path` a source in the graph of `known_target`, and schedules its parse
+        /// when that graph did not hold the path.
         pub(crate) fn enqueue_parse_task(
             &mut self,
             resolve_result: &_resolver::Result,
             source: &mut bun_ast::Source,
             loader: Loader,
             known_target: options::Target,
-        ) -> Result<IndexInt, AllocError> {
-            let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
-
-            self.graph.input_files.append(crate::Graph::InputFile {
-                source: core::mem::take(source),
-                loader,
-                side_effects: loader.side_effects(),
-                ..Default::default()
-            })?;
+        ) -> Result<crate::Graph::SourceSlot, AllocError> {
+            let slot = self
+                .graph
+                .get_or_put_source(source.path.text, known_target, |index| {
+                    let mut source = core::mem::take(source);
+                    source.index = index;
+                    crate::Graph::InputFile {
+                        source,
+                        loader,
+                        side_effects: loader.side_effects(),
+                        ..Default::default()
+                    }
+                })?;
+            let crate::Graph::SourceSlot::New(source_index) = slot else {
+                return Ok(slot);
+            };
+            let source_index = Index::init(source_index);
             // `ParseTask::init` takes `bun_ast::Index`; both Index newtypes
             // are `repr(transparent)` u32 so reconstruct via `.get()`.
             // Arena-owned; freed on heap reset.
@@ -4134,134 +4118,164 @@ pub mod bv2_impl {
                 self.graph.pool().schedule(task);
             }
 
-            Ok(source_index.get())
+            Ok(slot)
         }
 
-        pub(crate) fn enqueue_parse_task2(
+        /// The source of a "use client" file in the graph of `target`. A graph that already holds
+        /// the path keeps its source. A new source is parsed from `copy.contents`.
+        fn client_module_source(
             &mut self,
-            source: &mut bun_ast::Source,
-            loader: Loader,
-            known_target: options::Target,
-            module_type: options::ModuleType,
+            copy: &ClientModuleCopy<'_>,
+            target: options::Target,
+            on_load: OnLoadPlugins,
         ) -> Result<IndexInt, AllocError> {
-            let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
-
-            self.graph.input_files.append(crate::Graph::InputFile {
-                source: core::mem::take(source),
-                loader,
-                side_effects: loader.side_effects(),
-                ..Default::default()
-            })?;
-            // `core::mem::take` moved the real `Source` into `graph.input_files`,
-            // leaving `*source` as `Default`. Read path/contents back from the
-            // graph's stored copy (where the data now lives for the rest of the
-            // bundle pass) so the `ParseTask` below sees the actual source bytes.
-            let stored = &self.graph.input_files.items_source()[source_index.get() as usize];
-            // The path type is split into
-            // `bun_paths::fs::Path<'static>` (on `Source`) and `bun_resolver::fs::Path`
-            // (on `ParseTask`). Convert field-by-field — `pretty`/`namespace` MUST
-            // be preserved here (the SCB `separate_ssr_graph=false` caller passes a
-            // source whose path went through `path_with_pretty_initialized`, and
-            // `ParseTask::run` builds the `Source` from `task.path` then swaps it
-            // back into `input_files`, so dropping `pretty` would surface the
-            // absolute path as the dev-server module key).
-            let task_path: Fs::Path<'static> = stored.path;
-            // SAFETY: `graph.input_files` owns `stored.contents` for the bundle
-            // pass (arena lifetime); erase the borrow to `'static` to fit
-            // `ContentsOrFd::Contents`. See `interned_slice` contract.
-            let contents: &'static [u8] = unsafe { interned_slice(stored.contents()) };
-            // Compute borrow-heavy fields up front so the `&self` borrow taken by
-            // `arena()` doesn't overlap `&mut self` uses inside the literal.
-            let jsx = if known_target == Target::ServerComponentsSsr
-                && !self
-                    .framework
-                    .as_ref()
-                    .unwrap()
-                    .server_components
-                    .as_ref()
-                    .unwrap()
-                    .separate_ssr_graph
-            {
-                self.transpiler.options.jsx.clone()
-            } else {
-                self.transpiler_for_target(known_target).options.jsx.clone()
+            let bump = self.arena();
+            let top_level_dir = self.transpiler.fs().top_level_dir;
+            let loader = copy.loader;
+            let slot = self
+                .graph
+                .get_or_put_source(copy.path.text, target, |index| {
+                    let mut path = copy.path;
+                    path.pretty = path.text;
+                    crate::Graph::InputFile {
+                        source: bun_ast::Source {
+                            path: path_as_static(
+                                &generic_path_with_pretty_initialized(
+                                    &path,
+                                    target,
+                                    top_level_dir,
+                                    bump,
+                                )
+                                .expect("oom"),
+                            ),
+                            contents: std::borrow::Cow::Borrowed(copy.contents),
+                            index,
+                            ..Default::default()
+                        },
+                        loader,
+                        side_effects: copy.side_effects,
+                        ..Default::default()
+                    }
+                })?;
+            let crate::Graph::SourceSlot::New(source_index) = slot else {
+                return Ok(slot.index());
             };
-            // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
-            // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
-            // `arena()` ends before we take `&mut self` below.
-            let task: *mut ParseTask = self.arena().alloc(ParseTask {
-                path: task_path,
-                contents_or_fd: parse_task::ContentsOrFd::Contents(contents),
-                side_effects: bun_ast::SideEffects::HasSideEffects,
+
+            let mut jsx = copy.jsx.clone();
+            jsx.development = self
+                .transpiler_for_target(target)
+                .options
+                .forced_jsx_development();
+            // SAFETY: `from_mut(self)` is the live bundle and outlives the task; `'a` is erased
+            // to `'static` for the BACKREF, as in `process_resolve_queue`.
+            let ctx = Some(unsafe {
+                bun_ptr::ParentRef::from_raw_mut(
+                    std::ptr::from_mut::<Self>(self).cast::<BundleV2<'static>>(),
+                )
+            });
+            let task: &mut ParseTask = self.arena_create(ParseTask {
+                path: self.graph.input_files.items_source()[source_index as usize].path,
+                contents_or_fd: parse_task::ContentsOrFd::Contents(copy.contents),
+                side_effects: copy.side_effects,
                 jsx,
-                source_index: bun_ast::Index::init(source_index.get()),
-                module_type,
-                emit_decorator_metadata: false, // TODO
-                package_version: bun_ast::StoreStr::EMPTY,
+                source_index: bun_ast::Index::init(source_index),
+                module_type: copy.module_type,
+                emit_decorator_metadata: copy.emit_decorator_metadata,
+                experimental_decorators: copy.experimental_decorators,
+                use_define_for_class_fields: copy.use_define_for_class_fields,
+                package_version: copy.package_version,
+                package_name: copy.package_name,
                 loader: Some(loader),
-                known_target,
+                known_target: target,
+                ctx,
                 ..Default::default()
             });
-            // SAFETY: `task` was just arena-allocated above; no other references exist yet.
-            unsafe {
-                // BACKREF — lifetime erased per ParseTask::ctx convention.
-                let ctx_mut = bun_ptr::ParentRef::from_raw_mut(
-                    std::ptr::from_mut(self).cast::<BundleV2<'static>>(),
-                );
-                (*task).ctx = Some(ctx_mut);
-                (*task).task.node.next = core::ptr::null_mut();
-                (*task).io_task.node.next = core::ptr::null_mut();
-            }
 
             self.increment_scan_counter();
 
-            // Handle onLoad plugins
-            // SAFETY: `task` lives in the bundle-pass arena; sole reference until scheduled.
-            if !self.enqueue_on_load_plugin_if_needed(unsafe { &mut *task }) {
-                if loader.should_copy_for_bundling() {
-                    let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
-                        &mut self.graph.input_files.items_additional_files_mut()
-                            [source_index.get() as usize];
-                    additional_files.push(crate::AdditionalFile::SourceIndex(source_index.get()));
-                    self.graph.input_files.items_side_effects_mut()[source_index.get() as usize] =
-                        bun_ast::SideEffects::NoSideEffectsPureData;
-                    self.graph.estimated_file_loader_count += 1;
-                }
-
-                self.graph.pool().schedule(task);
+            if on_load == OnLoadPlugins::Offer && self.enqueue_on_load_plugin_if_needed(task) {
+                return Ok(source_index);
             }
-            Ok(source_index.get())
+            if loader.should_copy_for_bundling() {
+                let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
+                    &mut self.graph.input_files.items_additional_files_mut()[source_index as usize];
+                additional_files.push(crate::AdditionalFile::SourceIndex(source_index));
+                self.graph.input_files.items_side_effects_mut()[source_index as usize] =
+                    bun_ast::SideEffects::NoSideEffectsPureData;
+                self.graph.estimated_file_loader_count += 1;
+            }
+            self.graph.pool().schedule(task);
+            Ok(source_index)
         }
 
-        /// Enqueue a ServerComponentParseTask.
-        /// `source_without_index` is copied and assigned a new source index. That index is returned.
-        pub(crate) fn enqueue_server_component_generated_file(
-            &mut self,
-            data: crate::ServerComponentParseTask::Data,
-            source_without_index: bun_ast::Source,
-        ) -> Result<IndexInt, AllocError> {
-            let mut new_source = source_without_index;
-            let source_index = self.graph.input_files.len();
-            new_source.index = bun_ast::Index(source_index as u32);
-            // `bun_ast::Source: !Clone` — manually dup the (all-Clone) fields.
-            let task_source = bun_ast::Source {
-                path: new_source.path,
-                contents: new_source.contents.clone(),
-                contents_is_recycled: new_source.contents_is_recycled,
-                identifier_name: new_source.identifier_name.clone(),
-                index: new_source.index,
+        /// The server graph holds a "use client" file as a client reference proxy (`separate_ssr_graph`):
+        /// the file gets one Browser source and one SSR source, and one boundary.
+        fn found_client_boundary(&mut self, boundary: &mut parse_task::ClientBoundary) {
+            let reference_index = boundary.source_index.get();
+            self.graph.input_files.items_loader_mut()[reference_index as usize] = boundary.loader;
+            let jsx = core::mem::take(&mut boundary.jsx);
+            let copy = ClientModuleCopy {
+                path: self.graph.input_files.items_source()[reference_index as usize].path,
+                contents: boundary.contents,
+                loader: boundary.loader,
+                jsx: &jsx,
+                module_type: boundary.module_type,
+                side_effects: boundary.side_effects,
+                emit_decorator_metadata: boundary.emit_decorator_metadata,
+                experimental_decorators: boundary.experimental_decorators,
+                use_define_for_class_fields: boundary.use_define_for_class_fields,
+                package_version: boundary.package_version,
+                package_name: boundary.package_name,
             };
-            self.graph.input_files.append(crate::Graph::InputFile {
-                source: new_source,
-                loader: Loader::Js,
-                side_effects: bun_ast::SideEffects::HasSideEffects,
-                ..Default::default()
-            })?;
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
+            // The Browser source takes the bytes this load gave. The SSR source is offered to
+            // the onLoad plugins again, so a boundary is loaded two times.
+            let client_index = self
+                .client_module_source(&copy, Target::Browser, OnLoadPlugins::Skip)
+                .expect("oom");
+            let ssr_index = self
+                .client_module_source(&copy, Target::ServerComponentsSsr, OnLoadPlugins::Offer)
+                .expect("oom");
+            self.graph
+                .server_component_boundaries
+                .put(
+                    client_index,
+                    crate::UseDirective::Client,
+                    reference_index,
+                    ssr_index,
+                )
+                .expect("oom");
+            // A client importer can have built the Browser source before this file was loaded.
+            if self.graph.ast.items_parts()[client_index as usize].len() != 0 {
+                self.enqueue_client_reference_proxy(client_index, reference_index)
+                    .expect("oom");
+            }
+        }
 
-            // `bun.new(ServerComponentParseTask, …)` — heap-owned by the
-            // worker pool; freed via `bun.destroy` in `on_complete` after the
+        /// Generates the client reference proxy of a boundary into the slot the server graph
+        /// holds for the file. The Browser source at `client_index` is parsed: the proxy has its exports.
+        fn enqueue_client_reference_proxy(
+            &mut self,
+            client_index: IndexInt,
+            reference_index: IndexInt,
+        ) -> Result<(), AllocError> {
+            let sources = self.graph.input_files.items_source();
+            let client_source = &sources[client_index as usize];
+            let source = bun_ast::Source {
+                path: sources[reference_index as usize].path,
+                contents: client_source.contents.clone(),
+                index: bun_ast::Index(reference_index),
+                ..Default::default()
+            };
+            let data = crate::ServerComponentParseTask::Data::ClientReferenceProxy(
+                crate::ServerComponentParseTask::ReferenceProxy {
+                    other_source: client_source.clone(),
+                    // A worker reads this while the bundle thread appends to `graph.ast`.
+                    named_exports: self.graph.ast.items_named_exports()[client_index as usize]
+                        .clone()?,
+                },
+            );
+
+            // Heap-owned by the worker pool; freed in `on_complete` after the
             // result posts back to the bundle thread.
             let task = bun_core::heap::into_raw(Box::new(ServerComponentParseTask {
                 data,
@@ -4273,14 +4287,14 @@ pub mod bv2_impl {
                         core::ptr::from_mut(&mut *self).cast::<BundleV2<'static>>(),
                     )
                 }),
-                source: task_source,
+                source,
                 // `..Default::default()` supplies `task: ThreadPoolTask { callback: task_callback_wrap }`.
                 ..Default::default()
             }));
 
             self.increment_scan_counter();
 
-            // SAFETY: `task` is the just-allocated arena box; sole reference here.
+            // SAFETY: `task` is the just-allocated box; sole reference here.
             self.graph
                 .pool()
                 .worker_pool()
@@ -4288,8 +4302,31 @@ pub mod bv2_impl {
                     core::ptr::addr_of_mut!((*task).task)
                 }));
 
-            Ok(u32::try_from(source_index).expect("int cast"))
+            Ok(())
         }
+    }
+
+    /// What the sources of a "use client" file share: the loaded bytes and the settings the
+    /// resolver gave the file. See `client_module_source`.
+    struct ClientModuleCopy<'b> {
+        path: Fs::Path<'static>,
+        contents: &'static [u8],
+        loader: Loader,
+        jsx: &'b options::jsx::Pragma,
+        module_type: options::ModuleType,
+        side_effects: bun_ast::SideEffects,
+        emit_decorator_metadata: bool,
+        experimental_decorators: bool,
+        use_define_for_class_fields: bool,
+        package_version: bun_ast::StoreStr,
+        package_name: bun_ast::StoreStr,
+    }
+
+    /// Whether a source made from loaded bytes is offered to the onLoad plugins again.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum OnLoadPlugins {
+        Offer,
+        Skip,
     }
 
     pub struct DependenciesScanner {
@@ -5283,67 +5320,50 @@ pub mod bv2_impl {
                         path.namespace = result_ns_static;
                     }
                     if !result.external {
-                        // SAFETY: `GetOrPutResult` borrows `&mut this` for its whole
-                        // lifetime, blocking the `free_list`/`graph` accesses below.
-                        // Capture `value_ptr` as a raw ptr + `found_existing` and drop
-                        // the borrow; the map entry is not rehashed before we write
-                        // through `value_ptr` (no intervening map mutation).
-                        let (value_ptr, found_existing) = {
-                            let existing = this
-                                .path_to_source_index_map(resolve.import_record.original_target)
-                                .get_or_put(path.text)
-                                .expect("oom");
-                            (
-                                std::ptr::from_mut(existing.value_ptr),
-                                existing.found_existing,
-                            )
-                        };
-                        if !found_existing {
+                        let target = resolve.import_record.original_target;
+                        // A file that a plugin resolved the record to instead keeps its own loader.
+                        let loader = this.requested_file_loader(
+                            &path,
+                            resolve
+                                .import_record
+                                .loader
+                                .filter(|_| path.text == &*resolve.import_record.specifier),
+                        );
+                        let bump = this.arena();
+                        let top_level_dir = this.transpiler.fs().top_level_dir;
+                        let slot = this
+                            .graph
+                            .get_or_put_source(path.text, target, |index| crate::Graph::InputFile {
+                                source: bun_ast::Source {
+                                    path: path_as_static(
+                                        &generic_path_with_pretty_initialized(
+                                            &path,
+                                            target,
+                                            top_level_dir,
+                                            bump,
+                                        )
+                                        .expect("oom"),
+                                    ),
+                                    contents: std::borrow::Cow::Borrowed(&b""[..]),
+                                    index,
+                                    ..Default::default()
+                                },
+                                loader,
+                                side_effects: bun_ast::SideEffects::HasSideEffects,
+                                ..Default::default()
+                            })
+                            .expect("oom");
+                        if let crate::Graph::SourceSlot::New(source_index) = slot {
                             // Move (not clone) — `path` keeps borrowing the heap bytes via the
                             // `'static` erasure above; `Box<[u8]>` heap data does not relocate
                             // when the Box itself is moved into the Vec.
                             this.free_list.push(result.namespace);
                             this.free_list.push(result.path);
-                            path = this
-                                .path_with_pretty_initialized(
-                                    &path,
-                                    resolve.import_record.original_target,
-                                )
-                                .expect("oom");
-                            // `GetOrPutResult` has no `key_ptr` — `get_or_put` already
-                            // duped the key into the map (see PathToSourceIndexMap.rs).
+                            path = this.graph.input_files.items_source()[source_index as usize].path;
 
                             // We need to parse this
-                            let source_index =
-                                Index::init(u32::try_from(this.graph.ast.len()).expect("int cast"));
-                            // SAFETY: map slot from `get_or_put` above; map not mutated since.
-                            unsafe { *value_ptr = source_index.get() };
+                            let source_index = Index::init(source_index);
                             out_source_index = Some(source_index);
-                            let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
-                            // A file that a plugin resolved the record to instead keeps its own loader.
-                            let loader = this.requested_file_loader(
-                                &path,
-                                resolve
-                                    .import_record
-                                    .loader
-                                    .filter(|_| path.text == &*resolve.import_record.specifier),
-                            );
-
-                            this.graph
-                                .input_files
-                                .append(crate::Graph::InputFile {
-                                    source: bun_ast::Source {
-                                        // Shim to the field-identical `bun_paths::fs::Path<'static>`.
-                                        path: path_as_static(&path),
-                                        contents: std::borrow::Cow::Borrowed(&b""[..]),
-                                        index: bun_ast::Index(source_index.get()),
-                                        ..Default::default()
-                                    },
-                                    loader,
-                                    side_effects: bun_ast::SideEffects::HasSideEffects,
-                                    ..Default::default()
-                                })
-                                .expect("unreachable");
                             let task_val = ParseTask {
                                 // SAFETY: `from_mut(this)` is the live bundle (write provenance);
                                 // outlives the task.
@@ -5398,8 +5418,7 @@ pub mod bv2_impl {
                                 this.graph.pool().schedule(task);
                             }
                         } else {
-                            // SAFETY: map slot from `get_or_put` above; map not mutated since.
-                            out_source_index = Some(Index::init(unsafe { *value_ptr }));
+                            out_source_index = Some(Index::init(slot.index()));
                             drop(result.namespace);
                             drop(result.path);
                         }
@@ -6441,7 +6460,7 @@ pub mod bv2_impl {
         fn run_resolution_for_parse_task(
             parse_result: &mut parse_task::Result,
             this: &mut BundleV2,
-        ) -> ResolveQueue {
+        ) -> ResolveImportRecordResult {
             let result = match &mut parse_result.value {
                 parse_task::ResultValue::Success(r) => r,
                 _ => unreachable!(),
@@ -6458,9 +6477,10 @@ pub mod bv2_impl {
                 only_records: None,
             });
 
-            if let Some(err) = resolve_result.last_error {
+            if let Some(err) = resolve_result.last_error.take() {
                 bun_core::scoped_log!(Bundle, "failed with error: {}", err.name());
                 resolve_result.resolve_queue.clear();
+                resolve_result.ssr_resolve_queue.clear();
 
                 // A failed file's imports are not followed: the queue is cleared
                 // above. That includes the records barrel optimization deferred, so
@@ -6515,7 +6535,7 @@ pub mod bv2_impl {
                 });
             }
 
-            resolve_result.resolve_queue
+            resolve_result
         }
     }
 
@@ -6530,7 +6550,22 @@ pub mod bv2_impl {
 
     pub(crate) struct ResolveImportRecordResult {
         pub(crate) resolve_queue: ResolveQueue,
+        /// The new modules of `bunBakeGraph: "ssr"` records. They go in the SSR graph, whatever
+        /// graph the importer is in.
+        pub(crate) ssr_resolve_queue: ResolveQueue,
+        pub(crate) has_ssr_graph_import: bool,
         pub(crate) last_error: Option<Error>,
+    }
+
+    impl ResolveImportRecordResult {
+        fn none() -> Self {
+            Self {
+                resolve_queue: ResolveQueue::default(),
+                ssr_resolve_queue: ResolveQueue::default(),
+                has_ssr_graph_import: false,
+                last_error: None,
+            }
+        }
     }
 
     /// `only_records`: barrel un-deferral passes the ascending indices of the records
@@ -6592,6 +6627,8 @@ pub mod bv2_impl {
             }
             let mut resolve_queue = ResolveQueue::default();
             resolve_queue.reserve(estimated_resolve_queue_count);
+            let mut ssr_resolve_queue = ResolveQueue::default();
+            let mut has_ssr_graph_import = false;
 
             let mut last_error: Option<Error> = None;
 
@@ -6721,10 +6758,11 @@ pub mod bv2_impl {
                 // backrefs valid for `'a` (see `init`). Compute the raw ptr first, then
                 // deref once, so the `&mut self` borrow doesn't span the rest of the loop
                 // body.
-                let (transpiler_ptr, bake_graph, target): (
+                let (transpiler_ptr, bake_graph, target, resolve_queue): (
                     *mut Transpiler<'a>,
                     bake::Graph,
                     options::Target,
+                    &mut ResolveQueue,
                 ) = if import_record.tag == bun_ast::ImportRecordTag::BakeResolveToSsrGraph {
                     if self.framework.is_none() {
                         self.log_for_resolution_failures(source.path.text, bake::Graph::Ssr).add_error_fmt(
@@ -6753,10 +6791,12 @@ pub mod bv2_impl {
                         continue;
                     }
 
+                    has_ssr_graph_import = true;
                     (
                         self.ssr_transpiler,
                         bake::Graph::Ssr,
                         Target::ServerComponentsSsr,
+                        &mut ssr_resolve_queue,
                     )
                 } else {
                     (
@@ -6765,6 +6805,7 @@ pub mod bv2_impl {
                         ),
                         ctx.target.bake_graph(),
                         ctx.target,
+                        &mut resolve_queue,
                     )
                 };
                 // SAFETY: see note above — raw `*mut Transpiler` lives for `'a`.
@@ -7229,8 +7270,29 @@ pub mod bv2_impl {
 
             ResolveImportRecordResult {
                 resolve_queue,
+                ssr_resolve_queue,
+                has_ssr_graph_import,
                 last_error,
             }
+        }
+
+        /// `process_resolve_queue` for what one `resolve_import_records` call queued.
+        pub(crate) fn process_resolve_queues(
+            &mut self,
+            resolved: &ResolveImportRecordResult,
+            target: options::Target,
+            importer_source_index: IndexInt,
+        ) -> i32 {
+            let mut diff =
+                self.process_resolve_queue(&resolved.resolve_queue, target, importer_source_index);
+            if !resolved.ssr_resolve_queue.is_empty() {
+                diff += self.process_resolve_queue(
+                    &resolved.ssr_resolve_queue,
+                    Target::ServerComponentsSsr,
+                    importer_source_index,
+                );
+            }
+            diff
         }
 
         /// Process a resolve queue: create input file slots and schedule parse tasks.
@@ -7242,10 +7304,6 @@ pub mod bv2_impl {
             importer_source_index: IndexInt,
         ) -> i32 {
             let mut diff: i32 = 0;
-            // reshaped for borrowck — `graph` and the
-            // path map are both needed across the loop body. We (a) capture a raw self ptr for
-            // ParseTask.ctx, (b) hoist dev_server check, and (c) scope the map
-            // borrow to the get_or_put so later `self.graph.*` writes don't overlap.
             // SAFETY: write provenance from `ptr::from_mut`; outlives every ParseTask.
             let self_ptr: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>> =
                 Some(unsafe {
@@ -7267,59 +7325,47 @@ pub mod bv2_impl {
                 });
                 let is_html_entrypoint =
                     loader == Loader::Html && target.is_server_side() && dev_server_is_none;
-                // Select map and perform get_or_put, capturing the slot as a raw ptr
-                // so the &mut on self.graph is released before we touch other fields.
-                let (found_existing, value_ptr): (bool, *mut IndexInt) = {
-                    let map: &mut PathToSourceIndexMap = if is_html_entrypoint {
-                        self.graph.path_to_source_index_map(Target::Browser)
-                    } else {
-                        self.graph.path_to_source_index_map(target)
-                    };
-                    let existing = map.get_or_put(key).expect("oom");
-                    (
-                        existing.found_existing,
-                        std::ptr::from_mut::<IndexInt>(existing.value_ptr),
-                    )
-                };
-
-                if !found_existing {
-                    let new_task: &mut ParseTask = value;
-                    let mut new_input_file = crate::Graph::InputFile {
-                        source: bun_ast::Source::init_empty_file(new_task.path.text),
-                        side_effects: new_task.side_effects,
-                        secondary_path: if let Some(secondary_path) =
-                            &new_task.secondary_path_for_commonjs_interop
-                        {
-                            bun_alloc::AstAlloc::vec_from_slice(secondary_path.text)
+                let slot = self
+                    .graph
+                    .get_or_put_source(
+                        key,
+                        if is_html_entrypoint {
+                            Target::Browser
                         } else {
-                            bun_alloc::AstAlloc::vec()
+                            target
                         },
-                        ..Default::default()
-                    };
+                        |index| {
+                            let mut source = bun_ast::Source::init_empty_file(value.path.text);
+                            source.index = index;
+                            source.path = path_as_static(&value.path);
+                            crate::Graph::InputFile {
+                                source,
+                                loader,
+                                side_effects: value.side_effects,
+                                secondary_path: if let Some(secondary_path) =
+                                    &value.secondary_path_for_commonjs_interop
+                                {
+                                    bun_alloc::AstAlloc::vec_from_slice(secondary_path.text)
+                                } else {
+                                    bun_alloc::AstAlloc::vec()
+                                },
+                                ..Default::default()
+                            }
+                        },
+                    )
+                    .expect("oom");
 
+                if let crate::Graph::SourceSlot::New(new_source_index) = slot {
+                    let new_task: &mut ParseTask = value;
                     self.graph.has_any_secondary_paths = self.graph.has_any_secondary_paths
-                        || !new_input_file.secondary_path.is_empty();
-
-                    new_input_file.source.index =
-                        bun_ast::Index(self.graph.input_files.len() as u32);
-                    new_input_file.source.path = path_as_static(&new_task.path);
-                    new_input_file.loader = loader;
-                    let new_source_index: u32 = new_input_file.source.index.0;
+                        || new_task
+                            .secondary_path_for_commonjs_interop
+                            .as_ref()
+                            .is_some_and(|secondary_path| !secondary_path.text.is_empty());
                     new_task.source_index = bun_ast::Index(new_source_index);
                     new_task.ctx = self_ptr;
-                    // SAFETY: value_ptr points into PathToSourceIndexMap storage; no
-                    // intervening insert into that map has occurred since get_or_put.
-                    unsafe {
-                        *value_ptr = new_task.source_index.get();
-                    }
 
                     diff += 1;
-
-                    self.graph
-                        .input_files
-                        .append(new_input_file)
-                        .expect("unreachable");
-                    let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
                     if is_html_entrypoint {
                         self.ensure_client_transpiler();
@@ -7348,8 +7394,7 @@ pub mod bv2_impl {
                     self.graph.pool().schedule(new_task);
                 } else {
                     if loader.should_copy_for_bundling() {
-                        // SAFETY: value_ptr is valid (see above).
-                        let existing_idx = unsafe { *value_ptr };
+                        let existing_idx = slot.index();
                         let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                             &mut self.graph.input_files.items_additional_files_mut()
                                 [importer_source_index as usize];
@@ -7381,6 +7426,8 @@ pub mod bv2_impl {
         /// See `only_selected_record`. `Some` also saves the source indices regardless
         /// of dev_server/loader: the barrel BFS follows them.
         pub(crate) only_records: Option<&'a [u32]>,
+        /// See `ResolveImportRecordResult::has_ssr_graph_import`.
+        pub(crate) has_ssr_graph_import: bool,
     }
 
     impl Default for PatchImportRecordsCtx<'_> {
@@ -7392,6 +7439,7 @@ pub mod bv2_impl {
                 target: Target::Browser,
                 redirect_import_record_index: u32::MAX,
                 only_records: None,
+                has_ssr_graph_import: false,
             }
         }
     }
@@ -7450,6 +7498,26 @@ pub mod bv2_impl {
                     if let Some(compare) = get_redirect_id(ctx.redirect_import_record_index) {
                         if compare == i as u32 {
                             let _ = path_to_source_index_map.put(ctx.source_path, source_index); // OOM-only Result
+                        }
+                    }
+                }
+            }
+
+            if ctx.has_ssr_graph_import {
+                // A `bunBakeGraph: "ssr"` record names the SSR graph's source of its path. The
+                // loop above reads the importer's graph, which can hold the path too.
+                let ssr_map = &self.graph.build_graphs[Target::ServerComponentsSsr];
+                for (i, record) in import_records.as_mut_slice().iter_mut().enumerate() {
+                    if record.tag != bun_ast::ImportRecordTag::BakeResolveToSsrGraph
+                        || !only_selected_record(ctx.only_records, i)
+                    {
+                        continue;
+                    }
+                    if let Some(source_index) = ssr_map.get_path(&record.path) {
+                        if save_import_record_source_index
+                            || input_file_loaders[source_index as usize].is_css()
+                        {
+                            record.source_index.0 = source_index;
                         }
                     }
                 }
@@ -7586,12 +7654,12 @@ pub mod bv2_impl {
             // hoisted to tail position (see end of fn) so a deferred closure doesn't
             // double-borrow `graph`/`this`.
 
-            let mut resolve_queue = ResolveQueue::default();
+            let mut resolved = ResolveImportRecordResult::none();
             let mut process_log = true;
 
             if matches!(parse_result.value, parse_task::ResultValue::Success(_)) {
                 barrel_imports::apply_barrel_optimization(this, parse_result);
-                resolve_queue = Self::run_resolution_for_parse_task(parse_result, this);
+                resolved = Self::run_resolution_for_parse_task(parse_result, this);
                 if matches!(parse_result.value, parse_task::ResultValue::Err(_)) {
                     process_log = false;
                 }
@@ -7743,8 +7811,8 @@ pub mod bv2_impl {
                         this.graph.css_file_count += 1;
                     }
 
-                    diff += this.process_resolve_queue(
-                        &resolve_queue,
+                    diff += this.process_resolve_queues(
+                        &resolved,
                         result.ast.target,
                         result_source_index as IndexInt,
                     );
@@ -7763,6 +7831,7 @@ pub mod bv2_impl {
                             target: result.ast.target,
                             redirect_import_record_index: result.ast.redirect_import_record_index,
                             only_records: None,
+                            has_ssr_graph_import: resolved.has_ssr_graph_import,
                         },
                     );
 
@@ -7791,11 +7860,13 @@ pub mod bv2_impl {
                     }
                     result.ast.import_records = import_records;
 
-                    // `result.ast` is moved into `graph.ast` and `result.source` was
-                    // swapped earlier, so snapshot the data the use-directive block
-                    // needs *before* the move. Only paid for files that hit the SCB gate.
-                    let named_exports_for_scb = if result.use_directive != crate::UseDirective::None
-                        && {
+                    // `Some` for a file parsed for the side its directive names, when the SSR
+                    // graph is separate, and for the other side when it is not. Holds
+                    // `separate_ssr_graph`.
+                    let directive_side: Option<bool> =
+                        if result.use_directive == crate::UseDirective::None {
+                            None
+                        } else {
                             let separate = this
                                 .framework
                                 .as_ref()
@@ -7806,16 +7877,13 @@ pub mod bv2_impl {
                                 .separate_ssr_graph;
                             let is_client = result.use_directive == crate::UseDirective::Client;
                             let is_browser = result_ast_target == Target::Browser;
-                            if separate {
+                            let at_boundary = if separate {
                                 is_client == is_browser
                             } else {
                                 is_client != is_browser
-                            }
-                        } {
-                        Some(result.ast.named_exports.clone().expect("oom"))
-                    } else {
-                        None
-                    };
+                            };
+                            at_boundary.then_some(separate)
+                        };
 
                     let result_heap = *result.ast.parts.allocator();
                     this.graph.ast.set(
@@ -7834,112 +7902,68 @@ pub mod bv2_impl {
                         .expect("oom");
                     }
 
-                    if let Some(named_exports) = named_exports_for_scb {
+                    if let Some(separate_ssr_graph) = directive_side {
                         if result.use_directive == crate::UseDirective::Server {
                             bun_core::todo_panic!("\"use server\"");
                         }
 
-                        let separate_ssr_graph = this
-                            .framework
-                            .as_ref()
-                            .unwrap()
-                            .server_components
-                            .as_ref()
-                            .unwrap()
-                            .separate_ssr_graph;
-
-                        // `result.source` was swapped into
-                        // `graph.input_files` earlier; re-borrow it from the SoA
-                        // and `.clone()` where an owned copy is needed.
-                        let source_loader: Loader =
-                            this.graph.input_files.items_loader()[result_source_index];
-                        let source_module_type: options::ModuleType =
-                            this.graph.ast.items_module_type()[result_source_index];
-
-                        let (reference_source_index, ssr_index) = if separate_ssr_graph {
-                            // Enqueue two files, one in server graph, one in ssr graph.
-                            let other_source =
-                                this.graph.input_files.items_source()[result_source_index].clone();
-                            let scb_source =
-                                this.graph.input_files.items_source()[result_source_index].clone();
-                            let reference_source_index = this
-                                .enqueue_server_component_generated_file(
-                                    crate::ServerComponentParseTask::Data::ClientReferenceProxy(
-                                        crate::ServerComponentParseTask::ReferenceProxy {
-                                            other_source,
-                                            named_exports,
-                                        },
-                                    ),
-                                    scb_source,
+                        if separate_ssr_graph {
+                            // The Browser source of a "use client" file. When the server graph
+                            // holds the file too, its slot waits for these exports.
+                            if let Some(reference_index) = this
+                                .graph
+                                .server_component_boundaries
+                                .slice()
+                                .get_reference_source_index(result_source_index as IndexInt)
+                            {
+                                this.enqueue_client_reference_proxy(
+                                    result_source_index as IndexInt,
+                                    reference_index,
                                 )
                                 .expect("oom");
-
-                            let mut ssr_source =
-                                this.graph.input_files.items_source()[result_source_index].clone();
-                            // `path_with_pretty_initialized` takes/returns
-                            // `Fs::Path` (`bun_resolver::fs::Path`); bridge through
-                            // `fs_path_from_logger`/`fs_path_to_logger` until the
-                            // three `Path` mirrors unify.
-                            ssr_source.path.pretty = ssr_source.path.text;
-                            ssr_source.path = path_as_static(
-                                &this
-                                    .path_with_pretty_initialized(
-                                        &ssr_source.path,
-                                        Target::ServerComponentsSsr,
-                                    )
-                                    .expect("oom"),
-                            );
-                            let ssr_index = this
-                                .enqueue_parse_task2(
-                                    &mut ssr_source,
-                                    source_loader,
-                                    Target::ServerComponentsSsr,
-                                    source_module_type,
-                                )
-                                .expect("oom");
-
-                            (reference_source_index, ssr_index)
+                            }
                         } else {
-                            // Enqueue only one file
-                            let mut server_source =
-                                this.graph.input_files.items_source()[result_source_index].clone();
-                            server_source.path.pretty = server_source.path.text;
-                            let server_target = this.transpiler.options.target;
-                            server_source.path = path_as_static(
-                                &this
-                                    .path_with_pretty_initialized(
-                                        &server_source.path,
-                                        server_target,
-                                    )
-                                    .expect("oom"),
-                            );
-                            let server_index = this
-                                .enqueue_parse_task2(
-                                    &mut server_source,
-                                    source_loader,
-                                    Target::Browser,
-                                    source_module_type,
+                            // One server graph: this parse is the reference, and the file gets
+                            // a Browser source.
+                            let jsx = this
+                                .transpiler_for_target(Target::Browser)
+                                .options
+                                .jsx
+                                .clone();
+                            let source =
+                                &this.graph.input_files.items_source()[result_source_index];
+                            let copy = ClientModuleCopy {
+                                path: source.path,
+                                // SAFETY: the graph row owns the contents for the bundle pass.
+                                contents: unsafe { interned_slice(source.contents()) },
+                                loader: this.graph.input_files.items_loader()[result_source_index],
+                                jsx: &jsx,
+                                module_type: this.graph.ast.items_module_type()
+                                    [result_source_index],
+                                side_effects: bun_ast::SideEffects::HasSideEffects,
+                                emit_decorator_metadata: false,
+                                experimental_decorators: false,
+                                use_define_for_class_fields: true,
+                                package_version: bun_ast::StoreStr::EMPTY,
+                                package_name: bun_ast::StoreStr::EMPTY,
+                            };
+                            let client_index = this
+                                .client_module_source(&copy, Target::Browser, OnLoadPlugins::Offer)
+                                .expect("oom");
+                            this.graph
+                                .server_component_boundaries
+                                .put(
+                                    result_source_index as IndexInt,
+                                    result.use_directive,
+                                    client_index,
+                                    Index::INVALID.get(),
                                 )
                                 .expect("oom");
-
-                            (server_index, Index::INVALID.get())
-                        };
-
-                        this.graph
-                            .path_to_source_index_map(result_ast_target)
-                            .put(source_path_text, reference_source_index)
-                            .expect("oom");
-
-                        this.graph
-                            .server_component_boundaries
-                            .put(
-                                result_source_index as IndexInt,
-                                result.use_directive,
-                                reference_source_index,
-                                ssr_index,
-                            )
-                            .expect("oom");
+                        }
                     }
+                }
+                parse_task::ResultValue::ClientBoundary(boundary) => {
+                    this.found_client_boundary(boundary);
                 }
                 parse_task::ResultValue::Err(err) => {
                     if process_log {

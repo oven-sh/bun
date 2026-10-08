@@ -145,6 +145,23 @@ bun_collections::multi_array_columns! {
     }
 }
 
+/// What `Graph::get_or_put_source` found for a path in one graph.
+#[derive(Clone, Copy)]
+pub(crate) enum SourceSlot {
+    /// That graph already holds the path.
+    Existing(IndexInt),
+    New(IndexInt),
+}
+
+impl SourceSlot {
+    #[inline]
+    pub(crate) fn index(self) -> IndexInt {
+        match self {
+            SourceSlot::Existing(index) | SourceSlot::New(index) => index,
+        }
+    }
+}
+
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy, PartialEq, Eq)]
     pub struct InputFileFlags: u8 {
@@ -219,6 +236,26 @@ impl<'a> Graph<'a> {
         target: options::Target,
     ) -> &mut PathToSourceIndexMap {
         &mut self.build_graphs[target]
+    }
+
+    /// The one place that gives a path a source in the graph of `target`. The new row is filed
+    /// under that target's path map, so a graph never holds two sources for one path.
+    /// `input_file` runs only for a new row. The caller schedules the parse of a new row.
+    pub(crate) fn get_or_put_source(
+        &mut self,
+        path_text: &[u8],
+        target: options::Target,
+        input_file: impl FnOnce(Index) -> InputFile,
+    ) -> Result<SourceSlot, bun_alloc::AllocError> {
+        let slot = self.build_graphs[target].get_or_put(path_text)?;
+        if slot.found_existing {
+            return Ok(SourceSlot::Existing(*slot.value_ptr));
+        }
+        let index = Index::init(u32::try_from(self.input_files.len()).expect("int cast"));
+        *slot.value_ptr = index.get();
+        self.input_files.append(input_file(index))?;
+        let _ = self.ast.append(JSAst::empty_in(self.heap)); // OOM/capacity: fire-and-forget
+        Ok(SourceSlot::New(index.get()))
     }
 
     /// Schedule a task to be run on the JS thread which resolves the promise of

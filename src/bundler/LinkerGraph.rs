@@ -10,7 +10,7 @@ use bun_collections::{AutoBitSet, DynamicBitSetUnmanaged as BitSet, MultiArrayLi
 use bun_core::RawSlice;
 
 use crate::IndexStringMap::IndexStringMap;
-use crate::{ImportTracker, Index, JSAst, Part, Ref, UseDirective, import_record, index, part};
+use crate::{ImportTracker, Index, JSAst, Part, Ref, UseDirective, index, part};
 // `items_<field>()` column accessors — bring the `*ListExt` traits into scope.
 // Note: `BundledAstColumns` is emitted by `bun_collections::multi_array_columns!`
 // on `BundledAst` in `crate::bundled_ast` (the same macro output
@@ -761,32 +761,6 @@ impl<'a> LinkerGraph<'a> {
                         }
                         UseDirective::Server => {
                             bun_core::todo_panic!("um");
-                        }
-                    }
-                }
-
-                // For client components, the import record index currently points to the original source index, instead of the reference source index.
-                let import_records_list: &mut [import_record::List<'_>] =
-                    self.ast.items_import_records_mut();
-                for source_id in self.reachable_files.slice() {
-                    for import_record in import_records_list[source_id.get() as usize]
-                        .as_mut_slice()
-                        .iter_mut()
-                    {
-                        if import_record.source_index.is_valid()
-                            && self
-                                .is_scb_bitset
-                                .is_set(import_record.source_index.get() as usize)
-                        {
-                            // Only rewrite if this is an original SCB file, not a reference file
-                            if let Some(ref_index) =
-                                scb.get_reference_source_index(import_record.source_index.get())
-                            {
-                                import_record.source_index = Index::init(ref_index);
-                                debug_assert!(import_record.source_index.is_valid());
-                                // did not generate
-                            }
-                            // If it's already a reference file, leave it as-is
                         }
                     }
                 }

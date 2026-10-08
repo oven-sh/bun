@@ -1,7 +1,7 @@
 //! `postcss-selector-parser` 2.2.3 (`dist/tokenize.js`, `dist/parser.js`), and Prettier's
 //! `parse/parse-selector.js`.
 
-use super::text;
+use super::text::{self, ByteSet};
 use std::borrow::Cow;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -28,6 +28,9 @@ struct ParseError;
 fn is_space(byte: Option<&u8>) -> bool {
     matches!(byte, Some(b' ' | b'\n' | b'\t' | b'\r' | 0x0C))
 }
+
+static AT_END: ByteSet = ByteSet::new(b" \n\t\r{()'\"\\;/");
+static WORD_END: ByteSet = ByteSet::new(b" \n\t\r()*:;@!&'\"+|~>,[]\\/");
 
 fn tokenize(css: &[u8]) -> Result<Vec<Token>, ParseError> {
     let mut tokens = Vec::new();
@@ -62,8 +65,7 @@ fn tokenize(css: &[u8]) -> Result<Vec<Token>, ParseError> {
                 (kind, end) = (TokenKind::String, close + 1);
             }
             b'@' => {
-                let at = bun_core::strings::index_of_any(&css[pos + 1..], b" \n\t\r{()'\"\\;/");
-                (kind, end) = (TokenKind::AtWord, at.map_or(css.len(), |at| pos + 1 + at as usize));
+                (kind, end) = (TokenKind::AtWord, AT_END.find(css, pos + 1).unwrap_or(css.len()));
             }
             b'\\' => {
                 let mut last = pos;
@@ -85,12 +87,10 @@ fn tokenize(css: &[u8]) -> Result<Vec<Token>, ParseError> {
             _ => {
                 let mut at = pos + 1;
                 let found = loop {
-                    let Some(next) = css.get(at..).and_then(|rest| {
-                        bun_core::strings::index_of_any(rest, b" \n\t\r()*:;@!&'\"+|~>,[]\\/")
-                    }) else {
+                    let Some(next) = WORD_END.find(css, at) else {
                         break css.len();
                     };
-                    at += next as usize;
+                    at = next;
                     if css[at] != b'/' || css.get(at + 1) == Some(&b'*') {
                         break at;
                     }

@@ -494,6 +494,26 @@ fn value_by_test(value: &[u8]) -> ScalarValue {
     ScalarValue::String
 }
 
+/// Whether `atob` takes `value`.
+fn is_base64(value: &[u8]) -> bool {
+    let mut count = 0usize;
+    let mut padding = 0usize;
+    for &byte in value {
+        match byte {
+            b' ' | b'\t' | b'\n' | 0x0C | b'\r' => {}
+            b'=' => padding += 1,
+            _ if padding > 0 => return false,
+            _ if byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/') => count += 1,
+            _ => return false,
+        }
+    }
+    match padding {
+        0 => count % 4 != 1,
+        1 | 2 => (count + padding) % 4 == 0,
+        _ => false,
+    }
+}
+
 /// The `test` of the tag `!!timestamp`.
 fn is_timestamp(value: &[u8]) -> bool {
     fn digits(text: &[u8], min: usize, max: usize) -> Option<&[u8]> {
@@ -736,12 +756,10 @@ impl<'a> Context<'a> {
             Some(tag) => self.directives.tag_name(tag.source(self.text))?,
             None => None,
         };
-        if let Some(name) = &tag_name
-            && name.strip_prefix(DEFAULT_PREFIX) == Some(b"timestamp")
-            && !self.directives.is_version_1_1
-            && !is_timestamp(&value)
-        {
-            return Err(SyntaxError);
+        match tag_name.as_deref().and_then(|name| name.strip_prefix(DEFAULT_PREFIX)) {
+            Some(b"timestamp") if !self.directives.is_version_1_1 && !is_timestamp(&value) => return Err(SyntaxError),
+            Some(b"binary") if !is_base64(&value) => return Err(SyntaxError),
+            _ => {}
         }
         let scalar_value = match (tag_token, is_plain_token) {
             (None, true) => value_by_test(&value),
@@ -781,7 +799,9 @@ impl<'a> Context<'a> {
                 source,
             } => {
                 let (kind, range, has_comment) = self.resolve_block_scalar(*offset, *indent, props, *source)?;
-                self.finish_scalar(kind, Cow::Borrowed(b""), range, has_comment, false, tag_token)
+                // All that is asked of the value is what is in it apart from white space.
+                let value = self.text.get(source.0 as usize..source.1 as usize).unwrap_or_default();
+                self.finish_scalar(kind, Cow::Borrowed(value), range, has_comment, false, tag_token)
             }
             _ => Err(SyntaxError),
         }

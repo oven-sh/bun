@@ -55,6 +55,8 @@ struct Lexer<'a> {
     flow_level: u32,
     indent_next: usize,
     indent_value: usize,
+    /// Where the line ends that `get_line` has been asked for last.
+    line_end_pos: Option<usize>,
     pos: usize,
 }
 
@@ -100,9 +102,16 @@ impl<'a> Lexer<'a> {
         Some(offset)
     }
 
-    fn get_line(&self) -> &'a [u8] {
-        let rest = self.buffer.get(self.pos..).unwrap_or_default();
-        &rest[..strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len())]
+    fn get_line(&mut self) -> &'a [u8] {
+        let end = match self.line_end_pos {
+            Some(end) if end >= self.pos => end,
+            _ => {
+                let rest = self.buffer.get(self.pos..).unwrap_or_default();
+                self.pos + strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len())
+            }
+        };
+        self.line_end_pos = Some(end);
+        self.buffer.get(self.pos..end).unwrap_or_default()
     }
 
     fn index_of(&self, ch: u8, from: usize) -> Option<usize> {
@@ -552,6 +561,7 @@ pub(crate) fn lex(text: &[u8]) -> Vec<Lexeme> {
         flow_level: 0,
         indent_next: 0,
         indent_value: 0,
+        line_end_pos: None,
         pos: 0,
     };
     let mut next = State::Stream;

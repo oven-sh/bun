@@ -5,7 +5,7 @@
 //! is a range of the text.
 
 use super::Parser as Syntax;
-use super::text;
+use super::text::{self, ByteSet};
 
 /// A range of the text.
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
@@ -152,6 +152,10 @@ struct Tokenizer<'a> {
     /// Where the first `)` is behind the last `(` that was looked at, if that is known.
     next_close: Option<Option<usize>>,
 }
+
+static AT_END: ByteSet = ByteSet::new(b"\t\n\x0C\r \"#'()/;[\\]{}");
+static WORD_END: ByteSet = ByteSet::new(b"\t\n\x0C\r !\"#'():;@[\\]{}/");
+static SCSS_WORD_END: ByteSet = ByteSet::new(b",\t\n\x0C\r !\"#'():;@[\\]{}/");
 
 fn is_space(byte: Option<&u8>) -> bool {
     matches!(byte, Some(b' ' | b'\n' | b'\t' | b'\r' | 0x0C))
@@ -302,8 +306,7 @@ impl<'a> Tokenizer<'a> {
                 (kind, next) = (TokenKind::String, close);
             }
             b'@' => {
-                let end = bun_core::strings::index_of_any(&css[pos + 1..], b"\t\n\x0C\r \"#'()/;[\\]{}")
-                    .map_or(css.len(), |at| pos + 1 + at);
+                let end = AT_END.find(css, pos + 1).unwrap_or(css.len());
                 (kind, next) = (TokenKind::AtWord, end - 1);
             }
             b'\\' => {
@@ -341,16 +344,13 @@ impl<'a> Tokenizer<'a> {
                 inline = true;
             }
             _ => {
-                let set: &[u8] = match is_scss {
-                    true => b",\t\n\x0C\r !\"#'():;@[\\]{}/",
-                    false => b"\t\n\x0C\r !\"#'():;@[\\]{}/",
-                };
+                let set = if is_scss { &SCSS_WORD_END } else { &WORD_END };
                 let mut end = pos + 1;
                 loop {
-                    match bun_core::strings::index_of_any(&css[end..], set) {
+                    match set.find(css, end) {
                         None => end = css.len(),
                         Some(at) => {
-                            end += at;
+                            end = at;
                             if css[end] == b'/' && css.get(end + 1) != Some(&b'*') {
                                 end += 1;
                                 continue;

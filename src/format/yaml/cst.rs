@@ -188,7 +188,7 @@ pub(crate) enum ParseError {
 }
 
 /// How deep collections can be nested. What follows is recursive.
-const MAX_DEPTH: usize = 192;
+const MAX_DEPTH: usize = 100;
 
 fn includes_token(list: &[SourceToken], kind: TokenType) -> bool {
     list.iter().any(|token| token.kind == kind)

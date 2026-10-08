@@ -18,7 +18,7 @@ pub(crate) struct Printer<'t, 'a> {
     pub(crate) trailing_comma: bool,
     pub(crate) tab_width: u32,
     /// `printedEmptyLineCache`: where the nodes end whose next line has been looked at.
-    pub(crate) printed_empty_lines: Vec<u32>,
+    pub(crate) printed_empty_lines: rustc_hash::FxHashSet<u32>,
     pub(crate) last_group_id: u32,
 }
 
@@ -54,11 +54,17 @@ fn should_print_end_comments(node: &Node<'_>) -> bool {
 /// Prettier's `isPreviousLineEmpty`.
 fn is_previous_line_empty(text: &[u8], start: usize) -> bool {
     let skip_spaces = |text: &[u8]| text.iter().rposition(|b| !matches!(b, b' ' | b'\t')).map_or(0, |at| at + 1);
+    // `skipNewline`
+    let newline_len = |text: &[u8]| match text {
+        [.., b'\n'] => 1,
+        [.., 0xE2, 0x80, 0xA8 | 0xA9] => 3,
+        _ => 0,
+    };
     let before = &text[..start.min(text.len())];
     let before = &before[..skip_spaces(before)];
-    let before = before.strip_suffix(b"\n").unwrap_or(before);
+    let before = &before[..before.len() - newline_len(before)];
     let before = &before[..skip_spaces(before)];
-    before.ends_with(b"\n")
+    newline_len(before) > 0
 }
 
 /// `splitWithSingleSpace`: `" a   b c   d e   f "` is `[" a   b", "c   d", "e   f "]`.
@@ -170,8 +176,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     /// `printNextEmptyLine`
     fn print_next_empty_line(&mut self, node: &Node<'a>) -> Doc<'a> {
         let end = node.position.end.offset;
-        if !self.printed_empty_lines.contains(&end) {
-            self.printed_empty_lines.push(end);
+        if self.printed_empty_lines.insert(end) {
             if self.is_next_line_empty(node) && !self.parent(node).is_some_and(should_print_end_comments) {
                 return Doc::SOFTLINE;
             }
@@ -356,12 +361,10 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
             }
             Kind::Directive => {
                 // The name without the `%`, and the parameters.
-                let parts = strings::split_any(text::trim(&node.value), b" \t").filter(|part| !part.is_empty());
                 let source: &'a [u8] = match &node.value {
                     Cow::Borrowed(source) => source,
                     Cow::Owned(_) => b"",
                 };
-                let _ = parts;
                 let parts: Vec<Doc<'a>> = strings::split_any(text::trim(source), b" \t")
                     .filter(|part| !part.is_empty())
                     .enumerate()

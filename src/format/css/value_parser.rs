@@ -6,7 +6,7 @@
 
 use super::Parser as Syntax;
 use super::selector_parser::{self, SelectorNode};
-use super::text;
+use super::text::{self, ByteSet};
 use std::borrow::Cow;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -52,10 +52,10 @@ fn is_space(byte: Option<&u8>) -> bool {
 
 /// The index of the first character from `from` on that ends a word. A `/` does if `slash` says so,
 /// given what follows it.
-fn word_end(css: &[u8], from: usize, set: &[u8], slash: impl Fn(Option<&u8>) -> bool) -> Option<usize> {
+fn word_end(css: &[u8], from: usize, set: &ByteSet, slash: impl Fn(Option<&u8>) -> bool) -> Option<usize> {
     let mut at = from;
     loop {
-        at += bun_core::strings::index_of_any(css.get(at..)?, set)? as usize;
+        at = set.find(css, at)?;
         if css[at] != b'/' || slash(css.get(at + 1)) {
             return Some(at);
         }
@@ -63,8 +63,9 @@ fn word_end(css: &[u8], from: usize, set: &[u8], slash: impl Fn(Option<&u8>) -> 
     }
 }
 
-const WORD_END: &[u8] = b" \n\t\r(){}*:;@!&'\"+|~>,[]\\/";
-const WORD_END_NUM: &[u8] = b" \n\t\r(){}*:;@!&'\"-+|~>,[]\\/";
+static WORD_END: ByteSet = ByteSet::new(b" \n\t\r(){}*:;@!&'\"+|~>,[]\\/");
+static WORD_END_NUM: ByteSet = ByteSet::new(b" \n\t\r(){}*:;@!&'\"-+|~>,[]\\/");
+static AT_END: ByteSet = ByteSet::new(b" \n\t\r{()'\"\\;,/");
 
 fn tokenize(css: &[u8]) -> Result<Vec<Token>, ParseError> {
     let mut tokens: Vec<Token> = Vec::new();
@@ -131,8 +132,7 @@ fn tokenize(css: &[u8]) -> Result<Vec<Token>, ParseError> {
                 (kind, end, next) = (TokenKind::String, close + 1, close);
             }
             b'@' => {
-                let at = bun_core::strings::index_of_any(&css[pos + 1..], b" \n\t\r{()'\"\\;,/")
-                    .map_or(length, |at| pos + 1 + at as usize);
+                let at = AT_END.find(css, pos + 1).unwrap_or(length);
                 (kind, end, next) = (TokenKind::AtWord, at, at - 1);
             }
             b'\\' => (kind, end, next) = (TokenKind::Word, pos + 1, pos),
@@ -173,8 +173,8 @@ fn tokenize(css: &[u8]) -> Result<Vec<Token>, ParseError> {
             _ => {
                 let is_number = code.is_ascii_digit();
                 let find = |from: usize, is_number: bool| match is_number {
-                    true => word_end(css, from, WORD_END_NUM, |_| true),
-                    false => word_end(css, from, WORD_END, |after| after == Some(&b'*')),
+                    true => word_end(css, from, &WORD_END_NUM, |_| true),
+                    false => word_end(css, from, &WORD_END, |after| after == Some(&b'*')),
                 };
                 let mut last = find(pos + 1, is_number).map_or(length - 1, |at| at - 1);
                 // `1e-10`, `1e+10`

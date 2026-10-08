@@ -929,7 +929,9 @@ fn should_own_end_comment(nodes: &[Node<'_>], id: Id, comment: Position) -> bool
     }
 }
 
-fn attach_comment(nodes: &mut [Node<'_>], table: &[Line], comment: Id, document: Id) -> Result<()> {
+/// `next_leading[line]`: the first line from the one with the index `line` on that has a
+/// `leading_attachable_node`.
+fn attach_comment(nodes: &mut [Node<'_>], table: &[Line], next_leading: &[u32], comment: Id, document: Id) -> Result<()> {
     let position = nodes[comment as usize].position;
     let comment_line = position.start.line as usize;
     let line_at = |line: usize| table.get(line.wrapping_sub(1)).copied().unwrap_or_default();
@@ -976,12 +978,14 @@ fn attach_comment(nodes: &mut [Node<'_>], table: &[Line], comment: Id, document:
         }
         break;
     }
-    for line in comment_line + 1..=document_position.end.line as usize {
-        if let Some(node) = line_at(line).leading_attachable_node {
-            nodes[comment as usize].parent = Some(node);
-            nodes[node as usize].leading_comments.push(comment);
-            return Ok(());
-        }
+    // The first line after that of the comment, in the document.
+    if let Some(&index) = next_leading.get(comment_line)
+        && index < document_position.end.line
+        && let Some(node) = table.get(index as usize).and_then(|line| line.leading_attachable_node)
+    {
+        nodes[comment as usize].parent = Some(node);
+        nodes[node as usize].leading_comments.push(comment);
+        return Ok(());
     }
     let body = *nodes[document as usize].children.get(1).ok_or(Unexpected)?;
     nodes[comment as usize].parent = Some(body);
@@ -1102,6 +1106,13 @@ pub(crate) fn build<'a>(text: &'a [u8], documents: &[Document<'_, 'a>], cst_toke
         }
     }
     init_node_table(&nodes, &mut table, root);
+    let mut next_leading = vec![u32::MAX; table.len()];
+    for index in (0..table.len()).rev() {
+        next_leading[index] = match table[index].leading_attachable_node {
+            Some(_) => index as u32,
+            None => next_leading.get(index + 1).copied().unwrap_or(u32::MAX),
+        };
+    }
     let mut rest_documents = &children[..];
     for &comment in &comments {
         if nodes[comment as usize].parent.is_some() {
@@ -1112,7 +1123,7 @@ pub(crate) fn build<'a>(text: &'a [u8], documents: &[Document<'_, 'a>], cst_toke
         {
             rest_documents = &rest_documents[1..];
         }
-        attach_comment(&mut nodes, &table, comment, *rest_documents.first().ok_or(Unexpected)?)?;
+        attach_comment(&mut nodes, &table, &next_leading, comment, *rest_documents.first().ok_or(Unexpected)?)?;
     }
     update_positions(&mut nodes, root);
     Ok(Tree { nodes, root })

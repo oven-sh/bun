@@ -78,6 +78,28 @@ pub(crate) fn leading_white_space_len(text: &[u8]) -> usize {
     text.len() - trim_start(text).len()
 }
 
+/// A set of bytes, for the ends of tokens: they are a few bytes away, and there are more kinds of them
+/// than the vectorized search takes at once.
+pub(crate) struct ByteSet([bool; 256]);
+
+impl ByteSet {
+    pub(crate) const fn new(bytes: &[u8]) -> ByteSet {
+        let mut set = [false; 256];
+        let mut i = 0;
+        while i < bytes.len() {
+            set[bytes[i] as usize] = true;
+            i += 1;
+        }
+        ByteSet(set)
+    }
+
+    /// The index of the first byte of `text` from `from` on that is in the set.
+    pub(crate) fn find(&self, text: &[u8], from: usize) -> Option<usize> {
+        let rest = text.get(from..)?;
+        rest.iter().position(|&byte| self.0[byte as usize]).map(|at| from + at)
+    }
+}
+
 /// `text.includes(part)`
 pub(crate) fn includes(text: &[u8], part: &[u8]) -> bool {
     bun_core::strings::contains(text, part)

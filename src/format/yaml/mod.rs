@@ -64,7 +64,7 @@ pub(crate) fn document<'a>(text: &'a [u8], options: &FormatOptions) -> Result<Do
         bracket_spacing: options.bracket_spacing.value(),
         trailing_comma: !matches!(options.trailing_commas, TrailingCommas::None),
         tab_width: u32::from(options.indent_width.value()),
-        printed_empty_lines: Vec::new(),
+        printed_empty_lines: Default::default(),
         last_group_id: 0,
     };
     Ok(printer.print(tree.root, true))

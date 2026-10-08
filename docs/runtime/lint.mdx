@@ -57,21 +57,22 @@ Rule names, options, messages, locations, fixes, and `eslint-disable` comments a
 
 ### Plugins
 
-The rules of ESLint and typescript-eslint are built into Bun. `bun lint` does not run other plugins. It skips their rules and tells you how many:
+The rules of ESLint and typescript-eslint are built into Bun, and so are the rules of `react-hooks` and some of `import`, `n`, and `oxc`. They run as native code.
 
-```txt
-warn: 12 rules of the plugin "react" are not supported yet and were skipped
+Every other plugin runs as it is. `bun lint` loads the plugins that your `eslint.config.js` has in `plugins`, and runs their rules in JavaScript, with the same `context`, `sourceCode`, scopes, and fixers that ESLint gives them.
+
+```js eslint.config.js icon="file-code"
+import unicorn from "eslint-plugin-unicorn";
+
+export default [
+  {
+    plugins: { unicorn },
+    rules: { "unicorn/prefer-node-protocol": "error" },
+  },
+];
 ```
 
-To keep those rules, run ESLint for them only. Turn off what `bun lint` covers in a second configuration file, and run both:
-
-```json package.json icon="file-json"
-{
-  "scripts": {
-    "lint": "bun lint && eslint -c eslint.plugins.config.js"
-  }
-}
-```
+Rules in JavaScript are slower than the built-in ones. A file costs nothing extra if no rule in JavaScript is on for it.
 
 ### `.eslintrc.json`
 
@@ -99,7 +100,7 @@ Where an `.oxlintrc.json` is the configuration, `bun lint` behaves like oxlint:
 | `oxlint -f json`              | `bun lint -f json`              |
 | `oxlint --rules`              | `bun lint --rules`              |
 
-Run `bun lint --rules` to list the rules that exist. A rule that does not exist is skipped with a warning. Where oxlint and ESLint disagree about a rule, `bun lint` does what ESLint does, and the messages are ESLint's.
+The plugins in `jsPlugins` are loaded and run. Run `bun lint --rules` to list the rules that are built in. A rule that does not exist is skipped with a warning. Where oxlint and ESLint disagree about a rule, `bun lint` does what ESLint does, and the messages are ESLint's.
 
 ## Which configuration file
 
@@ -301,7 +302,7 @@ When `AGENT=1`, `CLAUDECODE=1`, or `REPL_ID=1` is set, the default format is `ag
 These differences are intentional:
 
 - **No configuration file is not an error.** ESLint stops. `bun lint` uses [defaults](#without-a-configuration-file).
-- **Plugins, processors, custom parsers, and custom formatters do not load.** Their rules are skipped with a warning. Files that need them, such as `.vue` or Markdown files, are skipped too.
+- **Processors, custom parsers, and custom formatters do not load.** Files that need them, such as `.vue` or Markdown files, are skipped. The rules of plugins run.
 - **One parser.** Bun's parser reads all files. The wording of a syntax error can differ from espree's.
 - **A rule that needs types never stops the run.** If the configuration does not ask for types, typescript-eslint throws. `bun lint` skips the rule and says so.
 - **`parserOptions.project` is a switch.** Any value turns types on. Each file is checked with its nearest `tsconfig.json`, and a file that no `tsconfig.json` includes is still linted.

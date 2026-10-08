@@ -174,10 +174,11 @@ impl<'a> UnionMembers<'a> {
         if !matches!(self.parent, AstNodes::TSArrayType(_) | AstNodes::TSUnionType(_) | AstNodes::TSIntersectionType(_)) {
             return &[];
         }
-        let span = self.ty.span();
+        // Only those that are in the parent.
+        let (span, parent_end) = (self.ty.span(), self.parent.span().end);
         let end = match following_span_start_in(span, self.parent) {
-            0 => self.parent.span().end,
-            following => following,
+            0 => parent_end,
+            following => following.min(parent_end),
         };
         end_of_line_comments(f.comments().comments_in_range(span.end, end))
     }

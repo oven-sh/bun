@@ -52,7 +52,7 @@ pub(crate) fn write_ts_interface_declaration<'a>(statement: Stmt<'a>, interface:
         }
         if type_params.angle_brackets_span().is_some() {
             let options = FormatTSTypeParametersOptions {
-                group_id: Some(f.group_id("type_parameters")),
+                group_id: None,
                 is_type_or_interface_decl: true,
             };
             type_parameters(type_params, Node::Stmt(statement)).with_options(options).write_without_comments(f);
@@ -80,22 +80,24 @@ pub(crate) fn write_ts_interface_declaration<'a>(statement: Stmt<'a>, interface:
                 false => write!(f, [space(), format_extends]),
             }
         }
-
-        if !f.comments().has_leading_own_line_comment(body_span.start) {
-            write!(f, [space(), format_leading_comments(body_span)]);
-        }
     });
 
     let content = format_with(|f| {
         write!(f, [is_declared(statement).then_some("declare "), "interface", space()]);
 
         if !extends.is_empty() && group_mode {
-            let heritage_id = f.group_id("heritageGroup");
-            write!(f, [group(&format_args!(format_id, indent(&format_extends))).with_group_id(Some(heritage_id)), space()]);
+            write!(f, group(&format_args!(format_id, indent(&format_extends))));
         } else {
             write!(f, [format_id, format_extends]);
         }
 
+        // The comments on the line of the `{` stay before it. All others are in the body.
+        if !f.is_quiet() {
+            let comments = f.comments().comments_before(body_span.start);
+            if !comments.iter().any(|comment| comment.preceded_by_newline() || comment.followed_by_newline()) {
+                write!(f, [space(), FormatLeadingComments::Comments(comments)]);
+            }
+        }
         write!(f, [space(), "{"]);
         match interface.members().is_empty() {
             true => write!(f, format_dangling_comments(body_span).with_block_indent()),

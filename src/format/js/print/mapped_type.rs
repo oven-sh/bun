@@ -26,9 +26,10 @@ pub(crate) fn write_ts_mapped_type<'a>(ty: TypeNode<'a>, mapped: Mapped<'a>, f: 
         }
 
         let format_key = format_with(|f| {
-            write!(f, [identifier(key, AstNodes::TSMappedType(ty)), space(), "in", space(), param.constraint()]);
+            // The blank after `in` stays if a comment that trails the key ends up behind it.
+            write!(f, [identifier(key, AstNodes::TSMappedType(ty)), " in ", param.constraint()]);
             if let Some(name_type) = mapped.name_type() {
-                write!(f, [space(), "as", space(), name_type]);
+                write!(f, [" as ", name_type]);
             }
         });
         write!(f, group(&format_args!("[", soft_block_indent(&format_key), "]")));

@@ -1299,8 +1299,8 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     // command. No quoting of the argument stops that, so refuse the launch.
     {
         // SAFETY: spawn_command_line is NUL-terminated (written above).
-        let assembled = unsafe { bun_core::ffi::wstr_units(spawn_command_line) };
-        if program_runs_through_cmd(program_of_command_line(assembled)) {
+        let program = unsafe { program_of_command_line(spawn_command_line) };
+        if program_runs_through_cmd(program) {
             if let Some(argument) = find_cmd_special_argument(user_arguments_u16) {
                 capture_failure_text(unquote_argument(argument));
                 return LauncherMode::fail(MODE, FailReason::ArgumentHasCmdSpecialCharacter);
@@ -1545,8 +1545,8 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                             }
 
                             // SAFETY: spawn_command_line is NUL-terminated.
-                            let line = unsafe { bun_core::ffi::wstr_units(spawn_command_line) };
-                            capture_failure_text(program_of_command_line(line));
+                            let program = unsafe { program_of_command_line(spawn_command_line) };
+                            capture_failure_text(program);
                             return LauncherMode::fail(MODE, FailReason::InterpreterNotFound);
                         } else {
                             return LauncherMode::fail(MODE, FailReason::BinNotFound);
@@ -1852,19 +1852,36 @@ fn unquote_argument(argument: &[u16]) -> &[u16] {
 }
 
 /// Returns the first part of `command_line`: the file `CreateProcessW` runs.
-fn program_of_command_line(command_line: &[u16]) -> &[u16] {
-    let quoted = command_line.first() == Some(&QUOTE);
-    let rest = if quoted {
-        &command_line[1..]
+///
+/// The walk stops at the NUL, at the end of the first argument, or at the
+/// longest command line Windows takes. It reads the units one at a time: a
+/// `wcslen` over the whole line becomes a call into the C runtime, which the
+/// standalone shim does not link.
+///
+/// # Safety
+/// `command_line` must point to at least one unit and hold a NUL within
+/// `BUF2_U16_LEN` units.
+unsafe fn program_of_command_line<'a>(command_line: *const u16) -> &'a [u16] {
+    // SAFETY: the caller guarantees one readable unit.
+    let quoted = unsafe { *command_line } == QUOTE;
+    // SAFETY: the quote is one unit of the same buffer.
+    let start = if quoted {
+        unsafe { command_line.add(1) }
     } else {
         command_line
     };
     let end_at = if quoted { QUOTE } else { SPACE };
-    let mut i: usize = 0;
-    while i < rest.len() && rest[i] != end_at {
-        i += 1;
+    let mut len: usize = 0;
+    while len < BUF2_U16_LEN - 1 {
+        // SAFETY: every unit up to the NUL is readable per the caller.
+        let unit = unsafe { *start.add(len) };
+        if unit == 0 || unit == end_at {
+            break;
+        }
+        len += 1;
     }
-    &rest[..i]
+    // SAFETY: the loop above read every one of these units.
+    unsafe { bun_core::ffi::slice(start, len) }
 }
 
 /// True when Windows reads the command line of `program` a second time with

@@ -223,7 +223,7 @@ pub(crate) fn print(
         variants: &storage.variants,
         source,
         text: &storage.text,
-        out: Out::new(out),
+        out: Out::new(out, source.len() + source.len() / 8 + 64),
         pending_indent: Indention::default(),
         pending_space: false,
         measured_group_fits: true,
@@ -308,7 +308,7 @@ impl<'d> Printer<'d> {
     fn insert_group_mode(&mut self, id: GroupId, mode: PrintMode) {
         let (index, modes) = (id.index(), &mut self.buffers.group_modes);
         if modes.len() <= index {
-            modes.resize(index + 1, None);
+            modes.resize((index + 1).max(modes.len() * 2).max(64), None);
         }
         modes[index] = Some(mode);
     }

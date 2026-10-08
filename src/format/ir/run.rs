@@ -57,7 +57,6 @@ pub(crate) fn print(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
-    out.reserve(source.len() + source.len() / 8);
     let printer_options = super::printer::PrinterOptions::new(options, source);
     super::printer::print(root, &scratch.formatter.storage, source, printer_options, &mut scratch.printer, out)
         .map_err(|_| FormatError::InvalidDocument)

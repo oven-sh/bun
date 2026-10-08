@@ -13,9 +13,10 @@ pub(super) struct Out<'o> {
 const BLOCK: usize = 16;
 
 impl<'o> Out<'o> {
-    pub(super) fn new(buffer: &'o mut Vec<u8>) -> Self {
+    /// `expected`: about the number of bytes that are going to be written.
+    pub(super) fn new(buffer: &'o mut Vec<u8>, expected: usize) -> Self {
         let len = buffer.len();
-        buffer.resize(buffer.capacity(), 0);
+        buffer.resize(len + expected, 0);
         Out { buffer, len }
     }
 

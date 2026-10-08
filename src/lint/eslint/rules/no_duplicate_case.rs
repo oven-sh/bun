@@ -1,11 +1,16 @@
 use bun_core::strings;
 use bun_lint::language::Parser;
 use bun_lint::prelude::*;
+use bun_lint::utils::token_key::TokenClasses;
+use rustc_hash::FxHashSet;
 
 /// Disallow duplicate case labels.
 pub struct NoDuplicateCase;
 
 const UNEXPECTED: Message = Message::new("unexpected", "Duplicate case label.");
+
+/// With more cases than this, the tests are not compared with each other but looked up.
+const COMPARED: usize = 16;
 
 /// It is a single token, so that two of them are equal only if their text is.
 fn is_single_token(e: Expr) -> bool {
@@ -47,6 +52,28 @@ fn equal<'a>(file: &'a File<'a>, a: Expr<'a>, b: Expr<'a>, is_text_enough: bool)
     (can_be_written_differently(a) || can_be_written_differently(b)) && ast_utils::equal_tokens(file, a, b)
 }
 
+/// What comparing each test with those before it by [`equal`] finds, in time in proportion to the text of the tests.
+fn check_many<'a>(cases: List<'a, Case<'a>>, is_text_enough: bool, cx: &Cx<'a, NoDuplicateCase>) {
+    let is_espree = cx.language().parser == Parser::Espree;
+    let (mut texts, mut names) = (FxHashSet::default(), FxHashSet::default());
+    let mut classes = TokenClasses::default();
+    for case in cases {
+        let Some(test) = case.test() else {
+            continue;
+        };
+        let known = classes.len();
+        let is_new = match test.as_ident() {
+            _ if is_text_enough => texts.insert(test.text()),
+            Some(name) if is_espree => names.insert(name),
+            Some(_) => texts.insert(test.text()),
+            None => classes.number_of(cx.file(), test) as usize == known,
+        };
+        if !is_new {
+            cx.report(case, UNEXPECTED);
+        }
+    }
+}
+
 impl Rule for NoDuplicateCase {
     const META: Meta = Meta::eslint("no-duplicate-case", Kind::Problem).recommended();
     type State<'a> = ();
@@ -63,6 +90,9 @@ impl Rule for NoDuplicateCase {
             // Spares the tokens of the file for `case Kind.A: case Kind.B:`.
             let mut tests = cases.iter().filter_map(Case::test);
             let is_text_enough = !tests.any(|it| !is_single_token(it) && can_be_written_differently(it));
+            if cases.iter().nth(COMPARED).is_some() {
+                return check_many(cases, is_text_enough, cx);
+            }
             for (i, case) in cases.iter().enumerate() {
                 let Some(test) = case.test() else {
                     continue;

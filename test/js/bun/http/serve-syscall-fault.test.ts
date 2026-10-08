@@ -124,21 +124,26 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
   test("server.timeout(req, N) holds when the socket takes none of a response that ended in the cork buffer", async () => {
     const { proc, port } = await spawnServer(/* js */ `
       const { socketFaultInjection: fault, runSocketTimeoutSweepSoon } = require("bun:internal-for-testing");
-      const s = Bun.serve({ port: 0, hostname: "127.0.0.1", idleTimeout: 1,
-        fetch(req, server) {
-          server.timeout(req, 60);
-          // The response ends with all of its bytes in the cork buffer, and no send moves one.
-          fault.set({ syscall: "send", action: "zero", repeat: -1 });
-          fault.set({ syscall: "writev", action: "zero", repeat: -1 });
-          // One idle sweep runs over the connection, then the sends work again.
-          setImmediate(() => {
+      // A socket of this process that sends nothing. Its 1 s timeout fires in the next sweep of the loop.
+      const listener = Bun.listen({ port: 0, hostname: "127.0.0.1", socket: { data() {} } });
+      let afterSweep = () => {};
+      Bun.connect({ port: listener.port, hostname: "127.0.0.1",
+        socket: { data() {}, timeout() { afterSweep(); } } }).then(witness => {
+        const s = Bun.serve({ port: 0, hostname: "127.0.0.1", idleTimeout: 1,
+          fetch(req, server) {
+            server.timeout(req, 60);
+            // The response ends with all of its bytes in the cork buffer, and no send moves one.
+            fault.set({ syscall: "send", action: "zero", repeat: -1 });
+            fault.set({ syscall: "writev", action: "zero", repeat: -1 });
+            // One sweep runs over both connections. The sends work again when it has run.
+            afterSweep = () => fault.clear();
+            witness.timeout(1);
             runSocketTimeoutSweepSoon();
-            setImmediate(() => setImmediate(() => fault.clear()));
-          });
-          return new Response("tail");
-        } });
-      console.log(s.port);
-      process.on("SIGTERM", () => { fault.clear(); s.stop(true); process.exit(0); });
+            return new Response("tail");
+          } });
+        console.log(s.port);
+        process.on("SIGTERM", () => { fault.clear(); s.stop(true); process.exit(0); });
+      });
     `);
     try {
       // The wire up to the end of the response, or up to the close if the server cut it.
@@ -170,12 +175,9 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");
       const s = Bun.serve({ port: 0, hostname: "127.0.0.1",
         websocket: {
-          open(ws) {
-            ws.send("first-frame");
-            // Two loop turns later every send of this turn was tried. Then the connection goes.
-            setImmediate(() => setImmediate(() => ws.terminate()));
-          },
-          message() {},
+          open(ws) { ws.send("first-frame"); },
+          // The client sends a frame when it has the 101. A first frame that is not out by then never leaves.
+          message(ws) { ws.terminate(); },
         },
         fetch(req, server) {
           server.timeout(req, 60);
@@ -194,10 +196,16 @@ describe.skipIf(skip)("Bun.serve under injected syscall faults", () => {
       const wire = Promise.withResolvers<string>();
       const socket = net.connect(port, "127.0.0.1");
       let received = "";
+      let asked = false;
       socket.on("error", () => {});
       socket.on("data", chunk => {
         received += chunk.toString("latin1");
-        if (received.endsWith(frame)) wire.resolve(received);
+        if (received.endsWith(frame)) return wire.resolve(received);
+        if (!asked && received.includes("\r\n\r\n")) {
+          asked = true;
+          // A masked text frame "done" with a zero mask: the server ends the connection.
+          socket.write(Buffer.from([0x81, 0x84, 0, 0, 0, 0, 0x64, 0x6f, 0x6e, 0x65]));
+        }
       });
       socket.on("close", () => wire.resolve(received));
       socket.write(

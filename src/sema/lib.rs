@@ -4,7 +4,7 @@
 //! typescript-go (https://github.com/microsoft/typescript-go, Copyright Microsoft Corporation, Apache License 2.0), and comments
 //! name the function a piece of code corresponds to.
 
-#![feature(allocator_api)]
+#![feature(adt_const_params, allocator_api)]
 
 pub mod atom;
 pub mod bind;

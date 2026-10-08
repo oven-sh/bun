@@ -1015,6 +1015,32 @@ where
             (task.buffer().typed_or_new(&self.slot)).replace(spread, key, value);
         }
     }
+
+    /// `get`. `Err`: the hash of `key`, for `insert_absent` and `rewrite_absent`.
+    #[inline]
+    pub fn get_or_hash(&self, task: &Task<'s>, key: &K) -> Result<V, u64> {
+        let spread = spread_hash(key);
+        if let Some(value) = self.published(spread, key) {
+            return Ok(value);
+        }
+        let own = task.buffer().typed(&self.slot);
+        own.and_then(|own| own.get(spread, key))
+            .copied()
+            .ok_or(spread)
+    }
+
+    /// `insert`, for a key for which `get_or_hash` has returned `spread` in this task: nothing is
+    /// published during a step, so it is still not among the published entries.
+    #[inline]
+    pub fn insert_absent(&self, task: &Task<'s>, spread: u64, key: K, value: V, _: Stored) -> V {
+        *(task.buffer().typed_or_new(&self.slot)).insert(spread, key, value)
+    }
+
+    /// `rewrite`, likewise.
+    #[inline]
+    pub fn rewrite_absent(&self, task: &Task<'s>, spread: u64, key: K, value: V, _: Stored) {
+        (task.buffer().typed_or_new(&self.slot)).replace(spread, key, value);
+    }
 }
 
 // ───────────────────────────── `Buffered`: the end of a task, and the barrier ─────────────────────────────

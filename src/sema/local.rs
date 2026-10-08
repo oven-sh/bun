@@ -94,18 +94,31 @@ impl Placement for OfTask {
 pub struct Found {
     places: RefCell<Places<OfTask>>,
     count: Cell<usize>,
+    /// The first entry makes room for that many, so that the table does not double its way up from
+    /// `OfTask::LEAST` in every task.
+    expected: Cell<usize>,
 }
 
 impl Default for Found {
     fn default() -> Self {
-        Found {
-            places: RefCell::new(Places::new_in(Global)),
-            count: Cell::new(0),
-        }
+        Found::expecting(0)
     }
 }
 
 impl Found {
+    pub fn expecting(expected: usize) -> Self {
+        Found {
+            places: RefCell::new(Places::new_in(Global)),
+            count: Cell::new(0),
+            expected: Cell::new(expected),
+        }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.count.get()
+    }
+
     /// `is_it` does not add to this.
     #[inline]
     pub fn find(&self, spread: u64, is_it: impl FnMut(u32) -> bool) -> Option<u32> {
@@ -117,15 +130,27 @@ impl Found {
     pub fn add(&self, spread: u64, number: u32) {
         let count = self.count.replace(self.count.get() + 1);
         let mut places = self.places.borrow_mut();
+        if count == 0 {
+            places.reserve(0, self.expected.get());
+        }
         places.add(count, 1, std::iter::once((spread, number)));
         places.forget_older();
     }
 
     pub fn clear(&mut self) {
-        if self.count.replace(0) != 0 {
+        let count = self.count.replace(0);
+        if count != 0 {
+            self.expected.set(expected_after(count));
             self.places.get_mut().clear();
         }
     }
+}
+
+/// What a table that had `count` entries in one task expects of the next: half, so that a small task
+/// after a big one pays for little, and a task of the same size doubles once.
+#[inline]
+pub fn expected_after(count: usize) -> usize {
+    (count / 2).min(1 << 20)
 }
 
 /// A hash map that iterates in insertion order: the entries are in a vector, and the hash index

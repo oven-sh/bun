@@ -13,6 +13,7 @@ mod js_plugin_cmd;
 mod linter_cmd;
 mod plugins_cmd;
 mod parser_cmd;
+mod perf_cmd;
 mod regex_cmd;
 mod selector_cmd;
 mod semantic_cmd;
@@ -468,6 +469,7 @@ fn main() {
         Some("tokens") => tokens_cmd::run(&args[1..]),
         Some("semantic") => semantic_cmd::run(&args[1..]),
         Some("code-path") => code_path_cmd::run(&args[1..]),
+        Some("perf") => perf_cmd::run_command(&args[1..]),
         Some("regex") => regex_cmd::run(&args[1..]),
         Some("types") => types_cmd::run(&args[1..]),
         Some("linter") => linter_cmd::run(&args[1..]),

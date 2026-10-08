@@ -3,7 +3,7 @@
 use super::program::{Bound, Id, Key, Op, Program, Relation, Test};
 use super::value::Val;
 use crate::ast::Node;
-use crate::estree::{FieldEntry, NodeType, Nodes, VNode, Value};
+use crate::estree::{Dialect, FieldEntry, NodeType, Nodes, VNode, Value};
 use smallvec::SmallVec;
 use std::cmp::Ordering;
 
@@ -11,7 +11,7 @@ use std::cmp::Ordering;
 #[derive(Copy, Clone)]
 pub(super) struct Matcher<'s, 'a> {
     pub(super) program: &'s Program,
-    pub(super) is_espree: bool,
+    pub(super) dialect: Dialect,
     /// The node that a `:has()` is asked about. What is in the parentheses does not see above it.
     pub(super) limit: Option<VNode<'a>>,
 }
@@ -27,7 +27,7 @@ struct Children<'a> {
     node: VNode<'a>,
     entries: std::slice::Iter<'static, FieldEntry>,
     list: Option<Nodes<'a>>,
-    is_espree: bool,
+    dialect: Dialect,
 }
 
 impl<'a> Iterator for Children<'a> {
@@ -40,7 +40,7 @@ impl<'a> Iterator for Children<'a> {
             }
             self.list = None;
             let entry = self.entries.next().filter(|it| it.is_child)?;
-            if self.is_espree && entry.is_typescript_only {
+            if !entry.is_in(self.dialect) {
                 continue;
             }
             match (entry.get)(self.node) {
@@ -67,16 +67,16 @@ impl<'s, 'a> Matcher<'s, 'a> {
             node,
             entries: node_type.fields().iter(),
             list: None,
-            is_espree: self.is_espree,
+            dialect: self.dialect,
         }
     }
 
     /// The value of the field of `entry` in `node`, which is of the type that `entry` is of.
     #[inline]
     fn value_of(&self, entry: &FieldEntry, node: VNode<'a>) -> Val<'a> {
-        match self.is_espree && entry.is_typescript_only {
-            true => Val::Undefined,
-            false => (entry.get)(node).into(),
+        match entry.is_in(self.dialect) {
+            true => (entry.get)(node).into(),
+            false => Val::Undefined,
         }
     }
 
@@ -86,7 +86,7 @@ impl<'s, 'a> Matcher<'s, 'a> {
             if value.is_nullish() {
                 break;
             }
-            value = value.get(key, self.is_espree);
+            value = value.get(key, self.dialect);
         }
         value
     }
@@ -119,7 +119,7 @@ impl<'s, 'a> Matcher<'s, 'a> {
             if current.is_nullish() {
                 return false;
             }
-            current = current.get(key, self.is_espree);
+            current = current.get(key, self.dialect);
             if let Val::Nodes(mut nodes) = current {
                 let rest = path.get(i + 1..).unwrap_or_default();
                 return nodes.any(|it| self.is_in_path(node, it.map_or(Val::Null, Val::Node), rest));
@@ -133,7 +133,7 @@ impl<'s, 'a> Matcher<'s, 'a> {
     // TODO(api): replace by `==` once estree has one `VNode` for the two.
     fn is_same(&self, a: VNode<'a>, b: VNode<'a>) -> bool {
         a == b
-            || (self.is_espree
+            || (self.dialect == Dialect::Espree
                 && a.base() == b.base()
                 && matches!(a.base(), Node::ImportSpec(_) | Node::ExportSpec(_))
                 && a.span() == b.span()
@@ -142,10 +142,10 @@ impl<'s, 'a> Matcher<'s, 'a> {
 
     /// The fields of the parent of `node` that are lists.
     fn lists_around(&self, node: VNode<'a>) -> impl Iterator<Item = Nodes<'a>> {
-        let is_espree = self.is_espree;
+        let dialect = self.dialect;
         let parent = self.parent(node);
         let entries = parent.map_or(&[][..], |it| it.node_type().fields()).iter();
-        let entries = entries.take_while(|it| it.is_child).filter(move |it| !(is_espree && it.is_typescript_only));
+        let entries = entries.take_while(|it| it.is_child).filter(move |it| it.is_in(dialect));
         entries.filter_map(move |it| match (it.get)(parent?) {
             Value::Nodes(list) => Some(list),
             _ => None,

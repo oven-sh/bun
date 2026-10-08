@@ -1,6 +1,6 @@
 //! What is found out about a selector once, after it is parsed.
 
-use super::program::{Bound, Id, Op, Program, TypeSet};
+use super::program::{Bound, Id, Op, Program, Run, TypeSet};
 use crate::estree::NodeType;
 
 /// What ESLint's `analyzeParsedSelector` finds.
@@ -130,7 +130,7 @@ pub(super) fn optimize(program: &mut Program) {
                 let ops = &program.ops;
                 let cost_of = |id: &Id| ops.get(*id as usize).map_or(0, |it| cost(*it));
                 list.of_mut(&mut program.lists).sort_by_key(cost_of);
-                bind(program, list.of(&program.lists).to_vec().as_slice());
+                bind(program, list);
             }
             Op::Has { selectors, .. } => {
                 let is_about_children = selectors.of(&program.lists).iter().all(|&it| {
@@ -147,10 +147,12 @@ pub(super) fn optimize(program: &mut Program) {
     }
 }
 
-/// Of the selectors `all`, which a node has to match all of: if one is the name of a type, the first
-/// key of each attribute is a field of that type.
-fn bind(program: &mut Program, all: &[Id]) {
-    let node_type: Option<NodeType> = all.iter().find_map(|&it| match program.ops.get(it as usize) {
+/// Of the selectors in `all`, which a node has to match all of: if one is the name of a type, the first key of each attribute is
+/// a field of that type.
+fn bind(program: &mut Program, all: Run) {
+    let Program { ops, lists, keys, .. } = program;
+    let all = all.of(lists);
+    let node_type: Option<NodeType> = all.iter().find_map(|&it| match ops.get(it as usize) {
         Some(Op::Identifier { node_type, .. }) => *node_type,
         _ => None,
     });
@@ -158,8 +160,8 @@ fn bind(program: &mut Program, all: &[Id]) {
         return;
     };
     for &id in all {
-        if let Some(Op::Attribute { path, first, .. }) = program.ops.get_mut(id as usize)
-            && let Some(key) = path.of(&program.keys).first()
+        if let Some(Op::Attribute { path, first, .. }) = ops.get_mut(id as usize)
+            && let Some(key) = path.of(keys).first()
             && !key.property.is_of_nodes()
         {
             *first = match key.field.and_then(|it| node_type.field(it)) {

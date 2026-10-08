@@ -3,7 +3,7 @@
 
 use super::program::{JsType, Key, Literal, Names, Property};
 use crate::ast::File;
-use crate::estree::{Nodes, Object, VNode, Value};
+use crate::estree::{Dialect, Nodes, Object, VNode, Value};
 use crate::span::Span;
 use crate::utils::text;
 use std::cmp::Ordering;
@@ -138,8 +138,9 @@ impl<'a> Val<'a> {
     }
 
     /// `value[key]`, for a value that is not nullish.
-    pub(super) fn get(self, key: Key, is_espree: bool) -> Val<'a> {
+    pub(super) fn get(self, key: Key, dialect: Dialect) -> Val<'a> {
         use Property as P;
+        let is_espree = dialect == Dialect::Espree;
         let string = |text: &[u8]| match key.property {
             P::Length => Val::Number(f64::from(text::utf16_len(text))),
             P::Index(index) => unit_at(text, index).map_or(Val::Undefined, Val::Short),

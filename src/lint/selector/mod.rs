@@ -7,12 +7,18 @@
 //! // In `Rule::new`:
 //! let selector = Selector::parse(b"CallExpression[callee.name='foo']")?;
 //! // In `Rule::register`: only the kinds of nodes that a match can be made of.
-//! on.enter(rule.selector.listens_to(), |rule, node, cx| {
-//!     rule.selector.for_each_match(node, |found| {
-//!         cx.report(found, MESSAGE);
-//!     });
-//! });
+//! selector::listen(on, self.selector.listens_to());
+//!
+//! impl selector::OnNode for MyRule {
+//!     fn on_node<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+//!         self.selector.for_each_match(node, |found| {
+//!             cx.report(found, MESSAGE);
+//!         });
+//!     }
+//! }
 //! ```
+//!
+//! [`listen`] calls in no particular order. `on.enter(selector.listens_to(), ..)` and `on.exit(..)` work as well.
 //!
 //! The grammar is that of esquery 1.7, and what matches is what ESLint calls a listener with: see [`Selector::parse`]. The nodes are
 //! those of the parser that `languageOptions.parser` says, so with ESLint's own there is no `[optional]` in an `Identifier`.
@@ -27,13 +33,16 @@
 //! list or a `RegExp` is compared with a string.
 
 mod compile;
+mod listen;
 mod matcher;
 mod parse;
 mod program;
 mod value;
 
+pub use listen::{OnNode, listen, sort_as_called};
+
 use crate::ast::Node;
-use crate::estree::{Dialect, NodeType, VNode};
+use crate::estree::{NodeType, VNode};
 use crate::rule::NodeTags;
 use crate::span::{Span, Spanned};
 use crate::utils::text;
@@ -224,7 +233,7 @@ impl Selector {
     fn matches_slowly(&self, node: EsNode<'_>) -> bool {
         let matcher = Matcher {
             program: &self.program,
-            is_espree: node.node.dialect() == Dialect::Espree,
+            dialect: node.node.dialect(),
             limit: None,
         };
         matcher.matches(self.root, node.node, node.node_type)

@@ -5,7 +5,7 @@
 //
 // <inputs.jsonl>: what ../ast/collect.ts writes. For each input, selectors are generated from its own AST, so that most of them
 // match something, a rule with one listener for each is run by ESLint, and the (selector, type, range) of the calls are
-// compared with those of `bun-lint selector match`: as sets, and for inputs without `:exit` selectors in the order of reports.
+// compared with those of `bun-lint selector match`: as sets, and in the order of reports.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -37,6 +37,7 @@ function places(ast: Node, visitorKeys: Record<string, string[]>): Place[] {
   while (open.length > 0) {
     const place = open.pop()!;
     all.push(place);
+    placeOf.set(place.node, place);
     for (const key of visitorKeys[place.node.type] ?? []) {
       const value = place.node[key];
       if (Array.isArray(value)) {
@@ -58,36 +59,43 @@ const literal = (value: unknown) =>
     : typeof value === "number" && !/^\d*\.?\d+$/.test(String(value)) ? quote(String(value)) : String(value);
 const SKIPPED = new Set(["type", "range", "loc", "parent", "start", "end", "tokens", "comments"]);
 
+const placeOf = new WeakMap<Node, Place>();
+
 /// A path from `node` to something, and what is there.
 function path(node: Node): [string, unknown] {
   const keys: string[] = [];
   let at: any = node;
-  for (let depth = 0; depth < 4; depth++) {
+  for (let depth = 0; depth < 5; depth++) {
+    let names: string[];
     if (typeof at === "string") {
-      if (chance(10)) return [[...keys, "length"].join("."), at.length];
+      if (!chance(12)) break;
+      names = ["length", "0", "1", "7"];
+    } else if (at instanceof RegExp) {
+      if (!chance(50)) break;
+      names = ["source", "flags", "global", "ignoreCase", "unicode", "sticky", "lastIndex", "foo"];
+    } else if (at === null || typeof at !== "object") {
       break;
+    } else if (Array.isArray(at)) {
+      names = [...at.keys()].map(String).concat("length", String(at.length));
+    } else if (isNode(at) && chance(10)) {
+      names = ["type", "parent", "range", "loc", "start", "end"];
+    } else {
+      names = Object.keys(at).filter(it => !isNode(at) || !SKIPPED.has(it));
     }
-    if (at === null || typeof at !== "object" || at instanceof RegExp) break;
-    const special = isNode(at) && chance(8) ? pick(["type", "parent", "range", "loc", "start", "end"]) : undefined;
-    const names = Array.isArray(at) ? [...at.keys()].map(String).concat("length") : Object.keys(at).filter(it => !SKIPPED.has(it));
-    if (special === undefined && names.length === 0) break;
-    const key = special ?? pick(names);
-    if (key === "parent" && depth > 0) break;
+    if (names.length === 0) break;
+    const key = pick(names);
     keys.push(key);
-    at = key === "parent" ? undefined : at[key];
-    if (key === "parent") return [keys.concat("type").join("."), PARENT];
-    if (keys.length > 0 && chance(35)) break;
+    at = key === "parent" && isNode(at) ? (placeOf.get(at)?.parent?.node ?? null) : at[key];
+    if (chance(35)) break;
   }
   if (keys.length === 0) return ["type", node.type];
   return [keys.join("."), at];
 }
-const PARENT = Symbol("the type of the parent");
 
 function attribute(place: Place): string {
-  let [name, value] = path(place.node);
-  if (value === PARENT) value = place.parent?.node.type;
+  const [name, value] = path(place.node);
   const space = chance(15) ? " " : "";
-  const isPrimitive = value === null || ["string", "number", "boolean", "undefined"].includes(typeof value);
+  const isPrimitive = value === null || ["string", "number", "boolean", "undefined", "bigint"].includes(typeof value);
   switch (random(isPrimitive ? 10 : 4)) {
     case 0:
     case 1:
@@ -220,7 +228,8 @@ function generate(ast: Node, visitorKeys: Record<string, string[]>): string[] {
     let selector = list(pick(all), all, 0);
     if (chance(5)) selector = " " + selector + " ";
     if (chance(6)) selector += ":exit";
-    selectors.add(selector);
+    // Half of a surrogate pair does not survive the trip through UTF-8.
+    if (selector.isWellFormed()) selectors.add(selector);
   }
   return [...selectors];
 }
@@ -241,7 +250,7 @@ function expected(filename: string, code: string, sourceType: string): { selecto
     },
   };
   const config = {
-    files: ["**/*"],
+    files: ["**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}"],
     plugins: { oracle: { rules: { probe: rule } } },
     rules: { "oracle/probe": "error" },
     linterOptions: { reportUnusedDisableDirectives: "off" },
@@ -254,6 +263,7 @@ function expected(filename: string, code: string, sourceType: string): { selecto
   try {
     const messages = linter.verify(code, [config], { filename, allowInlineConfig: false });
     if (messages.some((it: any) => it.fatal)) return { error: "parse" };
+    if (selectors.length === 0) return { error: messages[0]?.message ?? "the rule did not run" };
   } catch (error: any) {
     return { error: String(error.message).split("\n")[0] };
   }
@@ -321,7 +331,7 @@ for (const line of run.stdout.toString().split("\n").filter(Boolean)) {
         console.log("    extra  ", JSON.stringify(extra.filter(it => it[0] === i).slice(0, 4)));
       }
     }
-  } else if (!want.selectors.some(it => it.endsWith(":exit"))) {
+  } else {
     // ESLint sorts what is reported by where it starts, and leaves the rest in the order of the calls. The runner here also
     // puts what ends later first.
     const inOrder = (alsoByEnd: boolean) =>

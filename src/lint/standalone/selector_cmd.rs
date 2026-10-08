@@ -11,7 +11,7 @@ use bun_lint::context::Severity;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
 use bun_lint::prelude::*;
 use bun_lint::runner::{Enabled, RuleEntry};
-use bun_lint::selector::{EsNode, Selector};
+use bun_lint::selector::{self, EsNode, Selector};
 use std::io::Write as _;
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
@@ -60,25 +60,20 @@ const FOUND: Message = Message::new("found", "{{selector}} {{type}}");
 static LISTENED: AtomicU64 = AtomicU64::new(0);
 static EXAMINED: AtomicU64 = AtomicU64::new(0);
 
-impl Probe {
-    fn listens_to(&self, is_exit: bool) -> NodeTags {
-        let selectors = self.selectors.iter().filter(|it| it.1.is_exit() == is_exit);
-        selectors.fold(NodeTags::EMPTY, |tags, it| tags | it.1.listens_to())
-    }
-
-    fn check<'a>(&self, node: EsNode<'a>, is_exit: bool, cx: &Cx<'a, Self>) {
-        EXAMINED.fetch_add(1, Relaxed);
-        for (index, selector) in &self.selectors {
-            if selector.is_exit() == is_exit && selector.matches(node) {
-                cx.report(node, FOUND).data("selector", *index).data("type", node.type_name());
-            }
-        }
+impl selector::OnNode for Probe {
+    fn on_node<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        LISTENED.fetch_add(1, Relaxed);
+        EsNode::for_each_at(node, |it| {
+            EXAMINED.fetch_add(1, Relaxed);
+            let matching = self.selectors.iter().enumerate().filter(|(_, selector)| selector.1.matches(it));
+            cx.state.extend(matching.map(|(i, _)| (it, i)));
+        });
     }
 }
 
 impl Rule for Probe {
     const META: Meta = Meta::eslint("probe", Kind::Problem);
-    type State<'a> = ();
+    type State<'a> = Vec<(EsNode<'a>, usize)>;
 
     fn new(options: &Options) -> Self {
         let sources = options.all().iter().enumerate().filter_map(|(i, it)| Some((i, it.as_str()?)));
@@ -87,16 +82,16 @@ impl Rule for Probe {
         Probe { selectors }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.enter(self.listens_to(false), |rule, node, cx| {
-            LISTENED.fetch_add(1, Relaxed);
-            EsNode::for_each_at(node, |it| rule.check(it, false, cx));
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
+        selector::listen(on, self.selectors.iter().fold(NodeTags::EMPTY, |tags, it| tags | it.1.listens_to()));
+        on.finish(|rule, cx| {
+            let mut found = std::mem::take(&mut cx.state);
+            selector::sort_as_called(&mut found, |i| rule.selectors[i].1.is_exit());
+            for (node, i) in found {
+                cx.report(node, FOUND).data("selector", rule.selectors[i].0).data("type", node.type_name());
+            }
         });
-        on.exit(self.listens_to(true), |rule, node, cx| {
-            let mut nodes = Vec::new();
-            EsNode::for_each_at(node, |it| nodes.push(it));
-            nodes.iter().rev().for_each(|it| rule.check(*it, true, cx));
-        });
+        Vec::new()
     }
 }
 

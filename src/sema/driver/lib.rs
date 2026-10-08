@@ -258,15 +258,15 @@ impl Plan {
         }
     }
 
-    /// The tasks of one thread for `count` files: in program order, like `tsc --singleThreaded`,
-    /// and as few as `one_thread_task_cost` allows. Most programs are one task.
+    /// The tasks of one thread for `files`, which are in program order like those of
+    /// `tsc --singleThreaded`: as few as `one_thread_task_cost` allows. Most programs are one task.
     ///
     /// Every task computes its own copy of what it shares with the other tasks of its step. That
     /// occupies threads that have nothing else to do, and one thread has: with the plan of several
     /// threads it is a fifth to a half of all the work. But a task keeps what it has computed until
     /// it ends, so its size is what the memory grows by.
     fn of_one_thread(
-        count: usize,
+        files: Vec<usize>,
         size_of: &dyn Fn(usize) -> usize,
         options: &PlanOptions,
     ) -> Vec<Task> {
@@ -275,7 +275,7 @@ impl Plan {
             chunk_bytes: options.one_thread_task_cost,
             ..*options
         };
-        Plan::cut((0..count).collect(), size_of, &options)
+        Plan::cut(files, size_of, &options)
     }
 
     /// `count`: the number of files to check. `size_of(i)`: the source size of file `i` in bytes.
@@ -3104,9 +3104,10 @@ fn check_named_files(
     let is_one_thread = threads == 1
         && !request.plan_options.tasks_on_one_thread
         && cost <= request.plan_options.one_thread_max_cost;
+    let all: Vec<usize> = (0..to_check.len()).collect();
     let plan = match request.plan_options.checkers {
         0 if is_one_thread => Plan {
-            steps: match Plan::of_one_thread(to_check.len(), &size_of, &request.plan_options) {
+            steps: match Plan::of_one_thread(all, &size_of, &request.plan_options) {
                 tasks if tasks.is_empty() => Vec::new(),
                 tasks => vec![tasks],
             },
@@ -3146,6 +3147,7 @@ fn check_named_files(
         // The largest first, so that no thread begins it when the others are nearly done.
         let mut start_order: Vec<usize> = (0..tasks).collect();
         match request.order {
+            1 if is_one_thread => {}
             1 => start_order.sort_by_key(|&i| Reverse(weight_of(i))),
             order => start_order.sort_by_key(|&i| (i as u32 + 1).wrapping_mul(order)),
         }
@@ -3270,7 +3272,10 @@ fn check_named_files(
         while !invalid.is_empty() {
             let mut files = invalid.concat();
             files.sort_unstable();
-            let again = Plan::cut(files, &size_of, &request.plan_options);
+            let again = match is_one_thread {
+                true => Plan::of_one_thread(files, &size_of, &request.plan_options),
+                false => Plan::cut(files, &size_of, &request.plan_options),
+            };
             invalid = run_round(number, &again, &[], expected);
         }
     };
@@ -3300,10 +3305,14 @@ fn check_named_files(
             // Like the tasks of the plan.
             let tasks: Vec<Vec<FileId>> = if is_one_thread {
                 let cost_of = |index: usize| cost_of(only_emitted[index]);
-                Plan::of_one_thread(only_emitted.len(), &cost_of, &request.plan_options)
-                    .into_iter()
-                    .map(|task| task.into_iter().map(|index| only_emitted[index]).collect())
-                    .collect()
+                Plan::of_one_thread(
+                    (0..only_emitted.len()).collect(),
+                    &cost_of,
+                    &request.plan_options,
+                )
+                .into_iter()
+                .map(|task| task.into_iter().map(|index| only_emitted[index]).collect())
+                .collect()
             } else {
                 let tasks = request.plan_options.min_tasks.max(1);
                 let tasks = only_emitted.chunks(only_emitted.len().div_ceil(tasks).max(1));

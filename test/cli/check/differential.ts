@@ -30,12 +30,14 @@ export const env = {
 export async function linesOf(cmd: string[], cwd: string, root: string) {
   await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  // A crash of bun is a signal, and the exit code 3 on Windows. tsc exits with 4 if project references form a cycle.
+  const hasCrashed = proc.signalCode !== null || exitCode > (cmd[0] === bunExe() ? 2 : 5);
   const prefix = new RegExp(root.replaceAll("\\", "/").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
   return stdout
     .split(/\r?\n/)
     .filter(line => line.trim())
     .map(line => line.replace(prefix, ""))
-    .concat(exitCode < 128 && !proc.signalCode ? [] : [`exit code ${exitCode}, signal ${proc.signalCode}`]);
+    .concat(hasCrashed ? [`exit code ${exitCode}, signal ${proc.signalCode}`] : []);
 }
 
 /**

@@ -110,9 +110,16 @@ fn is_boolean_available(node: Expr) -> bool {
     Node::Expr(node).scope().resolve("Boolean").is_none() && node.file().global(b"Boolean").is_some()
 }
 
+/// The first token of `recommendation`, if it starts with a call of one of the three functions. All of it otherwise.
+fn first_token_of(recommendation: &[u8]) -> &[u8] {
+    let is_called = |name: &&[u8]| recommendation.strip_prefix(*name).is_some_and(|rest| rest.starts_with(b"("));
+    [&b"Boolean"[..], b"Number", b"String"].into_iter().find(is_called).unwrap_or(recommendation)
+}
+
 fn fix<'a>(fixer: Fixer<'a>, node: Expr<'a>, recommendation: &[u8]) -> Fix {
+    // A text is split into tokens to its end, which for each of `!!!!..a` is the rest of the chain.
     let needs_space = fixer.file().token_before(node).is_some_and(|before| {
-        before.end() == node.span().start && !ast_utils::can_tokens_be_adjacent(before, recommendation)
+        before.end() == node.span().start && !ast_utils::can_tokens_be_adjacent(before, first_token_of(recommendation))
     });
     match needs_space {
         true => fixer.replace(node, [&b" "[..], recommendation].concat()),

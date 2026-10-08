@@ -3915,12 +3915,10 @@ function buildSensitiveNames(headers, sensitives): Record<string, boolean> {
   return map;
 }
 
-// The fold of a raw header list into sentHeaders pushes a later duplicate of a name into the
-// name's array. The list is encoded after the fold, so that array is a copy of the caller's.
-// node pushes into the caller's array, on a read of sentHeaders:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2173
+// The sentHeaders fold pushes a later duplicate of a name into the name's array. node pushes into
+// the caller's array: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2173
 function copyHeaderValueArray(values: any[]): any[] {
-  // A Proxy of an array can report any length. ToLength reads it as Array.prototype.join does.
+  // ToLength, as in Array.prototype.join: a Proxy of an array can report any length.
   const length = $toLength(values.length);
   const copy = $newArrayWithSize(length);
   for (let i = 0; i < length; i++) $putByValDirect(copy, i, values[i]);

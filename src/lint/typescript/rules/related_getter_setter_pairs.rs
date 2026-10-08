@@ -1,6 +1,8 @@
 use bun_lint::prelude::*;
 use bun_lint::types::Type;
 use bun_lint::utils::ts_utils::get_name_from_member;
+use rustc_hash::FxHashMap;
+use std::borrow::Cow;
 
 /// Enforce that `get()` types should be assignable to their equivalent `set()` type.
 pub struct RelatedGetterSetterPairs;
@@ -36,25 +38,31 @@ fn type_of_param(param: Param<'_>) -> Type<'_> {
 
 impl RelatedGetterSetterPairs {
     fn check<'a>(members: List<'a, Member<'a>>, cx: &Cx<'a, Self>) {
-        for (i, getter) in members.iter().enumerate() {
-            let Some(return_type) = getter_type(getter) else {
-                continue;
-            };
-            let name = get_name_from_member(getter).name;
-            let has_name = |other: Member<'a>| get_name_from_member(other).name == name;
-            // The last getter and the last setter of a name are the pair.
-            if members.iter().skip(i + 1).any(|other| getter_type(other).is_some() && has_name(other)) {
-                continue;
+        if !members.iter().any(|it| getter_type(it).is_some())
+            || !members.iter().any(|it| setter_param(it).is_some())
+        {
+            return;
+        }
+        // The last getter and the last setter of a name are the pair.
+        let mut pairs = FxHashMap::<Cow<'a, [u8]>, (Option<Member<'a>>, Option<Param<'a>>)>::default();
+        for member in members {
+            if getter_type(member).is_some() {
+                pairs.entry(get_name_from_member(member).name).or_default().0 = Some(member);
+            } else if let Some(param) = setter_param(member) {
+                pairs.entry(get_name_from_member(member).name).or_default().1 = Some(param);
             }
-            let Some(param) = members.iter().rev().find_map(|other| setter_param(other).filter(|_| has_name(other)))
-            else {
+        }
+        for pair in pairs.into_values() {
+            let (Some(getter), Some(param)) = pair else {
                 continue;
             };
             let (get_type, set_type) = (getter.type_at_location(), type_of_param(param));
             if get_type.is_unresolved() || set_type.is_unresolved() {
                 continue;
             }
-            if !get_type.is_assignable_to(set_type) {
+            if !get_type.is_assignable_to(set_type)
+                && let Some(return_type) = getter_type(getter)
+            {
                 cx.report(return_type, MISMATCH);
             }
         }

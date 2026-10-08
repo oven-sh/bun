@@ -26,6 +26,14 @@ fn is_type_context_declaration(decl: TsNode) -> bool {
     matches!(decl.kind(), SyntaxKind::TypeAliasDeclaration | SyntaxKind::InterfaceDeclaration)
 }
 
+/// `checker.getSymbolAtLocation(expression)`, which has nothing for a `ParenthesizedExpression`.
+fn get_symbol_at_location(expression: Expr<'_>) -> Option<TsSymbol<'_>> {
+    if expression.is_parenthesized() {
+        return None;
+    }
+    expression.ts_symbol()
+}
+
 fn get_construct_signature_declaration(symbol: TsSymbol<'_>) -> Option<TsNode<'_>> {
     symbol.get_type().get_construct_signatures().first()?.declaration()
 }
@@ -124,7 +132,7 @@ impl NoUnnecessaryTypeArguments {
         if args.is_empty() {
             return;
         }
-        let symbol = class.extends().and_then(|expression| expression.ts_symbol());
+        let symbol = class.extends().and_then(get_symbol_at_location);
         if let Some(type_parameters) = get_type_parameters_from_type(symbol, false) {
             check_ts_args_and_parameters(args, &type_parameters, cx);
         }
@@ -143,7 +151,7 @@ impl NoUnnecessaryTypeArguments {
         let sig_decl = node.resolved_signature().and_then(|sig| sig.declaration());
         let type_parameters = match sig_decl {
             Some(sig_decl) => type_parameters_of(sig_decl),
-            None => class.and_then(|it| get_type_parameters_from_type(it.ts_symbol(), false)),
+            None => class.and_then(|it| get_type_parameters_from_type(get_symbol_at_location(it), false)),
         };
         if let Some(type_parameters) = type_parameters {
             check_ts_args_and_parameters(args, &type_parameters, cx);

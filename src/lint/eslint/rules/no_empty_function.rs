@@ -23,6 +23,8 @@ const PRIVATE_CONSTRUCTORS: u16 = 1 << 10;
 const PROTECTED_CONSTRUCTORS: u16 = 1 << 11;
 const DECORATED_FUNCTIONS: u16 = 1 << 12;
 const OVERRIDE_METHODS: u16 = 1 << 13;
+/// Not an option: typescript-eslint also looks at the decorators and the `override` of a constructor.
+const CONSTRUCTORS_AS_METHODS: u16 = 1 << 14;
 
 /// The option `allow`: the kinds of functions that may be empty.
 #[derive(Copy, Clone)]
@@ -53,39 +55,71 @@ impl Allow {
         }))
     }
 
+    pub fn of_typescript_eslint(options: &Options) -> Allow {
+        Allow(Allow::new(options).0 | CONSTRUCTORS_AS_METHODS)
+    }
+
     #[inline]
     fn includes(self, kind: u16) -> bool {
         self.0 & kind != 0
     }
 }
 
-/// The member of a class that `func` is the function of.
-fn member_of(func: Func<'_>) -> Option<Member<'_>> {
-    match func.owner() {
-        Node::Member(member) => Some(member),
+/// ESLint's `parent` of `func`, if that is a `MethodDefinition`: `func` is its function or its
+/// computed key.
+fn method_definition_of(func: Func<'_>) -> Option<Member<'_>> {
+    let member = match func.owner() {
+        Node::Member(member) => member,
+        Node::Expr(e) => match e.parent() {
+            Node::Member(member)
+                if matches!(member.key().map(Key::kind), Some(KeyKind::Computed(key)) if key == e) =>
+            {
+                member
+            }
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let is_method_definition =
+        member.func().is_some() && !member.is_signature() && !member.flags().contains(Flags::ABSTRACT);
+    is_method_definition.then_some(member)
+}
+
+/// The same for a `Property`, whose value `func` can be as well.
+fn property_of(func: Func<'_>) -> Option<Prop<'_>> {
+    match func.owner().parent() {
+        Node::Prop(prop) => Some(prop),
         _ => None,
     }
 }
 
 /// `None` for what ESLint does not have as a function.
 fn get_kind(func: Func) -> Option<u16> {
-    let (plain, generator, asynchronous) = match func.kind() {
+    let is_method = match func.kind() {
         FnKind::Arrow => return Some(ARROW_FUNCTIONS),
-        FnKind::Getter => return Some(GETTERS),
-        FnKind::Setter => return Some(SETTERS),
-        FnKind::Constructor if member_of(func).is_some_and(Member::is_constructor) => {
-            return Some(CONSTRUCTORS);
+        FnKind::Decl => false,
+        FnKind::Expr | FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor => {
+            match (method_definition_of(func), property_of(func).map(Prop::kind)) {
+                (Some(member), _) if member.is_constructor() => return Some(CONSTRUCTORS),
+                (Some(member), _) => match member.kind() {
+                    MemberKind::Getter => return Some(GETTERS),
+                    MemberKind::Setter => return Some(SETTERS),
+                    _ => true,
+                },
+                (None, Some(PropKind::Getter)) => return Some(GETTERS),
+                (None, Some(PropKind::Setter)) => return Some(SETTERS),
+                (None, kind) => kind == Some(PropKind::Method),
+            }
         }
-        FnKind::Decl | FnKind::Expr => (FUNCTIONS, GENERATOR_FUNCTIONS, ASYNC_FUNCTIONS),
-        FnKind::Method | FnKind::Constructor => (METHODS, GENERATOR_METHODS, ASYNC_METHODS),
         _ => return None,
     };
-    Some(if func.is_generator() {
-        generator
-    } else if func.is_async() {
-        asynchronous
-    } else {
-        plain
+    Some(match (is_method, func.is_generator(), func.is_async()) {
+        (true, true, _) => GENERATOR_METHODS,
+        (true, false, true) => ASYNC_METHODS,
+        (true, false, false) => METHODS,
+        (false, true, _) => GENERATOR_FUNCTIONS,
+        (false, false, true) => ASYNC_FUNCTIONS,
+        (false, false, false) => FUNCTIONS,
     })
 }
 
@@ -93,20 +127,26 @@ fn is_allowed_empty_function(func: Func, kind: u16, allow: Allow) -> bool {
     if allow.includes(kind) {
         return true;
     }
-    let Some(member) = member_of(func) else {
+    let Some(member) = method_definition_of(func).filter(|_| kind != ARROW_FUNCTIONS) else {
         return false;
     };
     let flags = member.flags();
     if kind == CONSTRUCTORS {
-        return flags.contains(Flags::PRIVATE) && allow.includes(PRIVATE_CONSTRUCTORS)
+        if flags.contains(Flags::PRIVATE) && allow.includes(PRIVATE_CONSTRUCTORS)
             || flags.contains(Flags::PROTECTED) && allow.includes(PROTECTED_CONSTRUCTORS)
-            || func.params().iter().any(Param::is_parameter_property);
+            || func.params().iter().any(Param::is_parameter_property)
+        {
+            return true;
+        }
+        if !allow.includes(CONSTRUCTORS_AS_METHODS) {
+            return false;
+        }
     }
     allow.includes(DECORATED_FUNCTIONS) && member.decorators().next().is_some()
         || allow.includes(OVERRIDE_METHODS) && flags.contains(Flags::OVERRIDE)
 }
 
-/// The whole rule, for a function. typescript-eslint's rule of the same name is no different.
+/// The whole rule, for a function, and typescript-eslint's rule of the same name.
 pub fn check<'a, R: Rule>(func: Func<'a>, allow: Allow, cx: &Cx<'a, R>) {
     if !func.body_statements().is_some_and(|body| body.is_empty()) {
         return;
@@ -115,8 +155,9 @@ pub fn check<'a, R: Rule>(func: Func<'a>, allow: Allow, cx: &Cx<'a, R>) {
         return;
     };
     let inside = body.shrink(1, 1);
-    // There are no statements, so anything but whitespace is a comment.
-    if is_allowed_empty_function(func, kind, allow) || !text::is_blank(cx.slice(inside)) {
+    // There are no statements, so there is only whitespace, of which TypeScript knows more kinds,
+    // and comments.
+    if cx.slice(inside).iter().any(u8::is_ascii_graphic) || is_allowed_empty_function(func, kind, allow) {
         return;
     }
     let name = ast_utils::get_function_name_with_kind(func);

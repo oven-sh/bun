@@ -133,6 +133,7 @@ impl Checker {
     /// Notes the functions of `member` that have to use `this`.
     pub fn check_member<'a>(&self, member: Member<'a>, state: &mut State<'a>) {
         let is_field = match member.kind() {
+            MemberKind::Method if member.is_constructor() => return,
             MemberKind::Method | MemberKind::Getter | MemberKind::Setter => false,
             MemberKind::Property if self.enforce_for_class_fields => true,
             _ => return,

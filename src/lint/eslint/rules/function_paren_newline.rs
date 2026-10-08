@@ -153,18 +153,25 @@ impl FunctionParenNewline {
             return;
         };
         let params = func.params();
-        let before_right = match params.last().or_else(|| func.this_param()) {
-            Some(last) => end_of_list(text, last.span().end),
-            None => left.end,
-        };
-        let right = skip_trivia(text, before_right);
-        if text.get(right as usize) != Some(&b')') {
-            return;
-        }
-        let parens = Parens {
-            left,
-            right: Span::new(right, right + 1),
-            before_right,
+        let parens = match params.last().or_else(|| func.this_param()) {
+            Some(last) => {
+                let before_right = end_of_list(text, last.span().end);
+                let right = skip_trivia(text, before_right);
+                if text.get(right as usize) != Some(&b')') {
+                    return;
+                }
+                Parens {
+                    left,
+                    right: Span::new(right, right + 1),
+                    before_right,
+                }
+            }
+            // Upstream takes the token after `left`, whatever it is.
+            None => Parens {
+                left,
+                right: next_token(text, left.end),
+                before_right: left.end,
+            },
         };
         let count = params.len() + usize::from(func.this_param().is_some());
         let mut elements = func.params_with_this().map(|it| utils::estree_span(Node::Param(it)));
@@ -173,9 +180,9 @@ impl FunctionParenNewline {
 
     fn check_call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let (file, text) = (cx.file(), cx.text());
-        let before_right = |args: List<'a, Expr<'a>>, left: Span| match args.last() {
+        let before_right = |args: List<'a, Expr<'a>>, right: u32| match args.last() {
             Some(last) => end_of_list(text, last.outer_span().end),
-            None => left.end,
+            None => file.end_of_token_before(right),
         };
         match e.kind() {
             ExprKind::Call(call) | ExprKind::New(call) => {
@@ -190,17 +197,17 @@ impl FunctionParenNewline {
                 let parens = Parens {
                     left,
                     right: Span::new(right, right + 1),
-                    before_right: before_right(args, left),
+                    before_right: before_right(args, right),
                 };
                 self.validate(cx, parens, args.len(), &mut args.iter().map(|it| it.span()));
             }
             ExprKind::ImportCall { args } => {
                 let whole = e.span();
-                let left = next_token(text, whole.start + "import".len() as u32);
+                let right = whole.end.saturating_sub(1);
                 let parens = Parens {
-                    left,
-                    right: Span::new(whole.end.saturating_sub(1), whole.end),
-                    before_right: before_right(args, left),
+                    left: next_token(text, whole.start + "import".len() as u32),
+                    right: Span::new(right, whole.end),
+                    before_right: before_right(args, right),
                 };
                 // Only the source counts.
                 self.validate(cx, parens, 1, &mut args.first().into_iter().map(|it| it.span()));

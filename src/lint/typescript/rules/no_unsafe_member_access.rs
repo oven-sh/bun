@@ -43,6 +43,23 @@ fn object_of(node: Expr<'_>) -> Option<Expr<'_>> {
     }
 }
 
+/// `TSClassImplements MemberExpression, TSInterfaceHeritage MemberExpression`: it is in a type
+/// argument there.
+fn is_in_implements_or_interface_heritage(node: Expr) -> bool {
+    Node::Expr(node).ancestors().any(|ancestor| {
+        let Node::Type(ty) = ancestor else {
+            return false;
+        };
+        match ty.parent() {
+            Node::Class(class) => class.implements().iter().any(|it| it == ty),
+            Node::Stmt(parent) => {
+                matches!(parent.kind(), StmtKind::Interface(it) if it.extends().iter().any(|it| it == ty))
+            }
+            _ => false,
+        }
+    })
+}
+
 impl NoUnsafeMemberAccess {
     /// Whether the member expression `node`, or one that it starts with, reads from an `any`.
     fn is_unsafe(&self, mut node: Expr) -> bool {
@@ -82,6 +99,9 @@ impl NoUnsafeMemberAccess {
         }
         // It is reported where the first of them is.
         if !object.is_chain_root() && self.is_unsafe(object) {
+            return;
+        }
+        if is_in_implements_or_interface_heritage(node) {
             return;
         }
 

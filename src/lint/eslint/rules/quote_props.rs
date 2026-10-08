@@ -93,7 +93,15 @@ fn tokenize_word(raw_key: &[u8]) -> Option<Cow<'_, [u8]>> {
         // The `uXXXX`.
         points.nth(4)?;
     }
-    Some(Cow::Owned(word))
+    // acorn throws "Escape sequence in keyword".
+    let is_es5_keyword = matches!(
+        word.as_slice(),
+        b"break" | b"case" | b"catch" | b"continue" | b"debugger" | b"default" | b"do" | b"else" | b"finally"
+            | b"for" | b"function" | b"if" | b"return" | b"switch" | b"throw" | b"try" | b"var" | b"while"
+            | b"with" | b"null" | b"true" | b"false" | b"instanceof" | b"typeof" | b"void" | b"delete" | b"new"
+            | b"in" | b"this"
+    );
+    (!is_es5_keyword).then_some(Cow::Owned(word))
 }
 
 /// Reports the property at `span`, whose key is `key`. The fix quotes a key that is not quoted, and
@@ -147,9 +155,13 @@ impl QuoteProps {
     }
 
     fn check_consistency<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Object(properties) = e.kind() else {
-            return;
-        };
+        if let ExprKind::Object(properties) = e.kind() {
+            self.check_consistency_of(properties, Some(e), cx);
+        }
+    }
+
+    /// `object`: the expression that has the `properties`.
+    fn check_consistency_of<'a>(&self, properties: List<'a, Prop<'a>>, object: Option<Expr<'a>>, cx: &Cx<'a, Self>) {
         let check_quotes_redundancy = self.mode == Mode::ConsistentAsNeeded;
         let (mut has_quoted, mut has_unquoted) = (false, false);
         let (mut keyword_key_name, mut necessary_quotes) = (None, false);
@@ -179,7 +191,7 @@ impl QuoteProps {
             return;
         };
         // An `ObjectPattern`.
-        if utils::is_assignment_target(e) || is_import_attributes(e) {
+        if object.is_some_and(|e| utils::is_assignment_target(e) || is_import_attributes(e)) {
             return;
         }
         for property in properties {
@@ -188,6 +200,43 @@ impl QuoteProps {
             {
                 report(cx, property.span(), key, message, name, keyword_key_name);
             }
+        }
+    }
+
+    /// A `Property` of an object literal, in the modes that look at one at a time.
+    fn check_prop<'a>(&self, property: Prop<'a>, is_in_import_type: bool, cx: &Cx<'a, Self>) {
+        if let Some(key) = key_of_prop(property)
+            && let Some(message) = self.check_property(key)
+            && (is_in_import_type
+                || !matches!(property.parent(), Node::Expr(object) if is_import_attributes(object)))
+        {
+            report(cx, property.span(), key, message, "property", None);
+        }
+    }
+
+    /// ESLint has `{ with: { type: "json" } }` in `import("m", { with: { type: "json" } })` as two
+    /// object literals.
+    fn check_import_type<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(attributes) = ty.import_attributes() else {
+            return;
+        };
+        let keyword = attributes.keyword_span();
+        let word = cx.slice(keyword);
+        let is_reserved = self.keywords && is_keyword(word);
+        let message = match self.mode {
+            Mode::Always => Some(UNQUOTED_PROPERTY_FOUND),
+            Mode::AsNeeded => is_reserved.then_some(UNQUOTED_RESERVED_PROPERTY),
+            Mode::Consistent => None,
+            Mode::ConsistentAsNeeded => is_reserved.then_some(REQUIRE_QUOTES_DUE_TO_RESERVED_WORD),
+        };
+        if let Some(message) = message {
+            cx.report(Span::new(keyword.start, attributes.braces_span().end), message)
+                .data("property", word)
+                .fix(|fixer| fixer.replace(keyword, [&b"\""[..], word, &b"\""[..]].concat()));
+        }
+        match self.mode {
+            Mode::Always | Mode::AsNeeded => attributes.entries().iter().for_each(|entry| self.check_prop(entry, true, cx)),
+            Mode::Consistent | Mode::ConsistentAsNeeded => self.check_consistency_of(attributes.entries(), None, cx),
         }
     }
 }
@@ -212,18 +261,12 @@ impl Rule for QuoteProps {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+        on.types([TypeTag::Import], Self::check_import_type);
         if matches!(self.mode, Mode::Consistent | Mode::ConsistentAsNeeded) {
             on.exprs([ExprTag::Object], Self::check_consistency);
             return;
         }
-        on.props(|rule, property, cx| {
-            if let Some(key) = key_of_prop(property)
-                && let Some(message) = rule.check_property(key)
-                && !matches!(property.parent(), Node::Expr(object) if is_import_attributes(object))
-            {
-                report(cx, property.span(), key, message, "property", None);
-            }
-        });
+        on.props(|rule, property, cx| rule.check_prop(property, false, cx));
         on.pats([PatTag::Object], |rule, pattern, cx| {
             let PatKind::Object(properties) = pattern.kind() else {
                 return;

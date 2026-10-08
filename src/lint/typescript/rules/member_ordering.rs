@@ -284,10 +284,11 @@ fn get_node_type(member: Member) -> NodeType {
     let flags = member.flags();
     let is_readonly = flags.contains(Flags::READONLY);
     match member.kind() {
-        MemberKind::Method => NodeType::Method,
+        MemberKind::Method | MemberKind::Constructor if member.is_constructor() => NodeType::Constructor,
+        MemberKind::Method | MemberKind::Constructor => NodeType::Method,
         MemberKind::Getter => NodeType::Get,
         MemberKind::Setter => NodeType::Set,
-        MemberKind::Constructor | MemberKind::ConstructSignature => NodeType::Constructor,
+        MemberKind::ConstructSignature => NodeType::Constructor,
         MemberKind::CallSignature => NodeType::CallSignature,
         MemberKind::StaticBlock => NodeType::StaticInitialization,
         MemberKind::IndexSignature if is_readonly => NodeType::ReadonlySignature,
@@ -383,14 +384,12 @@ fn collect_immediate_this_property_names(initializer: Expr<'_>) -> SmallVec<[Cow
     let mut stack = vec![Node::Expr(initializer)];
     while let Some(node) = stack.pop() {
         match node {
-            Node::Func(_) | Node::Type(_) | Node::TypeParam(_) => continue,
-            Node::Class(class) => {
-                stack.extend(class.decorators().map(Node::Expr));
-                stack.extend(class.extends().map(Node::Expr));
-                continue;
-            }
+            Node::Func(func) if func.has_body() => continue,
+            Node::Member(member) if !member.is_signature() => continue,
             Node::Expr(e) => match e.kind() {
-                ExprKind::Dot { obj, name, .. } if obj.tag() == ExprTag::This => {
+                ExprKind::Dot { obj, name, .. }
+                    if obj.tag() == ExprTag::This && !e.is_in_type_query() && !e.is_jsx_tag_name() =>
+                {
                     let name = name.bytes();
                     names.push(Cow::Borrowed(name.strip_prefix(b"#").unwrap_or(name)));
                 }

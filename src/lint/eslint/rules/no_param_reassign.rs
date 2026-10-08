@@ -17,55 +17,61 @@ const ASSIGNMENT_TO_FUNCTION_PARAM_PROP: Message = Message::new(
     "Assignment to property of function parameter '{{name}}'.",
 );
 
-/// Whether the identifier is read in order to modify a property of its value.
-fn is_modifying_prop(identifier: Expr) -> bool {
+/// Whether ESLint's node for `func` is none of those that end the search: a `TSFunctionType`, a
+/// `TSConstructorType`, a `TSMethodSignature`, a `TSIndexSignature`.
+fn is_part_of_a_type(func: Func) -> bool {
+    match func.kind() {
+        FnKind::FunctionType | FnKind::ConstructorType | FnKind::IndexSignature => true,
+        FnKind::Method | FnKind::Getter | FnKind::Setter => {
+            matches!(func.owner(), owner @ Node::Member(_) if !matches!(owner.parent(), Node::Class(_)))
+        }
+        _ => false,
+    }
+}
+
+/// Whether what is at `identifier` is read in order to modify a property of its value.
+/// A name in a type counts as well: `(a as typeof b).c = 1`.
+fn is_modifying_prop(identifier: Node) -> bool {
     let mut node = identifier;
     loop {
-        node = match node.parent() {
-            Node::Expr(parent) => {
-                match parent.kind() {
-                    // A default value in a destructuring target is part of the left side of the
-                    // assignment around it.
-                    ExprKind::Assign { target, .. } => {
-                        return target == node || is_assignment_target(parent);
-                    }
-                    ExprKind::Unary {
-                        op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec | UnOp::Delete,
-                        ..
-                    } => return true,
-                    ExprKind::Call(call) if call.callee() != node => return false,
-                    ExprKind::Index { index, .. } if index == node => return false,
-                    ExprKind::Cond { test, .. } if test == node => return false,
-                    _ => {}
+        let parent = node.parent();
+        match parent {
+            Node::Expr(parent) => match parent.kind() {
+                // A default value in a destructuring target is part of the left side of the
+                // assignment around it.
+                ExprKind::Assign { target, .. } => {
+                    return Node::Expr(target) == node || is_assignment_target(parent);
                 }
-                parent
-            }
+                ExprKind::Unary {
+                    op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec | UnOp::Delete,
+                    ..
+                } => return true,
+                ExprKind::Call(call) if Node::Expr(call.callee()) != node => return false,
+                ExprKind::Index { index, .. } if Node::Expr(index) == node => return false,
+                ExprKind::Cond { test, .. } if Node::Expr(test) == node => return false,
+                _ => {}
+            },
             Node::Prop(prop) => {
-                if matches!(prop.key().map(Key::kind), Some(KeyKind::Computed(key)) if key == node) {
+                if matches!(prop.key().map(Key::kind), Some(KeyKind::Computed(key)) if Node::Expr(key) == node) {
                     return false;
-                }
-                match prop.parent() {
-                    Node::Expr(object) => object,
-                    _ => return false,
                 }
             }
             Node::Stmt(statement) => {
                 return match statement.kind() {
                     StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => {
-                        matches!(left.kind(), StmtKind::Expr(target) if target == node)
+                        matches!(left.kind(), StmtKind::Expr(target) if Node::Expr(target) == node)
                     }
                     _ => false,
                 };
             }
-            // A class expression does not end the search, a class declaration does.
-            parent @ (Node::Class(_) | Node::Member(_)) => {
-                match parent.ancestors().find(|it| !matches!(it, Node::Class(_))) {
-                    Some(Node::Expr(owner)) => owner,
-                    _ => return false,
-                }
-            }
+            Node::Func(func) if is_part_of_a_type(func) => {}
+            Node::Param(_) if matches!(node, Node::Type(_)) => {}
+            // The others are in a `TSTypeParameterDeclaration`.
+            Node::TypeParam(_) if matches!(parent.parent(), Node::Type(_)) => {}
+            Node::Type(_) | Node::TupleElem(_) | Node::Class(_) | Node::Member(_) => {}
             _ => return false,
-        };
+        }
+        node = parent;
     }
 }
 
@@ -79,10 +85,21 @@ impl NoParamReassign {
         let Some(symbol) = pat.symbol() else {
             return;
         };
+        // ESLint defines the parameters before everything else in the scope of the function.
         // Once for `function f(a, a) {}`.
-        if !matches!(symbol.declarations().next(), Some(Declaration::Param(first)) if first == pat) {
+        let is_parameter = |it: &Declaration<'a>| matches!(it, Declaration::Param(_));
+        if !matches!(symbol.declarations().find(is_parameter), Some(Declaration::Param(first)) if first == pat) {
             return;
         }
+        // ESLint comes to the variable from each function that declares it:
+        // `function f(a) { function a() {} }`.
+        let redeclarations = symbol.declarations().filter(|it| matches!(it, Declaration::Fn(func) if func.has_body()));
+        for _ in 0..=redeclarations.count() {
+            self.check_references(symbol, cx);
+        }
+    }
+
+    fn check_references<'a>(&self, symbol: Symbol<'a>, cx: &Cx<'a, Self>) {
         // A destructuring assignment with a default value writes to the same identifier twice.
         let mut previous = None;
         for reference in symbol.references() {
@@ -94,7 +111,7 @@ impl NoParamReassign {
             if reference.is_write() {
                 cx.report(at, ASSIGNMENT_TO_FUNCTION_PARAM).data("name", reference.name());
             } else if self.props
-                && reference.expr().is_some_and(is_modifying_prop)
+                && matches!(reference.node(), node @ (Node::Expr(_) | Node::Type(_)) if is_modifying_prop(node))
                 && !self.is_ignored_property_assignment(reference.name().bytes())
             {
                 cx.report(at, ASSIGNMENT_TO_FUNCTION_PARAM_PROP).data("name", reference.name());

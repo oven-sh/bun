@@ -128,6 +128,32 @@ impl Camelcase {
                     self.note_variable_name(first.name(), cx);
                 }
             }
+            StmtKind::ExportAsNamespace(name) => self.note_variable_name(name, cx),
+            _ => {}
+        }
+    }
+
+    /// The names in a type that are references, and the keys in `import("m", { with: { key: "" } })`,
+    /// which ESLint has as an object literal.
+    fn check_type<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        match ty.kind() {
+            TypeKind::Ref { name, .. } => {
+                if let Some(first) = name.first() {
+                    self.note_variable_name(first.name(), cx);
+                }
+            }
+            TypeKind::Predicate { param, .. } => self.note_variable_name(param, cx),
+            TypeKind::Import { .. } if self.checks_properties => {
+                for entry in ty.import_attributes().into_iter().flat_map(ImportAttributes::entries) {
+                    if let Some(key) = entry.key()
+                        && let KeyKind::Ident(name) = key.kind()
+                        && !self.is_good_name(name.bytes())
+                    {
+                        let at = key.span(cx.file());
+                        report(cx, at, name.bytes(), NOT_CAMEL_CASE);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -225,9 +251,10 @@ impl Camelcase {
                 }
             }
             Node::Pat(pat) => {
-                if self.ignores_destructuring && binding_equals_to_original_name(pat) {
-                    return;
+                if !(self.ignores_destructuring && binding_equals_to_original_name(pat)) {
+                    report(cx, utils::estree_span(pat.into()), reference.name().bytes(), NOT_CAMEL_CASE);
                 }
+                return;
             }
             _ => {}
         }
@@ -260,11 +287,23 @@ impl Camelcase {
             Declaration::ImportSpec(spec) => spec.imported().name() == spec.local().name(),
             _ => false,
         };
+        let id = match first {
+            Declaration::Var(pat) | Declaration::Param(pat) => Some(utils::estree_span(pat.into())),
+            _ => first.name_span(),
+        };
         if ((is_declared && !(self.ignores_destructuring && equals_to_original_name))
             || (is_imported && !(self.ignores_imports && equals_to_original_name)))
-            && let Some(id) = first.name_span()
+            && let Some(id) = id
         {
             report(cx, id, symbol.name().bytes(), NOT_CAMEL_CASE);
+        }
+        // For ESLint a class also declares its name in a scope of its own, where it comes first.
+        for declaration in symbol.declarations() {
+            if let Declaration::Class(class) = declaration
+                && let Some(name) = class.name()
+            {
+                report(cx, name.span(), name.bytes(), NOT_CAMEL_CASE);
+            }
         }
         for reference in symbol.references() {
             if is_imported || !reference.is_init() {
@@ -325,6 +364,7 @@ impl Rule for Camelcase {
                 StmtTag::ExportStar,
                 StmtTag::Import,
                 StmtTag::ImportEquals,
+                StmtTag::ExportAsNamespace,
             ],
             Self::check_statement,
         );
@@ -351,14 +391,18 @@ impl Rule for Camelcase {
                 rule.note_variable_name(name, cx);
             }
         });
+        // The tags `a-b` and `a:b` are references too.
+        on.exprs([ExprTag::Jsx], |_, e, cx| {
+            if let ExprKind::Jsx(jsx) = e.kind()
+                && let Some(tag) = jsx.tag()
+                && matches!(tag.kind(), ExprKind::String(_))
+                && strings::contains_char(tag.text(), b'_')
+            {
+                cx.state.has_bad_variable_name = true;
+            }
+        });
         if !file.is_javascript() {
-            on.types([TypeTag::Ref], |rule, ty, cx| {
-                if let TypeKind::Ref { name, .. } = ty.kind()
-                    && let Some(first) = name.first()
-                {
-                    rule.note_variable_name(first.name(), cx);
-                }
-            });
+            on.types([TypeTag::Ref, TypeTag::Predicate, TypeTag::Import], Self::check_type);
         }
         on.finish(Self::check_variables);
         State::default()

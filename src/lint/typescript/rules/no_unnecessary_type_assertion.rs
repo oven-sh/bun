@@ -36,7 +36,8 @@ const UNNECESSARY_ASSERTION: Message = Message::new(
     "This assertion is unnecessary since it does not change the type of the expression.",
 );
 
-/// How deep [`type_contains`] looks. A type can be infinite: upstream runs out of stack.
+/// How deep [`type_contains`] looks. A type can be infinite: upstream runs out of stack, which ends the walk. To go on
+/// with the rest of each level instead would take exponential time.
 const MAX_DEPTH: u32 = 100;
 
 /// `expression as T`, `<T>expression`
@@ -131,7 +132,8 @@ fn is_implicitly_narrowed_literal_declaration(assertion: Assertion) -> bool {
         Node::Member(member) => {
             member.kind() == MemberKind::Property
                 && member.flags().contains(Flags::READONLY)
-                && !member.flags().contains(Flags::ACCESSOR)
+                && !member.flags().intersects(Flags::ACCESSOR | Flags::ABSTRACT)
+                && !member.is_signature()
                 && !member.decorators().any(|decorator| decorator == assertion.node)
         }
         _ => false,
@@ -159,6 +161,9 @@ fn is_type_unchanged<'a>(
     {
         return are_union_parts_equivalent_ignoring_undefined(uncast, cast);
     }
+    if expression.tag() != ExprTag::Object && is_conceptually_literal(expression) {
+        return false;
+    }
     if (is_type_flag_set(uncast, TypeFlags::NON_PRIMITIVE) && !is_type_flag_set(cast, TypeFlags::NON_PRIMITIVE))
         || has_index_signature(uncast) != has_index_signature(cast)
         || contains_any(uncast)
@@ -167,13 +172,9 @@ fn is_type_unchanged<'a>(
     {
         return false;
     }
-    let is_literal = match expression.kind() {
-        ExprKind::Object(properties) => {
-            properties.is_empty() || cast.get_properties().iter().any(|p| is_type_literal(p.get_type()))
-        }
-        _ => is_conceptually_literal(expression),
-    };
-    if is_literal {
+    if let ExprKind::Object(properties) = expression.kind()
+        && (properties.is_empty() || cast.get_properties().iter().any(|p| is_type_literal(p.get_type())))
+    {
         return false;
     }
     if cast.is_intersection() && !uncast.is_intersection() {
@@ -209,33 +210,51 @@ fn get_type_arguments<'a>(ty: Type<'a>) -> impl ExactSizeIterator<Item = Type<'a
     }
 }
 
+/// `None`: the type is infinite.
 fn type_contains<'a>(
     ty: Type<'a>,
     predicate: fn(Type<'a>) -> bool,
     seen: &mut FxHashSet<Type<'a>>,
     depth: u32,
-) -> bool {
-    if depth > MAX_DEPTH || !seen.insert(ty) {
-        return false;
+) -> Option<bool> {
+    if depth > MAX_DEPTH {
+        return None;
+    }
+    if !seen.insert(ty) {
+        return Some(false);
     }
     if predicate(ty) {
-        return true;
+        return Some(true);
     }
+    let mut contains = |nested: Type<'a>| type_contains(nested, predicate, seen, depth + 1);
     if ty.is_union_or_intersection() {
-        return ty.types().iter().any(|t| type_contains(t, predicate, seen, depth + 1));
+        for part in ty.types() {
+            if contains(part)? {
+                return Some(true);
+            }
+        }
+        return Some(false);
     }
-    get_type_arguments(ty).any(|t| type_contains(t, predicate, seen, depth + 1))
-        || ty.get_call_signatures().iter().any(|signature| {
-            type_contains(signature.get_return_type(), predicate, seen, depth + 1)
-                || signature
-                    .parameters()
-                    .iter()
-                    .any(|p| type_contains(p.get_type(), predicate, seen, depth + 1))
-        })
+    for type_argument in get_type_arguments(ty) {
+        if contains(type_argument)? {
+            return Some(true);
+        }
+    }
+    for signature in ty.get_call_signatures() {
+        if contains(signature.get_return_type())? {
+            return Some(true);
+        }
+        for parameter in signature.parameters() {
+            if contains(parameter.get_type())? {
+                return Some(true);
+            }
+        }
+    }
+    Some(false)
 }
 
 fn contains_any(ty: Type) -> bool {
-    type_contains(ty, |t| is_type_flag_set(t, TypeFlags::ANY), &mut FxHashSet::default(), 0)
+    type_contains(ty, |t| is_type_flag_set(t, TypeFlags::ANY), &mut FxHashSet::default(), 0).unwrap_or(false)
 }
 
 fn contains_type_variable(ty: Type) -> bool {
@@ -245,6 +264,7 @@ fn contains_type_variable(ty: Type) -> bool {
         &mut FxHashSet::default(),
         0,
     )
+    .unwrap_or(false)
 }
 
 fn has_phantom_type_arguments(ty: Type) -> bool {

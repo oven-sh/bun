@@ -124,7 +124,7 @@ impl Quotes {
     /// `is_allowed_as_non_backtick`: a template cannot be written there.
     fn check_literal(&self, literal: Span, is_allowed_as_non_backtick: bool, cx: &Cx<'_, Self>) {
         let raw = cx.slice(literal);
-        let Some(&(first @ (b'"' | b'\''))) = raw.first() else {
+        let Some(&first @ (b'"' | b'\'')) = raw.first() else {
             return;
         };
         if first == self.quote
@@ -314,11 +314,10 @@ impl Rule for Quotes {
         });
         on.types([TypeTag::StringLit, TypeTag::Import], Self::check_type);
         on.import_specs(|rule, spec, cx| rule.check_literal(spec.imported().span(), true, cx));
+        // Without an `as`, ESLint comes by the one name twice: as `local` and as `exported`.
         on.export_specs(|rule, spec, cx| {
             rule.check_literal(spec.local().span(), true, cx);
-            if spec.is_renamed() {
-                rule.check_literal(spec.exported().span(), true, cx);
-            }
+            rule.check_literal(spec.exported().span(), true, cx);
         });
         on.stmts(
             [

@@ -1,4 +1,3 @@
-use bun_lint::language::Parser;
 use bun_lint::prelude::*;
 use bun_lint::utils::ast_utils;
 
@@ -61,15 +60,10 @@ impl Mode {
     }
 }
 
-/// `Program.sourceType === "module"`
+/// `Program.sourceType === "module"`. `@typescript-eslint/parser` overwrites what typescript-estree
+/// says with the option it was given: an `import` or an `export` makes no module of a script.
 fn is_module(file: &File<'_>) -> bool {
-    match file.language().parser {
-        // typescript-estree also says so of a script that has an `import` or an `export`.
-        Parser::TypeScript => {
-            file.language().scope_source_type() == SourceType::Module || file.has_module_syntax()
-        }
-        _ => file.is_module(),
-    }
+    file.language().scope_source_type() == SourceType::Module
 }
 
 fn is_use_strict(statement: Stmt<'_>) -> bool {

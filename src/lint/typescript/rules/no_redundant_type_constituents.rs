@@ -1,4 +1,3 @@
-use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::types::tsutils::{is_false_literal_type, is_true_literal_type, union_constituents};
 use bun_lint::types::{Literal, Type, TypeFlags};
@@ -155,26 +154,6 @@ fn join<'a>(parts: impl Iterator<Item = TypeFlagsWithName<'a>>) -> Vec<u8> {
     joined
 }
 
-/// `type.aliasSymbol.escapedName` of an error type: the name that does not resolve. `None` for
-/// the error type that has no alias.
-// TODO(api): replace by types::Type::alias_symbol, which is `None` for the type of an unresolved name
-fn alias_name_of_error_type(ty: Type) -> Option<Vec<u8>> {
-    if let Some(alias_symbol) = ty.alias_symbol() {
-        return Some(alias_symbol.escaped_name().to_vec());
-    }
-    // `A.B<C>`
-    let printed = ty.to_text();
-    let entity_name = match strings::index_of_char_usize(&printed, b'<') {
-        Some(end) => &printed[..end],
-        None => &printed[..],
-    };
-    let name = match strings::last_index_of_char(entity_name, b'.') {
-        Some(dot) => &entity_name[dot + 1..],
-        None => entity_name,
-    };
-    (name != b"any").then(|| name.to_vec())
-}
-
 fn describe_literal_type(ty: Type) -> Vec<u8> {
     match ty.value() {
         Some(Literal::String(value)) => return text::json_stringify(value),
@@ -185,10 +164,11 @@ fn describe_literal_type(ty: Type) -> Vec<u8> {
         Some(Literal::Number(value)) => return text::number_to_string(value),
         None => {}
     }
+    // The alias of the type of a name that does not resolve is that name.
     if ty.is_error()
-        && let Some(name) = alias_name_of_error_type(ty)
+        && let Some(alias_symbol) = ty.alias_symbol()
     {
-        return name;
+        return alias_symbol.escaped_name().to_vec();
     }
     let flags = ty.flags();
     let description: &[u8] = if flags.intersects(TypeFlags::ANY) {

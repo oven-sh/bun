@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::regex;
 
 /// Disallow explicit type declarations for variables or parameters initialized to a number, string, or boolean.
 pub struct NoInferrableTypes {
@@ -13,6 +14,11 @@ const NO_INFERRABLE_TYPE: Message = Message::new(
 
 fn is_function_call(init: Expr<'_>, name: &str) -> bool {
     init.as_call().is_some_and(|call| call.callee().is_ident(name))
+}
+
+/// Whether `new RegExp` accepts the literal. If not, the `value` of typescript-estree's `Literal` is `null`.
+fn is_valid_regex(literal: Expr<'_>) -> bool {
+    regex::validate_literal(literal.text(), regex::Options::default(), &mut regex::Ignore).is_ok()
 }
 
 /// The operand, if `init` is a unary expression with one of `operators`. Otherwise `init`.
@@ -47,7 +53,14 @@ fn inferrable_type(annotation: TypeNode<'_>, init: Expr<'_>) -> Option<&'static 
             };
             ("number", is_number)
         }
-        TypeKind::Keyword(Keyword::Null) => ("null", matches!(init.kind(), ExprKind::Null)),
+        TypeKind::Keyword(Keyword::Null) => {
+            let is_null = match init.kind() {
+                ExprKind::Null => true,
+                ExprKind::Regex(_) => !is_valid_regex(init),
+                _ => false,
+            };
+            ("null", is_null)
+        }
         TypeKind::Keyword(Keyword::String) => (
             "string",
             matches!(init.kind(), ExprKind::String(_) | ExprKind::Template(_))
@@ -60,7 +73,7 @@ fn inferrable_type(annotation: TypeNode<'_>, init: Expr<'_>) -> Option<&'static 
         ),
         TypeKind::Ref { name, .. } if name.is("RegExp") => {
             let is_regexp = match init.kind() {
-                ExprKind::Regex(_) => true,
+                ExprKind::Regex(_) => is_valid_regex(init),
                 ExprKind::New(call) | ExprKind::Call(call) => call.callee().is_ident("RegExp"),
                 _ => false,
             };

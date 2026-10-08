@@ -223,6 +223,17 @@ impl Rule for CommaDangle {
         if modes.objects != Mode::Ignore {
             on.exprs([ExprTag::Object], Self::check_object);
             on.pats([PatTag::Object], Self::check_binding_pattern);
+            // ESLint has `{ with: { type: "json" } }` in `import("m", { with: { type: "json" } })`
+            // as two object literals.
+            on.types([TypeTag::Import], |_, ty, cx| {
+                let Some(attributes) = ty.import_attributes() else {
+                    return;
+                };
+                let ends = [attributes.entries().last().map(|last| last.span().end), Some(attributes.braces_span().end)];
+                for end in ends.into_iter().flatten() {
+                    check(cx.state.objects, LastItem { end, is_rest: false }, cx);
+                }
+            });
         }
         if modes.arrays != Mode::Ignore {
             on.exprs([ExprTag::Array], Self::check_array);

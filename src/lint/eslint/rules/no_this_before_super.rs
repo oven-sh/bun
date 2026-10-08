@@ -1,4 +1,3 @@
-use bun_core::strings;
 use bun_lint::prelude::*;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -172,11 +171,11 @@ impl Rule for NoThisBeforeSuper {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        // A keyword cannot be written with escapes.
-        if !file.has_classes()
-            || !strings::contains(file.text(), b"extends")
-            || !file.has_exprs([ExprTag::This, ExprTag::Super])
-        {
+        let has_constructor_of_derived_class = file.classes().any(|class| {
+            class.extends().is_some()
+                && class.members().iter().any(|it| it.is_constructor() && it.func().is_some_and(Func::has_body))
+        });
+        if !has_constructor_of_derived_class || !file.has_exprs([ExprTag::This, ExprTag::Super]) {
             return State::default();
         }
         on.code_path_start(Self::on_code_path_start);

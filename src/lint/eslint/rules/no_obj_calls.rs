@@ -21,12 +21,15 @@ const TRACE_MAP: TraceMap<'static, ()> = TraceMap::new(&[
     ("Temporal", NOT_CALLABLE),
 ]);
 
-/// ESLint's `getReportNodeName`
-fn get_report_node_name(callee: Expr<'_>) -> Option<Cow<'_, [u8]>> {
+/// ESLint's `getReportNodeName`. Where that has no name, the message has JavaScript's `null` or
+/// `undefined`.
+fn get_report_node_name(callee: Expr<'_>) -> Cow<'_, [u8]> {
     match callee.kind() {
-        ExprKind::Dot { .. } | ExprKind::Index { .. } => ast_utils::get_static_property_name(callee),
-        ExprKind::Ident(name) => Some(Cow::Borrowed(name.bytes())),
-        _ => None,
+        ExprKind::Dot { .. } | ExprKind::Index { .. } => {
+            ast_utils::get_static_property_name(callee).unwrap_or(Cow::Borrowed(b"null"))
+        }
+        ExprKind::Ident(name) => Cow::Borrowed(name.bytes()),
+        _ => Cow::Borrowed(b"undefined"),
     }
 }
 
@@ -37,12 +40,8 @@ impl NoObjCalls {
                 continue;
             };
             let name = get_report_node_name(call.callee());
-            let is_direct = name.as_deref() == Some(global.as_bytes());
-            let message = if is_direct { UNEXPECTED_CALL } else { UNEXPECTED_REF_CALL };
-            let report = cx.report(reference.span, message).data("ref", global);
-            if let Some(name) = name {
-                report.data("name", name);
-            }
+            let message = if *name == *global.as_bytes() { UNEXPECTED_CALL } else { UNEXPECTED_REF_CALL };
+            cx.report(reference.span, message).data("name", name).data("ref", global);
         }
     }
 }

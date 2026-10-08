@@ -148,6 +148,14 @@ impl Rule for ObjectCurlyNewline {
             };
             check(cx, options, e.span(), props.len(), None);
         });
+        // ESLint has `{ with: { type: "json" } }` in `import("m", { with: { type: "json" } })` as two
+        // object literals.
+        on.types([TypeTag::Import], |rule, ty, cx| {
+            if let Some(attributes) = ty.import_attributes() {
+                check(cx, rule.object_expression, attributes.options_span(), 1, None);
+                check(cx, rule.object_expression, attributes.braces_span(), attributes.entries().len(), None);
+            }
+        });
         on.pats([PatTag::Object], |rule, pat, cx| {
             let PatKind::Object(props) = pat.kind() else {
                 return;

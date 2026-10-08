@@ -18,7 +18,9 @@ fn has_block_level_binding<'a>(body: List<'a, Stmt<'a>>) -> bool {
         StmtKind::Fn(func) => func.has_body() && Node::Stmt(statement).scope().is_strict(),
         _ => false,
     };
-    body.iter().any(is_lexical) || body.iter().any(is_function_in_strict_mode)
+    // What is exported, which is an error here, is in an `ExportNamedDeclaration`.
+    let declarations = || body.iter().filter(|it| !it.is_exported());
+    declarations().any(is_lexical) || declarations().any(is_function_in_strict_mode)
 }
 
 impl NoLoneBlocks {

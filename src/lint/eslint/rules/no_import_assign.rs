@@ -78,7 +78,11 @@ fn get_write_node(reference: Reference) -> Span {
             _ => {}
         }
     }
-    reference.span()
+    // `import type { A } from "a"; const A: A = 0`: the annotation is a part of the `Identifier`.
+    match reference.node() {
+        id @ Node::Pat(_) => utils::estree_span(id),
+        _ => reference.span(),
+    }
 }
 
 impl Rule for NoImportAssign {

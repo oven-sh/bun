@@ -42,16 +42,18 @@ fn is_passing_through<'a>(params: List<'a, Param<'a>>, args: List<'a, Expr<'a>>)
     params.len() == args.len() && params.iter().zip(args).all(|(param, arg)| is_valid_pair(param, arg))
 }
 
-fn is_redundant_super_call<'a>(body: List<'a, Stmt<'a>>, params: List<'a, Param<'a>>) -> bool {
+/// `has_this`: there is a parameter `this` before `params`, which no argument can be.
+fn is_redundant_super_call<'a>(body: List<'a, Stmt<'a>>, params: List<'a, Param<'a>>, has_this: bool) -> bool {
     single_super_call(body).is_some_and(|args| {
-        params.iter().all(is_simple) && (is_spread_arguments(args) || is_passing_through(params, args))
+        params.iter().all(is_simple)
+            && (is_spread_arguments(args) || (!has_this && is_passing_through(params, args)))
     })
 }
 
 /// The whole rule, for a member of a class. typescript-eslint's rule of the same name is no
 /// different.
 pub fn check<'a, R: Rule>(member: Member<'a>, cx: &Cx<'a, R>) {
-    if member.kind() != MemberKind::Constructor || member.is_static() {
+    if !member.is_constructor() {
         return;
     }
     let (Some(func), Node::Class(class)) = (member.func(), member.parent()) else {
@@ -62,7 +64,7 @@ pub fn check<'a, R: Rule>(member: Member<'a>, cx: &Cx<'a, R>) {
     };
     let (params, has_super_class) = (func.params(), class.extends().is_some());
     let is_useless = match has_super_class {
-        true => is_redundant_super_call(body, params),
+        true => is_redundant_super_call(body, params, func.this_param().is_some()),
         false => body.is_empty(),
     };
     let has_useful_accessibility = member.flags().intersects(Flags::PROTECTED | Flags::PRIVATE)
@@ -74,10 +76,17 @@ pub fn check<'a, R: Rule>(member: Member<'a>, cx: &Cx<'a, R>) {
         return;
     }
 
-    let name_end = match (member.constructor_keyword(), func.open_paren()) {
-        (Some(name), _) => name.span().end,
-        (None, Some(paren)) => skip_trivia_back(cx.text(), paren),
-        (None, None) => return,
+    // The token before the first `(`, which can be in the type parameters.
+    let name_end = match member.constructor_keyword().filter(|_| func.type_params().is_empty()) {
+        Some(name) => name.span().end,
+        None => {
+            let file = cx.file();
+            let paren = file.tokens_in(member).find(|token| token.is_punctuator("("));
+            let Some(before) = paren.and_then(|paren| file.token_before(paren)) else {
+                return;
+            };
+            before.end()
+        }
     };
     cx.report(Span::new(member.span().start, name_end), NO_USELESS_CONSTRUCTOR)
         .suggest(REMOVE_CONSTRUCTOR, |fixer| {

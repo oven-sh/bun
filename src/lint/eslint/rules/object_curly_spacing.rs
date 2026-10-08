@@ -21,6 +21,11 @@ impl ObjectCurlySpacing {
     /// which there is something. What is next to a brace, a token or a comment, is found by
     /// skipping whitespace.
     fn validate_brace_spacing(&self, open: u32, close: u32, cx: &Cx<'_, Self>) {
+        self.validate_brace_spacing_around(open, close, None, cx);
+    }
+
+    /// `inner_close`: a `}` that is known to end an `ObjectExpression`.
+    fn validate_brace_spacing_around(&self, open: u32, close: u32, inner_close: Option<u32>, cx: &Cx<'_, Self>) {
         let source = cx.text();
         if source.get(open as usize) != Some(&b'{') || source.get(close as usize) != Some(&b'}') {
             return;
@@ -50,7 +55,8 @@ impl ObjectCurlySpacing {
             let is_exception = match source.get(penultimate as usize) {
                 Some(b']') if self.arrays_in_objects_exception => penultimate_type() == "ArrayExpression",
                 Some(b'}') if self.objects_in_objects_exception => {
-                    matches!(penultimate_type(), "ObjectExpression" | "ObjectPattern")
+                    inner_close == Some(penultimate)
+                        || matches!(penultimate_type(), "ObjectExpression" | "ObjectPattern")
                 }
                 _ => false,
             };
@@ -71,7 +77,7 @@ impl ObjectCurlySpacing {
     /// the ranges.
     fn check_specifiers(&self, first: Span, last: Span, cx: &Cx<'_, Self>) {
         let source = cx.text();
-        let open = skip_trivia_back(source, first.start).saturating_sub(1);
+        let open = cx.file().end_of_token_before(first.start).saturating_sub(1);
         let mut close = skip_trivia(source, last.end);
         if source.get(close as usize) == Some(&b',') {
             close = skip_trivia(source, close + 1);
@@ -108,6 +114,19 @@ impl Rule for ObjectCurlySpacing {
                 let span = pat.span();
                 rule.validate_brace_spacing(span.start, span.end.saturating_sub(1), cx);
             }
+        });
+        // ESLint has `{ with: { type: "json" } }` in `import("m", { with: { type: "json" } })` as two
+        // object literals.
+        on.types([TypeTag::Import], |rule, ty, cx| {
+            let Some(attributes) = ty.import_attributes() else {
+                return;
+            };
+            let (outer, inner) = (attributes.options_span(), attributes.braces_span());
+            let inner_close = inner.end.saturating_sub(1);
+            if !attributes.entries().is_empty() {
+                rule.validate_brace_spacing(inner.start, inner_close, cx);
+            }
+            rule.validate_brace_spacing_around(outer.start, outer.end.saturating_sub(1), Some(inner_close), cx);
         });
         on.stmts([StmtTag::Import, StmtTag::ExportNamed], |rule, statement, cx| {
             let ends = match statement.kind() {

@@ -1,4 +1,3 @@
-use bun_lint::language::Parser;
 use bun_lint::prelude::*;
 
 /// Disallow use of `this` in contexts where the value of `this` is `undefined`.
@@ -8,16 +7,10 @@ pub struct NoInvalidThis {
 
 const UNEXPECTED_THIS: Message = Message::new("unexpectedThis", "Unexpected 'this'.");
 
-/// `Program.sourceType === "module"`
-// TODO(api): replace by ast::File::is_module_program
+/// `Program.sourceType === "module"`. `@typescript-eslint/parser` overwrites what typescript-estree
+/// says with the option it was given: an `import` or an `export` makes no module of a script.
 fn is_module(file: &File<'_>) -> bool {
-    match file.language().parser {
-        // typescript-estree also says so of a script that has an `import` or an `export`.
-        Parser::TypeScript => {
-            file.language().scope_source_type() == SourceType::Module || file.has_module_syntax()
-        }
-        _ => file.is_module(),
-    }
+    file.language().scope_source_type() == SourceType::Module
 }
 
 /// `accessor a = function () {}`

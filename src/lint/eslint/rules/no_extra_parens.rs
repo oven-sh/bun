@@ -42,52 +42,25 @@ const PRECEDENCE_OF_CALL_EXPR: i32 = 18;
 const PRECEDENCE_OF_NEW_EXPR: i32 = 19;
 const PRECEDENCE_OF_MEMBER_EXPR: i32 = 20;
 
-/// The `e` of `/** @type {T} */ (e)`. In a JavaScript file the HIR has an `As`, a `Satisfies` or an
-/// `AsConst` for the comment, which holds the parentheses, and ESTree has nothing.
-// TODO(api): remove once ast hides these casts
-fn jsdoc_cast_operand(e: Expr<'_>) -> Option<Expr<'_>> {
-    match e.kind() {
-        ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::AsConst(expr)
-            if e.span() == expr.outer_span() =>
-        {
-            Some(expr)
-        }
-        _ => None,
+/// The parentheses of the call `import.defer(e)`, if `e` is all that is in them. Upstream takes the
+/// second token of an `ImportExpression` for its `(`. Here that is the `.`, so that these count as
+/// parentheses around `e`.
+fn deferred_import_parens(e: Expr<'_>) -> Option<Span> {
+    let Node::Expr(parent) = e.parent() else {
+        return None;
+    };
+    if parent.tag() != ExprTag::ImportCall || !parent.is_deferred_import_call() {
+        return None;
     }
+    let (file, outer) = (e.file(), e.outer_span());
+    let close = parent.span().end.saturating_sub(1);
+    (skip_trivia(file.text(), outer.end) == close)
+        .then(|| Span::new(file.end_of_token_before(outer.start).saturating_sub(1), close + 1))
 }
 
-fn without_jsdoc_casts(mut e: Expr<'_>) -> Expr<'_> {
-    while let Some(operand) = jsdoc_cast_operand(e) {
-        e = operand;
-    }
-    e
-}
-
-/// `e` in all the JSDoc casts around it, and how many parentheses are around `e`, theirs included.
-fn with_jsdoc_casts(e: Expr<'_>) -> (Expr<'_>, usize) {
-    let (mut top, mut count) = (e, e.parens().len());
-    while let Node::Expr(parent) = top.parent()
-        && jsdoc_cast_operand(parent) == Some(top)
-    {
-        count += parent.parens().len();
-        top = parent;
-    }
-    (top, count)
-}
-
-/// How many parentheses are around what `e` is without JSDoc casts.
-fn paren_count(mut e: Expr<'_>) -> usize {
-    let mut count = e.parens().len();
-    while let Some(operand) = jsdoc_cast_operand(e) {
-        e = operand;
-        count += e.parens().len();
-    }
-    count
-}
-
-/// ESTree's `node.parent`.
-fn parent_of(e: Expr<'_>) -> Node<'_> {
-    with_jsdoc_casts(e).0.parent()
+/// How many parentheses upstream sees around `e`.
+fn paren_count(e: Expr<'_>) -> usize {
+    e.parens().len() + usize::from(deferred_import_parens(e).is_some())
 }
 
 /// The expression in the head of a `for`, if that is not a declaration.
@@ -130,11 +103,11 @@ fn is_immediate_function_prototype_method_call(e: Expr<'_>) -> bool {
     let ExprKind::Call(call) = e.kind() else {
         return false;
     };
-    let callee = without_jsdoc_casts(call.callee());
+    let callee = call.callee();
     let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = callee.kind() else {
         return false;
     };
-    is_function_expression(without_jsdoc_casts(obj))
+    is_function_expression(obj)
         && get_static_property_name(callee)
             .is_some_and(|name| matches!(&*name, b"call" | b"apply"))
 }
@@ -148,7 +121,6 @@ fn is_in_return_statement(e: Expr<'_>) -> bool {
 }
 
 fn contains_assignment(e: Expr<'_>) -> bool {
-    let is_assignment = |e| is_assignment(without_jsdoc_casts(e));
     match e.kind() {
         ExprKind::Assign { .. } => true,
         ExprKind::Cond { yes, no, .. } => is_assignment(yes) || is_assignment(no),
@@ -164,7 +136,7 @@ fn does_member_expression_contain_call_expression(member: Expr<'_>) -> bool {
     while let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = at.kind()
         && (at == member || !is_chain_root(at))
     {
-        at = without_jsdoc_casts(obj);
+        at = obj;
     }
     at.tag() == ExprTag::Call && !is_chain_root(at)
 }
@@ -176,16 +148,12 @@ fn is_member_expression_in_new_callee(member: Expr<'_>) -> bool {
         if is_chain_root(at) {
             return false;
         }
-        let Node::Expr(parent) = parent_of(at) else {
+        let Node::Expr(parent) = at.parent() else {
             return false;
         };
         match parent.kind() {
-            ExprKind::New(call) => return without_jsdoc_casts(call.callee()) == at,
-            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }
-                if without_jsdoc_casts(obj) == at =>
-            {
-                at = parent;
-            }
+            ExprKind::New(call) => return call.callee() == at,
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == at => at = parent,
             _ => return false,
         }
     }
@@ -199,7 +167,7 @@ fn is_anonymous_function_assignment_exception(
 ) -> bool {
     left.tag() == ExprTag::Ident
         && matches!(op, None | Some(BinOp::And | BinOp::Or | BinOp::Nullish))
-        && match without_jsdoc_casts(right).kind() {
+        && match right.kind() {
             ExprKind::Fn(func) => func.is_arrow() || func.name().is_none(),
             ExprKind::Class(class) => class.name().is_none(),
             _ => false,
@@ -232,10 +200,7 @@ fn skip_closing_parens(text: &[u8], at: u32) -> u32 {
 /// An expression in parentheses.
 #[derive(Copy, Clone)]
 pub struct Found<'a> {
-    /// What is written in the parentheses.
     node: Expr<'a>,
-    /// The same in the JSDoc casts around it: what its parent holds.
-    top: Expr<'a>,
     /// How many parentheses are around it.
     count: usize,
     /// The innermost of them.
@@ -243,22 +208,12 @@ pub struct Found<'a> {
 }
 
 impl<'a> Found<'a> {
-    /// `None` unless the parentheses around `e` are the innermost around what is written in them.
-    fn new(e: Expr<'a>) -> Option<Self> {
-        let parens = e.parens().next()?;
-        let mut node = e;
-        while let Some(operand) = jsdoc_cast_operand(node) {
-            if operand.is_parenthesized() {
-                return None;
-            }
-            node = operand;
-        }
-        let (top, count) = with_jsdoc_casts(e);
+    fn new(node: Expr<'a>) -> Option<Self> {
+        let (mut own, of_import) = (node.parens(), deferred_import_parens(node));
         Some(Found {
             node,
-            top,
-            count,
-            parens,
+            count: own.len() + usize::from(of_import.is_some()),
+            parens: own.next().or(of_import)?,
         })
     }
 
@@ -266,7 +221,7 @@ impl<'a> Found<'a> {
     /// first.
     fn enclosing_initializers(self) -> impl Iterator<Item = (Stmt<'a>, Stmt<'a>)> {
         let span = self.node.span();
-        Node::Expr(self.top).ancestors().filter_map(move |ancestor| match ancestor {
+        Node::Expr(self.node).ancestors().filter_map(move |ancestor| match ancestor {
             Node::Stmt(statement) => match statement.kind() {
                 StmtKind::For {
                     init: Some(init), ..
@@ -287,7 +242,7 @@ impl<'a> Found<'a> {
             return false;
         }
         // Up, as long as nothing but `(` is before the token.
-        let mut child = self.top;
+        let mut child = self.node;
         let statement = loop {
             match child.parent() {
                 Node::Expr(parent) if skip_opening_parens(text, parent.span().start) == start => {
@@ -304,9 +259,11 @@ impl<'a> Found<'a> {
         let is_before_bracket = text.get(after as usize) == Some(&b'[');
         match statement.kind() {
             StmtKind::Expr(_) | StmtKind::ExportDefault(_) => match token {
+                // Not for every parser, and not in every version of the language.
                 b"let" => {
-                    is_before_bracket
-                        || file.token_at(after).is_some_and(|it| it.kind() == TokenKind::Identifier)
+                    file.token_at(start).is_some_and(|it| it.kind() == TokenKind::Keyword)
+                        && (is_before_bracket
+                            || file.token_at(after).is_some_and(|it| it.kind() == TokenKind::Identifier))
                 }
                 b"async" => token_text(text, skip_trivia(text, start + 5)) == b"function",
                 _ => true,
@@ -384,10 +341,7 @@ fn node_to_exclude<'a>(
         let Node::Expr(e) = node else {
             continue;
         };
-        if jsdoc_cast_operand(e).is_some() {
-            continue;
-        }
-        match with_jsdoc_casts(e).1 {
+        match paren_count(e) {
             0 => {}
             // Only the outermost has to stay.
             1 if reports.iter().any(|it| it.node == e) => excluded = excluded.or(Some(e)),
@@ -417,18 +371,13 @@ fn requires_trailing_space<'a>(file: &'a File<'a>, node: Expr<'a>, right_paren: 
 }
 
 fn finish_report<'a>(found: Found<'a>, cx: &Cx<'a, NoExtraParens>) {
-    let Found {
-        node,
-        top,
-        count,
-        parens,
-    } = found;
+    let Found { node, count, parens } = found;
     let left_paren = Span::new(parens.start, parens.start + 1);
     let report = cx.report(left_paren, UNEXPECTED);
     // Without its parentheses, a string that is a statement can become a directive.
     if node.tag() == ExprTag::String
         && count < 2
-        && matches!(top.parent(), Node::Stmt(it) if is_top_level_expression_statement(it))
+        && matches!(node.parent(), Node::Stmt(it) if is_top_level_expression_statement(it))
     {
         return;
     }
@@ -513,9 +462,9 @@ impl NoExtraParens {
                 return false;
             }
         } else if self.ignore_function_prototype_methods
-            && let Node::Expr(parent) = parent_of(member)
+            && let Node::Expr(parent) = member.parent()
             && let ExprKind::Call(call) = parent.kind()
-            && without_jsdoc_casts(call.callee()) == member
+            && call.callee() == member
             && is_immediate_function_prototype_method_call(parent)
         {
             return false;
@@ -561,16 +510,14 @@ impl NoExtraParens {
 
     /// What the listener of ESLint's rule for the parent decides about the parentheses.
     fn has_excess_parens(&self, found: Found<'_>) -> bool {
-        let Found {
-            node, top, count, ..
-        } = found;
+        let Found { node, count, .. } = found;
         let file = node.file();
         let is_twice = count >= 2;
         let has_precedence = |limit: i32| is_twice || get_precedence(node) >= limit;
         // After a keyword that no line break may follow.
         let is_on_line_of = |keyword: u32| is_twice || file.is_on_same_line(keyword, node.span().start);
         let is_cond_assign_exception = self.except_cond_assign && is_assignment(node);
-        match top.parent() {
+        match node.parent() {
             Node::Expr(parent) => match parent.kind() {
                 ExprKind::Array(_) => match is_assignment_target(parent) {
                     true => can_be_assignment_target(node),
@@ -581,16 +528,16 @@ impl NoExtraParens {
                     _ if is_assignment_target(parent) => can_be_assignment_target(node),
                     _ => has_precedence(PRECEDENCE_OF_ASSIGNMENT_EXPR),
                 },
-                ExprKind::Index { index, .. } if index == top => true,
+                ExprKind::Index { index, .. } if index == node => true,
                 ExprKind::Dot { .. } | ExprKind::Index { .. } => {
                     self.has_excess_parens_as_object(parent, node, is_twice)
                 }
-                ExprKind::Call(call) | ExprKind::New(call) if call.callee() == top => {
+                ExprKind::Call(call) | ExprKind::New(call) if call.callee() == node => {
                     is_twice
                         || Self::has_excess_parens_as_callee(call, parent.tag() == ExprTag::New, node)
                 }
                 ExprKind::Call(_) | ExprKind::New(_) => has_precedence(PRECEDENCE_OF_ASSIGNMENT_EXPR),
-                ExprKind::TaggedTemplate(call) => call.callee() != top,
+                ExprKind::TaggedTemplate(call) => call.callee() != node,
                 ExprKind::Template(_) => true,
                 ExprKind::Unary {
                     op: UnOp::PostInc | UnOp::PostDec,
@@ -610,11 +557,11 @@ impl NoExtraParens {
                     op: BinOp::Comma, ..
                 } => has_precedence(PRECEDENCE_OF_SEQUENCE_EXPR),
                 ExprKind::Binary { left, .. } => {
-                    self.has_excess_parens_as_operand(parent, left == top, node, is_twice)
+                    self.has_excess_parens_as_operand(parent, left == node, node, is_twice)
                 }
                 ExprKind::Assign { op, target, value } => {
                     let is_pattern = op.is_none() && is_assignment_target(parent);
-                    if target == top {
+                    if target == node {
                         can_be_assignment_target(node)
                             && (is_pattern
                                 || is_twice
@@ -632,7 +579,7 @@ impl NoExtraParens {
                     {
                         return false;
                     }
-                    match test == top {
+                    match test == node {
                         true => {
                             !is_cond_assign_exception && has_precedence(PRECEDENCE_OF_LOGICAL_OR_EXPR)
                         }
@@ -645,7 +592,7 @@ impl NoExtraParens {
                             && is_on_line_of(parent.span().start))
                 }
                 ExprKind::ImportCall { args } => {
-                    args.first() == Some(top)
+                    args.first() == Some(node)
                         && (is_twice || get_precedence(node) != PRECEDENCE_OF_SEQUENCE_EXPR)
                 }
                 _ => false,
@@ -659,9 +606,9 @@ impl NoExtraParens {
                 StmtKind::If { .. } | StmtKind::While { .. } | StmtKind::DoWhile { .. } => {
                     !is_cond_assign_exception
                 }
-                StmtKind::For { test, .. } => test != Some(top) || !is_cond_assign_exception,
+                StmtKind::For { test, .. } => test != Some(node) || !is_cond_assign_exception,
                 StmtKind::ForOf { expr, .. } => {
-                    expr != top || has_precedence(PRECEDENCE_OF_ASSIGNMENT_EXPR)
+                    expr != node || has_precedence(PRECEDENCE_OF_ASSIGNMENT_EXPR)
                 }
                 StmtKind::Return(_) => {
                     !(self.except_return_assign && contains_assignment(node))
@@ -672,14 +619,14 @@ impl NoExtraParens {
                 _ => false,
             },
             Node::Func(func) => {
-                matches!(func.body(), FnBody::Expr(body) if body == top)
+                matches!(func.body(), FnBody::Expr(body) if body == node)
                     && !(self.except_return_assign && contains_assignment(node))
                     && !(self.ignore_arrow_conditionals && node.tag() == ExprTag::Cond)
                     && has_precedence(PRECEDENCE_OF_ASSIGNMENT_EXPR)
             }
             Node::Prop(prop) if prop.is_jsx_attribute() => false,
             Node::Prop(prop) => {
-                let is_in_pattern = prop.value() == Some(top)
+                let is_in_pattern = prop.value() == Some(node)
                     && matches!(prop.parent(), Node::Expr(object) if is_assignment_target(object));
                 match is_in_pattern {
                     true => can_be_assignment_target(node),
@@ -689,19 +636,19 @@ impl NoExtraParens {
             Node::Member(member) => {
                 let is_key = matches!(
                     member.key().map(Key::kind),
-                    Some(KeyKind::Computed(key)) if key == top
+                    Some(KeyKind::Computed(key)) if key == node
                 );
-                (is_key || member.init() == Some(top))
+                (is_key || member.init() == Some(node))
                     && matches!(member.parent(), Node::Class(_))
                     && !member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR)
                     && has_precedence(PRECEDENCE_OF_ASSIGNMENT_EXPR)
             }
             Node::Class(class) => {
-                class.extends() == Some(top)
+                class.extends() == Some(node)
                     && (is_twice || get_precedence(node) > PRECEDENCE_OF_UPDATE_EXPR)
             }
             Node::Param(param) => {
-                param.default() == Some(top) && has_precedence(PRECEDENCE_OF_ASSIGNMENT_EXPR)
+                param.default() == Some(node) && has_precedence(PRECEDENCE_OF_ASSIGNMENT_EXPR)
             }
             Node::PatProp(_) | Node::PatElem(_) => has_precedence(PRECEDENCE_OF_ASSIGNMENT_EXPR),
             Node::VarDecl(_) => has_precedence(PRECEDENCE_OF_ASSIGNMENT_EXPR) && !is_regex(node),
@@ -711,23 +658,20 @@ impl NoExtraParens {
     }
 
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !e.is_parenthesized() {
+        if !self.rule_applies(e) {
             return;
         }
-        let Some(found) = Found::new(e) else {
+        let Some(found) = Found::new(e).filter(|found| self.has_excess_parens(*found)) else {
             return;
         };
-        if !self.rule_applies(found.node) || !self.has_excess_parens(found) {
-            return;
-        }
         if found.count < 2 {
             if found.is_first_token_ignored() {
                 return;
             }
             // (function () {}())
             if let ExprKind::Call(call) = found.node.kind()
-                && is_function_expression(without_jsdoc_casts(call.callee()))
-                && (is_chain_root(found.node) || paren_count(call.callee()) == 0)
+                && is_function_expression(call.callee())
+                && (is_chain_root(found.node) || !call.callee().is_parenthesized())
             {
                 return;
             }
@@ -815,50 +759,19 @@ impl Rule for NoExtraParens {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Vec<Found<'a>> {
-        // TODO(api): replace by ast::File::parenthesized
-        on.exprs(
-            [ExprTag::Fn, ExprTag::As, ExprTag::Satisfies, ExprTag::AsConst],
-            Self::check,
-        );
-        if self.all_nodes {
-            on.exprs(
-                [
-                    ExprTag::Ident,
-                    ExprTag::This,
-                    ExprTag::Super,
-                    ExprTag::Null,
-                    ExprTag::True,
-                    ExprTag::False,
-                    ExprTag::Number,
-                    ExprTag::String,
-                    ExprTag::BigInt,
-                    ExprTag::Regex,
-                    ExprTag::Template,
-                    ExprTag::TaggedTemplate,
-                    ExprTag::Array,
-                    ExprTag::Object,
-                    ExprTag::Class,
-                    ExprTag::Dot,
-                    ExprTag::Index,
-                    ExprTag::Call,
-                    ExprTag::New,
-                    ExprTag::Unary,
-                    ExprTag::Binary,
-                    ExprTag::Assign,
-                    ExprTag::Cond,
-                    ExprTag::Await,
-                    ExprTag::Yield,
-                    ExprTag::NonNull,
-                    ExprTag::Instantiation,
-                    ExprTag::Jsx,
-                    ExprTag::ImportCall,
-                    ExprTag::ImportMeta,
-                    ExprTag::NewTarget,
-                ],
-                Self::check,
-            );
-        }
-        on.finish(Self::check_initializers);
+        on.exprs([ExprTag::ImportCall], |rule, e, cx| {
+            if let ExprKind::ImportCall { args } = e.kind()
+                && let Some(source) = args.first()
+                && !source.is_parenthesized()
+            {
+                rule.check(source, cx);
+            }
+        });
+        on.finish(|rule, cx| {
+            let file = cx.file();
+            file.parenthesized().for_each(|e| rule.check(e, cx));
+            rule.check_initializers(cx);
+        });
         Vec::new()
     }
 }

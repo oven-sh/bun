@@ -57,6 +57,7 @@ fn symbol_is_namespace_in_scope<'a>(mut symbol: TsSymbol<'a>, namespaces: &Names
 }
 
 /// `checker.getSymbolsInScope(node, flags).find(it => it.name === name)`. `name`: as it is written.
+/// TODO(api): `resolve_name` stops at an `import name = ..` on the way, which is in that list only if `flags` has `ALIAS`.
 fn get_symbol_in_scope<'a>(
     types: Types<'a>,
     node: TsNode<'a>,

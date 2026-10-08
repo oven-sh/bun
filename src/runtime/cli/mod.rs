@@ -338,6 +338,8 @@ pub(crate) mod add_command;
 pub(crate) mod audit_command;
 #[path = "check_command.rs"]
 pub(crate) mod check_command;
+#[path = "format_command.rs"]
+pub(crate) mod format_command;
 #[path = "lint_command.rs"]
 pub(crate) mod lint_command;
 #[path = "script_or_command.rs"]
@@ -653,6 +655,7 @@ pub(crate) mod help_command {
   <b><magenta>test<r>                           Run unit tests with Bun
   <b><magenta>check<r>                          Type check a TypeScript project
   <b><magenta>lint<r>                           Lint JavaScript and TypeScript, like ESLint
+  <b><magenta>format<r>                         Format JavaScript and TypeScript, like Prettier
   <b><magenta>x<r>         <d>{:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
   <b><magenta>repl<r>                           Start a REPL session with Bun
   <b><magenta>exec<r>                           Run a shell script directly with Bun
@@ -1064,6 +1067,12 @@ pub(crate) mod command {
                 false => Tag::LintCommand,
             };
         }
+        if x == RootCommandMatcher::case(b"format") {
+            return match super::script_or_command::is_package_script(b"format") {
+                true => Tag::AutoCommand,
+                false => Tag::FormatCommand,
+            };
+        }
         if x == RootCommandMatcher::case(b"info") {
             return Tag::InfoCommand;
         }
@@ -1326,6 +1335,7 @@ pub(crate) mod command {
             Tag::AuditCommand => exec_audit(log),
             Tag::CheckCommand => exec_check(log),
             Tag::LintCommand => exec_lint(log),
+            Tag::FormatCommand => exec_format(log),
             Tag::DedupeCommand => exec_dedupe(log),
             Tag::PruneCommand => exec_prune(log),
             Tag::WhyCommand => exec_why(log),
@@ -1604,6 +1614,17 @@ pub(crate) mod command {
         // After the flags of `bun`, and those of `BUN_OPTIONS`.
         let lint = argv.iter().position(|arg| arg.as_bytes() == b"lint");
         super::lint_command::LintCommand::exec(&argv[lint.map_or(argv.len(), |at| at + 1)..])
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn exec_format(log: &mut bun_ast::Log) -> CmdResult {
+        // FormatCommand parses its own argv.
+        init(Tag::FormatCommand, log)?;
+        let argv = argv_zslice();
+        // After the flags of `bun`, and those of `BUN_OPTIONS`.
+        let format = argv.iter().position(|arg| arg.as_bytes() == b"format");
+        super::format_command::FormatCommand::exec(&argv[format.map_or(argv.len(), |at| at + 1)..])
     }
 
     #[cold]
@@ -2257,6 +2278,40 @@ Execute a shell script directly from Bun.
   <b><green>bun<r> <cyan>--check<r> <blue>src/index.ts<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/runtime/check<r>
+"
+                );
+                Output::flush();
+            }
+            Tag::FormatCommand => {
+                pretty!(
+                    "\
+<b>Usage<r>: <b><green>bun format<r> <cyan>[flags]<r> <blue>[...files, directories or patterns]<r>
+  Format JavaScript and TypeScript the way Prettier does, using all CPU cores.
+
+  Writes the files that change, unless <cyan>--check<r> or <cyan>--list-different<r> is given.
+  Uses the nearest <b>.prettierrc<r>, <b>prettier.config.js<r>, <b>package.json#prettier<r> or <b>.oxfmtrc.json<r>, and <b>.editorconfig<r>.
+
+<b>Flags:<r>"
+                );
+                Output::flush();
+                bun_clap::simple_help(crate::cli::format_command::PARAMS);
+                pretty!(
+                    "
+
+<b>Examples:<r>
+  <d>Format the current directory<r>
+  <b><green>bun format<r>
+
+  <d>Format some files and directories<r>
+  <b><green>bun format<r> <blue>src test/a.test.ts<r>
+
+  <d>Fail if a file is not formatted, and write nothing<r>
+  <b><green>bun format<r> <cyan>--check<r>
+
+  <d>Format what an editor has in a buffer<r>
+  <b><green>bun format<r> <cyan>--stdin-filepath<r> <blue>src/index.ts<r>
+
+Full documentation is available at <magenta>https://bun.com/docs/runtime/format<r>
 "
                 );
                 Output::flush();

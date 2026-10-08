@@ -51,6 +51,7 @@
 //! | `commentsExistBetween(a, b)` | `file.comments_exist_between(a, b)` |
 //! | `isSpaceBetween(a, b)` | `file.is_space_between(a, b)` |
 //! | `token.type`, `token.value`, `token.range` | `token.kind()`, `token.value()` (`token.text()` is `getText(token)`), `token.span()` |
+//! | `a.value === b.value` | `a.has_same_value(b)`: espree decodes `\u0061` in a name |
 //! | `isCommaToken`, `isOpeningParenToken`, .. | `utils::ast_utils`, or `token.is_punctuator(",")` |
 //!
 //! `x`, `a`, `b` are anything with a [`Span`]: a node, a token, a comment, a span. As in ESLint,
@@ -62,6 +63,7 @@ mod scan;
 use crate::ast::File;
 use crate::span::{Span, Spanned};
 use bun_sema::check::spans;
+use std::borrow::Cow;
 use std::cell::OnceCell;
 
 /// From `at`, past whitespace and comments: the start of the next token, or the end of the text.
@@ -226,12 +228,48 @@ impl<'a> Token<'a> {
         self.file.slice(span)
     }
 
-    /// ESLint's `token.value`: as it is written, but a comment without its delimiters and a private
-    /// identifier without its `#`. (espree also decodes the escape sequences of an identifier.)
+    /// ESLint's `token.value`, except for what espree decodes: as it is written, but a comment
+    /// without its delimiters and a private identifier without its `#`.
+    ///
+    /// espree, not typescript-estree, decodes two things, which stay as they are written here:
+    /// - The escape sequences of a name: the value of `a\u0062` is `ab`. [`Token::decoded_value`] and
+    ///   [`Token::has_same_value`] do that.
+    /// - The text between JSX tags (not the string of an attribute): the value of `&amp;` is `&`, and
+    ///   that of a `\r\n` is `\n`. Nothing here does that.
     pub fn value(self) -> &'a [u8] {
         match self.raw.kind {
             TokenKind::PrivateIdentifier => self.file.slice(self.span().shrink(1, 0)),
             _ => self.comment_value(),
+        }
+    }
+
+    /// Whether espree decodes escape sequences in it: the file is one of espree's, this is a name,
+    /// and there is a `\` in it.
+    fn has_decoded_value(self) -> bool {
+        use TokenKind::{Boolean, Identifier, Keyword, Null, PrivateIdentifier};
+        matches!(self.raw.kind, Identifier | Keyword | PrivateIdentifier | Boolean | Null)
+            && bun_core::strings::contains_char(self.text(), b'\\')
+            && scan::is_espree(self.file)
+    }
+
+    /// [`Token::value`], and for espree a name with what its `\u0061` and `\u{61}` stand for.
+    pub fn decoded_value(self) -> Cow<'a, [u8]> {
+        if !self.has_decoded_value() {
+            return Cow::Borrowed(self.value());
+        }
+        let mut decoded = Vec::with_capacity(self.value().len());
+        for c in code_points(self.value()) {
+            let c = char::from_u32(c).unwrap_or(char::REPLACEMENT_CHARACTER);
+            decoded.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
+        }
+        Cow::Owned(decoded)
+    }
+
+    /// ESLint's `a.value === b.value`, without allocating. (But see [`Token::value`] for JSX text.)
+    pub fn has_same_value(self, other: Token<'a>) -> bool {
+        match self.has_decoded_value() || other.has_decoded_value() {
+            true => code_points(self.value()).eq(code_points(other.value())),
+            false => self.value() == other.value(),
         }
     }
 
@@ -373,6 +411,19 @@ fn within(all: &[RawToken], span: Span) -> &[RawToken] {
     let first = all.partition_point(|token| token.start < span.start);
     let count = all[first..].partition_point(|token| token.end <= span.end);
     &all[first..first + count]
+}
+
+/// The code points of a name, with what its escape sequences stand for.
+fn code_points(name: &[u8]) -> impl Iterator<Item = u32> {
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        let (c, size) = match name.get(at)? {
+            b'\\' => bun_core::lexer::peek_unicode_escape(name, at).unwrap_or((i32::from(b'\\'), 1)),
+            _ => bun_core::lexer::char_and_size(name, at),
+        };
+        at += size.max(1);
+        Some(c as u32)
+    })
 }
 
 /// The one of `all` that `offset` is in.

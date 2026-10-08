@@ -581,3 +581,26 @@ let x = <const>y as const
 let x = <const>(y as const)
 let x = <T>y as const
 let x = (<const>y).z as const
+=== file.js
+this .a
+this﻿.a; null ; true　; false ; typeof a; function f() {}
+if (a) return_ ; else b
+let a; class A { static b; static {} }
+a.if ; ({ if : 1, default : 2 })
+a .b; ab 
+<a>{this .b}{c .d}</a>
+thisé; nullé; ifñ
+a\\u0062 === ab; a\\u0062 === a\\u{62}; x.a\\u0062 === x.ab; x.\\u0069f === x.if
+class A { #a\\u0062; m() { this.#a\\u0062 === this.#ab; this.#a\\u{62} } #ab }
+({ a\\u0062: 1, ab: 1, st\\u0061tic: 2, static: 2 })
+\\u{1d49c} === 𝒜; \\u{61}\\u{10400}é
+"\\u0061" === "a"; `\\u0061`; /\\u0061/
+=== file.ts
+this .a
+this﻿.a; null ; true　; false ; typeof a; function f() {}
+let a: void ; class A { static b; private c; static {} }
+interface I { if : 1 } class B implements I {}
+a\\u0062 === ab; x.\\u0069f === x.if
+class A { #a\\u0062; m() { this.#a\\u0062 === this.#ab } #ab }
+=== file.tsx
+<a>{this .b}{c .d}</a>

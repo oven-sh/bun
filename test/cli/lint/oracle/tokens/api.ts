@@ -94,6 +94,15 @@ function ask(sourceCode: any, ast: any, seed: number): { queries: Query[]; expec
     add("paddedBetween", a, b, false, () => ranges(sourceCode.getTokensBetween(a, b, 1)));
     add("commentsExist", a, b, false, () => [Number(sourceCode.commentsExistBetween(a, b))]);
   }
+  // `a.value === b.value`, as `equalTokens` of ast-utils compares. espree decodes entities in JSX text, which is not done here.
+  const words = ast.tokens.filter((it: any) => /^(Identifier|Keyword|PrivateIdentifier|Boolean|Null|String)$/.test(it.type));
+  for (const a of words.filter((it: any) => sourceCode.getText(it).includes("\\")).slice(0, 10)) {
+    for (const b of words.slice(0, 30)) add("sameValue", a, b, false, () => [Number(a.value === b.value)]);
+  }
+  for (let i = 0; i < 10 && words.length > 0; i++) {
+    const [a, b] = [words[next(words.length)], words[next(words.length)]];
+    add("sameValue", a, b, false, () => [Number(a.value === b.value)]);
+  }
   // Not a method of ESLint.
   for (let i = 0; i < 20; i++) {
     const offset = next(sourceCode.text.length + 1);

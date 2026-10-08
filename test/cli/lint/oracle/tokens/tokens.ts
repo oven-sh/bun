@@ -35,6 +35,17 @@ type Result = { cases: number; rejectedByOracle: number; rejectedByBun: number; 
 
 const flat = (tokens: any[]) => tokens.flatMap(t => [TYPES.indexOf(t.type), t.range[0], t.range[1]]);
 
+/** `[index, value, ..]` of the tokens whose `value` is not their text. The entities that espree decodes in JSX text are left out. */
+const valuesOf = (code: string, tokens: any[]) =>
+  tokens.flatMap((t, i) => (t.value === code.slice(...t.range) || t.type === "JSXText" ? [] : [i, t.value]));
+
+/** For each comment, how many characters before and after its `value` are part of it. */
+const delimitersOf = (comments: any[]) =>
+  comments.flatMap(c => {
+    const start = c.type === "Block" ? 2 : c.range[1] - c.range[0] - c.value.length;
+    return [start, c.range[1] - c.range[0] - c.value.length - start];
+  });
+
 /** The first place where the lists differ. */
 function compare(it: Case, what: string, expected: number[], actual: number[]): Difference | undefined {
   for (let i = 0; i < Math.max(expected.length, actual.length); i += 3) {
@@ -54,16 +65,22 @@ function compare(it: Case, what: string, expected: number[], actual: number[]): 
 function run(cases: Case[], name: string): Result {
   const parsers = loadParsers(args);
   const result: Result = { cases: 0, rejectedByOracle: 0, rejectedByBun: 0, wrong: 0, tokens: 0, differences: [], rejected: [] };
-  const accepted: { it: Case; tokens: number[]; comments: number[] }[] = [];
+  const accepted: { it: Case; tokens: number[]; comments: number[]; values: unknown[]; delimiters: number[] }[] = [];
   for (const it of cases) {
     try {
       const ast = parse(parsers, it);
-      accepted.push({ it, tokens: flat(ast.tokens), comments: flat(ast.comments) });
+      accepted.push({
+        it,
+        tokens: flat(ast.tokens),
+        comments: flat(ast.comments),
+        values: valuesOf(it.code, ast.tokens),
+        delimiters: delimitersOf(ast.comments),
+      });
     } catch {
       result.rejectedByOracle++;
     }
   }
-  let actual: { errors: boolean; tokens: number[]; comments: number[] }[];
+  let actual: { errors: boolean; tokens: number[]; comments: number[]; values?: unknown[]; delimiters?: number[] }[];
   if (comparesParsers) {
     actual = accepted.map(({ it }) => {
       try {
@@ -84,7 +101,7 @@ function run(cases: Case[], name: string): Result {
     }
     actual = lines.map(line => JSON.parse(line));
   }
-  accepted.forEach(({ it, tokens, comments }, i) => {
+  accepted.forEach(({ it, tokens, comments, values, delimiters }, i) => {
     if (actual[i].errors) {
       result.rejected.push(`${it.id} ${it.sourceType} ${it.ecmaVersion} ${JSON.stringify(it.code.slice(0, 150))}`);
       result.rejectedByBun++;
@@ -92,7 +109,15 @@ function run(cases: Case[], name: string): Result {
     }
     result.cases++;
     result.tokens += tokens.length / 3;
-    const difference = compare(it, "token", tokens, actual[i].tokens) ?? compare(it, "comment", comments, actual[i].comments);
+    const other = (kind: string, expected: unknown[], got?: unknown[]) =>
+      got === undefined || JSON.stringify(expected) === JSON.stringify(got)
+        ? undefined
+        : { kind, id: it.id, context: `expected ${JSON.stringify(expected).slice(0, 150)} got ${JSON.stringify(got).slice(0, 150)}` };
+    const difference =
+      compare(it, "token", tokens, actual[i].tokens) ??
+      compare(it, "comment", comments, actual[i].comments) ??
+      other("the values of tokens", values, actual[i].values) ??
+      other("the values of comments", delimiters, actual[i].delimiters);
     if (difference) {
       result.wrong++;
       result.differences.push(difference);

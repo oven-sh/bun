@@ -610,6 +610,11 @@ pub(super) fn comments(file: &File) -> Option<Vec<RawToken>> {
     Some(Scanner::<false>::run(file, Dialect::of(file), Marks::for_comments(file), 0).comments)
 }
 
+/// Whether the tokens of `file` are those of espree.
+pub(super) fn is_espree(file: &File) -> bool {
+    Dialect::of(file) != Dialect::TypeScript
+}
+
 fn has_html_comments(file: &File) -> bool {
     Dialect::of(file) != Dialect::TypeScript && !file.is_module()
 }
@@ -959,8 +964,8 @@ impl<'a, const TOKENS: bool> Scanner<'a, TOKENS> {
                 break;
             }
         }
-        if matches!(text.get(end), Some(b'\\' | 0x80..)) {
-            return self.unusual_word(end);
+        if matches!(text.get(end), Some(b'\\' | 0x80..)) && self.unusual_word(end) {
+            return;
         }
         let mut kind = TokenKind::Identifier;
         let word = Word::of_chunk(chunk, end - start);
@@ -997,15 +1002,19 @@ impl<'a, const TOKENS: bool> Scanner<'a, TOKENS> {
         kind
     }
 
-    /// An identifier with an escape sequence or a character that is not ASCII at `end`. With an
-    /// escape sequence a reserved word can only be a name.
+    /// An identifier with an escape sequence or a character that is not ASCII at `ascii_end`. With
+    /// an escape sequence a reserved word can only be a name. False, and nothing is done, if what is
+    /// there is not part of the word, as whitespace that is not ASCII.
     #[cold]
-    fn unusual_word(&mut self, end: usize) {
+    fn unusual_word(&mut self, ascii_end: usize) -> bool {
         let (text, start) = (self.text, self.at);
-        let end = lexer::scan_identifier_parts(text, end);
+        let end = lexer::scan_identifier_parts(text, ascii_end);
         if end == start {
             self.at += 1;
-            return;
+            return true;
+        }
+        if end == ascii_end {
+            return false;
         }
         let mut kind = TokenKind::Identifier;
         if let Dialect::Espree { .. } = self.dialect
@@ -1028,6 +1037,7 @@ impl<'a, const TOKENS: bool> Scanner<'a, TOKENS> {
             kind = TokenKind::JsxIdentifier;
         }
         self.token(kind, start, end);
+        true
     }
 
     fn number(&mut self) {

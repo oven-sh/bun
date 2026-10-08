@@ -2,8 +2,8 @@
 //!
 //! - `dump <file>`: the tokens and the comments of a file, one per line.
 //! - `batch <cases.jsonl>`: for each line `{ path, code, parser?, ecmaVersion?, sourceType? }`, a line
-//!   `{ "errors": bool, "tokens": [type, start, end, ..], "comments": [..] }`. A type is an index
-//!   into `TYPES`, positions are in UTF-16 code units.
+//!   `{ "errors": bool, "tokens": [type, start, end, ..], "comments": [..], "values": [index, value, ..],
+//!   "delimiters": [at the start, at the end, ..] }`. A type is a `TokenKind`, positions are in UTF-16 code units.
 //! - `query <cases.jsonl>`: the same with `queries: [[method, a.start, a.end, b.start, b.end, includeComments], ..]`.
 //!   A line of answers for each: the ranges of the tokens, or 0 or 1. The code has to be ASCII.
 //! - `bench <files..>`: the speed of the scan.
@@ -84,7 +84,19 @@ fn batch(path: &str) {
             assert!(bun_lint::tokens::scan_comments_again(file).is_some(), "the scans disagree on the comments");
             let mut out = format!("{{\"errors\":{},\"tokens\":", file.has_parse_errors());
             write_tokens(&mut out, code, file.tokens());
-            let _ = write!(out, ",\"comments\":{comments}}}");
+            // Where `token.value` is not the text: the index of the token, and the value.
+            let different = file.tokens().enumerate().filter(|(_, token)| *token.decoded_value() != *token.text());
+            let values = different.flat_map(|(i, token)| [Json::Number(i as f64), Json::String(token.decoded_value().into_owned())]);
+            let mut written = Vec::new();
+            Json::Array(values.collect()).stringify(&mut written);
+            // How much of each comment is not its value: at the start, at the end.
+            let delimiters = file.comments().flat_map(|comment| {
+                let start = if comment.kind() == TokenKind::Block { 2 } else { comment.text().len() - comment.value().len() };
+                [start, comment.text().len() - comment.value().len() - start]
+            });
+            let delimiters: Vec<usize> = delimiters.collect();
+            let written = bstr::BStr::new(&written);
+            let _ = write!(out, ",\"comments\":{comments},\"values\":{written},\"delimiters\":{delimiters:?}}}");
             out
         });
         let _ = writeln!(stdout, "{line}");
@@ -128,6 +140,13 @@ fn answer<'a>(file: &'a File<'a>, query: &[Json]) -> Vec<u32> {
             vec![u32::from(file.comments_exist_between(a, b))]
         }
         b"space" => vec![u32::from(file.is_space_between(a, b))],
+        b"sameValue" => match (file.token_at(a.start), file.token_at(b.start)) {
+            (Some(a), Some(b)) => {
+                assert_eq!(a.has_same_value(b), a.decoded_value() == b.decoded_value());
+                vec![u32::from(a.has_same_value(b))]
+            }
+            _ => vec![u32::MAX],
+        },
         _ => vec![u32::MAX],
     }
 }

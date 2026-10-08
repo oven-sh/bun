@@ -122,13 +122,14 @@ impl HeaderBlock {
 
     pub fn iter(&self) -> impl Iterator<Item = (&[u8], &[u8], bool)> {
         let mut offset = 0usize;
-        self.fields.chunks_exact(2).map(move |field| {
-            let name_end = offset + (field[0] & !Self::NEVER_INDEX) as usize;
-            let value_end = name_end + field[1] as usize;
+        let (fields, _) = self.fields.as_chunks::<2>();
+        fields.iter().map(move |&[name_len, value_len]| {
+            let name_end = offset + (name_len & !Self::NEVER_INDEX) as usize;
+            let value_end = name_end + value_len as usize;
             let name = &self.bytes[offset..name_end];
             let value = &self.bytes[name_end..value_end];
             offset = value_end;
-            (name, value, field[0] & Self::NEVER_INDEX != 0)
+            (name, value, name_len & Self::NEVER_INDEX != 0)
         })
     }
 }

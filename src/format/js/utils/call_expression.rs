@@ -83,13 +83,21 @@ pub(crate) fn callee_trailing_comments<'a>(call: Call<'a>, callee_end: u32, f: &
     }
 }
 
-/// Of the comments between `start` and the `(` of `call`, those that trail what ends at `start`: the
-/// callee or the type arguments.
-pub(crate) fn comments_before_arguments<'a>(call: Call<'a>, start: u32, f: &Formatter<'a>) -> &'a [Comment] {
-    let comments = f.comments().comments_before_character(start, b'(');
+fn comments_before_arguments<'a>(call: Call<'a>, callee_end: u32, f: &Formatter<'a>) -> &'a [Comment] {
+    let comments = f.comments().comments_before_character(callee_end, b'(');
     match call.args().is_empty() {
         true => comments,
         false => trailing_prefix(comments, f),
+    }
+}
+
+/// The comments that trail the type arguments of `call`, which end at `end`. One behind the `(` at
+/// the end of the line is among them: Prettier's `handleCallExpressionComments` only gives it to
+/// the first argument if what is before it is the callee.
+pub(crate) fn type_arguments_trailing_comments<'a>(call: Call<'a>, end: u32, f: &Formatter<'a>) -> &'a [Comment] {
+    match call.args().first() {
+        Some(first) => trailing_prefix(f.comments().comments_in_range(end, first.span().start), f),
+        None => f.comments().comments_before_character(end, b'('),
     }
 }
 

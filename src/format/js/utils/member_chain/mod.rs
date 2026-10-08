@@ -52,20 +52,7 @@ impl<'a> MemberChain<'a> {
         let Some(first_member) = self.tail.first().and_then(|group| group.members().first()) else {
             return false;
         };
-        // A comment before the `.` that does not start its line trails the object.
-        let has_comment = !f.is_quiet()
-            && match *first_member {
-                ChainMember::StaticMember(member) => {
-                    has_trailing_comment(member, f)
-                        || member.object().is_some_and(|object| {
-                            let comments = f.comments().comments_before_character(object.span().end, b'.');
-                            comments.iter().any(|comment| comment.preceded_by_newline())
-                        })
-                }
-                ChainMember::ComputedMember(member) => has_trailing_comment(member, f),
-                _ => false,
-            };
-        if has_comment {
+        if !f.is_quiet() && (has_leading_comment(first_member, f) || has_trailing_comment(first_member.expr(), f)) {
             return false;
         }
         let has_computed_property = first_member.is_computed_expression();
@@ -155,28 +142,19 @@ impl<'a> MemberChain<'a> {
         self.head.members().iter().chain(self.tail.members())
     }
 
-    /// Whether there is a comment between the object and the `.`, or behind the member.
-    fn has_comment_in_member(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool {
-        match *member {
-            ChainMember::StaticMember(member) => {
-                member.object().is_some_and(|object| {
-                    !f.comments().comments_before_character(object.span().end, b'.').is_empty()
-                }) || has_trailing_comment(member, f)
-            }
-            ChainMember::ComputedMember(member) => call_of_callee(member).is_some() && has_trailing_comment(member, f),
-            ChainMember::CallExpression {
-                expression,
-                position: CallExpressionPosition::Middle,
-            }
-            | ChainMember::TSNonNullExpression(expression) => {
-                call_of_callee(expression).is_some_and(|call| !callee_trailing_comments(call, expression.span().end, f).is_empty())
-            }
-            _ => false,
-        }
-    }
-
+    /// Prettier's `nodeHasComment`.
     fn has_comment(&self, f: &Formatter<'a>) -> bool {
-        !f.is_quiet() && self.members().any(|member| Self::has_comment_in_member(member, f))
+        !f.is_quiet()
+            && self.members().any(|member| {
+                has_leading_comment(member, f)
+                    || (!matches!(
+                        member,
+                        ChainMember::CallExpression {
+                            position: CallExpressionPosition::End,
+                            ..
+                        }
+                    ) && has_trailing_comment(member.expr(), f))
+            })
     }
 }
 
@@ -227,12 +205,31 @@ impl<'a> Format<'a> for MemberChain<'a> {
     }
 }
 
-/// Whether a comment trails `member`, which is `a.b` or `a[b]`.
-fn has_trailing_comment<'a>(member: Expr<'a>, f: &Formatter<'a>) -> bool {
-    let end = member.span().end;
-    match call_of_callee(member) {
+/// Whether a comment leads `member`: it is on a line of its own before the `.`, or before the `[` of
+/// `[name]`. Prettier's `handleMemberExpressionComments`.
+fn has_leading_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool {
+    let (object, character) = match member.expr().kind() {
+        ExprKind::Dot { obj, .. } if matches!(member, ChainMember::StaticMember(_)) => (obj, b'.'),
+        ExprKind::Index { obj, index, .. }
+            if matches!(member, ChainMember::ComputedMember(_)) && matches!(index.kind(), ExprKind::Ident(_)) =>
+        {
+            (obj, b'[')
+        }
+        _ => return false,
+    };
+    f.comments().comments_before_character(object.span().end, character).iter().any(|comment| comment.preceded_by_newline())
+}
+
+/// Whether a comment trails `expression`, a link of a chain that is not the last.
+fn has_trailing_comment<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let end = expression.span().end;
+    match call_of_callee(expression) {
         Some(call) => !callee_trailing_comments(call, end, f).is_empty(),
-        None => f.comments().has_end_of_line_comment_after(end),
+        // A comment on its own line leads the next member, or what is in its brackets.
+        None => f.comments().comments_after(end).first().is_some_and(|comment| {
+            !comment.preceded_by_newline()
+                && f.source_text().all_bytes_match(end, comment.span.start, |b| b.is_ascii_whitespace() || b == b')')
+        }),
     }
 }
 
@@ -280,17 +277,7 @@ fn compute_remaining_groups<'a>(
     let mut groups_builder = MemberChainGroupsBuilder::default();
 
     for member in members {
-        let has_trailing_comment = !f.is_quiet() && {
-            let (expression, end) = (member.expr(), member.span().end);
-            match call_of_callee(expression) {
-                Some(call) => !callee_trailing_comments(call, end, f).is_empty(),
-                // A comment on its own line leads the next member.
-                None => f.comments().comments_after(end).first().is_some_and(|comment| {
-                    !comment.preceded_by_newline()
-                        && f.source_text().bytes_range(end, comment.span.start).trim_ascii().is_empty()
-                }),
-            }
-        };
+        let has_trailing_comment = !f.is_quiet() && has_trailing_comment(member.expr(), f);
 
         match member {
             // `[0]` goes with what is before it.

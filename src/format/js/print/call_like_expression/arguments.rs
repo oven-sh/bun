@@ -211,7 +211,7 @@ fn arguments_grouped_layout<'a>(
         let (first, second) = (args.first()?, as_expression(args.last()?)?);
         let first = as_expression(first);
         if can_group_expression_argument(second, f) {
-            return should_group_last_argument_impl(2, first, second, f)
+            return should_group_last_argument_impl(args, first, second, f)
                 .then_some(GroupedCallArgumentLayout::GroupedLastArgument);
         }
         should_group_first_argument(first?, second, f).then_some(GroupedCallArgumentLayout::GroupedFirstArgument)
@@ -219,7 +219,7 @@ fn arguments_grouped_layout<'a>(
         let mut iter = args.iter();
         let last = as_expression(iter.next_back()?)?;
         let penultimate = iter.next_back().and_then(as_expression);
-        (can_group_expression_argument(last, f) && should_group_last_argument_impl(args.len(), penultimate, last, f))
+        (can_group_expression_argument(last, f) && should_group_last_argument_impl(args, penultimate, last, f))
             .then_some(GroupedCallArgumentLayout::GroupedLastArgument)
     }
 }
@@ -250,11 +250,14 @@ fn should_group_first_argument<'a>(first: Expr<'a>, second: Expr<'a>, f: &Format
 }
 
 fn should_group_last_argument_impl<'a>(
-    args_len: usize,
+    args: List<'a, Expr<'a>>,
     penultimate: Option<Expr<'a>>,
     last: Expr<'a>,
     f: &Formatter<'a>,
 ) -> bool {
+    let args_len = args.len();
+    let previous_end = args.get(args_len.wrapping_sub(2)).map(|previous| previous.span().end);
+
     // Not if the one before is of the same kind.
     if let Some(penultimate) = penultimate
         && matches!(
@@ -274,13 +277,13 @@ fn should_group_last_argument_impl<'a>(
     // Not if there are comments around the last argument.
     if !f.is_quiet() {
         let last_span = last.span();
-        let has_comment_before_last = match penultimate {
-            // A comment at the end of the line, or before the comma, belongs to the one before.
-            Some(penultimate) => {
-                f.comments().comments_in_range(penultimate.span().end, last_span.start).last().is_some_and(|c| {
-                    !c.followed_by_newline() && !f.source_text().next_non_whitespace_byte_is(c.span.end, b',')
-                })
-            }
+        // A comment at the end of the line of the argument before, or before the comma, trails that.
+        let has_comment_before_last = match previous_end {
+            Some(previous_end) => f.comments().comments_in_range(previous_end, last_span.start).iter().any(|comment| {
+                comment.preceded_by_newline()
+                    || (!comment.followed_by_newline()
+                        && !f.source_text().bytes_contain(comment.span.end, last_span.start, b','))
+            }),
             None => f.comments().has_comment_before(last_span.start),
         };
         if has_comment_before_last

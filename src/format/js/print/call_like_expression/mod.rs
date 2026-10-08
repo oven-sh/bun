@@ -7,8 +7,8 @@ use super::arrow_function_expression::is_multiline_template_starting_on_same_lin
 use super::type_parameters::type_arguments;
 use crate::js::parentheses::expression::expression_needs_parentheses;
 use crate::js::utils::call_expression::{
-    callee_trailing_comments, comments_before_arguments, is_call_expression, is_member_expression,
-    is_test_call_expression,
+    callee_trailing_comments, is_call_expression, is_member_expression, is_test_call_expression,
+    type_arguments_trailing_comments,
 };
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::member_chain::MemberChain;
@@ -103,7 +103,7 @@ impl<'a> Format<'a> for FormatTypeArguments<'a> {
         let span = AstNodes::TSTypeParameterInstantiation(Node::Expr(e)).span();
         write!(f, format_leading_comments(span));
         type_arguments.write_without_comments(f);
-        write!(f, FormatTrailingComments::Comments(comments_before_arguments(call, span.end, f)));
+        write!(f, FormatTrailingComments::Comments(type_arguments_trailing_comments(call, span.end, f)));
     }
 }
 

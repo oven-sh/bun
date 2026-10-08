@@ -2,6 +2,7 @@ use crate::js::format::{FormatNonNullMarks, identifier, write_trailing_comments_
 use crate::js::print::call_like_expression::FormatTypeArguments;
 use crate::js::print::call_like_expression::arguments::FormatArguments;
 use crate::js::utils::call_expression::callee_trailing_comments;
+use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -45,10 +46,6 @@ impl<'a> ChainMember<'a> {
             | Self::ComputedMember(e)
             | Self::Node(e) => e,
         }
-    }
-
-    pub(crate) fn span(&self) -> Span {
-        self.expr().span()
     }
 }
 
@@ -128,15 +125,15 @@ impl<'a> Format<'a> for ChainMember<'a> {
             Self::ComputedMember(member) => {
                 write!(
                     f,
-                    [
-                        line_suffix_boundary(),
-                        format_leading_comments(member.span()),
-                        FormatComputedMemberExpressionWithoutObject(member)
-                    ]
+                    [format_leading_comments(member.span()), FormatComputedMemberExpressionWithoutObject(member)]
                 );
                 write_trailing_comments_of_member(member, f);
             }
-            Self::Node(node) => write!(f, node),
+            Self::Node(node) if f.is_quiet() || call_of_callee(node).is_none() => write!(f, node),
+            Self::Node(node) => {
+                write!(f, FormatNodeWithoutTrailingComments(&node));
+                write_trailing_comments_of_member(node, f);
+            }
         }
     }
 }
@@ -154,9 +151,7 @@ impl<'a> Format<'a> for FormatComputedMemberExpressionWithoutObject<'a> {
         // name.
         if !f.is_quiet() && matches!(index.kind(), ExprKind::Ident(_)) {
             let comments = f.comments().comments_before_character(member.span().start, b'[');
-            if !comments.is_empty() {
-                write!(f, [soft_line_break(), FormatLeadingComments::Comments(comments)]);
-            }
+            write!(f, FormatLeadingComments::Comments(comments));
         }
 
         let optional = member.is_optional().then_some("?.");

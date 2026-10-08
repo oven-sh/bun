@@ -56,7 +56,8 @@ fn may_need_parentheses<'a>(e: Expr<'a>) -> bool {
             let text = e.text();
             // `l\u0065t` is `let`.
             return is_name_that_may_need_parentheses(text)
-                || (text.len() >= 8 && bun_core::strings::contains_char(text, b'\\'));
+                || (text.len() >= 8 && bun_core::strings::contains_char(text, b'\\'))
+                || (text.len() >= 35 && text.starts_with(b"PRETTIER_"));
         }
         // `in` in the head of a `for` statement, and a sequence, depend on more.
         T::Binary if matches!(e.binary_operator(), None | Some(BinOp::In | BinOp::Comma)) => return true,
@@ -398,6 +399,10 @@ fn is_name_that_may_need_parentheses(name: &[u8]) -> bool {
 fn identifier_needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     // Without escapes, as it is written: `(l\u0065t)[0]` is `(let)[0]`.
     let name = e.as_ident().map_or(&b""[..], |name| name.bytes());
+    // It stands for an expression in a template that this code is in the text of.
+    if e.is_parenthesized() && crate::html::in_js::is_placeholder_in_js(name) {
+        return true;
+    }
     if !is_name_that_may_need_parentheses(name) || is_cast_target(e, f) {
         return false;
     }

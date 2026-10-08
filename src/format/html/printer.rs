@@ -249,9 +249,13 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             }
             return self.out.built_text(|out| tags.closing_tag_suffix(id, out));
         }
-        // The first and the last part of the `fill` have what is borrowed.
-        self.out.start_fill();
-        self.out.start_item();
+        // The first and the last part of the `fill` have what is borrowed. One part is no `fill`: `cleanDoc` makes it so in
+        // a template of JavaScript, where the part can be more than a string.
+        let is_fill = html_split(value).nth(1).is_some();
+        if is_fill {
+            self.out.start_fill();
+            self.out.start_item();
+        }
         self.out.built_text(|out| tags.opening_tag_prefix(id, out));
         for (index, word) in html_split(value).enumerate() {
             if index > 0 {
@@ -264,8 +268,10 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
             self.out.text(word);
         }
         self.out.built_text(|out| tags.closing_tag_suffix(id, out));
-        self.out.end_item();
-        self.out.end_fill();
+        if is_fill {
+            self.out.end_item();
+            self.out.end_fill();
+        }
     }
 
     // ───────────────────────────── `print/children.js` ─────────────────────────────

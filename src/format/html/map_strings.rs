@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 
 /// What becomes of the strings of a document.
 pub(crate) trait MapString {
-    /// Whether `text` becomes something else.
+    /// Whether `text`, or a string that it is a part of, may become something else.
     fn changes(&self, text: &[u8]) -> bool;
 
     /// Writes what `text` becomes. `is_one_string`: see `TextWidth::multiline_string`.
@@ -23,7 +23,8 @@ fn text_of<'t>(element: &'t FormatElement, source: &'t [u8], owned: &'t [u8]) ->
     }
 }
 
-/// Writes `content`, which has been captured, with what `map` makes of its strings.
+/// Writes `content`, which has been captured, with what `map` makes of its strings. Strings that follow each other are one
+/// string: the document that Prettier maps has been through `cleanDoc`.
 pub(crate) fn write_mapped(content: Interned, map: &mut impl MapString, f: &mut Formatter<'_>) {
     let source = f.source_text().as_bytes();
     // Everything that `content` stands for is in it: what is captured stays where it is written.
@@ -34,7 +35,10 @@ pub(crate) fn write_mapped(content: Interned, map: &mut impl MapString, f: &mut 
             let mut mapper = Mapper {
                 map,
                 mapped: FxHashMap::default(),
+                strings: SmallVec::new(),
                 text: Vec::new(),
+                is_one_string: false,
+                has_literal_lines: false,
             };
             mapper.write(content, f);
         }
@@ -46,8 +50,14 @@ struct Mapper<'m, M> {
     map: &'m mut M,
     /// What has been captured, and the same with the new texts.
     mapped: FxHashMap<Interned, Interned>,
-    /// The text that is being replaced.
+    /// The strings since the last element that is not one, which have not been written yet.
+    strings: SmallVec<[FormatElement; 8]>,
+    /// The same, put together.
     text: Vec<u8>,
+    /// One of them has line breaks that are nothing but characters.
+    is_one_string: bool,
+    /// One of them has line breaks that are a `literalline` each.
+    has_literal_lines: bool,
 }
 
 impl<M: MapString> Mapper<'_, M> {
@@ -65,16 +75,51 @@ impl<M: MapString> Mapper<'_, M> {
         mapped
     }
 
+    /// Writes the strings that have not been written yet.
+    fn flush(&mut self, f: &mut Formatter<'_>) {
+        if self.strings.is_empty() {
+            return;
+        }
+        match self.map.changes(&self.text) {
+            true => self.map.write(&self.text, self.is_one_string, f),
+            false => self.strings.iter().for_each(|&string| f.write_element(string)),
+        }
+        self.strings.clear();
+        self.text.clear();
+        (self.is_one_string, self.has_literal_lines) = (false, false);
+    }
+
     fn write(&mut self, content: Interned, f: &mut Formatter<'_>) {
         let source = f.source_text().as_bytes();
         let mut indices = content.range();
         while let Some(&element) = indices.next().and_then(|index| f.storage.pool.get(index)) {
+            let (is_one_string, has_literal_lines) = match element {
+                FormatElement::SourceText(text) | FormatElement::OwnedText(text) => {
+                    (text.width.is_one_string(), text.width.is_multiline() && !text.width.is_one_string())
+                }
+                _ => (false, false),
+            };
+            if (is_one_string && self.has_literal_lines) || (has_literal_lines && self.is_one_string) {
+                self.flush(f);
+            }
+            if let Some(text) = text_of(&element, source, &f.storage.text) {
+                self.text.extend_from_slice(text);
+                self.strings.push(element);
+                self.is_one_string |= is_one_string;
+                self.has_literal_lines |= has_literal_lines;
+                continue;
+            }
             match element {
                 FormatElement::Skip(skip) => {
                     if skip.len > 0 {
                         indices.nth(skip.len as usize - 1);
                     }
+                    continue;
                 }
+                FormatElement::Nop => continue,
+                _ => self.flush(f),
+            }
+            match element {
                 FormatElement::Interned(interned) => {
                     let mapped = self.capture(interned, f);
                     if mapped.len > 0 {
@@ -92,20 +137,9 @@ impl<M: MapString> Mapper<'_, M> {
                     let mode = if group.mode() == GroupMode::Expand { GroupMode::Expand } else { GroupMode::Flat };
                     f.write_element(FormatElement::Tag(Tag::StartGroup(Group::new().with_id(group.id()).with_mode(mode))));
                 }
-                FormatElement::Token(_) | FormatElement::SourceText(_) | FormatElement::OwnedText(_) => {
-                    let Some(text) = text_of(&element, source, &f.storage.text).filter(|text| self.map.changes(text)) else {
-                        f.write_element(element);
-                        continue;
-                    };
-                    let mut copy = std::mem::take(&mut self.text);
-                    copy.clear();
-                    copy.extend_from_slice(text);
-                    let is_one_string = matches!(element, FormatElement::SourceText(text) | FormatElement::OwnedText(text) if text.width.is_one_string());
-                    self.map.write(&copy, is_one_string, f);
-                    self.text = copy;
-                }
                 element => f.write_element(element),
             }
         }
+        self.flush(f);
     }
 }

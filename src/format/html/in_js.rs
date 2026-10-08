@@ -6,8 +6,10 @@
 use super::Parser;
 use super::js::write_string;
 use super::map_strings::{MapString, write_mapped};
+pub(crate) use super::utilities::is_placeholder_in_js;
 use crate::css::text;
 use crate::ir::element::{Group, Interned, LineMode};
+use crate::js::context::JsFormatContext;
 use crate::js::print::template::write_embedded_template_expression;
 use crate::options::{HtmlRoot, HtmlWhitespaceSensitivity};
 use crate::prelude::*;
@@ -18,8 +20,25 @@ const PLACEHOLDER_START: &[u8] = b"PRETTIER_HTML_PLACEHOLDER_";
 const PLACEHOLDER_END: &[u8] = b"_IN_JS";
 
 /// `isAngularComponentTemplate`: `` @Component({ template: `..` }) ``. `e`: a template.
-pub(crate) fn is_angular_component_template(e: Expr<'_>) -> bool {
+fn is_angular_component_template(e: Expr<'_>) -> bool {
     crate::css::embed::is_angular_component_property(e.ast_parent(), b"template")
+}
+
+/// `` html`..` ``. `e`: a template.
+fn has_html_tag(e: Expr<'_>) -> bool {
+    matches!(e.ast_parent(), AstNodes::TaggedTemplateExpression(tagged)
+        if matches!(tagged.kind(), ExprKind::TaggedTemplate(call)
+            if call.callee() != e && matches!(call.callee().kind(), ExprKind::Ident(_)) && call.callee().text() == b"html"))
+}
+
+/// Whether the text of the template `e` can be written as HTML. Of the comments that say so, this knows the one right
+/// before the template.
+pub(crate) fn can_be_html(e: Expr<'_>) -> bool {
+    let mut before = e.file().text().get(..e.span().start as usize).unwrap_or_default().trim_ascii_end();
+    while let Some(outside) = before.strip_suffix(b"(") {
+        before = outside.trim_ascii_end();
+    }
+    has_html_tag(e) || is_angular_component_template(e) || before.ends_with(b"/* HTML */")
 }
 
 /// The parser for the text of the template `e`, if `embed` takes it for HTML.
@@ -27,11 +46,7 @@ fn parser_of<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> Opti
     if !f.options().embedded_html || !matches!(f.options().embedded_language_formatting, EmbeddedLanguageFormatting::Auto) {
         return None;
     }
-    let parent = e.ast_parent();
-    let has_tag = matches!(parent, AstNodes::TaggedTemplateExpression(tagged)
-        if matches!(tagged.kind(), ExprKind::TaggedTemplate(call)
-            if call.callee() != e && matches!(call.callee().kind(), ExprKind::Ident(_)) && call.callee().text() == b"html"));
-    let parser = if has_tag || crate::graphql::embed::has_language_comment(e, parent, b" HTML ", f) {
+    let parser = if has_html_tag(e) || crate::graphql::embed::has_language_comment(e, e.ast_parent(), b" HTML ", f) {
         Parser::Html
     } else if is_angular_component_template(e) {
         Parser::Angular
@@ -73,6 +88,22 @@ fn line_around(text: &[u8], options: &FormatOptions) -> Option<LineMode> {
         return Some(LineMode::Hard);
     }
     (text::starts_with_white_space(text) && text::trim_end(text).len() < text.len()).then_some(LineMode::SoftOrSpace)
+}
+
+/// How many `indent`s are around the line that `e` starts on, if the file is indented the way it is going to be.
+fn indent_level_in_source(e: Expr<'_>, options: &FormatOptions) -> u32 {
+    let before = e.file().text().get(..e.span().start as usize).unwrap_or_default();
+    let line_start = strings::last_index_of_char(before, b'\n').max(strings::last_index_of_char(before, b'\r')).map_or(0, |at| at + 1);
+    let indent_width = u32::from(options.indent_width.value()).max(1);
+    let mut columns = 0;
+    for byte in &before[line_start..] {
+        match byte {
+            b' ' => columns += 1,
+            b'\t' => columns += indent_width,
+            _ => break,
+        }
+    }
+    columns / indent_width
 }
 
 /// What the label of the document of a template says.
@@ -137,7 +168,7 @@ impl Substitutions<'_> {
     }
 
     fn needs_escapes(&self, text: &[u8]) -> bool {
-        strings::index_of_any(text, b"\\`").is_some() || strings::contains(text, b"${") || (self.is_in_html && strings::contains(text, b"</"))
+        strings::index_of_any(text, b"\\`$").is_some() || (self.is_in_html && strings::contains_char(text, b'<'))
     }
 
     /// Writes `text`, which is between placeholders: `uncookTemplateElementValue`.
@@ -172,7 +203,7 @@ impl Substitutions<'_> {
 
 impl MapString for Substitutions<'_> {
     fn changes(&self, text: &[u8]) -> bool {
-        self.needs_escapes(text) || self.find_placeholder(text).is_some()
+        self.needs_escapes(text) || strings::contains(text, PLACEHOLDER_START)
     }
 
     fn write(&mut self, text: &[u8], is_one_string: bool, f: &mut Formatter<'_>) {
@@ -209,8 +240,14 @@ pub(crate) fn write_template<'a>(e: Expr<'a>, template: Template<'a>, f: &mut Fo
         cursor_offset: None,
         ..f.options().clone()
     };
+    let line = line_around(&text, &options);
+    // Where the lines start is up to the printer. What is printed by itself (JSON, YAML, ..) has to be told how much room
+    // there is: as much as there is if the file has been formatted before.
+    let indent_level = indent_level_in_source(e, &options) + u32::from(line.is_some());
     let slot = f.start_capture();
-    let written = super::write_document(&text, parser, None, &options, true, None, f);
+    // The code in the text is written with the options of the formatter.
+    let context = JsFormatContext::without_file(&text, options.clone(), &[]);
+    let written = f.write_embedded(context, &text, |f| super::write_document(&text, parser, None, &options, true, Some(indent_level), f));
     let document = f.end_capture(slot);
     let Ok(top_level_count) = written else {
         return false;
@@ -226,7 +263,6 @@ pub(crate) fn write_template<'a>(e: Expr<'a>, template: Template<'a>, f: &mut Fo
     };
 
     let tag = |tag: Tag, f: &mut Formatter<'a>| f.write_element(FormatElement::Tag(tag));
-    let line = line_around(&text, &options);
     let is_indented = line.is_some() || top_level_count > 1;
     tag(Tag::StartGroup(Group::new()), f);
     f.write_token("`");

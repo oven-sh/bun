@@ -72,12 +72,23 @@ pub fn first_super_statement<'a>(constructor: Func<'a>) -> Option<(impl Iterator
 /// Whether it can be told from the statements of the body alone that `super()` is called exactly
 /// once on every way through `constructor`: it is a statement of its own there, no `return`
 /// precedes it, and there is no other.
+/// Not if there is a loop: see [`ConstructorSuper::on_segment_start`].
 fn calls_super_plainly<'a>(constructor: Func<'a>, cx: &mut Cx<'a, ConstructorSuper>) -> bool {
     let Some((_, call)) = first_super_statement(constructor) else {
         return false;
     };
     let (file, callee, whole) = (constructor.file(), call.callee(), constructor.span());
     if !constructor.returns().all(|it| it.span().start > callee.span().start) {
+        return false;
+    }
+    let loops = cx.state.loops.get_or_insert_with(|| {
+        let tags = [StmtTag::DoWhile, StmtTag::While, StmtTag::For, StmtTag::ForIn, StmtTag::ForOf];
+        let statements = tags.into_iter().flat_map(|tag| file.stmts_of_kind(tag));
+        let mut loops: Vec<u32> = statements.map(|it| it.span().start).collect();
+        loops.sort_unstable();
+        loops
+    });
+    if loops.get(loops.partition_point(|&it| it < whole.start)).is_some_and(|&it| it < whole.end) {
         return false;
     }
     let callees = cx.state.super_callees.get_or_insert_with(|| {
@@ -120,6 +131,8 @@ pub struct State<'a> {
     seg_info_map: FxHashMap<u32, SegmentInfo<'a>>,
     /// The `super` of each `super()` of the file, in source order, once a constructor asks.
     super_callees: Option<Vec<Expr<'a>>>,
+    /// Where the loops of the file start, in ascending order, once a constructor asks.
+    loops: Option<Vec<u32>>,
 }
 
 impl<'a> State<'a> {
@@ -226,15 +239,21 @@ impl ConstructorSuper {
         if cx.state.constructor().is_none() {
             return;
         }
-        let (any, some, every) = cx.state.seen_prev_segments(segment);
-        let info = SegmentInfo {
-            called_in_some_paths: any && some,
-            // The segment of the update of a `for` is made in advance, before what precedes it is
-            // seen. It is never the only one before another: this makes the others decide.
-            called_in_every_paths: any && every || is_update_of_for(node),
+        // As upstream, it has been seen before those before it are looked at. One of them is itself if it is all of a loop,
+        // as in `do { a(); } while (b);`: then `super()` is never called on every path to it, and to what follows.
+        let unknown = SegmentInfo {
+            called_in_some_paths: false,
+            called_in_every_paths: false,
             valid_nodes: SmallVec::new(),
         };
-        cx.state.seg_info_map.insert(segment.id(), info);
+        cx.state.seg_info_map.insert(segment.id(), unknown);
+        let (any, some, every) = cx.state.seen_prev_segments(segment);
+        if let Some(info) = cx.state.seg_info_map.get_mut(&segment.id()) {
+            info.called_in_some_paths = any && some;
+            // The segment of the update of a `for` is made in advance, before what precedes it is
+            // seen. It is never the only one before another: this makes the others decide.
+            info.called_in_every_paths = any && every || is_update_of_for(node);
+        }
     }
 
     fn on_segment_loop<'a>(

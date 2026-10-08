@@ -1,5 +1,6 @@
 //! From a file to its formatted text.
 
+use super::formatter::Formatter;
 use crate::{FormatError, FormatOptions};
 use bun_lint::ast::File;
 
@@ -18,7 +19,18 @@ pub fn format<'a>(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
-    let root = write_document(file, options, scratch)?;
+    format_with(file, options, scratch, out, crate::js::format_file)
+}
+
+/// The same for the document that `write` writes.
+pub(crate) fn format_with<'a>(
+    file: &'a File<'a>,
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+    write: impl FnOnce(&'a File<'a>, &mut Formatter<'a>),
+) -> Result<(), FormatError> {
+    let root = write_document(file, options, scratch, write)?;
     out.reserve(file.text().len() + file.text().len() / 8);
     super::printer::print(
         root,
@@ -37,7 +49,7 @@ pub fn dump_document<'a>(
     options: &FormatOptions,
     scratch: &mut Scratch,
 ) -> Result<String, FormatError> {
-    let root = write_document(file, options, scratch)?;
+    let root = write_document(file, options, scratch, crate::js::format_file)?;
     Ok(super::debug::dump(root, &scratch.formatter.storage, file.text()))
 }
 
@@ -45,6 +57,7 @@ fn write_document<'a>(
     file: &'a File<'a>,
     options: &FormatOptions,
     scratch: &mut Scratch,
+    write: impl FnOnce(&'a File<'a>, &mut Formatter<'a>),
 ) -> Result<super::element::Interned, FormatError> {
     if file.has_parse_errors() {
         return Err(FormatError::SyntaxError);
@@ -58,8 +71,8 @@ fn write_document<'a>(
     let comments = comments.map_or(&[][..], |comments: &Vec<crate::js::comments::Comment>| comments);
     let context = crate::js::context::JsFormatContext::new(file, options.clone(), comments);
     let buffers = std::mem::take(&mut scratch.formatter);
-    let mut formatter = super::formatter::Formatter::new(context, buffers);
-    crate::js::format_file(file, &mut formatter);
+    let mut formatter = Formatter::new(context, buffers);
+    write(file, &mut formatter);
     let (root, buffers) = formatter.finish();
     scratch.formatter = buffers;
     super::document::propagate_expand(root, &mut scratch.formatter.storage, &mut scratch.propagate);

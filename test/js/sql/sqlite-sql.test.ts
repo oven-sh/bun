@@ -1405,7 +1405,8 @@ describe("Transactions", () => {
 // also fails these tests if close() leaves a rejection unhandled.
 describe("tx.close() rolls the transaction back", () => {
   const connectionClosed = "ERR_SQLITE_CONNECTION_CLOSED";
-  const orders: Array<[string, (tx: Bun.TransactionSQL) => Promise<void>, string]> = [
+  type Order = [name: string, close: (tx: Bun.TransactionSQL) => Promise<void>, expected: string];
+  const orders: Order[] = [
     [
       "close({ timeout }) with no second query",
       async tx => {
@@ -1445,6 +1446,19 @@ describe("tx.close() rolls the transaction back", () => {
       },
       connectionClosed,
     ],
+    // Each then() moves the callback one microtask later against the wait of close().
+    ...[0, 1, 2, 3].map(
+      (hops): Order => [
+        `close({ timeout }) that the callback does not await, while it awaits the second query behind ${hops} then() calls`,
+        async tx => {
+          let second: Promise<unknown> = tx`SELECT 1 AS x`;
+          for (let hop = 0; hop < hops; hop++) second = second.then(rows => rows);
+          tx.close({ timeout: 60 });
+          await second;
+        },
+        connectionClosed,
+      ],
+    ),
     [
       "close() that the callback does not await",
       async tx => {

@@ -899,6 +899,29 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand, connec
     expect(pool.received).toEqual([...onConn0(beginCommand, "SELECT 'pending'", "ROLLBACK"), ...afterTransaction(0)]);
   });
 
+  // The pending query ends the wait of close() and the callback within a few microtasks of each
+  // other. Each then() moves the callback one microtask later, so the runner and close() meet
+  // in every order. Only one of the two may send the rollback.
+  test.each([0, 1, 2, 3])(
+    "transaction.close({ timeout }) and a callback that awaits the pending query behind %d then() calls send one rollback",
+    async hops => {
+      await using pool = await closeTestPool();
+      let closed: Promise<unknown> | undefined;
+      const outcome = await settledCode(
+        pool.sql.begin(async tx => {
+          let pending: Promise<unknown> = tx.unsafe("SELECT 'pending'").execute();
+          for (let hop = 0; hop < hops; hop++) pending = pending.then(rows => rows);
+          closed = tx.close({ timeout: 60 });
+          await pending;
+        }),
+      );
+      expect(outcome).toBe(connectionClosedCode);
+      await closed;
+      await expectConnectionKept(pool);
+      expect(pool.received).toEqual([...onConn0(beginCommand, "SELECT 'pending'", "ROLLBACK"), ...afterTransaction(0)]);
+    },
+  );
+
   // The callback's own error reaches begin(), and the runner and close() share one rollback.
   test("a callback that throws while transaction.close({ timeout }) waits keeps its error", async () => {
     await using pool = await closeTestPool();

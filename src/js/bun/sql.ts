@@ -903,10 +903,12 @@ const SQL = function SQL(
     } catch (err) {
       try {
         const closing = state.connectionState & ReservedConnectionState.closing;
-        if (closing && needs_rollback) {
+        // no await between this read and the write below: close() can leave its wait in any tick
+        const closeRollback = state.rollback;
+        if (closeRollback && needs_rollback) {
           try {
-            // the ROLLBACK that close() has in flight, if any
-            await state.rollback;
+            // the ROLLBACK that close() has in flight
+            await closeRollback;
           } catch {
             // close() reports that failure, and the runner sends its own ROLLBACK below
           }

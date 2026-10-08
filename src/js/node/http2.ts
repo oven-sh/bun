@@ -3915,8 +3915,7 @@ function buildSensitiveNames(headers, sensitives): Record<string, boolean> {
   return map;
 }
 
-// The sentHeaders fold pushes a later duplicate of a name into the name's array. node pushes into
-// the caller's array: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2173
+// Unlike node, a later duplicate is pushed into a copy: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L2173
 function copyHeaderValueArray(values: any[]): any[] {
   // ToLength, as in Array.prototype.join: a Proxy of an array can report any length.
   const length = $toLength(values.length);

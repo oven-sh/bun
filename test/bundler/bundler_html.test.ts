@@ -346,8 +346,10 @@ console.log("requires " + dep);`,
   });
 
   // Same, when the script resolved to a lazily-initialized ES module (here
-  // because another script also `import()`s it): the page calls `init_foo()`,
-  // with `await` when the module uses top-level await.
+  // because another script also `import()`s it): the page calls `init_foo()`.
+  // `tla.js` suspends on a top-level await and `main.js` comes after it, so the
+  // page starts both at their tags and awaits them at the end of the chunk:
+  // `main` runs while `tla` is suspended, as with separate module scripts.
   itBundled("html/script-src-lazy-esm", {
     outdir: "out/",
     files: {
@@ -375,10 +377,142 @@ console.log("lazy " + sync + " " + tla);`,
     entryPoints: ["/index.html"],
     onAfterBundle(api) {
       const js = api.readFile("out/index.html").match(/src="\.\/([^"]+\.js)"/)![1];
-      api.expectFile("out/" + js).toMatch(/init_sync\(\);\s*await init_tla\(\);/);
+      api.expectFile("out/" + js).toMatch(/init_sync\(\);\s*init_tla\(\);\s*init_main\(\);/);
+      api.expectFile("out/" + js).toMatch(/await __promiseAll\(\[\s*init_tla\(\),\s*init_main\(\)\s*\]\);\s*$/);
       api.writeFile("out/run.mjs", `import "./${js}";`);
     },
-    run: { file: "out/run.mjs", stdout: "sync\ntla\nmain\nlazy sync tla" },
+    run: { file: "out/run.mjs", stdout: "sync\nmain\ntla\nlazy sync tla" },
+  });
+
+  // In the browser a module script that suspends on a top-level await does not
+  // hold back the page's next script. Once a page has such a script with
+  // another script after it, every async script runs in an `__esm` wrapper
+  // that the page starts at the tag and awaits at the end of the chunk, so the
+  // chunk still settles after all of them.
+  for (const minify of [false, true]) {
+    itBundled("html/script-src-top-level-await-does-not-block-later-scripts" + (minify ? "-minify" : ""), {
+      outdir: "out/",
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      minifyWhitespace: minify,
+      files: {
+        "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <main id="m">catalogue</main>
+    <script src="./legacy-badge.js"></script>
+    <script type="module" src="./widget.js"></script>
+  </body>
+</html>`,
+        "/app.js": `
+import { currencies } from "./currencies.js";
+console.log("app: start");
+const cfg = await new Promise(resolve => setTimeout(() => resolve({ currency: currencies[0] }), 0));
+console.log("app: loaded " + cfg.currency);`,
+        "/currencies.js": `export const currencies = ["EUR"];`,
+        "/legacy-badge.js": `
+(function (root, factory) {
+  if (typeof module === "object" && module.exports) module.exports = factory();
+  else root.Badge = factory();
+})(globalThis, function () {
+  console.log("legacy badge");
+  return {};
+});`,
+        "/widget.js": `
+console.log("widget: start");
+await 0;
+console.log("widget: ready");`,
+      },
+      entryPoints: ["/index.html"],
+      onAfterBundle(api) {
+        const js = api.readFile("out/index.html").match(/src="\.\/([^"]+\.js)"/)![1];
+        api.writeFile("out/run.mjs", `await import("./${js}");\nconsole.log("chunk settled");`);
+      },
+      run: {
+        file: "out/run.mjs",
+        stdout: "app: start\nlegacy badge\nwidget: start\nwidget: ready\napp: loaded EUR\nchunk settled",
+      },
+    });
+  }
+
+  // A rejected top-level await fails the chunk once, at the end, after every
+  // other script has started. It is not left behind as an unhandled rejection.
+  itBundled("html/script-src-top-level-await-rejection", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <body>
+    <script type="module" src="./a.js"></script>
+    <script src="./b.js"></script>
+    <script type="module" src="./c.js"></script>
+  </body>
+</html>`,
+      "/a.js": `
+console.log("a: start");
+await new Promise((_, reject) => setTimeout(() => reject(new Error("a failed")), 0));
+console.log("a: unreachable");`,
+      "/b.js": `console.log("b");`,
+      "/c.js": `
+console.log("c: start");
+await new Promise(resolve => setTimeout(resolve, 30));
+console.log("c: done");`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const js = api.readFile("out/index.html").match(/src="\.\/([^"]+\.js)"/)![1];
+      api.writeFile(
+        "out/run.mjs",
+        `process.on("unhandledRejection", e => console.log("unhandled: " + e.message));
+try {
+  await import("./${js}");
+  console.log("chunk settled");
+} catch (e) {
+  console.log("chunk failed: " + e.message);
+}`,
+      );
+    },
+    run: { file: "out/run.mjs", stdout: "a: start\nb\nc: start\nchunk failed: a failed\nc: done" },
+  });
+
+  // A page whose only async script is the last one has nothing to hold back:
+  // the top-level await stays inline and no wrapper is paid for.
+  itBundled("html/script-src-top-level-await-last-stays-inline", {
+    outdir: "out/",
+    files: {
+      "/index.html": `
+<!DOCTYPE html>
+<html>
+  <head>
+    <link rel="stylesheet" href="./styles.css">
+    <script src="./first.js"></script>
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <img src="./logo.png">
+  </body>
+</html>`,
+      "/styles.css": `body { color: red; }`,
+      "/logo.png": `not really a png`,
+      "/first.js": `console.log("first");`,
+      "/app.js": `
+console.log("app: start");
+await 0;
+console.log("app: ready");`,
+    },
+    entryPoints: ["/index.html"],
+    onAfterBundle(api) {
+      const js = api.readFile("out/index.html").match(/src="\.\/([^"]+\.js)"/)![1];
+      api.expectFile("out/" + js).not.toContain("__esm");
+      api.expectFile("out/" + js).toContain("await 0");
+      api.writeFile("out/run.mjs", `await import("./${js}");\nconsole.log("chunk settled");`);
+    },
+    run: { file: "out/run.mjs", stdout: "first\napp: start\napp: ready\nchunk settled" },
   });
 
   // With code splitting the CommonJS script shared by two pages moves to its

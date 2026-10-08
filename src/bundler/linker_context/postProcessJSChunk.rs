@@ -821,6 +821,73 @@ pub(crate) fn post_process_js_chunk(
     Ok(())
 }
 
+/// See `LinkerContext::html_started_async_scripts`. Appends the statement that
+/// awaits every async script the HTML page started at its tag.
+fn html_settle_started_scripts(
+    c: &LinkerContext,
+    import_records: &[ImportRecord],
+    stmts: &mut Vec<Stmt>,
+) {
+    let loaders = c.parse_graph().input_files.items_loader();
+    let meta_flags = c.graph.meta.items_flags();
+    if LinkerContext::html_started_async_scripts(import_records, loaders, meta_flags).is_none() {
+        return;
+    }
+    let wrapper_refs = c.graph.ast.items_wrapper_ref();
+    let mut calls: Vec<Expr> = Vec::new();
+    for record in import_records {
+        if record.kind != bun_ast::ImportKind::Stmt || !record.source_index.is_valid() {
+            continue;
+        }
+        let other = record.source_index.get() as usize;
+        let other_flags = meta_flags[other];
+        let wrapper_ref = wrapper_refs[other];
+        if other_flags.wrap != crate::WrapKind::Esm
+            || !other_flags.is_async_or_has_async_dependency
+            || !c.graph.files_live.is_set(other)
+            || wrapper_ref.is_empty()
+        {
+            continue;
+        }
+        calls.push(Expr::init(
+            E::Call {
+                target: Expr::init_identifier(wrapper_ref, bun_ast::Loc::EMPTY),
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        ));
+    }
+    let settled = match calls.as_slice() {
+        [] => return,
+        [only] => *only,
+        _ => {
+            let mut args = bun_ast::ExprNodeList::init_capacity(1);
+            args.append_assume_capacity(Expr::init(
+                E::Array {
+                    items: bun_ast::ExprNodeList::from_slice(&calls),
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            ));
+            Expr::init(
+                E::Call {
+                    target: Expr::init_identifier(c.promise_all_runtime_ref, bun_ast::Loc::EMPTY),
+                    args,
+                    ..Default::default()
+                },
+                bun_ast::Loc::EMPTY,
+            )
+        }
+    };
+    stmts.push(Stmt::alloc(
+        S::SExpr {
+            value: Expr::init(E::Await { value: settled }, bun_ast::Loc::EMPTY),
+            ..Default::default()
+        },
+        bun_ast::Loc::EMPTY,
+    ));
+}
+
 // `js_printer::print` ties bump/Options/import_records/renamer to a
 // single `'a`, and `Renamer<'r, 'src>` is invariant in `'src` — so the caller's
 // renamer lifetime fixes `'a`. All by-ref params that flow into `print` must
@@ -912,6 +979,17 @@ pub(crate) fn generate_entry_point_tail_js<'a>(
                                 bun_ast::Loc::EMPTY,
                             ));
                         }
+                    }
+
+                    // An HTML page that started its async scripts at their tags without
+                    // awaiting them (`html_started_async_scripts`) settles them here, so
+                    // that the chunk finishes evaluating after every script has and a
+                    // rejected one fails the chunk once:
+                    // "await init_foo();" / "await __promiseAll([init_foo(), init_bar()]);"
+                    if c.parse_graph().input_files.items_loader()[source_index as usize]
+                        == options::Loader::Html
+                    {
+                        html_settle_started_scripts(c, &ast.import_records, &mut stmts);
                     }
 
                     let sorted_and_filtered_export_aliases =

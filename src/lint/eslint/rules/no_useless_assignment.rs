@@ -334,6 +334,8 @@ struct Uses<'a> {
     loops: SmallVec<[Stmt<'a>; 2]>,
     /// How many more statements to look at.
     budget: u32,
+    /// What a module exports is not reported.
+    is_in_module_scope: bool,
 }
 
 impl<'a> Uses<'a> {
@@ -352,6 +354,7 @@ impl<'a> Uses<'a> {
             all,
             loops: SmallVec::new(),
             budget: 0,
+            is_in_module_scope: variable.scope().kind() == ScopeKind::Module,
         }
     }
 
@@ -538,12 +541,56 @@ impl<'a> Uses<'a> {
                 }
                 all
             }
-            StmtKind::Try { block, finalizer, .. } => {
-                through!(self.statement(block).or(Flow::Unknown));
+            StmtKind::Try {
+                block,
+                handler,
+                finalizer,
+                ..
+            } => {
+                let mut flow = self.statement(block).or(Flow::Unknown);
+                if let Some(handler) = handler.filter(|_| flow != Flow::Read && self.throws_before_write(block)) {
+                    flow = flow.or(self.statement(handler));
+                }
+                through!(flow);
                 finalizer.map_or(Flow::Through, |finalizer| self.statement(finalizer).or(Flow::Unknown))
             }
+            StmtKind::ExportDefault(e) => self.expression(e),
+            // What a function reads can be read at any time.
+            StmtKind::Fn(_) if self.within(statement.span()).iter().any(|it| it.is_read) => Flow::Read,
+            StmtKind::ExportNamed(_) if self.is_in_module_scope => Flow::Read,
+            // The same, or it is read where the class is defined.
+            StmtKind::Class(_) if self.within(statement.span()).iter().all(|it| !it.is_write) => Flow::Read,
             _ => Flow::Unknown,
         }
+    }
+
+    /// Whether there is a way from the start of the block of a `try` statement to the `catch` block
+    /// on which nothing is assigned to the variable. ESLint lets the first name that is evaluated
+    /// in the block throw, which at the latest is that of the variable, before it is assigned to.
+    /// In another `try` statement in the block it throws for that.
+    fn throws_before_write(&self, block: Stmt<'a>) -> bool {
+        let Some(first) = self.within(block.span()).first() else {
+            return false;
+        };
+        for statement in block.as_block().into_iter().flatten() {
+            match statement.kind() {
+                _ if statement.span().end <= first.span.start => {
+                    if !matches!(statement.tag(), StmtTag::Expr | StmtTag::Var) {
+                        return false;
+                    }
+                }
+                StmtKind::Expr(e) => {
+                    return match e.kind() {
+                        ExprKind::Assign { target: it, .. } | ExprKind::Unary { operand: it, .. } => {
+                            it.tag() == ExprTag::Ident && it.span() == first.span
+                        }
+                        _ => false,
+                    };
+                }
+                _ => return false,
+            }
+        }
+        false
     }
 
     /// From the start of the body of a loop on. Only whether the variable is read matters.
@@ -728,7 +775,9 @@ impl<'a> Uses<'a> {
         let Some(statement) = statement.flatten() else {
             return false;
         };
-        if !statement.is_reachable() {
+        if !statement.is_reachable()
+            || self.is_in_module_scope && statement.tag() == StmtTag::Var && statement.is_exported()
+        {
             return true;
         }
         // The part of the statement that it is in.

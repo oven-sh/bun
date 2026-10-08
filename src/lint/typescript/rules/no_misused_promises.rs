@@ -6,8 +6,10 @@ use bun_lint::types::utils::{
     get_constrained_type_at_location, is_array_method_call_with_predicate, is_promise_like,
     is_rest_parameter_declaration, parse_finally_call,
 };
-use bun_lint::types::{NameOf, SyntaxKind, TsNode, TsSymbol, Type, TypeFlags};
+use bun_lint::types::{NameOf, SymbolList, SyntaxKind, TsNode, TsSymbol, Type, TypeFlags};
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ts_utils::get_function_head_loc;
+use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
 
 /// Disallow Promises in places not designed to handle them.
@@ -91,16 +93,13 @@ fn is_test(node: Expr) -> bool {
 }
 
 /// Whether `node` is an operand, at any depth, of logical operators that make up a [test](is_test).
-fn is_in_test(node: Expr) -> bool {
-    let mut at = node;
-    loop {
-        match at.parent() {
-            Node::Expr(parent) if matches!(parent.kind(), ExprKind::Binary { op, .. } if is_logical_operator(op)) => {
-                at = parent;
-            }
-            _ => return is_test(at),
-        }
-    }
+fn is_in_test<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
+    let decide = |at: Node<'a>, parent: Node<'a>| match (at, parent) {
+        (_, Node::Expr(parent)) if matches!(parent.kind(), ExprKind::Binary { op, .. } if is_logical_operator(op)) => None,
+        (Node::Expr(at), _) => Some(is_test(at)),
+        _ => Some(false),
+    };
+    known.find(Node::Expr(node), decide).unwrap_or(false)
 }
 
 /// Whether the type of `node` can have a `then`. The syntax tells that of a primitive value.
@@ -254,20 +253,49 @@ fn has_matching_promise_type_argument(node: TsNode) -> bool {
         && awaited_types.iter().all(|&awaited| non_promise_types.iter().any(|&ty| are_equivalent(ty, awaited)))
 }
 
-fn get_heritage_types(ts_node: TsNode<'_>) -> SmallVec<[Type<'_>; 2]> {
+/// A type that a class or an interface extends or implements.
+struct HeritageType<'a> {
+    ty: Type<'a>,
+    /// `type.getSymbol()?.members`
+    members: Option<SymbolList<'a>>,
+    /// The first of each name, if they are many.
+    members_by_name: Option<FxHashMap<&'a [u8], TsSymbol<'a>>>,
+}
+
+impl<'a> HeritageType<'a> {
+    fn new(ty: Type<'a>) -> Self {
+        let members = ty.get_symbol().map(|symbol| symbol.members());
+        let members_by_name = members.filter(|members| members.len() > 16).map(|members| {
+            let mut by_name = FxHashMap::default();
+            for member in members {
+                by_name.entry(member.name()).or_insert(member);
+            }
+            by_name
+        });
+        HeritageType {
+            ty,
+            members,
+            members_by_name,
+        }
+    }
+
+    /// The member with the given name, if it exists.
+    fn get_member_if_exists(&self, member_name: &[u8]) -> Option<TsSymbol<'a>> {
+        let member = match &self.members_by_name {
+            Some(by_name) => by_name.get(member_name).copied(),
+            None => self.members.and_then(|members| members.iter().find(|member| member.name() == member_name)),
+        };
+        member.or_else(|| self.ty.get_property(member_name))
+    }
+}
+
+fn get_heritage_types(ts_node: TsNode<'_>) -> SmallVec<[HeritageType<'_>; 2]> {
     ts_node
         .children()
         .filter(|child| child.kind() == SyntaxKind::HeritageClause)
         .flat_map(|clause| clause.children())
-        .map(|type_expression| type_expression.get_type_at_location())
+        .map(|type_expression| HeritageType::new(type_expression.get_type_at_location()))
         .collect()
-}
-
-/// The member with the given name in `ty`, if it exists.
-fn get_member_if_exists<'a>(ty: Type<'a>, member_name: &[u8]) -> Option<TsSymbol<'a>> {
-    ty.get_symbol()
-        .and_then(|symbol| symbol.members().iter().find(|member| member.name() == member_name))
-        .or_else(|| ty.get_property(member_name))
 }
 
 fn is_promise_finally_method(node: Expr) -> bool {
@@ -315,7 +343,10 @@ fn void_function_arguments<'a>(node: Expr<'a>, call: Call<'a>, arguments: &mut [
         for signature in signatures {
             for (index, parameter) in signature.parameters().iter().enumerate() {
                 if !parameter.value_declaration().is_some_and(is_rest_parameter_declaration) {
-                    if let Some(argument) = arguments.iter_mut().find(|it| it.index == index) {
+                    // They are in the order of their indices.
+                    if let Ok(at) = arguments.binary_search_by_key(&index, |it| it.index)
+                        && let Some(argument) = arguments.get_mut(at)
+                    {
                         let ty = parameter.get_type_at_location(expression);
                         check_thenable_or_void_argument(node, expression, ty, argument);
                     }
@@ -396,7 +427,7 @@ impl NoMisusedPromises {
         };
         if matches!(left.kind(), ExprKind::Binary { op, .. } if is_logical_operator(op))
             || !can_be_thenable(left)
-            || is_in_test(node)
+            || is_in_test(node, &mut cx.state)
         {
             return;
         }
@@ -616,7 +647,7 @@ impl NoMisusedPromises {
     /// Reports the members that return a Promise where a type that the class or the interface
     /// `ts_node` extends or implements has a member of that name that returns void.
     fn check_members<'a>(&self, ts_node: TsNode<'a>, members: List<'a, Member<'a>>, cx: &Cx<'a, Self>) {
-        let mut heritage_types: Option<SmallVec<[Type; 2]>> = None;
+        let mut heritage_types: Option<SmallVec<[HeritageType; 2]>> = None;
         for member in members {
             // Call, construct and index signatures have no name. A private name is not inherited.
             let Some(key) = member.key().filter(|key| !key.is_private()) else {
@@ -627,12 +658,12 @@ impl NoMisusedPromises {
                 continue;
             }
             let member_name = cx.slice(key.span(cx.file()));
-            for &heritage_type in heritage_types.get_or_insert_with(|| get_heritage_types(ts_node)).iter() {
-                let Some(heritage_member) = get_member_if_exists(heritage_type, member_name) else {
+            for heritage_type in heritage_types.get_or_insert_with(|| get_heritage_types(ts_node)).iter() {
+                let Some(heritage_member) = heritage_type.get_member_if_exists(member_name) else {
                     continue;
                 };
                 if is_void_returning_function_type(node_member, heritage_member.get_type_at_location(node_member)) {
-                    cx.report(member, VOID_RETURN_INHERITED_METHOD).data("heritageTypeName", heritage_type.to_text());
+                    cx.report(member, VOID_RETURN_INHERITED_METHOD).data("heritageTypeName", heritage_type.ty.to_text());
                 }
             }
         }
@@ -700,7 +731,8 @@ impl Rule for NoMisusedPromises {
     const META: Meta = Meta::typescript("no-misused-promises", Kind::Problem)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    /// [`is_in_test`]
+    type State<'a> = AncestorMemo<'a, bool>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -730,7 +762,7 @@ impl Rule for NoMisusedPromises {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> AncestorMemo<'a, bool> {
         let checks = &self.checks_void_return;
         if self.checks_conditionals.is_some() {
             on.stmts(
@@ -761,5 +793,6 @@ impl Rule for NoMisusedPromises {
         if self.checks_spreads || checks.attributes || checks.properties {
             on.props(Self::check_prop);
         }
+        AncestorMemo::default()
     }
 }

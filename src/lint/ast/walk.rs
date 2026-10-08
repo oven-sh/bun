@@ -22,7 +22,7 @@ impl<'a> Node<'a> {
         children
     }
 
-    fn children_into<V: FnMut(Node<'a>)>(self, visit: &mut V) {
+    fn children_into(self, visit: &mut dyn FnMut(Node<'a>)) {
         macro_rules! one {
             ($it:expr) => {
                 visit($it.into())

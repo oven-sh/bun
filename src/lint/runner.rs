@@ -7,6 +7,7 @@ use crate::ast::{
 use crate::code_path::{Event, Step, steps};
 use crate::context::{Cx, Diagnostic, Severity};
 use crate::options::Options;
+use crate::semantic::Symbol;
 use crate::rule::{Entries, Entry, Listeners, Meta, NodeTags, Rule};
 use bun_sema::atom::Atom;
 use bun_sema::hir;
@@ -165,12 +166,14 @@ impl File<'_> {
         self.by_kind().exprs.get_or_init(|| Exprs::new(self))
     }
 
+    #[inline(never)]
     fn exprs_of(&self, tag: ExprTag) -> &[u32] {
         let grouped = &self.exprs().grouped;
         &grouped.ids[grouped.starts[2 * tag as usize] as usize..grouped.starts[2 * tag as usize + 2] as usize]
     }
 
     /// Those of `exprs_of` that are part of an optional chain.
+    #[inline(never)]
     pub(crate) fn chained_exprs_of(&self, tag: ExprTag) -> &[u32] {
         self.exprs().grouped.of(2 * tag as usize + 1)
     }
@@ -206,18 +209,21 @@ impl File<'_> {
         texts.iter().any(|text| self.has_entity_named(text))
     }
 
+    #[inline(never)]
     fn stmts_of(&self, tag: StmtTag) -> &[u32] {
         let grouped = (self.by_kind().stmts)
             .get_or_init(|| Grouped::new(|kinds| self.stmt_tags_in_tree(kinds)));
         grouped.of(tag as usize)
     }
 
+    #[inline(never)]
     pub(crate) fn types_of(&self, tag: TypeTag) -> &[u32] {
         let grouped = (self.by_kind().types)
             .get_or_init(|| Grouped::new(|kinds| self.type_tags_in_tree(kinds)));
         grouped.of(tag as usize)
     }
 
+    #[inline(never)]
     pub(crate) fn binaries_of(&self, op: BinOp) -> &[u32] {
         let grouped = self.by_kind().binaries.get_or_init(|| {
             Grouped::of_ids(self.exprs_of(ExprTag::Binary).iter().copied(), |id| match self.hir.exprs.get(id as usize)?.kind {
@@ -228,6 +234,7 @@ impl File<'_> {
         grouped.of(op as usize)
     }
 
+    #[inline(never)]
     pub(crate) fn unaries_of(&self, op: UnOp) -> &[u32] {
         let grouped = self.by_kind().unaries.get_or_init(|| {
             Grouped::of_ids(self.exprs_of(ExprTag::Unary).iter().copied(), |id| match self.hir.exprs.get(id as usize)?.kind {
@@ -254,6 +261,7 @@ impl File<'_> {
         !self.hir.classes.is_empty()
     }
 
+    #[inline(never)]
     pub(crate) fn pats_of(&self, tag: PatTag) -> &[u32] {
         let grouped = (self.by_kind().pats)
             .get_or_init(|| Grouped::new(|kinds| self.pat_tags_in_tree(kinds)));
@@ -267,6 +275,7 @@ macro_rules! every {
     ($($method:ident $list:ident $handle:ident $field:ident;)*) => {
         impl<'a> File<'a> {
             $(
+                #[inline(never)]
                 fn $list(&'a self) -> &'a [u32] {
                     self.by_kind().$field.get_or_init(|| {
                         let all = 0..self.hir.$field.len() as u32;
@@ -339,7 +348,7 @@ impl<'a> File<'a> {
     }
 
     /// Calls `visit` with every node of the kinds in `tags`, sort by sort.
-    pub(crate) fn every_node_of(&'a self, tags: NodeTags, mut visit: impl FnMut(Node<'a>)) {
+    pub(crate) fn every_node_of(&'a self, tags: NodeTags, visit: &mut dyn FnMut(Node<'a>)) {
         for tag in EXPR_TAGS {
             if tags.intersects(tag.into()) {
                 self.exprs_of(tag).iter().for_each(|&id| visit(Node::Expr(Expr::from_raw(self, id))));
@@ -479,6 +488,11 @@ impl RuleEntry {
     }
 }
 
+#[inline(never)]
+fn every_symbol<'a>(file: &'a File<'a>, visit: &mut dyn FnMut(Symbol<'a>)) {
+    file.symbols().for_each(visit);
+}
+
 /// A rule at work on a file.
 #[doc(hidden)]
 pub trait Running<'a> {
@@ -573,13 +587,9 @@ impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
                 Entry::ImportSpecs(listener) => file.every_import_spec(|it| listener(rule, it, cx)),
                 Entry::ExportSpecs(listener) => file.every_export_spec(|it| listener(rule, it, cx)),
                 Entry::StringLiterals(listener) => file.every_string_literal(|it| listener(rule, it, cx)),
-                Entry::NumberLiterals(listener) => file.every_number_literal(|it| listener(rule, it, cx)),
-                Entry::Symbols(listener) => {
-                    for symbol in file.symbols() {
-                        listener(rule, symbol, cx);
-                    }
-                }
-                Entry::Nodes(tags, listener) => file.every_node_of(tags, |node| listener(rule, node, cx)),
+                Entry::NumberLiterals(listener) => file.every_number_literal(&mut |it| listener(rule, it, cx)),
+                Entry::Symbols(listener) => every_symbol(file, &mut |symbol| listener(rule, symbol, cx)),
+                Entry::Nodes(tags, listener) => file.every_node_of(tags, &mut |node| listener(rule, node, cx)),
                 Entry::Enter(..)
                 | Entry::Exit(..)
                 | Entry::CodePathStart(_)
@@ -759,7 +769,7 @@ fn walk_listened<'a>(file: &'a File<'a>, walk: &mut Walk<'_, '_, 'a>) {
         }
     }
     let mut found: Vec<Found<'a>> = Vec::new();
-    file.every_node_of(walk.enter.tags | walk.exit.tags, |node| {
+    file.every_node_of(walk.enter.tags | walk.exit.tags, &mut |node| {
         let span = node.span();
         found.push(Found {
             start: span.start,

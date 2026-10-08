@@ -106,6 +106,7 @@ impl RawLiteral {
 
 impl<'a> File<'a> {
     /// They are looked for once for all rules.
+    #[inline(never)]
     fn string_literals(&'a self) -> &'a [RawLiteral] {
         self.by_kind().string_literals.get_or_init(|| {
             let mut all = Vec::new();
@@ -185,7 +186,7 @@ impl<'a> File<'a> {
         });
     }
 
-    pub(crate) fn every_number_literal(&'a self, mut visit: impl FnMut(Literal<'a>)) {
+    pub(crate) fn every_number_literal(&'a self, visit: &mut dyn FnMut(Literal<'a>)) {
         let mut key = |key: Option<Key<'a>>, owner: Node<'a>| {
             if let Some(key) = key
                 && matches!(key.kind(), KeyKind::Number(_) | KeyKind::ComputedNumber(_))

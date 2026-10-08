@@ -1,5 +1,6 @@
 //! Calls that are written in a special way because of what they call: `it("..", () => {})`.
 
+use crate::js::trivia::{comments_stay_between_head_and_body, write_comments_between_blocks};
 use crate::prelude::*;
 
 /// Prettier's `isCallExpression`.
@@ -114,9 +115,32 @@ pub(crate) fn callee_trailing_comments<'a>(
     callee_end: u32,
     f: &Formatter<'a>,
 ) -> &'a [Comment] {
+    if comments_stay_between_head_and_body(f) {
+        let opener = match (call.is_optional(), call.type_args().is_empty()) {
+            (true, _) => b'?',
+            (false, false) => b'<',
+            (false, true) => b'(',
+        };
+        return f.comments().comments_before_character(callee_end, opener);
+    }
     match call.type_args().is_empty() {
         true => comments_before_arguments(call, callee_end, f),
         false => trailing_prefix(f.comments().comments_before_character(callee_end, b'<'), f),
+    }
+}
+
+/// Writes [`callee_trailing_comments`].
+pub(crate) fn write_callee_trailing_comments<'a>(
+    call: Call<'a>,
+    callee_end: u32,
+    f: &mut Formatter<'a>,
+) {
+    let comments = callee_trailing_comments(call, callee_end, f);
+    match comments_stay_between_head_and_body(f) {
+        true => {
+            write_comments_between_blocks(comments, f);
+        }
+        false => FormatTrailingComments::Comments(comments).fmt(f),
     }
 }
 
@@ -173,9 +197,31 @@ pub(crate) fn is_test_call_expression(e: Expr<'_>) -> bool {
 /// The same, with the callees that the flavor knows.
 pub(crate) fn is_test_call_expression_in_flavor<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     match knows_test_callees_of_vitest_and_deno(f) {
-        true => is_test_call(e, contains_a_test_pattern_of_oxfmt),
+        true => {
+            is_test_call(e, contains_a_test_pattern_of_oxfmt)
+                && !has_comments_around_arguments(e, f)
+        }
         false => is_test_call_expression(e),
     }
+}
+
+/// Whether there is a comment before, between or after the arguments of the call `e`. Prettier writes the
+/// arguments of a call of a test on one line all the same, and the comments come out in another order.
+/// To oxfmt it is a call like any other then.
+fn has_comments_around_arguments<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    let Some(call) = e.call() else {
+        return false;
+    };
+    let mut start = call.callee().span().end;
+    for argument in call.args() {
+        if f.comments()
+            .has_any_comment_in_range(start, argument.span().start)
+        {
+            return true;
+        }
+        start = argument.span().end;
+    }
+    f.comments().has_any_comment_in_range(start, e.span().end)
 }
 
 /// oxfmt has a longer list than Prettier: `it.todo("name", () => {})`, `Deno.test("name", () => {})`.

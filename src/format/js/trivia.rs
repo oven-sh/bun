@@ -271,6 +271,87 @@ fn write_dangling_comments<'a>(
     }
 }
 
+/// For oxfmt the comments between the head of something and its body, between a `}` and the keyword
+/// after it, and between what is called and the `(` stay where they are. Prettier attaches each to a
+/// node, which can be in the body, or in the parentheses.
+///
+/// ```js
+/// function a() // comment      function a() {
+/// {}                             // comment
+///                              }
+/// ```
+pub(crate) fn comments_stay_between_head_and_body(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// See [`comments_stay_between_head_and_body`]: what is between a head and its body, which starts at
+/// `body_start`: a space, or a line break if a comment starts the next line, and the comments.
+pub(crate) fn write_head_body_separator(body_start: u32, f: &mut Formatter<'_>) {
+    let comments = f.comments().comments_before(body_start);
+    match comments
+        .first()
+        .is_some_and(|comment| comment.preceded_by_newline())
+    {
+        true => write!(f, hard_line_break()),
+        false => write!(f, space()),
+    }
+    FormatLeadingComments::Comments(comments).fmt(f);
+}
+
+/// See [`comments_stay_between_head_and_body`]: `comments` are between a `}` and a keyword, or between
+/// what is called and the `(`. Those on the line of what is before them trail it, the others keep
+/// their lines. Returns whether what separates the two if there are no comments is still to be written.
+pub(crate) fn write_comments_between_blocks<'a>(
+    comments: &'a [Comment],
+    f: &mut Formatter<'a>,
+) -> bool {
+    let same_line_count = comments
+        .iter()
+        .take_while(|comment| !comment.preceded_by_newline())
+        .count();
+    let (same_line, own_line) = comments.split_at(same_line_count);
+    FormatTrailingComments::Comments(same_line).fmt(f);
+    if let Some(first) = own_line.first() {
+        match lines_before(first, f) > 1 {
+            true => write!(f, empty_line()),
+            false => write!(f, hard_line_break()),
+        }
+        FormatLeadingComments::Comments(own_line).fmt(f);
+        false
+    } else if same_line.last().is_some_and(|comment| comment.is_line()) {
+        write!(f, hard_line_break());
+        false
+    } else {
+        true
+    }
+}
+
+/// See [`comments_stay_between_head_and_body`]: writes the comments after `start` that are before
+/// `character`, which the caller writes next. Returns whether a line break has to follow that, because a
+/// line comment is waiting for the end of the line.
+pub(crate) fn write_trailing_comments_before(
+    start: u32,
+    character: u8,
+    f: &mut Formatter<'_>,
+) -> bool {
+    let comments = f.comments().comments_before_character(start, character);
+    let same_line_count = comments
+        .iter()
+        .take_while(|comment| !comment.preceded_by_newline())
+        .count();
+    let (same_line, own_line) = comments.split_at(same_line_count);
+    FormatTrailingComments::Comments(same_line).fmt(f);
+    for comment in own_line {
+        match lines_before(comment, f) > 1 {
+            true => write!(f, empty_line()),
+            false => write!(f, hard_line_break()),
+        }
+        f.comments_mut().increment_printed_count();
+        write!(f, [comment, comment.is_line().then_some(hard_line_break())]);
+    }
+    own_line.is_empty() && same_line.last().is_some_and(|comment| comment.is_line())
+}
+
 impl<'a> Format<'a> for Comment {
     /// Prettier's `printComment`.
     fn fmt(&self, f: &mut Formatter<'a>) {

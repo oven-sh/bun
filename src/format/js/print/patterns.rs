@@ -3,7 +3,7 @@
 use super::object_pattern_like::ObjectPatternLike;
 use crate::js::format::format_node;
 use crate::js::utils::array::write_array_node;
-use crate::js::utils::assignment_like::AssignmentLike;
+use crate::js::utils::assignment_like::{AssignmentLike, comments_stay_around_operator};
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::write;
@@ -97,6 +97,7 @@ pub(crate) fn write_binding_property<'a>(property: PatProp<'a>, f: &mut Formatte
     // Prettier's `handlePropertyComments`: a comment at the end of the line of the key leads the
     // property.
     if !f.is_quiet()
+        && !comments_stay_around_operator(f)
         && !property.is_shorthand()
         && let Some(key) = property.key()
         && !f.comments().has_comment_in_span(key.span(f.file()))

@@ -10,7 +10,9 @@ use super::type_parameters::{FormatTSTypeParametersOptions, type_parameters};
 use super::union_type::{union_breaks_one_per_line, write_ts_union_type_in};
 use crate::cursor::around_node;
 use crate::js::format::{format_node, identifier, write_trailing_comments_of};
-use crate::js::utils::assignment_like::AssignmentLikeLayout;
+use crate::js::utils::assignment_like::{
+    AssignmentLikeLayout, operator_line_run, write_comments_before_operator,
+};
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::object::{FormatKey, key_requires_quotes};
 use crate::js::utils::typescript::{should_hug_type, without_lone_operator};
@@ -211,9 +213,11 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
     } else {
         write!(f, FormatNodeWithoutTrailingComments(&id));
     }
+    // What oxfmt writes behind the `=`, and whether a line comment is on the line of the `=`.
+    let mut operator_line: (&[Comment], bool) = (&[], false);
     if !f.is_quiet() {
         match type_alias_comments_stay_behind_operator(f) {
-            true => write_comments_after_type_alias_left_side(alias, f),
+            true => operator_line = write_comments_after_type_alias_left_side(alias, f),
             false => {
                 write!(
                     f,
@@ -226,12 +230,28 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
             }
         }
     }
+    let (operator_line_run, has_line_comment_on_operator_line) = operator_line;
 
-    let layout = type_alias_layout(alias, ty, f);
+    let layout = match type_alias_layout(alias, ty, f) {
+        AssignmentLikeLayout::Fluid if has_line_comment_on_operator_line => {
+            AssignmentLikeLayout::BreakAfterOperator
+        }
+        layout => layout,
+    };
     if layout != AssignmentLikeLayout::BreakLeftHandSide {
         f.group_from(left_group, false);
     }
     write!(f, [space(), "="]);
+    if !operator_line_run.is_empty() {
+        write!(f, FormatTrailingComments::Comments(operator_line_run));
+        if operator_line_run
+            .iter()
+            .any(|comment| f.comments().is_suppression_comment(comment))
+        {
+            f.comments_mut()
+                .mark_suppressed_after_operator(ty.span().start);
+        }
+    }
 
     let right = format_with(|f| {
         match ty.kind() {
@@ -253,12 +273,10 @@ pub(crate) fn write_ts_type_alias_declaration<'a>(
         // A line comment that has been written after the `=` stays there.
         AssignmentLikeLayout::BreakAfterOperator
             if type_alias_comments_stay_behind_operator(f)
-                && !matches!(ty.kind(), TypeKind::Cond { .. }) =>
+                && (has_line_comment_on_operator_line
+                    || !matches!(ty.kind(), TypeKind::Cond { .. })) =>
         {
-            write!(
-                f,
-                [line_suffix_boundary(), soft_line_indent_or_space(&right)]
-            );
+            write!(f, soft_line_indent_or_space(&right));
         }
         AssignmentLikeLayout::BreakAfterOperator => {
             write!(f, group(&soft_line_indent_or_space(&right)))
@@ -295,41 +313,32 @@ fn type_alias_comments_stay_behind_operator(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
 
-/// What oxc's `AssignmentLike::write_left` does after the left side of a type alias.
-fn write_comments_after_type_alias_left_side<'a>(alias: Alias<'a>, f: &mut Formatter<'a>) {
+/// What oxc's `AssignmentLike::fmt` does with the comments between the two sides of a type alias: it
+/// writes those that trail the left side. Returns those to write behind the `=`, and whether a line
+/// comment is on the line of the `=`. See `comments_stay_around_operator`.
+fn write_comments_after_type_alias_left_side<'a>(
+    alias: Alias<'a>,
+    f: &mut Formatter<'a>,
+) -> (&'a [Comment], bool) {
     let left_end = alias
         .type_params()
         .angle_brackets_span()
         .map_or_else(|| alias.name().span().end, |it| it.end);
-    let declared = alias.ty();
-    let end_of_line_comments = f.comments().end_of_line_comments_after(left_end);
-    let comments = if end_of_line_comments.is_empty() {
-        let comments = f.comments().comments_before_character(left_end, b'=');
-        if comments.iter().any(|comment| comment.preceded_by_newline()) {
-            &[]
-        } else {
-            comments
-        }
-    } else if matches!(declared.kind(), TypeKind::Object(_))
-        || end_of_line_comments.last().is_some_and(|it| it.is_block())
+    if !f
+        .comments()
+        .has_any_comment_in_range(left_end, alias.ty().span().start)
     {
-        &[]
-    } else {
-        end_of_line_comments
-    };
-    write!(f, FormatTrailingComments::Comments(comments));
-
-    // `type A = /* 1 */ | C` is `type A /* 1 */ = C`.
-    if let TypeKind::Union(types) | TypeKind::Intersection(types) = declared.kind()
-        && types.len() == 1
-        && !types
-            .first()
-            .is_some_and(|only| only.tag() == declared.tag() || only.is_parenthesized())
-        && let comments @ [comment] = f.comments().comments_before(declared.span().start)
-        && !comment.preceded_by_newline()
-    {
-        write!(f, FormatTrailingComments::Comments(comments));
+        return (&[], false);
     }
+    let operator_end = f.comments().position_after_character(left_end, b'=');
+    let previous_limit = f.comments_mut().limit_comments_up_to(operator_end);
+    write_comments_before_operator(left_end, f);
+    f.comments_mut().restore_view_limit(previous_limit);
+    let run = operator_line_run(operator_end, f);
+    (
+        run,
+        !run.is_empty() || f.comments().has_printed_line_comment_after(left_end),
+    )
 }
 
 /// Of the comments that are left between the name of a type alias, which ends at `start`, and the
@@ -365,6 +374,14 @@ fn type_alias_layout<'a>(
     };
     let should_break_after_operator = match ty.kind() {
         TypeKind::Union(types) if !should_hug_type(ty, types, f) => !union_breaks_one_per_line(f),
+        _ if type_alias_comments_stay_behind_operator(f)
+            && !f.is_quiet()
+            && f.comments()
+                .comments_before_iter(ty.span().start)
+                .any(|comment| comment.is_indentable_block()) =>
+        {
+            true
+        }
         TypeKind::Union(_) if type_alias_comments_stay_behind_operator(f) => false,
         _ if type_alias_comments_stay_behind_operator(f)
             && f.comments().has_comment_before(ty.span().start) =>

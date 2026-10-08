@@ -415,6 +415,29 @@ impl<'a> FormatExpr<'a> {
             write_trailing_comments_of(node, f);
             return write!(f, ")");
         }
+        // `a ? b : /** @type {T} */ (c).d ?? e`
+        if !is_suppressed
+            && cast_comment_goes_into_added_parentheses(f)
+            && f.source_text().byte_at(span.start) == Some(b'(')
+            && f.comments().is_cast_parenthesis(span.start)
+            && let [others @ .., cast_comment] = f.comments().comments_before(span.start)
+            && match is_chain_expression {
+                true => parentheses::expression::chain_expression_needs_parentheses(expr, f),
+                false => parentheses::expression::needs_parentheses(expr, f),
+            }
+        {
+            let cast_comment = FormatLeadingComments::Comments(std::slice::from_ref(cast_comment));
+            write!(
+                f,
+                [FormatLeadingComments::Comments(others), "(", cast_comment]
+            );
+            f.in_scope(span, |f| match is_chain_expression {
+                true => print::expressions::write_chain_expression(expr, f),
+                false => write_expression(expr, self.options, f),
+            });
+            write!(f, ")");
+            return write_trailing_comments_of(node, f);
+        }
         format_leading_comments(span).fmt(f);
         if is_suppressed {
             write_suppressed_expression(expr, is_chain_expression, f);
@@ -423,6 +446,13 @@ impl<'a> FormatExpr<'a> {
         }
         write_trailing_comments_of(node, f);
     }
+}
+
+/// A type cast comment is about the parentheses right behind it. Where these are at the start of
+/// something that gets parentheses of its own, oxfmt writes the comment in them, so that it is still
+/// about the same. Prettier writes it before them.
+fn cast_comment_goes_into_added_parentheses(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// Prettier's `printIgnored` for an expression, in the parentheses that it needs.
@@ -493,7 +523,8 @@ fn format_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     // letters, and are longer only if they are written with escapes, or stand for an expression in a template.
     if tag == ExprTag::Ident {
         let span = e.span();
-        let may_need_parentheses = span.len() >= 3 && (span.len() <= 9 || span.len() >= 35 || !f.is_plain_source(span));
+        let may_need_parentheses =
+            span.len() >= 3 && (span.len() <= 9 || span.len() >= 35 || !f.is_plain_source(span));
         return match may_need_parentheses && parentheses::expression::needs_parentheses(e, f) {
             true => format_expression_in_general(e, f),
             false => write!(f, source_text(span)),
@@ -1141,18 +1172,40 @@ fn format_type_with_comments<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     let span = ty.span();
     // A union writes the comments before it with its first `|`, and deals with `prettier-ignore`.
     let is_union = matches!(ty.kind(), TypeKind::Union(_));
-    let is_suppressed = match is_union {
-        // On a line of its own it is about the first type only.
-        true => f
-            .comments()
-            .comments_before_iter(span.start)
-            .any(|comment| {
-                f.comments().is_suppression_comment(comment) && !comment.preceded_by_newline()
-            }),
-        false => f.comments().is_suppressed(span.start),
-    };
+    let is_suppressed =
+        match is_union && !print::union_type::prettier_ignore_before_union_is_about_all_of_it(f) {
+            // On a line of its own it is about the first type only.
+            true => f
+                .comments()
+                .comments_before_iter(span.start)
+                .any(|comment| {
+                    f.comments().is_suppression_comment(comment) && !comment.preceded_by_newline()
+                }),
+            false => f.comments().is_suppressed(span.start),
+        };
     if !is_union || is_suppressed {
         format_leading_comments(span).fmt(f);
+    } else if comments_stay_outside_of_parentheses_of_union(f)
+        && parentheses::ts_type::needs_parentheses(ty, f)
+    {
+        // Those before a `(` of the source, and after them those that start their line.
+        let leading = f.comments().comments_before(span.start);
+        let is_before_parenthesis = |(index, comment): (usize, &Comment)| {
+            let end = leading
+                .get(index + 1)
+                .map_or(span.start, |next| next.span.start);
+            f.source_text().bytes_contain(comment.span.end, end, b'(')
+        };
+        let mut count = leading
+            .iter()
+            .enumerate()
+            .rposition(is_before_parenthesis)
+            .map_or(0, |last| last + 1);
+        count += leading[count..]
+            .iter()
+            .take_while(|comment| comment.preceded_by_newline())
+            .count();
+        FormatLeadingComments::Comments(&leading[..count]).fmt(f);
     }
     if is_suppressed {
         let needs_parentheses = parentheses::ts_type::needs_parentheses(ty, f);
@@ -1170,6 +1223,12 @@ fn format_type_with_comments<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
         f.in_scope(span, |f| write_type_in_parentheses(ty, f));
     }
     write_trailing_comments_in(span, || ty.ast_parent(), f);
+}
+
+/// `keyof /* comment */ (A | B)`: for oxfmt the comment stays on the side of the `(` that it is on.
+/// Prettier writes the comments of a union in its parentheses.
+fn comments_stay_outside_of_parentheses_of_union(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// Step 5 for a type.

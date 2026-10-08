@@ -7,8 +7,8 @@ use super::arrow_function_expression::is_multiline_template_starting_on_same_lin
 use super::type_parameters::type_arguments;
 use crate::js::parentheses::expression::chain_expression_needs_parentheses;
 use crate::js::utils::call_expression::{
-    callee_trailing_comments, is_call_expression, is_test_call_expression_in_flavor,
-    type_arguments_trailing_comments,
+    is_call_expression, is_test_call_expression_in_flavor, type_arguments_trailing_comments,
+    write_callee_trailing_comments,
 };
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::member_chain::write_member_chain;
@@ -134,14 +134,8 @@ impl<'a> Format<'a> for FormatCallee<'a> {
             return write!(f, [callee, boundary_behind_callee(f)]);
         }
         write!(f, FormatNodeWithoutTrailingComments(&callee));
-        let comments = callee_trailing_comments(call, callee.span().end, f);
-        write!(
-            f,
-            [
-                FormatTrailingComments::Comments(comments),
-                boundary_behind_callee(f)
-            ]
-        );
+        write_callee_trailing_comments(call, callee.span().end, f);
+        write!(f, boundary_behind_callee(f));
     }
 }
 

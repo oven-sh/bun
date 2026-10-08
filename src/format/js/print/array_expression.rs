@@ -23,10 +23,22 @@ pub(crate) fn write_array_expression<'a>(
                 .comments_in_range(e.span().start, e.span().end)
                 .iter()
                 .any(|comment| comment.is_line());
-        let content = format_args!(
-            ArrayElementList::new(e, elements, group_id),
-            format_dangling_comments(e.span())
-        );
+        // Where the comma ends that follows the last element that is no hole, if holes follow it.
+        let holes_start = (!f.is_quiet()
+            && comments_stay_behind_holes(f)
+            && elements.last().is_some_and(Expr::is_missing))
+        .then(|| elements.iter().rev().find(|it| !it.is_missing()))
+        .flatten()
+        .map(|last| f.comments().position_after_character(last.span().end, b','));
+        let list = format_with(|f| {
+            let previous_limit =
+                holes_start.map(|start| f.comments_mut().limit_comments_up_to(start));
+            write!(f, ArrayElementList::new(e, elements, group_id));
+            if let Some(previous_limit) = previous_limit {
+                f.comments_mut().restore_view_limit(previous_limit);
+            }
+        });
+        let content = format_args!(list, format_dangling_comments(e.span()));
         write!(
             f,
             group(&soft_block_indent(&content))
@@ -35,6 +47,11 @@ pub(crate) fn write_array_expression<'a>(
         );
     }
     write!(f, "]");
+}
+
+/// `[1, , /* comment */]`: Prettier attaches the comment to the `1`. oxfmt leaves it where it is.
+fn comments_stay_behind_holes(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// Prettier's `isConciselyPrintedArray`'s opposite `shouldBreak`: there are at least two elements,

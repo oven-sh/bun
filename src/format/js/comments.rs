@@ -325,6 +325,9 @@ fn attach_between_sides_of_assignment<'a>(
     comments: &mut [Comment],
     mut index: usize,
 ) -> Option<usize> {
+    if comments_keep_their_order(nodes.flavor) {
+        return None;
+    }
     let first = *comments.get(index)?;
     let (left_end, right, is_assignment) = match nodes.innermost_node_at(first.span.start) {
         Node::VarDecl(declarator) => (
@@ -432,6 +435,12 @@ fn attach_between_sides_of_assignment<'a>(
         comment.flags &= !TRAILS_LEFT_SIDE;
     }
     gap.iter().any(|it| it.is_moved()).then_some(index + count)
+}
+
+/// oxfmt writes no comment before one that it follows in the source. Which side of an operator a
+/// comment belongs to is decided where the operator is written.
+fn comments_keep_their_order(flavor: Flavor) -> bool {
+    flavor.is_oxfmt()
 }
 
 /// Prettier's `handleAssignmentPatternComments`: a comment on a line of its own between the two sides
@@ -784,6 +793,8 @@ pub(crate) struct Comments<'a> {
     /// Some comment is a type cast: `/** @type {T} */ (e)`.
     has_type_cast_comments: bool,
     has_suppression_comments: bool,
+    /// See [`Comments::mark_suppressed_after_operator`].
+    suppressed_after_operator: u32,
 }
 
 /// How many of `comments`, from the first one on, end before `pos`.
@@ -815,6 +826,7 @@ impl<'a> Comments<'a> {
             view_limit: None,
             has_type_cast_comments: flags & TYPE_CAST != 0,
             has_suppression_comments: flags & SUPPRESSION != 0,
+            suppressed_after_operator: u32::MAX,
         }
     }
 
@@ -1196,9 +1208,57 @@ impl<'a> Comments<'a> {
     #[inline]
     pub(crate) fn is_suppressed(&self, start: u32) -> bool {
         self.has_suppression_comments
-            && self
-                .comments_before_iter(start)
-                .any(|comment| self.is_suppression_comment(comment))
+            && (self.suppressed_after_operator == start
+                || self
+                    .comments_before_iter(start)
+                    .any(|comment| self.is_suppression_comment(comment)))
+    }
+
+    /// `a = // prettier-ignore ⏎ b`, as oxfmt has it: the comment is written behind the operator, and
+    /// is about what starts at `start` all the same.
+    pub(crate) fn mark_suppressed_after_operator(&mut self, start: u32) {
+        self.suppressed_after_operator = start;
+    }
+
+    /// Whether the comment that was written last is a line comment that starts after `pos`.
+    pub(crate) fn has_printed_line_comment_after(&self, pos: u32) -> bool {
+        self.printed_comments()
+            .last()
+            .is_some_and(|comment| comment.is_line() && comment.span.start > pos)
+    }
+
+    /// Whether there is a comment from `start` to `end`, written or not.
+    pub(crate) fn has_any_comment_in_range(&self, start: u32, end: u32) -> bool {
+        let first = self.inner.partition_point(|comment| comment.end() < start);
+        self.inner
+            .get(first)
+            .is_some_and(|comment| comment.end() <= end)
+    }
+
+    /// The position behind the first `character` after `start` that is not in a comment. `start` if
+    /// there is none.
+    pub(crate) fn position_after_character(&self, start: u32, character: u8) -> u32 {
+        let first = self.inner.partition_point(|comment| comment.end() <= start);
+        let mut from = start;
+        let comments = self
+            .inner
+            .get(first..)
+            .unwrap_or_default()
+            .iter()
+            .filter(|comment| !comment.is_moved());
+        for to in comments
+            .map(|comment| comment.span)
+            .chain([Span::new(u32::MAX, u32::MAX)])
+        {
+            let gap = self
+                .source_text
+                .slice_range(from, to.start.min(self.source_text.as_bytes().len() as u32));
+            if let Some(at) = bun_core::strings::index_of_char_usize(gap, character) {
+                return from + at as u32 + 1;
+            }
+            from = from.max(to.end);
+        }
+        start
     }
 
     /// Whether a `prettier-ignore` comment trails the node that ends at `pos`: Prettier goes by any

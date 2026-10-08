@@ -2,7 +2,7 @@ use crate::js::format::{FormatNonNullMarks, identifier, write_trailing_comments_
 use crate::js::print::call_like_expression::FormatTypeArguments;
 use crate::js::print::call_like_expression::arguments::FormatArguments;
 use crate::js::print::member_expression::write_lookup_without_comments;
-use crate::js::utils::call_expression::callee_trailing_comments;
+use crate::js::utils::call_expression::write_callee_trailing_comments;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::prelude::*;
 use crate::{format_args, write};
@@ -68,8 +68,7 @@ fn write_trailing_comments_of_member<'a>(member: Expr<'a>, f: &mut Formatter<'a>
     }
     match call_of_callee(member) {
         Some(call) => {
-            let comments = callee_trailing_comments(call, member.span().end, f);
-            write!(f, FormatTrailingComments::Comments(comments));
+            write_callee_trailing_comments(call, member.span().end, f);
         }
         None => write_trailing_comments_of(member.as_chain_element(), f),
     }

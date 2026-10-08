@@ -531,10 +531,11 @@ fn write_operator<'a>(operator: BinOp, right: Expr<'a>, is_inlined: bool, f: &mu
     if has_comment_before_operator {
         // Prettier writes a space here. It is seen before a line comment that trails the left side, and it is one more
         // column that has to fit.
+        let space = writes_space_before_comments_before_operator(f).then_some(" ");
         write!(
             f,
             [
-                " ",
+                space,
                 soft_line_break_or_space(),
                 format_leading_comments(right.span())
             ]
@@ -543,6 +544,11 @@ fn write_operator<'a>(operator: BinOp, right: Expr<'a>, is_inlined: bool, f: &mu
         write!(f, soft_line_break_or_space());
     }
     write!(f, [operator.as_str(), space()]);
+}
+
+/// oxfmt has no such space.
+fn writes_space_before_comments_before_operator(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
 }
 
 /// A space and `operator`.

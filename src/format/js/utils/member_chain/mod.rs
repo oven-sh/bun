@@ -16,6 +16,7 @@ use super::call_expression::{callee_trailing_comments, is_call_expression, is_me
 use super::is_long_curried_call;
 use super::typecast::is_cast_target;
 use crate::js::parentheses::expression::expression_needs_parentheses;
+use crate::js::trivia::comments_stay_between_head_and_body;
 use crate::prelude::*;
 use crate::{best_fitting, write};
 use smallvec::SmallVec;
@@ -350,7 +351,16 @@ fn has_leading_comment<'a>(member: &ChainMember<'a>, f: &Formatter<'a>) -> bool 
 fn has_trailing_comment<'a>(expression: Expr<'a>, f: &Formatter<'a>) -> bool {
     let end = expression.span().end;
     match call_of_callee(expression) {
-        Some(call) => !callee_trailing_comments(call, end, f).is_empty(),
+        Some(call) => {
+            let comments = callee_trailing_comments(call, end, f);
+            match comments_stay_between_head_and_body(f) {
+                // All before the `(` are among them. A block comment on its line separates nothing.
+                true => comments
+                    .iter()
+                    .any(|comment| comment.preceded_by_newline() || comment.followed_by_newline()),
+                false => !comments.is_empty(),
+            }
+        }
         // A comment on its own line leads the next member, or what is in its brackets.
         None => f
             .comments()

@@ -50,13 +50,66 @@ pub(crate) enum AssignmentLikeLayout {
     ChainTailArrowFunction,
 }
 
-/// The comments between the left side, which is written, and `right` that trail the left side.
-fn format_left_trailing_comments<'a>(right: Expr<'a>, f: &mut Formatter<'a>) {
-    if !f.is_quiet() {
-        FormatTrailingComments::Comments(
+/// The comments between the left side, which is written and ends at `start`, and `right` that trail
+/// the left side.
+fn format_left_trailing_comments<'a>(start: u32, right: Expr<'a>, f: &mut Formatter<'a>) {
+    if f.is_quiet() {
+        return;
+    }
+    match comments_stay_around_operator(f) {
+        true => write_comments_before_operator(start, f),
+        false => FormatTrailingComments::Comments(
             f.comments().comments_trailing_left_side(right.span().start),
         )
-        .fmt(f);
+        .fmt(f),
+    }
+}
+
+/// See [`comments_stay_around_operator`]: the comments after the left side, which ends at `start`, that
+/// trail it. Those behind the operator are hidden.
+pub(crate) fn write_comments_before_operator(start: u32, f: &mut Formatter<'_>) {
+    let end_of_line_comments = f.comments().end_of_line_comments_after(start);
+    let comments = if end_of_line_comments.is_empty() {
+        let comments = f.comments().comments_before_character(start, b'=');
+        if comments.iter().any(|comment| comment.preceded_by_newline()) {
+            &[]
+        } else {
+            comments
+        }
+    } else if end_of_line_comments
+        .last()
+        .is_some_and(|comment| comment.is_multiline_block())
+    {
+        &[]
+    } else {
+        end_of_line_comments
+    };
+    FormatTrailingComments::Comments(comments).fmt(f);
+}
+
+/// For oxfmt a comment stays on the side of the `=` or the `:` that it is on, and a line comment on
+/// the line of the operator stays there, with what follows on the next line. Prettier attaches it to
+/// one of the two sides, and writes it where the line ends that this side ends on.
+///
+/// ```js
+/// const a = // comment      const a = 1; // comment
+///   1;
+/// ```
+pub(crate) fn comments_stay_around_operator(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
+}
+
+/// The comments behind the operator, which ends at `operator_end`, up to a line comment that ends its
+/// line. None if a comment from before the operator is left: then all lead the right side.
+pub(crate) fn operator_line_run<'a>(operator_end: u32, f: &Formatter<'a>) -> &'a [Comment] {
+    if f.comments().has_comment_before(operator_end) {
+        return &[];
+    }
+    let run = f.comments().end_of_line_comments_after(operator_end);
+    if run.last().is_some_and(|comment| comment.is_line()) {
+        run
+    } else {
+        &[]
     }
 }
 
@@ -333,7 +386,7 @@ impl<'a> AssignmentLike<'a> {
                     }
                     None => write!(f, [FormatNodeWithoutTrailingComments(&id), definite]),
                 }
-                format_left_trailing_comments(init, f);
+                format_left_trailing_comments(id.span().end, init, f);
                 false
             }
             AssignmentLike::AssignmentExpression(assignment) => {
@@ -341,7 +394,7 @@ impl<'a> AssignmentLike<'a> {
                     return false;
                 };
                 write!(f, FormatNodeWithoutTrailingComments(&target));
-                format_left_trailing_comments(value, f);
+                format_left_trailing_comments(target.span().end, value, f);
                 false
             }
             AssignmentLike::ObjectProperty(property) => match property.key() {
@@ -803,11 +856,37 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
         // layout, which depends on what is written for the left side.
         let outer_group = f.reserve_tag();
         let left_group = f.reserve_tag();
+        // See `comments_stay_around_operator`. Where the left side ends, the right side starts and the
+        // operator ends.
+        let sides = match !f.is_quiet() && comments_stay_around_operator(f) {
+            true => self.sides_with_comments_between(right_expression, f),
+            false => None,
+        };
+        let previous_limit =
+            sides.map(|(_, _, operator_end)| f.comments_mut().limit_comments_up_to(operator_end));
         let is_left_short = self.write_left(f);
+        if let Some(previous_limit) = previous_limit {
+            f.comments_mut().restore_view_limit(previous_limit);
+        }
+        let operator_line_run = sides.map_or(&[][..], |(_, _, operator_end)| {
+            operator_line_run(operator_end, f)
+        });
+        let has_line_comment_on_operator_line = !operator_line_run.is_empty()
+            || sides.is_some_and(|(left_end, ..)| {
+                f.comments().has_printed_line_comment_after(left_end)
+            });
         let left = f.elements().get(left_group + 1..).unwrap_or_default();
         let is_left_text = left.len() <= 12 && left.iter().all(is_text_on_one_line);
         let left_may_break = !is_left_text && f.elements_from(left_group + 1).may_directly_break();
-        let layout = self.layout(right_expression, is_left_short, left_may_break, f);
+        let layout = match self.layout(right_expression, is_left_short, left_may_break, f) {
+            AssignmentLikeLayout::Fluid | AssignmentLikeLayout::NeverBreakAfterOperator
+                if has_line_comment_on_operator_line
+                    && !right_expression.is_some_and(is_require_call) =>
+            {
+                AssignmentLikeLayout::BreakAfterOperator
+            }
+            layout => layout,
+        };
         // A group of text at the start of a group makes no difference: `Formatter::is_at_start_of_group`.
         if layout != AssignmentLikeLayout::BreakLeftHandSide
             && !(is_left_text && layout.has_group_around_it(false))
@@ -816,11 +895,90 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
         }
 
         self.write_operator(f);
-        self.write_after_operator(right_expression, layout, f);
+        if let Some((_, right_start, _)) = sides
+            && !operator_line_run.is_empty()
+        {
+            write!(f, FormatTrailingComments::Comments(operator_line_run));
+            if operator_line_run
+                .iter()
+                .any(|comment| f.comments().is_suppression_comment(comment))
+            {
+                f.comments_mut().mark_suppressed_after_operator(right_start);
+            }
+        }
+        // Without a group of its own the line break follows the group around it all, which the line
+        // comment breaks.
+        let follows_line_comment =
+            has_line_comment_on_operator_line && layout == AssignmentLikeLayout::BreakAfterOperator;
+        match follows_line_comment {
+            true => {
+                let right = format_with(|f| self.write_right(right_expression, f, layout, None));
+                write!(f, soft_line_indent_or_space(&right));
+            }
+            false => self.write_after_operator(right_expression, layout, f),
+        }
 
-        if layout.has_group_around_it(is_left_text) {
+        if follows_line_comment || layout.has_group_around_it(is_left_text) {
             f.group_from(outer_group, false);
         }
+    }
+}
+
+/// `require("a")`
+fn is_require_call(e: Expr<'_>) -> bool {
+    e.tag() == ExprTag::Call
+        && matches!(e.as_ast_nodes(), AstNodes::CallExpression(call)
+            if call.callee().is_some_and(|callee| callee.tag() == ExprTag::Ident && callee.text() == b"require"))
+}
+
+impl<'a> AssignmentLike<'a> {
+    /// Where the left side ends, where the right side starts and where the operator between them ends,
+    /// if there is a comment between the two sides.
+    ///
+    /// `right_expression`: [`AssignmentLike::get_right_expression`].
+    fn sides_with_comments_between(
+        &self,
+        right_expression: Option<Expr<'a>>,
+        f: &Formatter<'a>,
+    ) -> Option<(u32, u32, u32)> {
+        let right_start = right_expression.map(|it| it.span().start);
+        let (left_end, right_start, operator) = match *self {
+            Self::VariableDeclarator(declarator) => (
+                declarator
+                    .ty()
+                    .map_or_else(|| declarator.pat().span().end, |ty| ty.span().end),
+                right_start?,
+                b'=',
+            ),
+            Self::AssignmentExpression(assignment) => {
+                (assignment.left()?.span().end, right_start?, b'=')
+            }
+            Self::ObjectProperty(property) => {
+                (property.key()?.span(f.file()).end, right_start?, b':')
+            }
+            Self::BindingProperty(property) => (
+                property.key()?.span(f.file()).end,
+                property.value().span().start,
+                b':',
+            ),
+            Self::PropertyDefinition(member) | Self::AccessorProperty(member) => {
+                let key_end = member.key().map(|key| key.span(f.file()).end);
+                (
+                    member.ty().map(|ty| ty.span().end).or(key_end)?,
+                    right_start?,
+                    b'=',
+                )
+            }
+        };
+        f.comments()
+            .has_any_comment_in_range(left_end, right_start)
+            .then(|| {
+                (
+                    left_end,
+                    right_start,
+                    f.comments().position_after_character(left_end, operator),
+                )
+            })
     }
 }
 

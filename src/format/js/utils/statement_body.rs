@@ -1,4 +1,5 @@
 use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
+use crate::js::trivia::{comments_stay_between_head_and_body, write_head_body_separator};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -30,6 +31,16 @@ impl<'a> Format<'a> for FormatStatementBody<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let body = self.body;
         let content = FormatBodyAndItsComments(body);
+        if comments_stay_between_head_and_body(f)
+            && matches!(body.kind(), StmtKind::Empty | StmtKind::Block(_))
+        {
+            if !matches!(body.kind(), StmtKind::Empty)
+                || f.comments().has_comment_before(body.span().start)
+            {
+                write_head_body_separator(body.span().start, f);
+            }
+            return write!(f, content);
+        }
         if matches!(body.kind(), StmtKind::Empty) {
             // Not `is_quiet`: to the statement that this is the body of, a `;` at its end and the
             // comments before that are not part of it.
@@ -109,6 +120,10 @@ impl<'a> Format<'a> for FormatBodyAndItsComments<'a> {
         let previous_limit = f.comments_mut().limit_comments_up_to(limit);
         write!(f, body);
         f.comments_mut().restore_view_limit(previous_limit);
+        // They are written before the `else`, outside of the group that this is in.
+        if comments_stay_between_head_and_body(f) {
+            return;
+        }
         let comments = comments_before_else(body, alternate, f);
         let count = comments
             .iter()

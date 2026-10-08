@@ -130,7 +130,7 @@ fn write_method_definition<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     if value.has_body() {
         return write!(f, FormatFunctionBody(value));
     }
-    if !f.is_quiet() {
+    if !f.is_quiet() && !all_comments_before_semicolon_go_behind_it(f) {
         let limit = f
             .comments()
             .start_of_comments_before_semicolon(None, member.span());
@@ -140,6 +140,12 @@ fn write_method_definition<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
         );
     }
     write!(f, OptionalSemicolon);
+}
+
+/// For oxfmt all comments between a member and its `;` are behind the `;`. For Prettier those that end or
+/// start their line are in the member: see `Comments::start_of_comments_before_semicolon`.
+fn all_comments_before_semicolon_go_behind_it(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 fn constructor_keeps_override(f: &Formatter<'_>) -> bool {
@@ -835,6 +841,10 @@ impl<'a> Format<'a> for FormatClassElementWithSemicolon<'a> {
                 self.element.init().map(|it| it.span().end),
                 span,
             );
+            let limit = match all_comments_before_semicolon_go_behind_it(f) {
+                true => limit.min(f.comments().without_semicolon(span).end),
+                false => limit,
+            };
             let previous_limit = f.comments_mut().limit_comments_up_to(limit);
             write!(f, self.element);
             // Nothing follows them in the member.
@@ -844,6 +854,12 @@ impl<'a> Format<'a> for FormatClassElementWithSemicolon<'a> {
             );
             f.comments_mut().restore_view_limit(previous_limit);
             write!(f, ";");
+            if all_comments_before_semicolon_go_behind_it(f) {
+                write!(
+                    f,
+                    FormatTrailingComments::Comments(f.comments().comments_before(span.end))
+                );
+            }
             if !(self.next_element.is_some() && no_comment_trails_what_is_before_another(f)) {
                 write_trailing_comments_of(self.element.as_ast_nodes(), f);
             }

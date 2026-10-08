@@ -46,7 +46,11 @@ pub(crate) fn write_ts_union_type_in<'a>(
     let suppression = leading_comments
         .iter()
         .find(|comment| f.comments().is_suppression_comment(comment));
-    if suppression.is_some_and(|comment| !comment.preceded_by_newline()) {
+    let is_suppressed = match prettier_ignore_before_union_is_about_all_of_it(f) {
+        true => !f.is_quiet() && f.comments().is_suppressed(ty.span().start),
+        false => suppression.is_some_and(|comment| !comment.preceded_by_newline()),
+    };
+    if is_suppressed {
         return write!(
             f,
             [format_leading_comments, FormatSuppressedNode(ty.span())]
@@ -138,6 +142,12 @@ pub(crate) fn write_ts_union_type_in<'a>(
         soft_line_break()
     };
     write!(f, group(&indent(&format_args!(line, printed))));
+}
+
+/// For oxfmt a `prettier-ignore` comment before a union is about the union, as before anything else.
+/// For Prettier one on a line of its own is about the first type.
+pub(crate) fn prettier_ignore_before_union_is_about_all_of_it(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }
 
 /// Whether what the union `ty` is in has written a `prettier-ignore` comment that leads it, outside

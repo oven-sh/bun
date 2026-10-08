@@ -9,7 +9,7 @@ use super::return_or_throw_statement::has_argument_leading_comments;
 use crate::js::format::{FormatExpr, format_node};
 use crate::js::parentheses::expression::left_edge_end;
 use crate::js::utils::array::write_array_node;
-use crate::js::utils::assignment_like::AssignmentLike;
+use crate::js::utils::assignment_like::{AssignmentLike, comments_stay_around_operator};
 use crate::js::utils::conditional::ConditionalLike;
 use crate::js::utils::object::{format_computed_or_property_key, should_preserve_quote};
 use crate::js::utils::suppressed::FormatSuppressedNode;
@@ -156,6 +156,7 @@ fn write_object_property<'a>(property: Prop<'a>, f: &mut Formatter<'a>) {
         // Prettier's `handlePropertyComments`: a comment at the end of the line of the key leads
         // the property.
         if !f.is_quiet()
+            && !comments_stay_around_operator(f)
             && property.kind() != PropKind::Shorthand
             && let (Some(key), Some(value)) = (property.key(), property.value())
             && !f.comments().has_comment_in_span(key.span(f.file()))
@@ -303,11 +304,18 @@ pub(crate) fn is_last_binary_operand_comment<'a>(
     };
     let source_text = f.source_text();
     op != BinOp::Comma
+        && comment_can_trail_last_operand(f)
         && !comment.preceded_by_newline()
         && comment.followed_by_newline()
         && !comment.is_multiline_block()
         && source_text.contains_newline_between(argument.span().start, right.span().start)
         && !source_text.contains_newline_between(right.span().start, comment.span.start)
+}
+
+/// For oxfmt a comment before the `)` trails all that is in the parentheses here as everywhere else, and
+/// breaks no chain of operators.
+fn comment_can_trail_last_operand(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
 }
 
 /// `a = b`, `a += b`. In the target of a destructuring assignment, a target with its default value.

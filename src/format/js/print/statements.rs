@@ -5,6 +5,10 @@ use super::program::ends_before_semicolon;
 use super::semicolon::OptionalSemicolon;
 use crate::js::format::identifier;
 use crate::js::parentheses::expression::expression_needs_parentheses;
+use crate::js::trivia::{
+    comments_stay_between_head_and_body, write_comments_between_blocks, write_head_body_separator,
+    write_trailing_comments_before,
+};
 use crate::js::utils::expression::ExpressionLeftSide;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::statement_body::{FormatStatementBody, comments_before_else};
@@ -202,13 +206,35 @@ pub(crate) fn write_do_while_statement<'a>(
     test: Expr<'a>,
     f: &mut Formatter<'a>,
 ) {
-    write!(
-        f,
-        group(&format_args!("do", FormatStatementBody::new(body)))
-    );
-    match body.kind() {
-        StmtKind::Block(_) => write!(f, space()),
-        _ => write!(f, hard_line_break()),
+    let is_block = matches!(body.kind(), StmtKind::Block(_));
+    let mut needs_separator = true;
+    if !f.is_quiet() && comments_stay_between_head_and_body(f) {
+        match is_block {
+            true => {
+                write!(f, "do");
+                write_head_body_separator(body.span().start, f);
+                write!(f, FormatNodeWithoutTrailingComments(&body));
+            }
+            false => write!(
+                f,
+                group(&format_args!("do", FormatStatementBody::new(body)))
+            ),
+        }
+        needs_separator = write_comments_between_blocks(
+            f.comments()
+                .comments_before_character(body.span().end, b'w'),
+            f,
+        );
+    } else {
+        write!(
+            f,
+            group(&format_args!("do", FormatStatementBody::new(body)))
+        );
+    }
+    match (needs_separator, is_block) {
+        (false, _) => {}
+        (true, true) => write!(f, space()),
+        (true, false) => write!(f, hard_line_break()),
     }
     let condition = FormatCondition {
         test,
@@ -627,6 +653,17 @@ pub(crate) fn write_if_statement<'a>(
     };
 
     let is_consequent_block = matches!(consequent.kind(), StmtKind::Block(_));
+    let is_else_if = matches!(alternate.kind(), StmtKind::If { .. });
+    if !f.is_quiet() && comments_stay_between_head_and_body(f) {
+        if write_comments_between_blocks(comments_before_else(consequent, alternate, f), f) {
+            match is_consequent_block {
+                true => write!(f, space()),
+                false => write!(f, hard_line_break()),
+            }
+        }
+        let body = FormatStatementBody::new(alternate).with_forced_space(is_else_if);
+        return write!(f, ["else", line_suffix_boundary(), group(&body)]);
+    }
     if !is_consequent_block {
         write!(f, hard_line_break());
     }
@@ -647,11 +684,7 @@ pub(crate) fn write_if_statement<'a>(
                 indent: DanglingIndentMode::None
             }
         );
-        let is_else_on_next_line = match block_comments_stay_before_else(f) {
-            true => comments.iter().any(|comment| comment.is_line()),
-            false => last.followed_by_newline(),
-        };
-        match is_else_on_next_line {
+        match last.followed_by_newline() {
             true => write!(f, hard_line_break()),
             false => write!(f, space()),
         }
@@ -659,7 +692,6 @@ pub(crate) fn write_if_statement<'a>(
         write!(f, space());
     }
 
-    let is_else_if = matches!(alternate.kind(), StmtKind::If { .. });
     write!(
         f,
         [
@@ -667,11 +699,6 @@ pub(crate) fn write_if_statement<'a>(
             group(&FormatStatementBody::new(alternate).with_forced_space(is_else_if))
         ]
     );
-}
-
-/// oxfmt writes `/* comment */ else` on one line, wherever the `else` is in the source.
-fn block_comments_stay_before_else(f: &Formatter<'_>) -> bool {
-    f.options().flavor.is_oxfmt()
 }
 
 fn write_jump<'a>(keyword: &'static str, statement: Stmt<'a>, f: &mut Formatter<'a>) {
@@ -705,6 +732,16 @@ pub(crate) fn write_labeled_statement<'a>(
             f,
             [source_text(label.span()), ":", maybe_space(!is_empty), body]
         );
+    }
+    if comments_stay_between_head_and_body(f) {
+        write!(f, source_text(label.span()));
+        let follows_line_comment = write_trailing_comments_before(label.span().end, b':', f);
+        write!(f, [":", follows_line_comment.then_some(hard_line_break())]);
+        if is_empty {
+            return write!(f, FormatStatementBody::new(body));
+        }
+        write_head_body_separator(body_start, f);
+        return write!(f, body);
     }
 
     // Prettier's `handleLabeledStatementComments`: a comment that starts or ends its line goes

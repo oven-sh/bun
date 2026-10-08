@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -50,13 +51,18 @@ struct Modifiers {
 }
 
 impl Modifiers {
-    fn new<'a>(references: impl Iterator<Item = Reference<'a>>) -> Modifiers {
+    /// `declarations`: the function declaration around a node.
+    fn new<'a>(
+        references: impl Iterator<Item = Reference<'a>>,
+        declarations: &mut AncestorMemo<'a, Func<'a>>,
+    ) -> Modifiers {
         let mut modifiers = Modifiers::default();
         let mut functions: FxHashSet<Symbol<'a>> = FxHashSet::default();
         for modifier in references.filter(|it| is_write_reference(*it)) {
             modifiers.writes.push(modifier.span());
-            let mut around = modifier.node().ancestors().filter_map(Node::as_func);
-            let declaration = around.find(|it| it.kind() == FnKind::Decl && it.has_body());
+            let declaration = declarations.find(modifier.node(), |_, it| {
+                it.as_func().filter(|it| it.kind() == FnKind::Decl && it.has_body())
+            });
             if let Some(name) = declaration.and_then(Func::name)
                 && let Some(variable) = modifier.scope().parent().and_then(|it| it.resolve_name(name.name()))
                 && functions.insert(variable)
@@ -239,14 +245,16 @@ impl NoUnmodifiedLoopCondition {
         let mut modified_groups: FxHashSet<Expr<'a>> = FxHashSet::default();
         let mut of_symbols: FxHashMap<Symbol<'a>, Modifiers> = FxHashMap::default();
         let mut of_globals: FxHashMap<Name<'a>, Modifiers> = FxHashMap::default();
+        let mut declarations = AncestorMemo::default();
         for condition in &mut conditions {
             let modifiers = match condition.reference.symbol() {
                 Some(symbol) if !symbol.has_writes() => continue,
-                Some(symbol) => of_symbols.entry(symbol).or_insert_with(|| Modifiers::new(symbol.references())),
+                Some(symbol) => (of_symbols.entry(symbol))
+                    .or_insert_with(|| Modifiers::new(symbol.references(), &mut declarations)),
                 None => {
                     let name = condition.reference.name();
                     let references = || cx.file().unresolved_references_to(name.bytes());
-                    of_globals.entry(name).or_insert_with(|| Modifiers::new(references()))
+                    of_globals.entry(name).or_insert_with(|| Modifiers::new(references(), &mut declarations))
                 }
             };
             condition.is_modified = condition.has_modifier_in_loop(modifiers);

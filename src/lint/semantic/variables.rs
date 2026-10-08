@@ -47,9 +47,12 @@ pub(crate) struct Variables {
     /// The name and the index in `list` of each variable, sorted. So those of one name are sorted
     /// by scope.
     by_name: Vec<(u32, u32)>,
+    /// A Bloom filter with one hash function over the names in `by_name`: most names that are
+    /// looked up are globals. Its length is a power of two.
+    names: Vec<u64>,
     /// In the order they are written, variable by variable.
     declarations: Vec<Decl>,
-    /// The names that the binder may resolve differently from ESLint. Sorted.
+    /// The names that the binder may resolve to something else than ESLint. Sorted.
     pub(crate) hazards: Vec<Atom>,
 }
 
@@ -320,6 +323,11 @@ impl Variables {
         }
         let mut by_name: Vec<(u32, u32)> = (list.iter().enumerate()).map(|(i, it)| (it.name.0, i as u32)).collect();
         by_name.sort_unstable();
+        let mut names = vec![0u64; (list.len() / 8 + 1).next_power_of_two()];
+        for it in &list {
+            let (word, bit) = place_in_filter(names.len(), it.name);
+            names[word] |= bit;
+        }
 
         let mut refused: Vec<Decl> = Vec::new();
         file.binding.refused_declarations(&mut refused);
@@ -334,6 +342,7 @@ impl Variables {
             further,
             function_count: hir.fns.len(),
             by_name,
+            names,
             declarations,
             hazards,
         }
@@ -392,6 +401,10 @@ impl Variables {
 
     /// The variables named `name`, by scope.
     fn named(&self, name: Atom) -> &[(u32, u32)] {
+        let (word, bit) = place_in_filter(self.names.len(), name);
+        if self.names[word] & bit == 0 {
+            return &[];
+        }
         let start = self.by_name.partition_point(|it| it.0 < name.0);
         let len = self.by_name[start..].partition_point(|it| it.0 == name.0);
         &self.by_name[start..start + len]
@@ -442,6 +455,14 @@ impl Variables {
         }
         None
     }
+}
+
+/// The word and the bit for `name` in a filter of `words` words.
+#[inline]
+fn place_in_filter(words: usize, name: Atom) -> (usize, u64) {
+    // Atoms are numbered sequentially: Fibonacci hashing spreads them.
+    let hash = u64::from(name.0).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32;
+    ((hash >> 6) as usize & (words - 1), 1 << (hash & 63))
 }
 
 /// The scope that the type parameter at `pos` is declared in.

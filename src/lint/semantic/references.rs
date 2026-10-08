@@ -604,10 +604,8 @@ impl References {
                             && (!matches!(it.site, ReferenceSite::Pat(_)) || scope == it.from)
                     })
                 }
-                // Nothing in the file declares it, or it is the `arguments` of a function.
-                Some(_) if it.name != known::arguments => {
-                    continue;
-                }
+                // What the binder finds no value for can be the `arguments` of a function, or a
+                // namespace without values.
                 _ => None,
             };
             it.variable = match trusted {

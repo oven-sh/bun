@@ -295,12 +295,6 @@ impl<'a> Type<'a> {
         Some(Type::new(self.file, id))
     }
 
-    /// The number of the type in the checker. It means nothing after the file is linted.
-    #[inline]
-    pub fn id(self) -> TypeId {
-        self.id
-    }
-
     #[inline]
     pub fn file(self) -> &'a File<'a> {
         self.file

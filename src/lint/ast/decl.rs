@@ -1353,11 +1353,6 @@ impl<'a> Module<'a> {
     }
 
     #[inline]
-    pub fn flags(self) -> Flags {
-        self.raw().flags
-    }
-
-    #[inline]
     pub fn body(self) -> List<'a, Stmt<'a>> {
         List::ids(self.file, self.raw().body)
     }

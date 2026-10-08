@@ -21,9 +21,9 @@ use super::estree_compat::{
 };
 use super::text;
 use crate::ast::{
-    BinOp, Case, Chain, Expr, ExprKind, ExprTag, File, Flags, FnBody, FnKind, Func, Ident, Key,
-    KeyKind, Member, MemberKind, Name, Node, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind,
-    UnOp, VarKind,
+    BinOp, Case, Chain, Expr, ExprKind, ExprTag, File, Flags, FnBody, FnKind, Func, Key, KeyKind,
+    Member, MemberKind, Name, Node, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, UnOp,
+    VarKind,
 };
 use crate::semantic::{Reference, Scope, Symbol};
 use crate::span::{Position, Span, Spanned};
@@ -35,15 +35,6 @@ use smallvec::SmallVec;
 use std::borrow::Cow;
 
 // ───────────────────────────── constants ─────────────────────────────
-
-/// ESLint's `LINEBREAKS`.
-pub const LINEBREAKS: [&str; 5] = ["\r\n", "\r", "\n", "\u{2028}", "\u{2029}"];
-
-/// ESLint's `LINEBREAKS.has(text)`.
-#[inline]
-pub fn is_linebreak(text: &[u8]) -> bool {
-    !text.is_empty() && text::line_break_len(text) == text.len()
-}
 
 /// ESLint's `LINEBREAK_MATCHER.test(text)`. `LINEBREAK_MATCHER.exec` is
 /// [`text::find_line_break`].
@@ -324,12 +315,6 @@ fn is_decimal_integer_text(raw: &[u8]) -> bool {
         }
         _ => false,
     }
-}
-
-/// ESLint's `isDecimalIntegerNumericToken`.
-#[inline]
-pub fn is_decimal_integer_numeric_token(token: &Token<'_>) -> bool {
-    token.kind() == TokenKind::Numeric && is_decimal_integer_text(token.text())
 }
 
 /// ESLint's `isDirectiveComment`.
@@ -1048,18 +1033,6 @@ pub fn is_specific_member_access(
         })
 }
 
-/// ESLint's `isSpecificMemberAccess` with `RegExp`s: `object_name` is given the name of the object
-/// if that is an identifier, `property_name` the name of the property if that is static, and both
-/// must hold.
-pub fn is_specific_member_access_with(
-    e: Expr<'_>,
-    object_name: impl FnOnce(&[u8]) -> bool,
-    property_name: impl FnOnce(&[u8]) -> bool,
-) -> bool {
-    member_object(e).is_some_and(|object| is_specific_id_with(object, object_name))
-        && get_static_property_name(e).is_some_and(|it| property_name(&it))
-}
-
 /// Whether `e` is a member access whose property has one of `names`, whatever the object.
 pub fn is_member_access_of_any(e: Expr<'_>, names: &[&str]) -> bool {
     match e.kind() {
@@ -1135,13 +1108,6 @@ pub fn is_same_reference<'a>(a: Expr<'a>, b: Expr<'a>, disable_static_computed_k
         };
         (left, right) = (left_object, right_object);
     }
-}
-
-/// ESLint's `getModuleExportName`, for the name of an import or an export specifier, which can be
-/// written as a string.
-#[inline]
-pub fn get_module_export_name(name: Ident<'_>) -> Name<'_> {
-    name.name()
 }
 
 /// ESLint's `getBooleanValue`, for a literal: whether it is truthy.

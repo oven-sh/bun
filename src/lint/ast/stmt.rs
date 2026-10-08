@@ -227,10 +227,7 @@ impl<'a> Stmt<'a> {
                 body: s(body),
                 test: e(test),
             },
-            // The HIR stores `with (object) body` as a block of the two, positioned at the keyword.
-            hir::StmtKind::Block(list)
-                if list.len() == 2 && file.slice(self.span()).starts_with(b"with") =>
-            {
+            hir::StmtKind::Block(list) if file.is_with(raw) => {
                 let list: List<'a, Stmt<'a>> = List::ids(file, list);
                 match (list.get(0).map(Stmt::kind), list.get(1)) {
                     (Some(StmtKind::Expr(object)), Some(body)) => StmtKind::With { object, body },
@@ -435,30 +432,15 @@ impl<'a> Stmt<'a> {
     /// It wraps the expression in the head of a `for`, or the object of a `with`. The HIR has a
     /// statement there and the source has none: it is nobody's parent and no listener is called
     /// with it.
+    #[inline]
     pub fn is_wrapper(self) -> bool {
-        let Some(hir::StmtKind::Expr(_)) = self.try_raw().map(|raw| raw.kind) else {
-            return false;
-        };
-        self.wrapped_in().is_some()
+        self.file.wrapped_in(self.id).is_some()
     }
 
-    /// The `for` or `with` statement that an expression statement is a wrapper in.
+    /// The `for` or `with` statement that it is a wrapper in.
+    #[inline]
     pub(crate) fn wrapped_in(self) -> Option<Stmt<'a>> {
-        let Some(&bun_sema::bind::Parent::Stmt(parent)) = self.file.bound.stmt_parent.get(self.id.idx())
-        else {
-            return None;
-        };
-        let is_wrapper = match self.file.hir.stmts.get(parent.idx())?.kind {
-            hir::StmtKind::For { init: head, .. }
-            | hir::StmtKind::ForIn { left: head, .. }
-            | hir::StmtKind::ForOf { left: head, .. } => head == self.id,
-            hir::StmtKind::Block(list) if !self.file.hir.with_bodies.is_empty() => {
-                self.file.hir.ids.get(list.start as usize) == Some(&self.id.0)
-                    && matches!(Stmt::new(self.file, parent).kind(), StmtKind::With { .. })
-            }
-            _ => false,
-        };
-        is_wrapper.then(|| Stmt::new(self.file, parent))
+        self.file.wrapped_in(self.id).map(|parent| Stmt::new(self.file, parent))
     }
 
     #[inline]
@@ -530,6 +512,37 @@ impl<'a> Stmt<'a> {
             }
         }
         None
+    }
+}
+
+impl super::File<'_> {
+    /// The HIR stores `with (object) body` as a block of the two, positioned at the keyword.
+    #[inline]
+    fn is_with(&self, raw: &hir::Stmt) -> bool {
+        !self.hir.with_bodies.is_empty()
+            && matches!(raw.kind, hir::StmtKind::Block(list) if list.len() == 2)
+            && self.hir.text.get(raw.start as usize..).is_some_and(|it| it.starts_with(b"with"))
+    }
+
+    /// The `for` or `with` statement that the statement `id` is a wrapper in.
+    pub(super) fn wrapped_in(&self, id: hir::StmtId) -> Option<hir::StmtId> {
+        if !matches!(self.hir.stmts.get(id.idx())?.kind, hir::StmtKind::Expr(_)) {
+            return None;
+        }
+        let Some(&bun_sema::bind::Parent::Stmt(parent)) = self.bound.stmt_parent.get(id.idx()) else {
+            return None;
+        };
+        let raw = self.hir.stmts.get(parent.idx())?;
+        let is_wrapper = match raw.kind {
+            hir::StmtKind::For { init: head, .. }
+            | hir::StmtKind::ForIn { left: head, .. }
+            | hir::StmtKind::ForOf { left: head, .. } => head == id,
+            hir::StmtKind::Block(list) => {
+                self.is_with(raw) && self.hir.ids.get(list.start as usize) == Some(&id.0)
+            }
+            _ => false,
+        };
+        is_wrapper.then_some(parent)
     }
 }
 

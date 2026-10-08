@@ -8,7 +8,7 @@ use smallvec::SmallVec;
 
 handle! {
     /// An expression. Parentheses around it are not part of it.
-    Expr, ExprId, exprs, Expr
+    Expr, ExprId, exprs, Expr, |file: &File, id| file.written_expr(id)
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -128,7 +128,7 @@ impl<'a> Expr<'a> {
             hir::ExprKind::Number(at) => {
                 ExprKind::Number(file.hir.numbers.get(at as usize).copied().unwrap_or(f64::NAN))
             }
-            hir::ExprKind::String(text) if self.is_backtick_string(raw) => {
+            hir::ExprKind::String(text) if file.is_backtick_string(self.id, raw) => {
                 ExprKind::Template(Template {
                     expr: self,
                     exprs: hir::IdList::EMPTY,
@@ -216,39 +216,15 @@ impl<'a> Expr<'a> {
     /// The kind without what it holds. This is what a rule listens for.
     #[inline]
     pub fn tag(self) -> ExprTag {
-        match self.try_raw() {
-            Some(raw @ hir::Expr { kind: hir::ExprKind::String(_), .. }) if self.is_backtick_string(raw) => {
-                ExprTag::Template
-            }
-            Some(raw) => raw.kind.tag(),
-            None => ExprTag::Missing,
-        }
-    }
-
-    /// Whether `raw`, which is this expression and a string in the HIR, is a template without
-    /// substitutions.
-    #[inline]
-    fn is_backtick_string(self, raw: &hir::Expr) -> bool {
-        self.file.hir.text.get(raw.pos as usize) == Some(&b'`')
-            && (self.file.hir.jsx.is_empty() || !self.is_jsx_text())
+        self.try_raw().map_or(ExprTag::Missing, |raw| self.file.expr_tag(self.id, raw))
     }
 
     /// It is text between the tags of a JSX element: ESLint's `JSXText`. Its kind is `String`, with
     /// the value that the text has at run time: without the whitespace around line breaks, and
     /// with what `&amp;` and the like stand for. [`Expr::text`] is the text as it is written.
+    #[inline]
     pub fn is_jsx_text(self) -> bool {
-        let file = self.file;
-        if file.hir.jsx.is_empty() || !matches!(self.try_raw(), Some(hir::Expr { kind: hir::ExprKind::String(_), .. })) {
-            return false;
-        }
-        let Some(&bun_sema::bind::Parent::Expr(parent)) = file.bound.expr_parent.get(self.id.idx()) else {
-            return false;
-        };
-        let Some(&hir::Expr { kind: hir::ExprKind::Jsx(jsx), .. }) = file.hir.exprs.get(parent.idx()) else {
-            return false;
-        };
-        let is_name = file.hir.jsx.get(jsx.idx()).is_some_and(|it| it.tag == self.id || it.close_tag == self.id);
-        !is_name && self.jsx_container_span().is_none()
+        self.file.is_jsx_text(self.id)
     }
 
     /// It is the name in a tag of a JSX element, or a part of it: the `a`, the `a.b` and the `a.b.c`
@@ -298,17 +274,26 @@ impl<'a> Expr<'a> {
     /// The parentheses around it, the innermost first.
     pub fn parens(self) -> impl DoubleEndedIterator<Item = Span> + ExactSizeIterator + 'a {
         let parens = self.file.hir.parens;
-        let first = parens.partition_point(|p| p.0.0 < self.id.0);
-        let count = parens[first..].partition_point(|p| p.0 == self.id);
-        parens[first..first + count]
-            .iter()
-            .map(|p| Span::new(p.1, p.2))
+        let mut all: SmallVec<[Span; 2]> = SmallVec::new();
+        let mut id = self.id;
+        loop {
+            let first = parens.partition_point(|p| p.0.0 < id.0);
+            let around = parens[first..].iter().take_while(|p| p.0 == id);
+            all.extend(around.map(|p| Span::new(p.1, p.2)));
+            // The HIR has those after a JSDoc cast around the cast.
+            match self.file.jsdoc_cast_around(id) {
+                Some(cast) => id = cast,
+                None => return all.into_iter(),
+            }
+        }
     }
 
     #[inline]
     pub fn is_parenthesized(self) -> bool {
         let parens = self.file.hir.parens;
-        !parens.is_empty() && parens.binary_search_by_key(&self.id.0, |p| p.0.0).is_ok()
+        !parens.is_empty()
+            && (parens.binary_search_by_key(&self.id.0, |p| p.0.0).is_ok()
+                || self.file.jsdoc_cast_around(self.id).is_some())
     }
 
     /// With all the parentheses around it.
@@ -538,6 +523,39 @@ impl<'a> Expr<'a> {
         items.push(at);
         items.reverse();
         items
+    }
+}
+
+impl File<'_> {
+    /// The kind of the expression `id`, which is `raw`.
+    #[inline]
+    pub(super) fn expr_tag(&self, id: hir::ExprId, raw: &hir::Expr) -> ExprTag {
+        match raw.kind {
+            hir::ExprKind::String(_) if self.is_backtick_string(id, raw) => ExprTag::Template,
+            kind => kind.tag(),
+        }
+    }
+
+    /// Whether `id`, which is `raw` and a string in the HIR, is a template without substitutions.
+    #[inline]
+    fn is_backtick_string(&self, id: hir::ExprId, raw: &hir::Expr) -> bool {
+        self.hir.text.get(raw.pos as usize) == Some(&b'`') && !self.is_jsx_text(id)
+    }
+
+    fn is_jsx_text(&self, id: hir::ExprId) -> bool {
+        if self.hir.jsx.is_empty()
+            || !matches!(self.hir.exprs.get(id.idx()), Some(hir::Expr { kind: hir::ExprKind::String(_), .. }))
+        {
+            return false;
+        }
+        let Some(&bun_sema::bind::Parent::Expr(parent)) = self.bound.expr_parent.get(id.idx()) else {
+            return false;
+        };
+        let Some(&hir::Expr { kind: hir::ExprKind::Jsx(jsx), .. }) = self.hir.exprs.get(parent.idx()) else {
+            return false;
+        };
+        let is_name = self.hir.jsx.get(jsx.idx()).is_some_and(|it| it.tag == id || it.close_tag == id);
+        !is_name && self.hir.jsx_expressions.binary_search_by_key(&id.0, |it| it.0.0).is_err()
     }
 }
 

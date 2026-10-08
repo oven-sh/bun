@@ -8,7 +8,9 @@ impl<'a> Node<'a> {
     /// Calls `visit` with each child, in source order.
     ///
     /// A [`Func`](super::Func) is the only child of the expression or the statement that owns it,
-    /// and a [`Class`](super::Class) likewise. Holes in arrays are left out.
+    /// and a [`Class`](super::Class) likewise. Left out are holes in arrays and array patterns, the
+    /// empty `{}` of JSX, and the statements that are [wrappers](super::Stmt::is_wrapper): what they
+    /// wrap takes their place. Of `with { key: "value" }` only the values are nodes.
     pub fn for_each_child(self, mut visit: impl FnMut(Node<'a>)) {
         self.children_into(&mut visit);
     }
@@ -45,6 +47,12 @@ impl<'a> Node<'a> {
                 KeyKind::Computed(e) => Some(e),
                 _ => None,
             }
+        }
+        /// The strings in `with { key: "value" }`.
+        fn attribute_values<'a>(
+            attributes: Option<super::ImportAttributes<'a>>,
+        ) -> impl Iterator<Item = super::Expr<'a>> {
+            attributes.into_iter().flat_map(|it| it.entries()).filter_map(super::Prop::value)
         }
         /// What is in the head of a `for`: a `Var`, or the expression in a wrapper.
         fn head(statement: super::Stmt) -> Node {
@@ -136,8 +144,8 @@ impl<'a> Node<'a> {
                 | StmtKind::Break(_)
                 | StmtKind::Continue(_)
                 | StmtKind::ImportEquals(_)
-                | StmtKind::ExportStar { .. }
                 | StmtKind::ExportAsNamespace(_) => {}
+                StmtKind::ExportStar { .. } => all!(attribute_values(s.import_attributes())),
                 StmtKind::Expr(e)
                 | StmtKind::Throw(e)
                 | StmtKind::ExportDefault(e)
@@ -207,8 +215,14 @@ impl<'a> Node<'a> {
                     opt!(finalizer);
                 }
                 StmtKind::Labeled { body, .. } => one!(body),
-                StmtKind::Import(import) => all!(import.named()),
-                StmtKind::ExportNamed(export) => all!(export.items()),
+                StmtKind::Import(import) => {
+                    all!(import.named());
+                    all!(attribute_values(import.attributes()));
+                }
+                StmtKind::ExportNamed(export) => {
+                    all!(export.items());
+                    all!(attribute_values(export.attributes()));
+                }
             },
             Node::Func(func) => {
                 all!(func.type_params());
@@ -234,7 +248,7 @@ impl<'a> Node<'a> {
             Node::Pat(pat) => match pat.kind() {
                 PatKind::Missing | PatKind::Ident(_) => {}
                 PatKind::Object(props) => all!(props),
-                PatKind::Array(elements) => all!(elements),
+                PatKind::Array(elements) => all!(elements.iter().filter(|it| it.pat().is_some())),
             },
             Node::PatProp(prop) => {
                 opt!(computed(prop.key()));
@@ -291,7 +305,11 @@ impl<'a> Node<'a> {
                     one!(expr);
                     all!(args);
                 }
-                TypeKind::Ref { args, .. } | TypeKind::Import { args, .. } => all!(args),
+                TypeKind::Ref { args, .. } => all!(args),
+                TypeKind::Import { args, .. } => {
+                    all!(attribute_values(ty.import_attributes()));
+                    all!(args);
+                }
                 TypeKind::Template(types) | TypeKind::Union(types) | TypeKind::Intersection(types) => {
                     all!(types)
                 }

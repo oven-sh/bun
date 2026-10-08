@@ -2,7 +2,7 @@
 
 use super::{
     Case, Class, EnumMember, ExportSpec, Expr, File, Func, ImportSpec, Member, Param, Pat, PatElem,
-    PatProp, Prop, Stmt, StmtTag, TupleElem, TypeNode, TypeParam, VarDecl,
+    PatProp, Prop, Stmt, StmtKind, StmtTag, TupleElem, TypeNode, TypeParam, VarDecl,
 };
 use crate::span::{Span, Spanned};
 use bun_sema::bind::{MemberOwner, Parent, PatParent};
@@ -188,6 +188,7 @@ impl<'a> Node<'a> {
         let of_parent = |parent: Option<&Parent>| match parent.copied().unwrap_or(Parent::None) {
             Parent::None | Parent::File => Node::File(file),
             Parent::Expr(e) => Node::Expr(Expr::new(file, e)),
+            Parent::Prop(p) if file.is_import_attribute(p) => file.parents().of_import_attribute(file, p),
             Parent::Stmt(s) => {
                 let statement = Stmt::new(file, s);
                 Node::Stmt(match statement.tag() {
@@ -234,18 +235,49 @@ impl<'a> Node<'a> {
                 // Few files have a `typeof` in a type.
                 let in_type_query = !bound.type_query_operands.is_empty()
                     && bound.type_query_operands.binary_search(&e.id()).is_ok();
-                match in_type_query.then(|| file.parents().of_type_query_operand(e.id())) {
-                    Some(Some(ty)) => Node::Type(TypeNode::new(file, ty)),
-                    _ => of_parent(bound.expr_parent.get(e.id().idx())),
+                if let Some(Some(ty)) = in_type_query.then(|| file.parents().of_type_query_operand(e.id())) {
+                    return Node::Type(TypeNode::new(file, ty));
+                }
+                let mut id = e.id();
+                while let Some(cast) = file.jsdoc_cast_around(id) {
+                    id = cast;
+                }
+                match bound.expr_parent.get(id.idx()) {
+                    // The substitutions of a tagged template are in the template.
+                    Some(&Parent::Expr(parent)) => match hir.exprs.get(parent.idx()).map(|it| it.kind) {
+                        Some(hir::ExprKind::TaggedTemplate(call)) => match hir.calls.get(call.idx()) {
+                            Some(call) if call.callee != id && call.template != id => {
+                                Node::Expr(Expr::new(file, call.template))
+                            }
+                            _ => Node::Expr(Expr::new(file, parent)),
+                        },
+                        _ => Node::Expr(Expr::new(file, parent)),
+                    },
+                    parent => of_parent(parent),
                 }
             }
-            Node::Stmt(s) => of_parent(bound.stmt_parent.get(s.id().idx())),
+            Node::Stmt(s) => match of_parent(bound.stmt_parent.get(s.id().idx())) {
+                // The binder records the `switch` for what is in a clause.
+                Node::Stmt(parent) => match parent.kind() {
+                    StmtKind::Switch { cases, .. } => {
+                        let start = s.span().start;
+                        (cases.iter().find(|case| case.span().contains_offset(start)))
+                            .map_or(Node::Stmt(parent), Node::Case)
+                    }
+                    _ => Node::Stmt(parent),
+                },
+                parent => parent,
+            },
             Node::Pat(p) => match bound.pat_parent.get(p.id().idx()) {
                 Some(&PatParent::Var(d)) => Node::VarDecl(VarDecl::new(file, d)),
                 Some(&PatParent::Param(p)) => Node::Param(Param::new(file, p)),
                 Some(&PatParent::Prop(_, prop)) => Node::PatProp(PatProp::new(file, prop)),
                 Some(&PatParent::Elem(_, elem)) => Node::PatElem(PatElem::new(file, elem)),
-                Some(PatParent::None) | None => Node::File(file),
+                // The binder records none for the `this` of a `this` parameter.
+                Some(PatParent::None) | None => match file.parents().of_this(p.id()) {
+                    Some(param) => Node::Param(Param::new(file, param)),
+                    None => Node::File(file),
+                },
             },
             Node::PatProp(p) => owner_of_pattern(p.value().id()),
             Node::PatElem(e) => owner_of_pattern(hir.pat_elems[e.id().idx()].pat),
@@ -336,6 +368,8 @@ pub(crate) struct Parents {
     tuple_elems: Box<[Packed]>,
     /// The `a.b` of `typeof a.b`, with the type. Sorted.
     type_query_operands: Box<[(hir::ExprId, hir::TypeNodeId)]>,
+    /// The `this` of each `this` parameter, with the parameter. Sorted.
+    this_names: Box<[(hir::PatId, hir::ParamId)]>,
 }
 
 impl Parents {
@@ -343,6 +377,32 @@ impl Parents {
     fn of_type_query_operand(&self, e: hir::ExprId) -> Option<hir::TypeNodeId> {
         let at = self.type_query_operands.binary_search_by_key(&e, |it| it.0);
         at.ok().map(|at| self.type_query_operands[at].1)
+    }
+
+    #[inline]
+    pub(super) fn of_this(&self, name: hir::PatId) -> Option<hir::ParamId> {
+        let at = self.this_names.binary_search_by_key(&name, |it| it.0);
+        at.ok().map(|at| self.this_names[at].1)
+    }
+
+    /// The import, the export or the import type that the attribute `prop` belongs to.
+    fn of_import_attribute<'a>(&self, file: &'a File<'a>, prop: hir::PropId) -> Node<'a> {
+        let at = file.hir.props.get(prop.idx()).map_or(0, |it| it.pos);
+        let is_around = |start: u32, end: u32| start <= at && at < end;
+        let ty = (file.hir.types.iter()).position(|it| {
+            matches!(it.kind, hir::TypeNodeKind::Import { .. }) && is_around(it.pos, it.end)
+        });
+        if let Some(ty) = ty {
+            return Node::Type(TypeNode::new(file, hir::TypeNodeId(ty as u32)));
+        }
+        let statement = file.hir.stmts.iter().position(|it| {
+            use hir::StmtKind::{ExportNamed, ExportStar, Import};
+            matches!(it.kind, Import(_) | ExportNamed(_) | ExportStar { .. }) && is_around(it.start, it.loc.end)
+        });
+        match statement {
+            Some(statement) => Node::Stmt(Stmt::new(file, hir::StmtId(statement as u32))),
+            None => Node::File(file),
+        }
     }
 
     fn new(file: &File) -> Parents {
@@ -434,10 +494,15 @@ impl Parents {
             one(param.constraint, packed(Tag::TypeParam, i));
             one(param.default, packed(Tag::TypeParam, i));
         }
+        let mut this_names = Vec::new();
         for (i, func) in hir.fns.iter().enumerate() {
             one(func.ret, packed(Tag::Func, i));
             params(func.type_params, packed(Tag::Func, i));
+            if let Some(this) = hir.params.get(func.this_param.idx()) {
+                this_names.push((this.pat, func.this_param));
+            }
         }
+        this_names.sort_unstable_by_key(|it| it.0);
         for (i, param) in hir.params.iter().enumerate() {
             one(param.ty, packed(Tag::Param, i));
         }
@@ -492,13 +557,14 @@ impl Parents {
             type_params,
             tuple_elems,
             type_query_operands: type_query_operands.into_boxed_slice(),
+            this_names: this_names.into_boxed_slice(),
         }
     }
 }
 
 impl File<'_> {
     #[inline]
-    fn parents(&self) -> &Parents {
+    pub(super) fn parents(&self) -> &Parents {
         self.lazy.parents.get_or_init(|| Parents::new(self))
     }
 }

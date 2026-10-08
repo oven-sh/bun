@@ -18,6 +18,7 @@ mod list;
 mod name;
 mod node;
 mod pat;
+mod reach;
 mod stmt;
 mod ty;
 pub mod walk;
@@ -183,6 +184,8 @@ pub struct File<'a> {
     path: &'a [u8],
     kind: FileKind,
     is_js: bool,
+    /// Whether there can be casts that are synthesized from JSDoc comments.
+    hides_casts: bool,
     has_module_syntax: bool,
     has_parse_errors: bool,
 }
@@ -203,7 +206,11 @@ impl<'a> File<'a> {
             body: hir.body,
             kind: hir.kind,
             is_js: hir.is_js,
-            has_module_syntax: hir.has_module_syntax || hir.is_module_by_decree,
+            hides_casts: hir.is_js && !hir.jsdoc_comments.is_empty(),
+            has_module_syntax: hir.has_module_syntax
+                || hir.is_module_by_decree
+                || path.ends_with(b".mjs")
+                || path.ends_with(b".mts"),
             has_parse_errors: hir.has_errors || hir.has_parse_diagnostics,
             hir: Hir::new(hir),
             bound: Bound::new(bound),
@@ -331,6 +338,51 @@ impl<'a> File<'a> {
         after > 0 && pos < comments[after - 1].1
     }
 
+    /// `/** @type {T} */ (e)`, `/** @satisfies {T} */ (e)`: if `id` is the `e as T` that the HIR has
+    /// in these parentheses, the `e`. The source has no such node, and neither has a handle: it
+    /// takes exactly the place of `e` and the parentheses that `e` has of its own.
+    pub(crate) fn jsdoc_cast_operand(&self, id: hir::ExprId) -> Option<hir::ExprId> {
+        if !self.hides_casts {
+            return None;
+        }
+        let cast = self.hir.exprs.get(id.idx())?;
+        let operand = match cast.kind {
+            hir::ExprKind::As { expr, .. }
+            | hir::ExprKind::Satisfies { expr, .. }
+            | hir::ExprKind::AsConst(expr) => expr,
+            _ => return None,
+        };
+        let parens = self.hir.parens;
+        let after = parens.partition_point(|p| p.0.0 <= operand.0);
+        let place = match after.checked_sub(1).map(|last| parens[last]) {
+            Some((of, start, end)) if of == operand => (start, end),
+            _ => self.hir.exprs.get(operand.idx()).map(|it| (it.pos, it.end))?,
+        };
+        (place == (cast.pos, cast.end)).then_some(operand)
+    }
+
+    /// The cast that is synthesized from a JSDoc comment around the expression `id`.
+    pub(crate) fn jsdoc_cast_around(&self, id: hir::ExprId) -> Option<hir::ExprId> {
+        if !self.hides_casts {
+            return None;
+        }
+        match self.bound.expr_parent.get(id.idx()) {
+            Some(&bind::Parent::Expr(parent)) if self.jsdoc_cast_operand(parent) == Some(id) => Some(parent),
+            _ => None,
+        }
+    }
+
+    /// `id`, or what is in it if it is a cast that is synthesized from a JSDoc comment.
+    #[inline]
+    pub(crate) fn written_expr(&self, mut id: hir::ExprId) -> hir::ExprId {
+        if self.hides_casts {
+            while let Some(operand) = self.jsdoc_cast_operand(id) {
+                id = operand;
+            }
+        }
+        id
+    }
+
     /// Whether the file has nodes that are synthesized from JSDoc comments.
     #[inline]
     pub(crate) fn has_synthetic_nodes(&self) -> bool {
@@ -354,6 +406,13 @@ pub trait Handle<'a>: Copy {
 /// Declares a handle: `$name` refers to the `$raw` at index `$id` of `Hir::$field`.
 macro_rules! handle {
     ($(#[$doc:meta])* $name:ident, $id:ident, $field:ident, $raw:ident) => {
+        $crate::ast::handle! {
+            $(#[$doc])*
+            $name, $id, $field, $raw, |_: &$crate::ast::File, id: ::bun_sema::hir::$id| id
+        }
+    };
+    // `$written`: from the file and an id of the HIR to the id of the node that is written there.
+    ($(#[$doc:meta])* $name:ident, $id:ident, $field:ident, $raw:ident, $written:expr) => {
         $(#[$doc])*
         #[derive(Copy, Clone)]
         pub struct $name<'a> {
@@ -364,13 +423,13 @@ macro_rules! handle {
         impl<'a> $name<'a> {
             #[inline]
             pub(crate) fn new(file: &'a $crate::ast::File<'a>, id: ::bun_sema::hir::$id) -> Self {
-                $name { file, id }
+                $name { file, id: ($written)(file, id) }
             }
 
             /// `None` if the HIR leaves `id` empty.
             #[inline]
             pub(crate) fn some(file: &'a $crate::ast::File<'a>, id: ::bun_sema::hir::$id) -> Option<Self> {
-                (id.idx() < file.hir.$field.len()).then_some($name { file, id })
+                (id.idx() < file.hir.$field.len()).then(|| $name::new(file, id))
             }
 
             /// The index of the node in the HIR, which is what the type checker takes.
@@ -417,10 +476,7 @@ macro_rules! handle {
         impl<'a> crate::ast::Handle<'a> for $name<'a> {
             #[inline]
             fn from_raw(file: &'a $crate::ast::File<'a>, id: u32) -> Self {
-                $name {
-                    file,
-                    id: ::bun_sema::hir::$id(id),
-                }
+                $name::new(file, ::bun_sema::hir::$id(id))
             }
             #[inline]
             fn is_synthetic(self) -> bool {

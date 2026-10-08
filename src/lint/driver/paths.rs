@@ -70,6 +70,9 @@ pub(crate) fn resolve(base: &[u8], path: &[u8]) -> Vec<u8> {
 
 /// `path.relative(base, path)` of two resolved paths. Empty if they are the same.
 pub(crate) fn relative(base: &[u8], path: &[u8]) -> Vec<u8> {
+    if let Some(rest) = inside(base, path) {
+        return rest.to_vec();
+    }
     let names = |path| strings::split(path, b"/").filter(|name: &&[u8]| !name.is_empty());
     let common = names(base).zip(names(path)).take_while(|(a, b)| a == b).count();
     let mut parts: Vec<&[u8]> = vec![b".."; names(base).count() - common];

@@ -17,7 +17,7 @@ use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
 use bun_sema::atom::{Intern, Interner, InternerPerThread};
-use bun_sema::bind::{BindOptions, bind, bind_for_format};
+use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format_in};
 use bun_sema::hir::Diagnostic;
 use bun_sema::resolve::Dialect;
 use bun_sema::session::Session;
@@ -98,11 +98,13 @@ fn with_file<R>(how: &How, text: &[u8], then: impl for<'a> FnOnce(&'a File<'a>, 
                 before_es2017: false,
             };
             // To tell which imports are used takes symbols.
-            let bound = match how.resolved.options.sort_imports.as_deref().is_some_and(|it| it.needs_symbols()) {
-                true => bind(&hir, bind_options, atoms, arena),
-                false => bind_for_format(&hir, bind_options, atoms, arena),
-            };
-            then(&File::new(path, &hir, &bound, atoms, &language, None), hir.diagnostics.first())
+            if how.resolved.options.sort_imports.as_deref().is_some_and(|it| it.needs_symbols()) {
+                let bound = bind(&hir, bind_options, atoms, arena);
+                return then(&File::new(path, &hir, &bound, atoms, &language, None), hir.diagnostics.first());
+            }
+            let mut recycled = Recycled::of_this_thread();
+            let bound = bind_for_format_in(&hir, bind_options, atoms, &mut recycled);
+            then(&File::new(path, &hir, bound, atoms, &language, None), hir.diagnostics.first())
         },
     )
 }

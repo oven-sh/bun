@@ -93,17 +93,13 @@ impl Kind {
 }
 
 pub(crate) fn language_of(path: &[u8]) -> Language {
-    match Kind::of(path, None) {
-        // Not good enough yet to be let loose on files.
-        Some(Kind::Markdown) => return Language::Other,
-        Some(_) => return Language::Supported,
-        None => {}
+    if Kind::of(path, None).is_some() {
+        return Language::Supported;
     }
     let name = paths::basename(path);
     let extension = strings::last_index_of_char(name, b'.').map_or(&b""[..], |dot| &name[dot + 1..]);
     match extension {
-        b"md" | b"markdown" | b"mdx"
-        | b"html" | b"htm" | b"xhtml" | b"vue" | b"hbs" | b"handlebars"
+        b"mdx" | b"html" | b"htm" | b"xhtml" | b"vue" | b"hbs" | b"handlebars"
         | b"es6" | b"jsm" | b"wxs" | b"mjml" => Language::Other,
         _ if matches!(name, b".prettierrc" | b".lintstagedrc" | b".stylelintrc" | b".clang-format") => {
             Language::Other

@@ -111,10 +111,10 @@ describe.concurrent("bun format", () => {
   });
 
   test("other languages are left alone, with a warning", async () => {
-    const result = await format({ "a.html": "<a   >b</a>\n", "b.md": "*  a\n", "c.js": ugly }, [], {
-      reads: ["a.html", "b.md", "c.js"],
+    const result = await format({ "a.html": "<a   >b</a>\n", "b.vue": "<template><a   /></template>\n", "c.js": ugly }, [], {
+      reads: ["a.html", "b.vue", "c.js"],
     });
-    expect(result.files).toEqual({ "a.html": "<a   >b</a>\n", "b.md": "*  a\n", "c.js": formatted });
+    expect(result.files).toEqual({ "a.html": "<a   >b</a>\n", "b.vue": "<template><a   /></template>\n", "c.js": formatted });
     expect(result.stderr).toContain("2 files are in a language that bun format does not support yet");
     expect(result.exitCode).toBe(0);
   });
@@ -130,13 +130,19 @@ describe.concurrent("bun format", () => {
     expect(huge.stderr).toContain("[error] huge.json:");
   });
 
-  test("YAML, GraphQL", async () => {
+  test("YAML, GraphQL, Markdown", async () => {
     const result = await format(
-      { "a.yaml": "a:   1\nb:   [ c,d ]\n", "b.yml": "- 'a'\n", "c.graphql": "query Q($a:Int){b(c:$a){d e}}\n" },
+      {
+        "a.yaml": "a:   1\nb:   [ c,d ]\n",
+        "b.yml": "- 'a'\n",
+        "c.graphql": "query Q($a:Int){b(c:$a){d e}}\n",
+        "d.md": "Title\n===\n\n*  a\n*  b\n\n```js\nf( 1 )\n```\n",
+      },
       [],
-      { reads: ["a.yaml", "b.yml", "c.graphql"] },
+      { reads: ["a.yaml", "b.yml", "c.graphql", "d.md"] },
     );
     expect(result.files).toEqual({
+      "d.md": "Title\n===\n\n- a\n- b\n\n```js\nf(1);\n```\n",
       "a.yaml": "a: 1\nb: [c, d]\n",
       "b.yml": '- "a"\n',
       "c.graphql": "query Q($a: Int) {\n  b(c: $a) {\n    d\n    e\n  }\n}\n",

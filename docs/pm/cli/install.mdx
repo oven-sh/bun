@@ -648,6 +648,8 @@ The lockfile is not migrated when it has:
 - an entry with a protocol Bun does not have (for example `exec:`), or a git dependency on a package inside a repository (`#workspace=`)
 - a `__metadata.version` outside 4 to 10, a key written twice, or a YAML merge key (`<<`)
 
+The edits to `package.json` (rewritten ranges, `patchedDependencies`, catalogs) are written when `bun.lock` is saved. A command that does not write `package.json` (`--dry-run`, `--no-save`) does not migrate a lockfile that needs them.
+
 ---
 
 <Install />

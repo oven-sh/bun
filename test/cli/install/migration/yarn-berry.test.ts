@@ -269,6 +269,36 @@ describe("yarn berry migration", () => {
     await expectFrozenInstall(dir);
   });
 
+  test.concurrent("package.json is written with the lockfile, not before", async () => {
+    // --dry-run writes no package.json, so a migration that has to edit it is not done
+    const dryDir = await fixture("patch");
+    const before = await Bun.file(join(dryDir, "package.json")).text();
+    const dry = await run(dryDir, "install", "--dry-run");
+    expect(dry.stderr).toContain(
+      "error: migrating yarn.lock has to edit package.json (rewrote patch:/portal:/link: ranges, added patchedDependencies), and this command does not write package.json",
+    );
+    expect(await Bun.file(join(dryDir, "package.json")).text()).toBe(before);
+    expect(existsSync(join(dryDir, "bun.lock"))).toBeFalse();
+
+    // `bun remove` as the first command writes its own edit and the migration's
+    const dir = await fixture("patch");
+    const { stderr, exitCode } = await run(dir, "remove", "optional-native");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("error:");
+    expect(await Bun.file(join(dir, "package.json")).json()).toEqual({
+      name: "berry-patch",
+      dependencies: { "no-deps": "1.0.0", "one-dep": "^1.0.0" },
+      resolutions: { "one-dep/no-deps": "1.0.1" },
+      patchedDependencies: {
+        "no-deps@1.0.0": ".yarn/patches/no-deps-npm-1.0.0-d5a9b7e1c2.patch",
+        "no-deps@1.0.1": ".yarn/patches/no-deps-npm-1.0.1-aa11bb22cc.patch",
+      },
+    });
+    expect(lockedVersions(await bunLockOf(dir))).toEqual(["no-deps@1.0.0", "no-deps@1.0.1", "one-dep@1.0.0"]);
+    expect(exitCode).toBe(0);
+    await expectFrozenInstall(dir);
+  });
+
   test.concurrent("resolutions that rewrote a descriptor are followed", async () => {
     const dir = await fixture("resolutions");
 

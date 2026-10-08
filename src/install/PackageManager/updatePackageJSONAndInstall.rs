@@ -660,6 +660,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     }
 
     if manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
+        let after_install_source: Vec<u8>;
         let (source, path): (&[u8], &ZStr) =
             if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
                 'source_and_path: {
@@ -689,8 +690,20 @@ fn update_package_json_and_install_with_manager_with_updates(
                     );
                 }
             } else {
+                // A yarn or pnpm lockfile migration during the install edits the cached entry
+                // (ranges only that package manager reads) after it was printed above.
+                let cached = manager.workspace_package_json_cache.get_with_path(
+                    manager.log_mut(),
+                    manager.original_package_json_path.as_bytes(),
+                    GetJSONOptions::default(),
+                );
+                if let Ok(entry) = cached.unwrap() {
+                    after_install_source = entry.source.contents.to_vec();
+                } else {
+                    after_install_source = new_package_json_source;
+                }
                 (
-                    &new_package_json_source,
+                    &after_install_source,
                     manager.original_package_json_path.as_zstr(),
                 )
             };

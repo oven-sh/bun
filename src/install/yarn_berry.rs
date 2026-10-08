@@ -52,6 +52,9 @@ use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::lockfile_real::package::value_loc_of;
 use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
 use crate::npm;
+use crate::package_manager_real::add_remove_with_filter::WorkspaceTarget;
+use crate::package_manager_real::options::Do;
+use crate::package_manager_real::package_json_write_back;
 use crate::package_manager_real::update_package_json_and_install::print_package_json_into_cache_entry;
 use crate::pnpm::e_object_mut;
 use crate::repository::Repository;
@@ -570,6 +573,10 @@ fn join_folder(base: &[u8], path: &[u8]) -> Vec<u8> {
         return path.to_vec();
     }
     let mut buf = bun_paths::path_buffer_pool::get();
+    if base.len() + path.len() + 2 > buf.len() {
+        // longer than a path can be; the install reports the folder as missing
+        return [base, b"/", path].concat();
+    }
     let mut joined = join_string_buf::<platform::Auto>(&mut buf[..], &[base, path]).to_vec();
     if cfg!(windows) {
         bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut joined);
@@ -1510,9 +1517,11 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         this.patched_dependencies
             .put(hash, lockfile::PatchedDep::with_path(path))?;
     }
-    // The edits go to the cached package.json trees first and to disk last, so
-    // a migration that fails leaves every package.json as it was.
-    let mut edited: Vec<(Vec<u8>, Vec<&'static str>)> = Vec::new();
+    // The edits go to the cached package.json trees. They are written with the
+    // install's other package.json edits, after bun.lock is saved, so a failed
+    // migration or install, `--dry-run` and commands that only read the lockfile
+    // leave every package.json as it was.
+    let mut edited: Vec<(WorkspaceTarget, Vec<&'static str>)> = Vec::new();
     for ws in &workspaces {
         if ws.rewrites.is_empty() {
             continue;
@@ -1522,7 +1531,12 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         if let Some(changed) =
             edit_package_json(manager, log, json_path.slice(), &ws.rewrites, &[], None)?
         {
-            edited.push((json_path.slice().to_vec(), changed));
+            let target = WorkspaceTarget {
+                name: ws.name.clone(),
+                name_hash: Some(semver::string::Builder::string_hash(&ws.name)),
+                package_json_path: json_path.slice().into(),
+            };
+            edited.push((target, changed));
         }
     }
     if let Some(changed) = edit_package_json(
@@ -1533,7 +1547,12 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         &patched,
         Some(&yarnrc.catalogs),
     )? {
-        edited.push((root_json_path.slice().to_vec(), changed));
+        let target = WorkspaceTarget {
+            name: Box::default(),
+            name_hash: None,
+            package_json_path: root_json_path.slice().into(),
+        };
+        edited.push((target, changed));
     }
     // bun reads `resolutions` from package.json on every install; parse them the
     // same way now (after the `patch:` values were rewritten) so the next install
@@ -1545,8 +1564,36 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     }
     this.meta_hash = this.generate_meta_hash(false, this.packages.len())?;
 
-    for (abs_path, changed) in &edited {
-        write_package_json(manager, log, abs_path, changed)?;
+    // bun.lock is saved for the edited package.json files, so a command that does
+    // not write package.json (`--dry-run`, `--no-save`) cannot keep the two in step.
+    if !edited.is_empty() && !manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
+        return Err(invalid_lockfile(
+            log,
+            format_args!(
+                "migrating yarn.lock has to edit package.json ({}), and this command does not write package.json",
+                edited[0].1.join(", "),
+            ),
+        ));
+    }
+    for (target, changed) in edited {
+        if !silent {
+            let dirname =
+                bun_paths::dirname(&target.package_json_path).unwrap_or(&target.package_json_path);
+            let rel = strings::without_prefix(
+                dirname,
+                strings::without_trailing_slash(
+                    crate::bun_fs::FileSystem::instance().top_level_dir(),
+                ),
+            );
+            let rel = strings::trim_prefix(rel, b"/");
+            bun_core::pretty_errorln!(
+                "<d>{} in <r><green>{}{}package.json<r>",
+                changed.join(", "),
+                bstr::BStr::new(rel),
+                if rel.is_empty() { "" } else { "/" },
+            );
+        }
+        package_json_write_back::record(manager, target, false);
     }
 
     Ok(LoadResult::Ok(LoadResultOk {
@@ -2138,7 +2185,7 @@ fn sorted_object(map: &StringArrayHashMap<Box<[u8]>>) -> Expr {
 /// parse, project patches go to `patchedDependencies`, and .yarnrc.yml catalogs
 /// go to `workspaces.catalog(s)`, so the project keeps working with bun alone.
 /// Existing keys are left alone. Edits the cached tree and returns what
-/// changed; `write_package_json` puts it on disk.
+/// changed.
 fn edit_package_json(
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
@@ -2304,60 +2351,6 @@ fn edit_package_json(
         return Err(Error::InvalidPackageJSON);
     }
     Ok(Some(changed))
-}
-
-fn write_package_json(
-    manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
-    abs_path: &[u8],
-    changed: &[&'static str],
-) -> Result<(), Error> {
-    let silent = manager.options.log_level.is_silent();
-    let dirname = bun_paths::dirname(abs_path).unwrap_or(abs_path);
-    let rel = strings::without_prefix(
-        dirname,
-        strings::without_trailing_slash(crate::bun_fs::FileSystem::instance().top_level_dir()),
-    );
-    let rel = strings::trim_prefix(rel, b"/");
-    let written = manager
-        .workspace_package_json_cache
-        .get_with_path(
-            log,
-            abs_path,
-            crate::GetJsonOptions {
-                init_reset_store: false,
-                ..Default::default()
-            },
-        )
-        .unwrap()
-        .is_ok_and(|entry| {
-            bun_sys::File::write_file(
-                Fd::cwd(),
-                &bun_core::ZBox::from_bytes(abs_path),
-                entry.source.contents(),
-            )
-            .is_ok()
-        });
-    // bun.lock is about to be saved for the edited package.json
-    if !written {
-        return Err(invalid_lockfile(
-            log,
-            format_args!(
-                "could not write {}{}package.json",
-                bstr::BStr::new(rel),
-                if rel.is_empty() { "" } else { "/" },
-            ),
-        ));
-    }
-    if !silent {
-        bun_core::pretty_errorln!(
-            "<d>{} in <r><green>{}{}package.json<r>",
-            changed.join(", "),
-            bstr::BStr::new(rel),
-            if rel.is_empty() { "" } else { "/" },
-        );
-    }
-    Ok(())
 }
 
 /// `resolutions` / `overrides` from the root package.json, parsed the way a

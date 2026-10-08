@@ -757,6 +757,8 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             unsafe {
                 (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
             }
+            // package.json edits the migration made (yarn `patch:` / `portal:` ranges, ...)
+            bun_install::package_manager_real::package_json_write_back::flush(pm)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"version") {
             let positionals: &[&[u8]] = pm.options.positionals;

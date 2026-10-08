@@ -620,10 +620,19 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     data: &[u8],
     dir: Fd,
 ) -> Result<LoadResult<'a>, Error> {
-    if strings::index_of(data, b"# yarn lockfile v1").is_none() {
-        // yarn 2+ (berry) lockfiles are YAML with a `__metadata` header.
-        if strings::contains(data, b"\n__metadata:") || data.starts_with(b"__metadata:") {
-            return crate::yarn_berry::migrate_yarn_berry_lockfile(this, manager, log, data, dir);
+    // yarn 2+ (berry) lockfiles are YAML with a `__metadata` header. Yarn reads a
+    // file as v1 only when the marker is in the comment lines at its top, so a
+    // berry file that holds the marker further down is still a berry file.
+    let is_berry = strings::contains(data, b"\n__metadata:") || data.starts_with(b"__metadata:");
+    let has_v1_marker = match strings::index_of(data, b"# yarn lockfile v1") {
+        Some(at) if is_berry => strings::split(&data[..at], b"\n")
+            .all(|line| line.is_empty() || line.starts_with(b"#") || line == b"\r"),
+        Some(_) => true,
+        None => false,
+    };
+    if !has_v1_marker {
+        if is_berry {
+            return crate::yarn_berry::migrate_yarn_berry_lockfile(this, manager, log, data);
         }
         return Err(crate::Error::UnsupportedYarnLockfileVersion);
     }

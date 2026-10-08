@@ -8,21 +8,24 @@
 //! platform `conditions`.
 //!
 //! The point of migrating is that every third-party version stays exactly
-//! where yarn pinned it, so:
+//! where yarn pinned it. What yarn.lock pins and bun cannot keep (an edge with
+//! no entry, a patch `patchedDependencies` cannot express, a protocol bun does
+//! not have, a registry bun is not configured with, a package with no
+//! integrity) fails the migration with the reason in the log, and bun resolves
+//! from package.json instead. Otherwise:
 //!   * the root and workspace packages are built from their package.json
 //!     (workspaces come from the root package.json `workspaces` globs, the
 //!     same way `bun install` reads them), which gives the real prod/dev/
 //!     optional/peer behaviours;
 //!   * every other entry becomes a package from its `resolution`: npm (the
 //!     tarball URL comes from `::__archiveUrl` when present, otherwise from the
-//!     registry configured for bun, or the one in `.yarnrc.yml`), tarball URLs,
+//!     registry configured for bun, which has to be yarn's too), tarball URLs,
 //!     git (pinned to the locked commit), and `file:` / `portal:` / `link:`
 //!     folders relative to the workspace that declared them;
-//!   * dependency edges are bound by descriptor lookup (`name@<range>`), with
-//!     `catalog:` ranges translated through `.yarnrc.yml` and rewritten
-//!     descriptors recovered through package.json `resolutions`, so nothing yarn
-//!     had locked is re-resolved. Edges without a lockfile entry are left for
-//!     `bun install` to resolve;
+//!   * dependency edges are bound the way yarn bound them: through the first
+//!     matching package.json `resolutions` rule, else by descriptor lookup
+//!     (`name@<range>`), with `catalog:` ranges translated through
+//!     `.yarnrc.yml`. Peer edges may stay unbound; the install binds them;
 //!   * `patch:` locators fold onto the package they patch. Project patches
 //!     (`.yarn/patches/...`) are recorded in package.json `patchedDependencies`;
 //!     yarn's builtin compat patches are dropped;
@@ -84,6 +87,94 @@ fn as_str(expr: &Expr) -> Option<&'static [u8]> {
 
 fn get_str(expr: &Expr, key: &[u8]) -> Option<&'static [u8]> {
     expr.get(key).and_then(|e| as_str(&e))
+}
+
+/// The text of a scalar in yarn.lock / .yarnrc.yml. Yarn reads both with YAML's
+/// failsafe schema, where every scalar is a string. Bun's parser types plain
+/// scalars, so `wrappy: 1` and `ms: 2.10` arrive as numbers (the second one as
+/// `2.1`); their text is the source bytes at the node's `loc`.
+fn scalar_text(source: &[u8], expr: &Expr) -> Option<&'static [u8]> {
+    if let Some(s) = as_str(expr) {
+        return Some(s);
+    }
+    if !matches!(
+        expr.data,
+        ExprData::ENumber(_) | ExprData::EBoolean(_) | ExprData::ENull(_)
+    ) {
+        return None;
+    }
+    let rest = source.get(usize::try_from(expr.loc.start).ok()?..)?;
+    let text = &rest[..strings::index_of_any(rest, b" \t\r\n:,]}").unwrap_or(rest.len())];
+    // an alias (`*a`), a tagged scalar (`!!int 1`) and an empty value have no
+    // scalar text at `loc`
+    let plain = !text.is_empty()
+        && text
+            .iter()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.' | b'~'));
+    plain.then(|| bun_ast::data_store_dupe_str(text))
+}
+
+/// A key that one mapping of yarn.lock holds twice (nested mappings included).
+/// Yarn keeps the last value and `Expr::get` returns the first, so the two would
+/// read different entries.
+fn duplicate_key(
+    source: &[u8],
+    expr: &Expr,
+    depth: u8,
+) -> Result<Option<&'static [u8]>, AllocError> {
+    let ExprData::EObject(obj) = &expr.data else {
+        return Ok(None);
+    };
+    let mut seen: StringArrayHashMap<()> = StringArrayHashMap::new();
+    for p in obj.properties.slice() {
+        if let Some(key) = p.key.as_ref().and_then(|k| scalar_text(source, k)) {
+            if seen.get_or_put(key)?.found_existing {
+                return Ok(Some(key));
+            }
+        }
+        if let (Some(value), true) = (&p.value, depth > 0) {
+            if let Some(key) = duplicate_key(source, value, depth - 1)? {
+                return Ok(Some(key));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Whether yarn.lock can hold a `<<` merge key. Bun's YAML parser expands merge
+/// keys and yarn reads `<<` as an ordinary key, so the two would see different
+/// entries. Yarn never writes `<<`, a `\` escape for `<`, or a `\` line
+/// continuation (the two ways to spell `<<` without the bytes).
+fn may_hold_merge_key(data: &[u8]) -> bool {
+    if strings::contains(data, b"<<") {
+        return true;
+    }
+    let mut rest = data;
+    while let Some(i) = strings::index_of_char_usize(rest, b'\\') {
+        rest = &rest[i + 1..];
+        let hex_len = match rest.first() {
+            Some(b'x') => 2,
+            Some(b'u') => 4,
+            Some(b'U') => 8,
+            Some(b'\n' | b'\r') => return true,
+            _ => continue,
+        };
+        let Some(hex) = rest.get(1..1 + hex_len) else {
+            continue;
+        };
+        let code = hex
+            .iter()
+            .try_fold(0u32, |n, &c| hex_val(c).map(|v| n * 16 + u32::from(v)));
+        if code == Some(u32::from(b'<')) {
+            return true;
+        }
+    }
+    false
+}
+
+fn invalid_lockfile(log: &mut bun_ast::Log, args: core::fmt::Arguments<'_>) -> Error {
+    log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
+    Error::InvalidYarnBerryLockfile
 }
 
 fn hex_val(c: u8) -> Option<u8> {
@@ -244,7 +335,7 @@ fn patched_dependency_key(
     Ok(Some(out))
 }
 
-/// The parts of `.yarnrc.yml` the migration reads.
+/// The parts of yarn's configuration the migration reads.
 #[derive(Default)]
 struct YarnRc {
     /// catalog group ("" for the default `catalog:`) -> name -> range
@@ -255,12 +346,71 @@ struct YarnRc {
     scope_registries: StringArrayHashMap<Box<[u8]>>,
 }
 
-fn read_yarnrc(log: &mut bun_ast::Log, dir: Fd) -> Result<YarnRc, AllocError> {
+/// Yarn's settings come from `YARN_*` environment variables, then the rc file
+/// of the project folder, of each parent folder and of the home folder; the
+/// first source that sets a value wins.
+fn read_yarnrc(log: &mut bun_ast::Log, manager: &PackageManager) -> Result<YarnRc, Error> {
     let mut out = YarnRc::default();
-    let Ok(data) = bun_sys::File::read_from(dir, b".yarnrc.yml") else {
-        return Ok(out);
+    let env = |key: &[u8]| -> Option<&[u8]> {
+        manager
+            .env
+            .as_ref()
+            .and_then(|env| env.get().get(key))
+            .filter(|v| !v.is_empty())
     };
-    let source = bun_ast::Source::init_path_string(b".yarnrc.yml", data.as_slice());
+    if let Some(url) = env(b"YARN_NPM_REGISTRY_SERVER") {
+        out.registry = Some(Box::from(url));
+    }
+    let rc_name = env(b"YARN_RC_FILENAME").unwrap_or(b".yarnrc.yml");
+    let home = bun_core::env_var::HOME
+        .get_not_empty()
+        .map(strings::without_trailing_slash);
+
+    let mut folder: &[u8] =
+        strings::without_trailing_slash(crate::bun_fs::FileSystem::instance().top_level_dir());
+    let mut in_project = true;
+    let mut read_home = false;
+    loop {
+        read_yarnrc_file(log, &mut out, folder, rc_name, in_project)?;
+        in_project = false;
+        read_home |= home == Some(folder);
+        match bun_paths::dirname(folder) {
+            Some(parent) if parent.len() < folder.len() => {
+                folder = strings::without_trailing_slash(parent);
+            }
+            _ => break,
+        }
+    }
+    if let (Some(home), false) = (home, read_home) {
+        read_yarnrc_file(log, &mut out, home, rc_name, false)?;
+    }
+    Ok(out)
+}
+
+fn read_yarnrc_file(
+    log: &mut bun_ast::Log,
+    out: &mut YarnRc,
+    folder: &[u8],
+    rc_name: &[u8],
+    in_project: bool,
+) -> Result<(), Error> {
+    let path = [folder, b"/", rc_name].concat();
+    let data = match bun_sys::File::read_from(Fd::cwd(), &path) {
+        Ok(data) => data,
+        Err(err)
+            if err.errno == bun_sys::SystemErrno::ENOENT as u16
+                || err.errno == bun_sys::SystemErrno::ENOTDIR as u16 =>
+        {
+            return Ok(());
+        }
+        Err(_) => {
+            return Err(invalid_lockfile(
+                log,
+                format_args!("could not read {}", bstr::BStr::new(&path)),
+            ));
+        }
+    };
+    let source = bun_ast::Source::init_path_string(path.as_slice(), data.as_slice());
     let arena = bun_alloc::Arena::new();
     let Ok(root) = bun_parsers::yaml::YAML::parse(
         &source,
@@ -268,49 +418,72 @@ fn read_yarnrc(log: &mut bun_ast::Log, dir: Fd) -> Result<YarnRc, AllocError> {
         &arena,
         bun_parsers::yaml::CyclicAliases::Reject,
     ) else {
-        // not fatal: the lockfile itself is what matters
-        return Ok(out);
+        return Err(invalid_lockfile(
+            log,
+            format_args!("{} is not valid YAML", bstr::BStr::new(&path)),
+        ));
     };
 
-    let mut add_group = |group: &[u8], obj: &Expr| -> Result<(), AllocError> {
-        if !obj.is_object() {
-            return Ok(());
-        }
-        let entry = out.catalogs.get_or_put(group)?;
-        if !entry.found_existing {
-            *entry.value_ptr = StringArrayHashMap::new();
-        }
-        let map = &mut *entry.value_ptr;
-        obj.try_for_each_property(|name, _, value| -> Result<(), AllocError> {
-            if let Some(range) = as_str(&value) {
-                map.put(name, Box::from(range))?;
+    if in_project {
+        let mut add_group = |group: &[u8], obj: &Expr| -> Result<(), AllocError> {
+            if !obj.is_object() {
+                return Ok(());
             }
-            Ok(())
-        })
-    };
-    if let Some(catalog) = root.get(b"catalog") {
-        add_group(b"", &catalog)?;
-    }
-    if let Some(catalogs) = root.get(b"catalogs") {
-        catalogs.try_for_each_property(|group, _, value| add_group(group, &value))?;
-    }
-
-    if let Some(url) = get_str(&root, b"npmRegistryServer") {
-        if !url.is_empty() {
-            out.registry = Some(Box::from(url));
-        }
-    }
-    if let Some(scopes) = root.get(b"npmScopes") {
-        scopes.try_for_each_property(|scope, _, value| -> Result<(), AllocError> {
-            if let Some(url) = get_str(&value, b"npmRegistryServer") {
-                if !url.is_empty() {
-                    out.scope_registries.put(scope, Box::from(url))?;
+            let entry = out.catalogs.get_or_put(group)?;
+            if !entry.found_existing {
+                *entry.value_ptr = StringArrayHashMap::new();
+            }
+            let map = &mut *entry.value_ptr;
+            obj.try_for_each_property(|name, _, value| -> Result<(), AllocError> {
+                if let Some(range) = scalar_text(&data, &value) {
+                    map.put(name, Box::from(range))?;
                 }
-            }
-            Ok(())
-        })?;
+                Ok(())
+            })
+        };
+        if let Some(catalog) = root.get(b"catalog") {
+            add_group(b"", &catalog)?;
+        }
+        if let Some(catalogs) = root.get(b"catalogs") {
+            catalogs.try_for_each_property(|group, _, value| add_group(group, &value))?;
+        }
     }
-    Ok(out)
+
+    // yarn substitutes `${VAR}` in rc values; a registry spelled that way cannot
+    // be compared with bun's
+    let registry_of = |log: &mut bun_ast::Log, owner: &Expr| -> Result<Option<Box<[u8]>>, Error> {
+        let Some(url) = get_str(owner, b"npmRegistryServer").filter(|url| !url.is_empty()) else {
+            return Ok(None);
+        };
+        if strings::contains(url, b"${") {
+            return Err(invalid_lockfile(
+                log,
+                format_args!(
+                    "npmRegistryServer in {} uses an environment variable (\"{}\")",
+                    bstr::BStr::new(&path),
+                    bstr::BStr::new(url),
+                ),
+            ));
+        }
+        Ok(Some(Box::from(url)))
+    };
+    if out.registry.is_none() {
+        out.registry = registry_of(log, &root)?;
+    }
+    if let Some(ExprData::EObject(scopes)) = root.get(b"npmScopes").map(|e| e.data) {
+        for p in scopes.properties.slice() {
+            let (Some(scope), Some(value)) = (p.key.as_ref().and_then(as_str), &p.value) else {
+                continue;
+            };
+            if out.scope_registries.contains(scope) {
+                continue;
+            }
+            if let Some(url) = registry_of(log, value)? {
+                out.scope_registries.put(scope, url)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Where the project's `.patch` files of a `patch:` locator live, relative to
@@ -454,18 +627,22 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     data: &[u8],
-    dir: Fd,
 ) -> Result<LoadResult<'a>, Error> {
     this.init_empty();
     crate::initialize_store();
     bun_core::analytics::Features::yarn_migration_inc(1);
 
     let silent = manager.options.log_level.is_silent();
-    let verbose = manager.options.log_level.is_verbose();
 
     // Later `workspace_package_json_cache.get_with_path` calls reset the Expr
     // store, so clone the parsed tree into an arena that lives for the whole
     // function (same as the pnpm migration).
+    if may_hold_merge_key(data) {
+        return Err(invalid_lockfile(
+            log,
+            format_args!("yarn.lock has a \"<<\" merge key, which yarn and bun read differently"),
+        ));
+    }
     let source = bun_ast::Source::init_path_string(b"yarn.lock", data);
     let arena = bun_alloc::Arena::new();
     let root: Expr = match bun_parsers::yaml::YAML::parse(
@@ -488,20 +665,40 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         );
         return Err(Error::InvalidYarnBerryLockfile);
     };
-    if root
+    let Some(version) = root
         .get(b"__metadata")
         .and_then(|m| m.get(b"version"))
-        .is_none()
-    {
+        .and_then(|v| scalar_text(data, &v))
+    else {
         log.add_error(
             None,
             bun_ast::Loc::EMPTY,
             b"yarn.lock is missing __metadata.version",
         );
         return Err(Error::InvalidYarnBerryLockfile);
+    };
+    // 4 is yarn 2.0's lockfile and 10 is the newest (yarn 4); a later format may
+    // change what the fields mean
+    if !matches!(version, b"4" | b"5" | b"6" | b"7" | b"8" | b"9" | b"10") {
+        return Err(invalid_lockfile(
+            log,
+            format_args!(
+                "yarn.lock version {} is not supported",
+                bstr::BStr::new(version)
+            ),
+        ));
+    }
+    if let Some(key) = duplicate_key(data, &root, 3)? {
+        return Err(invalid_lockfile(
+            log,
+            format_args!(
+                "yarn.lock has the key \"{}\" more than once in one mapping",
+                bstr::BStr::new(key)
+            ),
+        ));
     }
 
-    let yarnrc = read_yarnrc(log, dir)?;
+    let yarnrc = read_yarnrc(log, manager)?;
 
     // `catalog:` ranges must resolve while this install parses package.json
     // (against `lockfile.catalogs`); they are also written to package.json at
@@ -546,8 +743,6 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     let mut entries: Vec<Entry> = Vec::with_capacity(root_obj.properties.len_u32() as usize);
     // descriptor as yarn writes it ("name@npm:^1") -> entry
     let mut descriptor_to_entry: StringArrayHashMap<usize> = StringArrayHashMap::new();
-    // descriptor with `::params` removed -> entry, or usize::MAX when ambiguous
-    let mut bare_descriptor_to_entry: StringArrayHashMap<usize> = StringArrayHashMap::new();
     // locator without `::params` ("name@npm:1.2.3") -> entry
     let mut locator_to_entry: StringArrayHashMap<usize> = StringArrayHashMap::new();
     // workspace path in the lockfile -> entry
@@ -560,7 +755,12 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         let (Some(key), Some(value)) = (&prop.key, &prop.value) else {
             continue;
         };
-        let Some(key) = as_str(key) else { continue };
+        let Some(key) = scalar_text(data, key) else {
+            return Err(invalid_lockfile(
+                log,
+                format_args!("yarn.lock has a key that is not a string"),
+            ));
+        };
         if key == b"__metadata" {
             continue;
         }
@@ -620,20 +820,22 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             if desc.is_empty() {
                 continue;
             }
-            descriptor_to_entry.put(desc, idx)?;
+            let e = descriptor_to_entry.get_or_put(desc)?;
+            if e.found_existing {
+                return Err(invalid_lockfile(
+                    log,
+                    format_args!(
+                        "yarn.lock has more than one entry for \"{}\"",
+                        bstr::BStr::new(desc)
+                    ),
+                ));
+            }
+            *e.value_ptr = idx;
             if reference.starts_with(b"link:") {
                 yarn_links.put(
                     strings::split_once(desc, b"::").map_or(desc, |(bare, _)| bare),
                     (),
                 )?;
-            }
-            if let Some((bare, _)) = strings::split_once(desc, b"::") {
-                let e = bare_descriptor_to_entry.get_or_put(bare)?;
-                *e.value_ptr = if e.found_existing && *e.value_ptr != idx {
-                    usize::MAX
-                } else {
-                    idx
-                };
             }
         }
         locator_to_entry.put(&locator_key(name, reference), idx)?;
@@ -713,21 +915,22 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             rewrites: Vec::new(),
         });
     }
-    if !silent {
-        for (path, _) in lockfile_workspaces.iter() {
-            let path: &[u8] = path;
-            if path != b"." && workspace_map.get(path).is_none() {
-                bun_core::warn!(
-                    "yarn.lock workspace \"{}\" is not one of the package.json \"workspaces\"; skipping it",
+    for (path, _) in lockfile_workspaces.iter() {
+        let path: &[u8] = path;
+        if path != b"." && workspace_map.get(path).is_none() {
+            return Err(invalid_lockfile(
+                log,
+                format_args!(
+                    "yarn.lock workspace \"{}\" is not one of the package.json \"workspaces\"",
                     bstr::BStr::new(path)
-                );
-            }
+                ),
+            ));
         }
     }
 
-    // yarn `resolutions`, consulted when a descriptor has no lockfile key of
-    // its own because yarn rewrote it: (parent package name of a `parent/name`
-    // key, last `name[@range]` segment, target).
+    // yarn `resolutions`, in file order: (parent of a `parent[@range]/name` key,
+    // the `name[@range]` segment, target). Yarn skips a key it cannot parse and
+    // a value that is not a string.
     let mut resolutions: Vec<(Option<Parent>, &[u8], &[u8])> = Vec::new();
     if let Some(ExprData::EObject(res)) = root_manifest.get(b"resolutions").map(|e| e.data) {
         for p in res.properties.slice() {
@@ -735,11 +938,24 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                 continue;
             };
             if let (Some(k), Some(v)) = (as_str(k), as_str(v)) {
-                let (parent, pattern) = resolution_key_parts(k);
-                resolutions.push((parent, pattern, v));
+                if let Some((parent, pattern)) = resolution_key_parts(k) {
+                    resolutions.push((parent, pattern, v));
+                }
             }
         }
     }
+
+    // `bun add <name>` / `bun update <name>` as the first command in the project:
+    // package.json already holds the range that command is about to resolve, and
+    // yarn.lock has nothing for it. Left out of the migrated package, the install
+    // sees the dependency as added and resolves it.
+    let requested: Vec<&[u8]> = manager.update_requests.iter().map(|r| r.name).collect();
+    let being_added = |name: &[u8], spec: &[u8]| -> bool {
+        requested.contains(&name)
+            && [&b"@"[..], b"@npm:"]
+                .iter()
+                .all(|sep| !descriptor_to_entry.contains(&[name, sep, spec].concat()))
+    };
 
     let mut root_rewrites: Vec<ManifestRewrite> = Vec::new();
     let mut original_specs = OriginalSpecs::default();
@@ -775,6 +991,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             &mut root_rewrites,
             &mut original_specs,
             &yarn_links,
+            &being_added,
         )?;
         pkg.dependencies = ExternalSlice::new(off, len);
         pkg.resolutions = ExternalSlice::new(off, len);
@@ -818,6 +1035,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             &mut ws.rewrites,
             &mut original_specs,
             &yarn_links,
+            &being_added,
         )?;
         pkg.dependencies = ExternalSlice::new(off, len);
         pkg.resolutions = ExternalSlice::new(off, len);
@@ -837,9 +1055,6 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     let workspace_path_of_locator = |encoded: &[u8]| -> Option<Vec<u8>> { locator_dir(encoded, 0) };
 
     // -- 3. third-party packages -----------------------------------------------
-    let mut warned_registries: StringArrayHashMap<()> = StringArrayHashMap::new();
-    // entries whose tarball lives outside the registry's conventional path
-    let mut archive_url_entries: Vec<usize> = Vec::new();
     // package id -> the lockfile entry it was built from (third-party packages)
     let mut entry_of_package: Vec<Option<usize>> = Vec::new();
     for i in 0..entries.len() {
@@ -869,13 +1084,9 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             }
             let version = parsed.version.min();
             let url = match param(&params, b"__archiveUrl") {
-                Some(url) => {
-                    archive_url_entries.push(i);
-                    sbuf!(this).append(url)?
-                }
+                Some(url) => sbuf!(this).append(url)?,
                 None => {
-                    let registry =
-                        registry_for(manager, &yarnrc, name, &mut warned_registries, silent)?;
+                    let registry = registry_for(manager, log, &yarnrc, name)?;
                     let url = crate::extract_tarball::build_url(
                         &registry,
                         &strings::StringOrTinyString::init(name),
@@ -915,19 +1126,19 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                 Resolution::init(TaggedValue::Folder(sbuf!(this).append(&joined)?))
             }
         } else if is_git_reference(head) {
-            git_resolution(this, name, head)?
+            git_resolution(this, log, name, head)?
         } else if head.starts_with(b"https://") || head.starts_with(b"http://") {
             Resolution::init(TaggedValue::RemoteTarball(sbuf!(this).append(head)?))
         } else {
-            // exec:, custom protocols from plugins, ...: let bun resolve that dependency itself.
-            if !silent {
-                bun_core::warn!(
-                    "skipped \"{}@{}\" from yarn.lock: unsupported protocol (bun will resolve it from package.json)",
+            // exec:, custom protocols from plugins, ...
+            return Err(invalid_lockfile(
+                log,
+                format_args!(
+                    "yarn.lock entry \"{}@{}\" uses a protocol bun does not support",
                     bstr::BStr::new(name),
                     bstr::BStr::new(reference),
-                );
-            }
-            continue;
+                ),
+            ));
         };
 
         let mut pkg = lockfile::Package {
@@ -936,7 +1147,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             resolution,
             ..Default::default()
         };
-        let (off, len) = append_entry_dependencies(this, log, &entry_expr)?;
+        let (off, len) = append_entry_dependencies(this, log, data, name, &entry_expr)?;
         pkg.dependencies = ExternalSlice::new(off, len);
         pkg.resolutions = ExternalSlice::new(off, len);
         if let Some(bin) = entry_expr.get(b"bin") {
@@ -960,6 +1171,9 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     // A patch can wrap another patch (yarn's builtin compat patch around a user
     // patch), so repeat until every chain reached a package.
     let mut patched: Vec<(Vec<u8>, Vec<u8>)> = Vec::new(); // ("name@version", patch path)
+    // In yarn the patched package is a second package next to its source; here it
+    // is the same one.
+    let mut patched_packages: bun_collections::HashMap<PackageID, ()> = Default::default();
     let mut pending: Vec<usize> = (0..entries.len())
         .filter(|&i| entries[i].kind == EntryKind::Patch)
         .collect();
@@ -975,14 +1189,14 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                 None => locator_key(name, &spec.inner),
             };
             let Some(&inner_idx) = locator_to_entry.get(&inner_key) else {
-                if !silent {
-                    bun_core::warn!(
-                        "skipped patch \"{}\" from yarn.lock: it patches \"{}\", which is not in the lockfile",
+                return Err(invalid_lockfile(
+                    log,
+                    format_args!(
+                        "yarn.lock patch \"{}\" patches \"{}\", which is not in the lockfile",
                         bstr::BStr::new(entries[i].reference),
                         bstr::BStr::new(&inner_key),
-                    );
-                }
-                continue;
+                    ),
+                ));
             };
             let pid = entries[inner_idx].package_id;
             if pid == INVALID_PACKAGE_ID {
@@ -992,46 +1206,57 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                 continue;
             }
             entries[i].package_id = pid;
+            patched_packages.insert(pid, ());
             let mut paths = project_patch_paths(&spec.source, &params, &workspace_path_of_locator);
             if paths.is_empty() {
                 continue;
             }
+            if let Some(path) = paths.iter().find(|p| {
+                bun_paths::is_absolute(p) || strings::split_any(p, b"/\\").any(|part| part == b"..")
+            }) {
+                return Err(invalid_lockfile(
+                    log,
+                    format_args!(
+                        "yarn.lock patch file \"{}\" is outside the project",
+                        bstr::BStr::new(path)
+                    ),
+                ));
+            }
             let Some(key) = patched_dependency_key(this, entries[inner_idx].name, pid)? else {
-                if !silent {
-                    bun_core::warn!(
-                        "skipped patch \"{}\" on \"{}\" from yarn.lock: bun does not patch packages installed from a project folder",
-                        bstr::BStr::new(&paths[0]),
+                return Err(invalid_lockfile(
+                    log,
+                    format_args!(
+                        "yarn.lock patches \"{}\" with \"{}\"; bun does not patch packages installed from a project folder",
                         bstr::BStr::new(entries[inner_idx].name),
-                    );
-                }
-                continue;
+                        bstr::BStr::new(&paths[0]),
+                    ),
+                ));
             };
             if paths.len() > 1 {
-                // bun applies one patch file per package
-                if !silent {
-                    bun_core::warn!(
-                        "\"{}\" has {} patch files in yarn.lock (\"{}\", ...); bun applies one patch per package, so it is left unpatched — merge them into one file and add it to \"patchedDependencies\"",
+                return Err(invalid_lockfile(
+                    log,
+                    format_args!(
+                        "yarn.lock patches \"{}\" with {} files (\"{}\", ...); bun applies one patch per package — merge them into one file",
                         bstr::BStr::new(&key),
                         paths.len(),
                         bstr::BStr::new(&paths[0]),
-                    );
-                }
-                continue;
+                    ),
+                ));
             }
-            // several descriptors / `resolutions` selectors can point at one patch entry;
-            // two different patch files for one package cannot both be kept
+            // several descriptors / `resolutions` selectors can point at one patch entry
             let path = paths.swap_remove(0);
             match patched.iter().find(|(k, _)| *k == key) {
                 None => patched.push((key, path)),
                 Some((_, existing)) if *existing != path => {
-                    if !silent {
-                        bun_core::warn!(
-                            "\"{}\" is patched by both \"{}\" and \"{}\" in yarn.lock; bun applies one patch per package, so only the first is kept",
+                    return Err(invalid_lockfile(
+                        log,
+                        format_args!(
+                            "yarn.lock patches \"{}\" with both \"{}\" and \"{}\"; bun applies one patch per package",
                             bstr::BStr::new(&key),
                             bstr::BStr::new(existing),
                             bstr::BStr::new(&path),
-                        );
-                    }
+                        ),
+                    ));
                 }
                 Some(_) => {}
             }
@@ -1049,48 +1274,53 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         .resolutions
         .resize(dep_count, INVALID_PACKAGE_ID);
     let mut key: Vec<u8> = Vec::with_capacity(128);
-    let mut unbound: Vec<(Box<[u8]>, Box<[u8]>)> = Vec::new();
-    let has_scoped_resolutions = resolutions.iter().any(|(parent, ..)| parent.is_some());
+    // yarn binds the target of a `resolutions` rule to the root workspace
+    let root_locator: Vec<u8> = {
+        let root_name = lockfile_workspaces
+            .get(b".")
+            .map_or(&b""[..], |&idx| entries[idx].name);
+        let mut enc = Vec::new();
+        percent_encode(&mut enc, &[root_name, b"@workspace:."].concat());
+        enc
+    };
 
     let pkg_count = this.packages.len();
     for pkg_id in 0..pkg_count {
-        // the owning workspace, for `::locator=` descriptors
-        let owner_locator: Option<Vec<u8>> = {
+        // this package's yarn locator, as (name, reference)
+        let owner: Option<(Vec<u8>, Vec<u8>)> = {
             let res = this.packages.items_resolution()[pkg_id];
-            let ws_path: &[u8] = match res.tag {
-                crate::resolution::Tag::Root => b".",
-                crate::resolution::Tag::Workspace => res.workspace().slice(string_bytes!(this)),
-                _ => b"",
+            let ws_path: Option<&[u8]> = match res.tag {
+                crate::resolution::Tag::Root => Some(b"."),
+                crate::resolution::Tag::Workspace => {
+                    Some(res.workspace().slice(string_bytes!(this)))
+                }
+                _ => None,
             };
-            if ws_path.is_empty() {
-                // a `file:` / `portal:` package declaring its own relative deps: yarn
-                // keys those by this entry's full locator
-                entry_of_package.get(pkg_id).copied().flatten().map(|idx| {
-                    let e = &entries[idx];
-                    let mut raw = Vec::with_capacity(e.name.len() + 1 + e.reference.len());
-                    raw.extend_from_slice(e.name);
-                    raw.push(b'@');
-                    raw.extend_from_slice(e.reference);
-                    let mut enc = Vec::with_capacity(raw.len() + 16);
-                    percent_encode(&mut enc, &raw);
-                    enc
-                })
-            } else {
+            match ws_path {
                 // yarn names an unnamed workspace itself (`root-workspace-0b6124`),
                 // so prefer the name its lockfile entry carries
-                let ws_name: &[u8] = match lockfile_workspaces.get(ws_path) {
-                    Some(&idx) => entries[idx].name,
-                    None => this.packages.items_name()[pkg_id].slice(string_bytes!(this)),
-                };
-                let mut raw = Vec::with_capacity(ws_name.len() + 12 + ws_path.len());
-                raw.extend_from_slice(ws_name);
-                raw.extend_from_slice(b"@workspace:");
-                raw.extend_from_slice(ws_path);
-                let mut enc = Vec::with_capacity(raw.len() + 8);
-                percent_encode(&mut enc, &raw);
-                Some(enc)
+                Some(path) => {
+                    let ws_name: &[u8] = match lockfile_workspaces.get(path) {
+                        Some(&idx) => entries[idx].name,
+                        None => this.packages.items_name()[pkg_id].slice(string_bytes!(this)),
+                    };
+                    Some((ws_name.to_vec(), [b"workspace:", path].concat()))
+                }
+                None => entry_of_package
+                    .get(pkg_id)
+                    .copied()
+                    .flatten()
+                    .map(|idx| (entries[idx].name.to_vec(), entries[idx].reference.to_vec())),
             }
         };
+        // relative protocols (`file:`, `portal:`, `link:`) are keyed by the package
+        // that declared them
+        let owner_locator: Option<Vec<u8>> = owner.as_ref().map(|(name, reference)| {
+            let mut enc = Vec::with_capacity(name.len() + reference.len() + 16);
+            percent_encode(&mut enc, &[&name[..], b"@", reference].concat());
+            enc
+        });
+        let is_patched = patched_packages.contains_key(&(pkg_id as PackageID));
 
         let deps = this.packages.items_dependencies()[pkg_id];
         for dep_id in deps.begin()..deps.end() {
@@ -1112,148 +1342,100 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             };
 
             let lookup = |key: &[u8]| -> Option<usize> { descriptor_to_entry.get(key).copied() };
-            // `this_parent`: `Some(pkg)` -> only `pkg[@range]/name` resolutions;
-            // `None` -> only resolutions without a parent
-            let from_resolutions = |this_parent: Option<&[u8]>| -> Option<usize> {
-                resolutions
-                    .iter()
-                    .filter(|(parent, pattern, _)| {
-                        parent.as_ref().map(|p| p.name) == this_parent
-                            && parent.as_ref().is_none_or(|p| {
-                                // `parent@range/name`: only the parent entries that range
-                                // was locked to (yarn matches the parent's descriptor)
-                                p.range.is_empty()
-                                    || [b"@".as_slice(), b"@npm:"].iter().any(|sep| {
-                                        descriptor_to_entry
-                                            .get(
-                                                &[p.name, sep, strip_npm_protocol(p.range)]
-                                                    .concat(),
-                                            )
-                                            .is_some_and(|&i| {
-                                                entries[i].package_id as usize == pkg_id
-                                            })
-                                    })
-                            })
-                            && resolution_pattern_matches(pattern, name, original_literal, literal)
-                    })
-                    .find_map(|(_, _, target)| {
-                        resolution_target_entry(
-                            name,
-                            target,
-                            &locator_to_entry,
-                            &descriptor_to_entry,
-                        )
-                    })
+
+            // Yarn passes every dependency (peers are not dependencies) through
+            // `resolutions` before it looks the descriptor up, and takes the first
+            // rule in file order whose parent and descriptor both match. A rule
+            // with `parent@range` names the parent's locator, which a patched
+            // package no longer has.
+            let rule = if dep.behavior.is_peer() || dep.behavior.is_workspace() {
+                None
+            } else {
+                resolutions.iter().find(|(parent, pattern, _)| {
+                    parent.as_ref().is_none_or(|p| {
+                        owner.as_ref().is_some_and(|(owner_name, reference)| {
+                            p.name == &owner_name[..]
+                                && (p.range.is_empty()
+                                    || (!is_patched
+                                        && if has_protocol(p.range) {
+                                            p.range == &reference[..]
+                                        } else {
+                                            reference.strip_prefix(b"npm:") == Some(p.range)
+                                        }))
+                        })
+                    }) && resolution_pattern_matches(pattern, name, original_literal, literal)
+                })
             };
 
-            // 0. a `parent/name` resolution names this package: yarn rewrote only this
-            //    edge, while the plain descriptor may still be locked for other parents
-            let mut found: Option<usize> = if has_scoped_resolutions && !dep.behavior.is_workspace()
-            {
-                from_resolutions(Some(
-                    this.packages.items_name()[pkg_id].slice(string_bytes!(this)),
-                ))
+            let mut found: Option<usize>;
+            if let Some((_, _, target)) = rule {
+                found = resolution_target_entry(name, target, &root_locator, &descriptor_to_entry);
             } else {
-                None
-            };
-            // 1. exactly as written (protocol descriptors: workspace:, patch:, npm: aliases, URLs)
-            key.clear();
-            key.extend_from_slice(name);
-            key.push(b'@');
-            key.extend_from_slice(literal);
-            let exact_len = key.len();
-            if found.is_none() {
+                // 1. exactly as written (protocol descriptors: workspace:, patch:, npm: aliases, URLs)
+                key.clear();
+                key.extend_from_slice(name);
+                key.push(b'@');
+                key.extend_from_slice(literal);
                 found = lookup(&key);
-            }
-            // 2. how yarn normalizes a bare range / tag
-            if found.is_none() && !has_protocol(literal) {
-                key.truncate(name.len() + 1);
-                if dep.version.tag == dependency::VersionTag::Github
-                    && !literal.starts_with(b"github:")
-                {
-                    key.extend_from_slice(b"github:");
-                    key.extend_from_slice(literal);
-                } else {
-                    key.extend_from_slice(b"npm:");
-                    key.extend_from_slice(if literal.is_empty() { b"*" } else { literal });
-                }
-                found = lookup(&key);
-            }
-            // 3. relative protocols (file:, portal:, link:) are keyed per declaring package
-            if found.is_none() {
-                if let Some(owner) = &owner_locator {
-                    key.clear();
-                    key.extend_from_slice(name);
-                    key.push(b'@');
-                    key.extend_from_slice(literal);
-                    key.extend_from_slice(b"::locator=");
-                    key.extend_from_slice(owner);
+                // 2. how yarn normalizes a bare range / tag
+                if found.is_none() && !has_protocol(literal) {
+                    key.truncate(name.len() + 1);
+                    if dep.version.tag == dependency::VersionTag::Github
+                        && !literal.starts_with(b"github:")
+                    {
+                        key.extend_from_slice(b"github:");
+                        key.extend_from_slice(literal);
+                    } else {
+                        key.extend_from_slice(b"npm:");
+                        key.extend_from_slice(if literal.is_empty() { b"*" } else { literal });
+                    }
                     found = lookup(&key);
-                    key.truncate(exact_len);
                 }
-            }
-            if found.is_none() && has_protocol(literal) {
-                // the only `name@literal::locator=…` descriptor, whoever declared it
-                found = bare_descriptor_to_entry
-                    .get(&key[..exact_len])
-                    .copied()
-                    .filter(|&i| i != usize::MAX);
-            }
-            // 4. workspaces by name (root -> workspace edges, and `workspace:` ranges however spelled)
-            if found.is_none()
-                && (dep.behavior.is_workspace()
-                    || dep.version.tag == dependency::VersionTag::Workspace)
-            {
-                if let Some(ws_path) = this.workspace_paths.get(&dep.name_hash) {
-                    let ws_path = ws_path.slice(string_bytes!(this));
-                    if let Some(ws) = workspaces.iter().find(|w| &*w.path == ws_path) {
-                        this.buffers.resolutions[dep_id as usize] = ws.package_id;
-                        continue;
+                // 3. relative protocols (file:, portal:, link:) are keyed per declaring package
+                if found.is_none() {
+                    if let Some(owner) = &owner_locator {
+                        key.clear();
+                        key.extend_from_slice(name);
+                        key.push(b'@');
+                        key.extend_from_slice(literal);
+                        key.extend_from_slice(b"::locator=");
+                        key.extend_from_slice(owner);
+                        found = lookup(&key);
                     }
                 }
-            }
-            // 5. an unscoped package.json `resolutions` entry that rewrote this
-            //    descriptor (scoped ones only ever apply through step 0)
-            if found.is_none() && !dep.behavior.is_workspace() {
-                found = from_resolutions(None);
+                // 4. workspaces by name (root -> workspace edges, and `workspace:` ranges however spelled)
+                if found.is_none()
+                    && (dep.behavior.is_workspace()
+                        || dep.version.tag == dependency::VersionTag::Workspace)
+                {
+                    if let Some(ws_path) = this.workspace_paths.get(&dep.name_hash) {
+                        let ws_path = ws_path.slice(string_bytes!(this));
+                        if let Some(ws) = workspaces.iter().find(|w| &*w.path == ws_path) {
+                            this.buffers.resolutions[dep_id as usize] = ws.package_id;
+                            continue;
+                        }
+                    }
+                }
             }
 
             match found.map(|i| entries[i].package_id) {
                 Some(pid) if pid != INVALID_PACKAGE_ID => {
                     this.buffers.resolutions[dep_id as usize] = pid;
                 }
+                // a peer is bound at install time, to a package another edge brought in
+                _ if dep.behavior.is_peer() || dep.behavior.is_workspace() => {}
                 _ => {
-                    // Left for `bun install` to resolve (peers are always bound at
-                    // install time, so they are not worth mentioning).
-                    if !dep.behavior.is_peer() && !dep.behavior.is_workspace() {
-                        unbound.push((Box::from(name), Box::from(original_literal)));
-                    }
+                    return Err(invalid_lockfile(
+                        log,
+                        format_args!(
+                            "yarn.lock has no entry for \"{}@{}\", a dependency of \"{}\"",
+                            bstr::BStr::new(name),
+                            bstr::BStr::new(original_literal),
+                            bstr::BStr::new(owner.as_ref().map_or(&b""[..], |(n, _)| n)),
+                        ),
+                    ));
                 }
             }
-        }
-    }
-    if !unbound.is_empty() && !silent {
-        if verbose {
-            for (name, literal) in &unbound {
-                bun_core::warn!(
-                    "yarn.lock has no entry for \"{}@{}\"; bun will resolve it",
-                    bstr::BStr::new(&**name),
-                    bstr::BStr::new(&**literal),
-                );
-            }
-        } else {
-            bun_core::warn!(
-                "yarn.lock has no entry for {} {} (e.g. \"{}@{}\"); bun will resolve {}",
-                unbound.len(),
-                if unbound.len() == 1 {
-                    "dependency"
-                } else {
-                    "dependencies"
-                },
-                bstr::BStr::new(&*unbound[0].0),
-                bstr::BStr::new(&*unbound[0].1),
-                if unbound.len() == 1 { "it" } else { "them" },
-            );
         }
     }
 
@@ -1267,34 +1449,36 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     // bins yarn did not record (older lockfiles), os/cpu for lockfiles without
     // `conditions`, and tarball integrity, all from the registry manifests.
     this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<true, true>(manager)?;
-    // An `__archiveUrl` the registry manifest does not vouch for (another host and
-    // not the manifest's own `dist.tarball`) is kept, but gets no integrity.
-    if !silent {
-        let unverified: Vec<usize> = archive_url_entries
-            .iter()
-            .copied()
-            .filter(|&i| {
-                let pid = entries[i].package_id;
-                pid != INVALID_PACKAGE_ID
-                    && !this.packages.items_meta()[pid as usize]
-                        .integrity
-                        .tag
-                        .is_supported()
-            })
-            .collect();
-        if let Some(&first) = unverified.first() {
-            bun_core::warn!(
-                "{} {} a tarball URL the registry manifest does not list (e.g. \"{}@{}\"); {} will be downloaded without an integrity check",
-                unverified.len(),
-                if unverified.len() == 1 {
-                    "package uses"
-                } else {
-                    "packages use"
-                },
-                bstr::BStr::new(entries[first].name),
-                bstr::BStr::new(entries[first].reference),
-                if unverified.len() == 1 { "it" } else { "they" },
-            );
+    // Yarn's `checksum` covers yarn's own zip of the package, so the registry
+    // manifest is the only integrity there is for the tarball. Without one (the
+    // registry was not reachable, or the manifest does not list an
+    // `__archiveUrl`) the tarball would be installed unverified.
+    // (An entry no edge reaches is not installed and not written to bun.lock.)
+    let mut reachable = vec![false; this.packages.len()];
+    let mut queue: Vec<PackageID> = vec![0];
+    reachable[0] = true;
+    while let Some(pid) = queue.pop() {
+        let edges = this.packages.items_resolutions()[pid as usize];
+        for &next in edges.get(&this.buffers.resolutions) {
+            if let Some(seen @ false) = reachable.get_mut(next as usize) {
+                *seen = true;
+                queue.push(next);
+            }
+        }
+    }
+    for (pid, res) in this.packages.items_resolution().iter().enumerate() {
+        if reachable[pid]
+            && res.tag == crate::resolution::Tag::Npm
+            && !this.packages.items_meta()[pid].integrity.tag.is_supported()
+        {
+            return Err(invalid_lockfile(
+                log,
+                format_args!(
+                    "could not get the integrity of \"{}@{}\" from the registry",
+                    bstr::BStr::new(this.packages.items_name()[pid].slice(string_bytes!(this))),
+                    res.fmt(string_bytes!(this), bun_core::fmt::PathSep::Posix),
+                ),
+            ));
         }
     }
 
@@ -1306,22 +1490,31 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         this.patched_dependencies
             .put(hash, lockfile::PatchedDep::with_path(path))?;
     }
+    // The edits go to the cached package.json trees first and to disk last, so
+    // a migration that fails leaves every package.json as it was.
+    let mut edited: Vec<(Vec<u8>, Vec<&'static str>)> = Vec::new();
     for ws in &workspaces {
         if ws.rewrites.is_empty() {
             continue;
         }
         let mut json_path = bun_paths::AutoAbsPath::init_top_level_dir();
         let _ = json_path.join(&[&ws.path, b"package.json"]); // bounded input
-        update_package_json(manager, log, json_path.slice(), &ws.rewrites, &[], None)?;
+        if let Some(changed) =
+            edit_package_json(manager, log, json_path.slice(), &ws.rewrites, &[], None)?
+        {
+            edited.push((json_path.slice().to_vec(), changed));
+        }
     }
-    update_package_json(
+    if let Some(changed) = edit_package_json(
         manager,
         log,
         root_json_path.slice(),
         &root_rewrites,
         &patched,
         Some(&yarnrc.catalogs),
-    )?;
+    )? {
+        edited.push((root_json_path.slice().to_vec(), changed));
+    }
     // bun reads `resolutions` from package.json on every install; parse them the
     // same way now (after the `patch:` values were rewritten) so the next install
     // does not see them as changed.
@@ -1332,6 +1525,10 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     }
     this.meta_hash = this.generate_meta_hash(false, this.packages.len())?;
 
+    for (abs_path, changed) in &edited {
+        write_package_json(manager, log, abs_path, changed);
+    }
+
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile: this,
         migrated: lockfile::Migrated::Yarn,
@@ -1340,28 +1537,30 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     }))
 }
 
-/// The registry tarball URLs are built from: `.yarnrc.yml` when it names a
-/// registry other than the one bun is configured with (that is where yarn
-/// fetched the locked packages from), otherwise bun's registry for the scope.
+/// The registry `name` is fetched from. When yarn's configuration names a
+/// registry for the package, it has to be the one bun is configured with: the
+/// tarball, its manifest (where the integrity comes from) and every later
+/// install of the package come from bun's.
 fn registry_for(
     manager: &PackageManager,
+    log: &mut bun_ast::Log,
     yarnrc: &YarnRc,
     name: &[u8],
-    warned: &mut StringArrayHashMap<()>,
-    silent: bool,
-) -> Result<Vec<u8>, AllocError> {
+) -> Result<Vec<u8>, Error> {
     let configured: &[u8] = manager.scope_for_package_name(name).url.href();
-    let from_yarnrc: Option<&[u8]> = if name.first() == Some(&b'@') {
+    let from_yarn: Option<&[u8]> = if name.first() == Some(&b'@') {
         let scope = npm::registry::Scope::get_name(name);
         yarnrc
             .scope_registries
             .get(scope)
             .map(|u| &**u)
+            // yarn's builtin default for the `@jsr` scope
+            .or((scope == b"jsr").then_some(b"https://npm.jsr.io".as_slice()))
             .or(yarnrc.registry.as_deref())
     } else {
         yarnrc.registry.as_deref()
     };
-    let Some(url) = from_yarnrc else {
+    let Some(url) = from_yarn else {
         return Ok(configured.to_vec());
     };
     let same = |a: &[u8], b: &[u8]| {
@@ -1369,19 +1568,25 @@ fn registry_for(
             && lockfile::bun_lock::url_is_under_registry(b, a)
     };
     // yarn's default registry serves the same packages as the npm registry
-    if same(url, configured)
-        || (same(url, b"https://registry.yarnpkg.com")
-            && same(configured, npm::Registry::DEFAULT_URL.as_bytes()))
-    {
+    let canonical = |url: &'_ [u8]| -> Vec<u8> {
+        if same(url, b"https://registry.yarnpkg.com") {
+            npm::Registry::DEFAULT_URL.as_bytes().to_vec()
+        } else {
+            url.to_vec()
+        }
+    };
+    if same(&canonical(url), &canonical(configured)) {
         return Ok(configured.to_vec());
     }
-    if !silent && !warned.get_or_put(url)?.found_existing {
-        bun_core::warn!(
-            "fetching yarn.lock packages from {} (npmRegistryServer in .yarnrc.yml); add it to bunfig.toml or .npmrc if it needs authentication",
-            bstr::BStr::new(url)
-        );
-    }
-    Ok(url.to_vec())
+    Err(invalid_lockfile(
+        log,
+        format_args!(
+            "yarn fetches \"{}\" from {} and bun is configured to fetch it from {}; add the registry to bunfig.toml or .npmrc",
+            bstr::BStr::new(name),
+            bstr::BStr::new(url),
+            bstr::BStr::new(configured),
+        ),
+    ))
 }
 
 /// yarn always locks git dependencies with `#commit=<sha>`; the prefixes cover
@@ -1409,7 +1614,12 @@ fn is_git_reference(head: &[u8]) -> bool {
 /// `github:o/r#commit=sha`, `https://github.com/o/r.git#commit=sha`,
 /// `git+ssh://git@host/o/r.git#commit=sha`, `ssh://...#commit=sha`: pinned to
 /// the commit yarn locked.
-fn git_resolution(this: &mut Lockfile, name: &[u8], head: &[u8]) -> Result<Resolution, Error> {
+fn git_resolution(
+    this: &mut Lockfile,
+    log: &mut bun_ast::Log,
+    name: &[u8],
+    head: &[u8],
+) -> Result<Resolution, Error> {
     let (url, fragment) = match strings::split_once_char(head, b'#') {
         Some((url, fragment)) => (url, fragment),
         None => (head, &b""[..]),
@@ -1418,7 +1628,16 @@ fn git_resolution(this: &mut Lockfile, name: &[u8], head: &[u8]) -> Result<Resol
     for kv in strings::split(fragment, b"&") {
         if let Some(c) = kv.strip_prefix(b"commit=") {
             commit = c;
-            break;
+        } else if kv.starts_with(b"workspace=") || kv.starts_with(b"cwd=") {
+            // a package inside the repository; a bun git dependency is the repository root
+            return Err(invalid_lockfile(
+                log,
+                format_args!(
+                    "yarn.lock entry \"{}@{}\" is a package inside a git repository, which bun does not support",
+                    bstr::BStr::new(name),
+                    bstr::BStr::new(head),
+                ),
+            ));
         }
     }
     let mut url_buf: Vec<u8> = Vec::new();
@@ -1449,16 +1668,18 @@ fn git_resolution(this: &mut Lockfile, name: &[u8], head: &[u8]) -> Result<Resol
     })))
 }
 
-/// A `resolutions` key -> (the parent package for `parent[@range]/name` keys,
-/// the last `name[@range]` segment). Yarn's grammar: segments are separated by
-/// `/`, a leading `@scope/` belongs to the name, and a range never contains `/`
-/// (`@babel/core@npm:^7.0.0/regenerator-runtime`, `**/left-pad`, `ms@^2`).
+/// A `resolutions` key -> (the parent for `parent[@range]/name` keys, the
+/// `name[@range]` segment). Yarn's grammar: an optional parent, then `/`, then
+/// the descriptor; a leading `@scope/` belongs to the name and a range never
+/// contains `/` (`@babel/core@npm:7.0.0/regenerator-runtime`, `ms@^2`). `None`
+/// for what yarn rejects (and then ignores): glob keys (`**/left-pad`) and more
+/// than one parent.
 struct Parent<'a> {
     name: &'a [u8],
     range: &'a [u8],
 }
 
-fn resolution_key_parts(key: &[u8]) -> (Option<Parent<'_>>, &[u8]) {
+fn resolution_key_parts(key: &[u8]) -> Option<(Option<Parent<'_>>, &[u8])> {
     fn next_segment(rest: &[u8]) -> (&[u8], &[u8]) {
         let scope = match rest.first() {
             Some(&b'@') => strings::index_of_char_usize(rest, b'/').map_or(rest.len(), |i| i + 1),
@@ -1469,27 +1690,30 @@ fn resolution_key_parts(key: &[u8]) -> (Option<Parent<'_>>, &[u8]) {
             None => (rest, &b""[..]),
         }
     }
-    let mut parent: Option<&[u8]> = None;
-    let (mut segment, mut rest) = next_segment(key);
-    while !rest.is_empty() {
-        parent = Some(segment);
-        (segment, rest) = next_segment(rest);
+    if key.starts_with(b"*/") || key.starts_with(b"**/") {
+        return None;
     }
-    let parent = parent.filter(|p| *p != b"**").map(|p| {
-        // `@scope/name@range` / `name@range`
-        let from = usize::from(p.first() == Some(&b'@'));
-        match strings::index_of_char_usize(&p[from..], b'@') {
-            Some(i) => Parent {
-                name: &p[..from + i],
-                range: &p[from + i + 1..],
-            },
-            None => Parent {
-                name: p,
-                range: b"",
-            },
-        }
-    });
-    (parent, segment)
+    let (first, rest) = next_segment(key);
+    if rest.is_empty() {
+        return (!first.is_empty()).then_some((None, first));
+    }
+    let (descriptor, extra) = next_segment(rest);
+    if first.is_empty() || descriptor.is_empty() || !extra.is_empty() {
+        return None;
+    }
+    // `@scope/name@range` / `name@range`
+    let from = usize::from(first.first() == Some(&b'@'));
+    let parent = match strings::index_of_char_usize(&first[from..], b'@') {
+        Some(i) => Parent {
+            name: &first[..from + i],
+            range: &first[from + i + 1..],
+        },
+        None => Parent {
+            name: first,
+            range: b"",
+        },
+    };
+    Some((Some(parent), descriptor))
 }
 
 /// `name`, `name@<literal>`, `name@npm:<literal>` (either the literal as
@@ -1513,71 +1737,41 @@ fn resolution_pattern_matches(
     range == strip_npm_protocol(original_literal) || range == strip_npm_protocol(literal)
 }
 
-/// The entry a `resolutions` value points at: `1.2.3`, `npm:1.2.3`,
-/// `npm:other@1.2.3`, `patch:<locator>#...`, or a full descriptor.
+/// The entry a matched `resolutions` rule sends an edge to. Yarn replaces the
+/// edge's range with the rule's value (`1.2.3`, `npm:other@1.2.3`,
+/// `patch:<locator>#...`, `file:./fork`, ...), normalizes it and binds it to
+/// the root workspace, so the lockfile has a key for exactly that descriptor.
 fn resolution_target_entry(
     name: &[u8],
     target: &[u8],
-    locator_to_entry: &StringArrayHashMap<usize>,
+    root_locator: &[u8],
     descriptor_to_entry: &StringArrayHashMap<usize>,
 ) -> Option<usize> {
-    let mut key: Vec<u8> = Vec::with_capacity(name.len() + target.len() + 5);
-    if let Some(rest) = target.strip_prefix(b"patch:") {
-        // the patch entry itself is keyed `name@patch:...`; fall back to what it patches
-        key.extend_from_slice(name);
-        key.push(b'@');
+    let mut key: Vec<u8> = Vec::with_capacity(name.len() + target.len() + root_locator.len() + 16);
+    key.extend_from_slice(name);
+    key.push(b'@');
+    for prefix in [&b""[..], b"npm:"] {
+        if !prefix.is_empty() && has_protocol(target) {
+            break;
+        }
+        key.truncate(name.len() + 1);
+        key.extend_from_slice(prefix);
         key.extend_from_slice(target);
         if let Some(&i) = descriptor_to_entry.get(&key) {
             return Some(i);
         }
-        let (spec, _) = decode_patch_spec(rest);
-        key = match split_locator(&spec.inner) {
-            Some((n, r)) => locator_key(n, r),
-            None => locator_key(name, &spec.inner),
-        };
-        return locator_to_entry
-            .get(&key)
-            .or_else(|| descriptor_to_entry.get(&key))
-            .copied();
-    }
-    key.extend_from_slice(name);
-    key.push(b'@');
-    key.extend_from_slice(target);
-    if let Some(&i) = descriptor_to_entry
-        .get(&key)
-        .or_else(|| locator_to_entry.get(&key))
-    {
-        return Some(i);
-    }
-    if !has_protocol(target) {
-        key.truncate(name.len() + 1);
-        key.extend_from_slice(b"npm:");
-        key.extend_from_slice(target);
-        if let Some(&i) = descriptor_to_entry
-            .get(&key)
-            .or_else(|| locator_to_entry.get(&key))
-        {
+        // relative protocols carry the workspace they are bound to
+        key.extend_from_slice(b"::locator=");
+        key.extend_from_slice(root_locator);
+        if let Some(&i) = descriptor_to_entry.get(&key) {
             return Some(i);
-        }
-    }
-    // `npm:other@1.2.3` names the aliased package's locator
-    if let Some(rest) = target.strip_prefix(b"npm:") {
-        if let Some((other, range)) = split_locator(rest).filter(|(n, _)| !n.is_empty()) {
-            key.clear();
-            key.extend_from_slice(other);
-            key.extend_from_slice(b"@npm:");
-            key.extend_from_slice(range);
-            return descriptor_to_entry
-                .get(&key)
-                .or_else(|| locator_to_entry.get(&key))
-                .copied();
         }
     }
     None
 }
 
 /// Names under `dependenciesMeta` / `peerDependenciesMeta` with `optional: true`.
-fn optional_names(entry: &Expr, meta_key: &[u8]) -> Vec<&'static [u8]> {
+fn optional_names(source: &[u8], entry: &Expr, meta_key: &[u8]) -> Vec<&'static [u8]> {
     let mut names = Vec::new();
     let Some(meta) = entry.get(meta_key) else {
         return names;
@@ -1590,7 +1784,7 @@ fn optional_names(entry: &Expr, meta_key: &[u8]) -> Vec<&'static [u8]> {
             continue;
         };
         if v.get(b"optional").and_then(|e| e.as_bool()) == Some(true) {
-            if let Some(k) = as_str(k) {
+            if let Some(k) = scalar_text(source, k) {
                 names.push(k);
             }
         }
@@ -1603,11 +1797,13 @@ fn optional_names(entry: &Expr, meta_key: &[u8]) -> Vec<&'static [u8]> {
 fn append_entry_dependencies(
     this: &mut Lockfile,
     log: &mut bun_ast::Log,
+    source: &[u8],
+    entry_name: &[u8],
     entry: &Expr,
 ) -> Result<(u32, u32), Error> {
     let off = this.buffers.dependencies.len();
-    let optional_deps = optional_names(entry, b"dependenciesMeta");
-    let optional_peers = optional_names(entry, b"peerDependenciesMeta");
+    let optional_deps = optional_names(source, entry, b"dependenciesMeta");
+    let optional_peers = optional_names(source, entry, b"peerDependenciesMeta");
     for (group, behavior, optional) in [
         (b"dependencies".as_slice(), Behavior::PROD, &optional_deps),
         (
@@ -1626,8 +1822,14 @@ fn append_entry_dependencies(
             let (Some(k), Some(v)) = (&p.key, &p.value) else {
                 continue;
             };
-            let (Some(name), Some(spec)) = (as_str(k), as_str(v)) else {
-                continue;
+            let (Some(name), Some(spec)) = (scalar_text(source, k), scalar_text(source, v)) else {
+                return Err(invalid_lockfile(
+                    log,
+                    format_args!(
+                        "yarn.lock entry \"{}\" has a dependency that is not a string",
+                        bstr::BStr::new(entry_name)
+                    ),
+                ));
             };
             let mut behavior = behavior;
             if optional.contains(&name) {
@@ -1664,9 +1866,10 @@ fn append_manifest_dependencies(
     rewrites: &mut Vec<ManifestRewrite>,
     original_specs: &mut OriginalSpecs,
     yarn_links: &StringArrayHashMap<()>,
+    being_added: &dyn Fn(&[u8], &[u8]) -> bool,
 ) -> Result<(u32, u32), Error> {
     let off = this.buffers.dependencies.len();
-    let optional_peers = optional_names(manifest, b"peerDependenciesMeta");
+    let optional_peers = optional_names(b"", manifest, b"peerDependenciesMeta");
     let mut seen: StringArrayHashMap<usize> = StringArrayHashMap::new();
     // name -> yarn's spelling of a rewritten range (bound to dependency ids after the sort below)
     let mut originals: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::new();
@@ -1688,6 +1891,9 @@ fn append_manifest_dependencies(
             };
             let Some(name) = as_str(k) else { continue };
             let mut spec = as_str(v).unwrap_or(b"");
+            if being_added(name, spec) {
+                continue;
+            }
             let mut behavior = behavior;
             let mut replaces: Option<usize> = None;
             if behavior.is_peer() {
@@ -1895,20 +2101,20 @@ fn sorted_object(map: &StringArrayHashMap<Box<[u8]>>) -> Expr {
 /// After migration: `patch:` / `portal:` / `link:` ranges become ones bun can
 /// parse, project patches go to `patchedDependencies`, and .yarnrc.yml catalogs
 /// go to `workspaces.catalog(s)`, so the project keeps working with bun alone.
-/// Existing keys are left alone.
-fn update_package_json(
+/// Existing keys are left alone. Edits the cached tree and returns what
+/// changed; `write_package_json` puts it on disk.
+fn edit_package_json(
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     abs_path: &[u8],
     rewrites: &[ManifestRewrite],
     patched: &[(Vec<u8>, Vec<u8>)],
     catalogs: Option<&StringArrayHashMap<StringArrayHashMap<Box<[u8]>>>>,
-) -> Result<(), Error> {
+) -> Result<Option<Vec<&'static str>>, Error> {
     let has_catalogs = catalogs.is_some_and(|c| c.iter().any(|(_, m)| m.count() > 0));
     if rewrites.is_empty() && patched.is_empty() && !has_catalogs {
-        return Ok(());
+        return Ok(None);
     }
-    let silent = manager.options.log_level.is_silent();
     let entry = match manager
         .workspace_package_json_cache
         .get_with_path(
@@ -1922,11 +2128,11 @@ fn update_package_json(
         .unwrap()
     {
         Ok(e) => e,
-        Err(_) => return Ok(()),
+        Err(_) => return Ok(None),
     };
     let mut json = entry.root;
     if !json.is_object() {
-        return Ok(());
+        return Ok(None);
     }
     let bump = bun_alloc::Arena::new();
     let mut changed: Vec<&'static str> = Vec::new();
@@ -2053,7 +2259,7 @@ fn update_package_json(
     }
 
     if changed.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     print_package_json_into_cache_entry(entry, json);
     // the edits spliced Store-allocated nodes into the cached tree; re-parse so
@@ -2061,38 +2267,58 @@ fn update_package_json(
     if entry.reparse_root(log).is_err() {
         return Err(Error::InvalidPackageJSON);
     }
+    Ok(Some(changed))
+}
+
+fn write_package_json(
+    manager: &mut PackageManager,
+    log: &mut bun_ast::Log,
+    abs_path: &[u8],
+    changed: &[&'static str],
+) {
+    let silent = manager.options.log_level.is_silent();
     let dirname = bun_paths::dirname(abs_path).unwrap_or(abs_path);
     let rel = strings::without_prefix(
         dirname,
         strings::without_trailing_slash(crate::bun_fs::FileSystem::instance().top_level_dir()),
     );
     let rel = strings::trim_prefix(rel, b"/");
-    match bun_sys::File::write_file(
-        Fd::cwd(),
-        &bun_core::ZBox::from_bytes(abs_path),
-        entry.source.contents(),
-    ) {
-        Ok(()) => {
-            if !silent {
-                bun_core::pretty_errorln!(
-                    "<d>{} in <r><green>{}{}package.json<r>",
-                    changed.join(", "),
-                    bstr::BStr::new(rel),
-                    if rel.is_empty() { "" } else { "/" },
-                );
-            }
-        }
-        Err(_) => {
-            if !silent {
-                bun_core::warn!(
-                    "could not update {}{}package.json after migrating yarn.lock",
-                    bstr::BStr::new(rel),
-                    if rel.is_empty() { "" } else { "/" },
-                );
-            }
-        }
+    let written = manager
+        .workspace_package_json_cache
+        .get_with_path(
+            log,
+            abs_path,
+            crate::GetJsonOptions {
+                init_reset_store: false,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .is_ok_and(|entry| {
+            bun_sys::File::write_file(
+                Fd::cwd(),
+                &bun_core::ZBox::from_bytes(abs_path),
+                entry.source.contents(),
+            )
+            .is_ok()
+        });
+    if silent {
+        return;
     }
-    Ok(())
+    if written {
+        bun_core::pretty_errorln!(
+            "<d>{} in <r><green>{}{}package.json<r>",
+            changed.join(", "),
+            bstr::BStr::new(rel),
+            if rel.is_empty() { "" } else { "/" },
+        );
+    } else {
+        bun_core::warn!(
+            "could not update {}{}package.json after migrating yarn.lock",
+            bstr::BStr::new(rel),
+            if rel.is_empty() { "" } else { "/" },
+        );
+    }
 }
 
 /// `resolutions` / `overrides` from the root package.json, parsed the way a

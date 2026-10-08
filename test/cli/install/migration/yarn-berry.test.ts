@@ -22,10 +22,15 @@ afterAll(() => {
 });
 
 async function run(cwd: string, ...args: string[]) {
+  return runWithEnv(cwd, {}, ...args);
+}
+
+async function runWithEnv(cwd: string, env: Record<string, string>, ...args: string[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
     cwd,
-    env: bunEnv,
+    // yarn also reads the rc file of the home folder; keep the machine's own out of the tests
+    env: { ...bunEnv, HOME: cwd, USERPROFILE: cwd, ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -43,6 +48,16 @@ async function fixture(name: string) {
 
 async function bunLockOf(dir: string) {
   return (await Bun.file(join(dir, "bun.lock")).text()).replaceAll(/(localhost|127\.0\.0\.1):\d+/g, "$1:1234");
+}
+
+/** yarn.lock text from `key -> the lines of that entry` */
+function yarnLock(entries: Record<string, string[]>, version: number | string = 8) {
+  return (
+    `__metadata:\n  version: ${version}\n  cacheKey: 10c0\n` +
+    Object.entries(entries)
+      .map(([key, lines]) => `\n${JSON.stringify(key)}:\n${lines.map(line => `  ${line}\n`).join("")}`)
+      .join("")
+  );
 }
 
 /** `"name@version"` keys of the `packages` section */
@@ -76,6 +91,7 @@ describe("yarn berry migration", () => {
       "peer-deps-fixed@1.0.0",
       "what-bin@1.0.0",
     ]);
+    expect(bunLock).not.toContain("trustedDependencies");
     // yarn's `checksum` is not the tarball's hash; integrity comes from the registry manifest
     expect(bunLock).toContain(
       `"no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", {}, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="`,
@@ -198,17 +214,7 @@ describe("yarn berry migration", () => {
 
     const { stderr, exitCode } = await run(dir, "install");
     expect(stderr).toContain("migrated lockfile from yarn.lock");
-    expect(stderr).not.toContain("bun will resolve");
     // the builtin compat patch that wraps the user patch (listed first in the fixture) folds too
-    expect(stderr).not.toContain("skipped patch");
-    // a second, different patch for the same package: the first one wins
-    expect(stderr).toContain(
-      `warn: "no-deps@1.0.1" is patched by both ".yarn/patches/no-deps-npm-1.0.1-aa11bb22cc.patch" and ".yarn/patches/zz-second-no-deps.patch" in yarn.lock; bun applies one patch per package, so only the first is kept`,
-    );
-    // two `&`-joined patch files for one package cannot become one patchedDependencies entry
-    expect(stderr).toContain(
-      `warn: "one-dep@1.0.0" has 2 patch files in yarn.lock (".yarn/patches/one-dep-a.patch", ...); bun applies one patch per package, so it is left unpatched`,
-    );
     expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
@@ -222,7 +228,6 @@ describe("yarn berry migration", () => {
       },
       resolutions: {
         "one-dep/no-deps": "1.0.1",
-        "one-dep@npm:^1.0.0": "1.0.0",
       },
       // the fixture already lists the first patch for bun; the second is merged in
       patchedDependencies: {
@@ -256,7 +261,6 @@ describe("yarn berry migration", () => {
     expect(
       await Bun.file(join(dir, "node_modules", "one-dep", "node_modules", "no-deps", "patched-too.txt")).text(),
     ).toBe("hello world\n");
-    expect(existsSync(join(dir, "node_modules", "one-dep", "one-dep-a.patch.txt"))).toBeFalse();
     expect((await readdir(join(dir, "node_modules"))).filter(e => e.startsWith("native-")).sort()).toEqual([
       "native-libc-glibc",
       "native-libc-musl",
@@ -293,8 +297,9 @@ describe("yarn berry migration", () => {
           name: "berry-scoped-resolution",
           dependencies: { "@scoped/create-test-app": "^1.0.0", "one-fixed-dep": "^1.0.0", "one-range-dep": "^1.0.0" },
           // create-test-app and one-fixed-dep ask for no-deps@1.0.0, one-range-dep for ^1.0.0 (which
-          // yarn had to rewrite for an unrelated reason); only create-test-app's copy is redirected
-          resolutions: { "@scoped/create-test-app@npm:^1.0.0/no-deps": "1.0.1", "no-deps@npm:^1.0.0": "1.0.0" },
+          // yarn had to rewrite for an unrelated reason); only create-test-app's copy is redirected.
+          // `parent@<version>` names the parent's locked version, as yarn matches it.
+          resolutions: { "@scoped/create-test-app@npm:1.0.0/no-deps": "1.0.1", "no-deps@npm:^1.0.0": "1.0.0" },
         }),
         "yarn.lock": `__metadata:
   version: 8
@@ -369,8 +374,8 @@ describe("yarn berry migration", () => {
       "one-range-dep@1.0.0",
     ]);
     expect(bunLock).toContain(`"one-range-dep/no-deps": ["no-deps@1.0.0", `);
-    // one-range-dep's `no-deps@^1.0.0` has no key of its own and goes through the unscoped
-    // resolution (1.0.0); the scoped one (1.0.1) is not considered for it
+    // one-range-dep's `no-deps@^1.0.0` goes through the unscoped resolution (1.0.0); the
+    // scoped one (1.0.1) is not considered for it
     expect(nodeModulesPackages(dir)).toMatchInlineSnapshot(`
       "node_modules/@scoped/create-test-app/@scoped/create-test-app@1.0.0
       node_modules/no-deps/no-deps@1.0.1
@@ -463,59 +468,6 @@ describe("yarn berry migration", () => {
     `);
 
     await expectFrozenInstall(dir);
-  });
-
-  test.concurrent("patch: on a portal: dependency", async () => {
-    const { packageDir: dir } = await verdaccio.createTestDir({
-      bunfigOpts: { linker: "hoisted" },
-      files: {
-        "package.json": JSON.stringify({
-          name: "berry-patched-portal",
-          dependencies: { local: "patch:local@portal%3A./local#./patches/local.patch" },
-        }),
-        "local/package.json": JSON.stringify({ name: "local", version: "1.0.0" }),
-        "patches/local.patch": "",
-        "yarn.lock": `__metadata:
-  version: 8
-  cacheKey: 10c0
-
-"berry-patched-portal@workspace:.":
-  version: 0.0.0-use.local
-  resolution: "berry-patched-portal@workspace:."
-  dependencies:
-    local: "patch:local@portal%3A./local#./patches/local.patch"
-  languageName: unknown
-  linkType: soft
-
-"local@patch:local@portal%3A./local#./patches/local.patch::locator=berry-patched-portal%40workspace%3A.":
-  version: 1.0.0
-  resolution: "local@patch:local@portal%3A./local%3A%3Alocator=berry-patched-portal%2540workspace%253A.#./patches/local.patch::version=1.0.0&hash=1f2e3d&locator=berry-patched-portal%40workspace%3A."
-  languageName: node
-  linkType: hard
-
-"local@portal:./local::locator=berry-patched-portal%40workspace%3A.":
-  version: 0.0.0-use.local
-  resolution: "local@portal:./local::locator=berry-patched-portal%40workspace%3A."
-  languageName: node
-  linkType: soft
-`,
-      },
-    });
-
-    const { stderr, exitCode } = await run(dir, "pm", "migrate");
-    // bun installs folders straight from the project and does not patch them
-    expect(stderr).toContain(
-      `warn: skipped patch "patches/local.patch" on "local" from yarn.lock: bun does not patch packages installed from a project folder`,
-    );
-    expect(stderr).toContain("migrated lockfile from yarn.lock");
-    expect(stderr).not.toContain("bun will resolve");
-    expect(exitCode).toBe(0);
-
-    // the range under the patch was yarn-only too, so both layers are rewritten
-    const manifest = await Bun.file(join(dir, "package.json")).json();
-    expect(manifest.dependencies).toEqual({ local: "file:./local" });
-    expect(manifest.patchedDependencies).toBeUndefined();
-    expect(lockedVersions(await bunLockOf(dir))).toEqual(["local@file:local"]);
   });
 
   test.concurrent("file:, portal: and link: dependencies", async () => {
@@ -656,95 +608,50 @@ describe("yarn berry migration", () => {
     );
   });
 
-  test.concurrent("__archiveUrl and npmRegistryServer from .yarnrc.yml decide the tarball URL", async () => {
-    // same server, but not the URL bun is configured with, so it is "another registry"
-    const other = `http://127.0.0.1:${verdaccio.port}/`;
-    const { packageDir: dir } = await verdaccio.createTestDir({
-      bunfigOpts: { linker: "hoisted" },
-      files: {
-        "package.json": JSON.stringify({
-          name: "berry-registries",
-          dependencies: { "no-deps": "^1.0.0", "a-dep": "^1.0.1", "what-bin": "1.0.0" },
-        }),
-        ".yarnrc.yml": `npmRegistryServer: "${other}"\n`,
-        "yarn.lock": `__metadata:
-  version: 8
-  cacheKey: 10c0
+  test.concurrent(
+    "__archiveUrl under the configured registry keeps its URL and gets the manifest's integrity",
+    async () => {
+      const { packageDir: dir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({ name: "berry-registries", dependencies: { "a-dep": "^1.0.1" } }),
+          // the same registry bun is configured with
+          ".yarnrc.yml": `npmRegistryServer: "${verdaccio.registryUrl()}"\n`,
+          "yarn.lock": yarnLock({
+            "a-dep@npm:^1.0.1": [
+              `resolution: "a-dep@npm:1.0.2::__archiveUrl=${encodeURIComponent(`${verdaccio.registryUrl()}a-dep/-/a-dep-1.0.2.tgz`)}"`,
+            ],
+            "berry-registries@workspace:.": [
+              `resolution: "berry-registries@workspace:."`,
+              `dependencies:`,
+              `  a-dep: "npm:^1.0.1"`,
+            ],
+          }),
+        },
+      });
 
-"a-dep@npm:^1.0.1":
-  version: 1.0.2
-  resolution: "a-dep@npm:1.0.2::__archiveUrl=${encodeURIComponent(`${verdaccio.registryUrl()}a-dep/-/a-dep-1.0.2.tgz`)}"
-  languageName: node
-  linkType: hard
+      const { stderr, exitCode } = await run(dir, "install");
+      expect(stderr).toContain("migrated lockfile from yarn.lock");
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      expect(await bunLockOf(dir)).toContain(
+        `["a-dep@1.0.2", "http://localhost:1234/a-dep/-/a-dep-1.0.2.tgz", {}, "sha512-786lp/Wqdz6jY9NOPFnU2OZAl/7wW/CWCHNn4I+0Or9NtA0F9I1TXtisuy8hMFw/6u6CYXwlzdwySiOdpJ94oQ=="]`,
+      );
+      await expectFrozenInstall(dir);
+    },
+  );
 
-"berry-registries@workspace:.":
-  version: 0.0.0-use.local
-  resolution: "berry-registries@workspace:."
-  dependencies:
-    a-dep: "npm:^1.0.1"
-    no-deps: "npm:^1.0.0"
-    what-bin: "npm:1.0.0"
-  languageName: unknown
-  linkType: soft
-
-"no-deps@npm:^1.0.0":
-  version: 1.0.0
-  resolution: "no-deps@npm:1.0.0"
-  languageName: node
-  linkType: hard
-
-"what-bin@npm:1.0.0":
-  version: 1.0.0
-  resolution: "what-bin@npm:1.0.0::__archiveUrl=${encodeURIComponent(`${other}what-bin/-/what-bin-1.0.0.tgz`)}"
-  bin:
-    what-bin: what-bin.js
-  languageName: node
-  linkType: hard
-`,
-      },
-    });
-
-    const { stderr, exitCode } = await run(dir, "install");
-    expect(stderr).toContain(
-      `warn: fetching yarn.lock packages from ${other} (npmRegistryServer in .yarnrc.yml); add it to bunfig.toml or .npmrc if it needs authentication`,
-    );
-    expect(stderr.match(/npmRegistryServer/g)?.length).toBe(1);
-    // an `__archiveUrl` on another host than the manifest bun fetched cannot get that manifest's integrity
-    expect(stderr).toContain(
-      `warn: 1 package uses a tarball URL the registry manifest does not list (e.g. "what-bin@npm:1.0.0::__archiveUrl=${encodeURIComponent(`${other}what-bin/-/what-bin-1.0.0.tgz`)}"); it will be downloaded without an integrity check`,
-    );
-    expect(stderr).toContain("migrated lockfile from yarn.lock");
-    expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
-
-    const bunLock = await bunLockOf(dir);
-    // no integrity: the manifest bun fetched is from another registry than the tarball
-    expect(bunLock).toContain(`["no-deps@1.0.0", "http://127.0.0.1:1234/no-deps/-/no-deps-1.0.0.tgz", {}, ""]`);
-    // `__archiveUrl` under the configured registry: kept, with the manifest's integrity
-    expect(bunLock).toContain(
-      `["a-dep@1.0.2", "http://localhost:1234/a-dep/-/a-dep-1.0.2.tgz", {}, "sha512-786lp/Wqdz6jY9NOPFnU2OZAl/7wW/CWCHNn4I+0Or9NtA0F9I1TXtisuy8hMFw/6u6CYXwlzdwySiOdpJ94oQ=="]`,
-    );
-    expect(bunLock).toContain(
-      `["what-bin@1.0.0", "http://127.0.0.1:1234/what-bin/-/what-bin-1.0.0.tgz", { "bin": { "what-bin": "what-bin.js" } }, ""]`,
-    );
-    expect(nodeModulesPackages(dir)).toMatchInlineSnapshot(`
-      "node_modules/a-dep/a-dep@1.0.2
-      node_modules/no-deps/no-deps@1.0.0
-      node_modules/what-bin/what-bin@1.0.0"
-    `);
-
-    await expectFrozenInstall(dir);
-  });
-
-  test.concurrent("yarn 3 lockfiles (bare ranges) and unsupported protocols", async () => {
+  test.concurrent("yarn 2/3 lockfiles: bare ranges, and ranges YAML reads as numbers", async () => {
     const { packageDir: dir } = await verdaccio.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {
         "package.json": JSON.stringify({
           name: "berry-v6",
-          dependencies: { "one-range-dep": "^1.0.0", generated: "exec:./gen.js" },
+          dependencies: { "one-range-dep": "^1.0.0", "one-fixed-dep": "^1.0.0" },
           devDependencies: { "no-deps": "1.0.0" },
         }),
+        // yarn 2 and 3 write ranges without the `npm:` prefix and without quotes, so `1` and
+        // `1.0` are YAML numbers (and the same number). Yarn reads them as the text.
         "yarn.lock": `__metadata:
   version: 6
   cacheKey: 8
@@ -753,22 +660,36 @@ describe("yarn berry migration", () => {
   version: 0.0.0-use.local
   resolution: "berry-v6@workspace:."
   dependencies:
-    generated: "exec:./gen.js"
     no-deps: 1.0.0
+    one-fixed-dep: ^1.0.0
     one-range-dep: ^1.0.0
   languageName: unknown
   linkType: soft
 
-"generated@exec:./gen.js::locator=berry-v6%40workspace%3A.":
-  version: 1.0.0
-  resolution: "generated@exec:./gen.js#./gen.js::hash=3f4a5b&locator=berry-v6%40workspace%3A."
+"no-deps@npm:1":
+  version: 1.1.0
+  resolution: "no-deps@npm:1.1.0"
   languageName: node
   linkType: hard
 
-"no-deps@npm:1.0.0, no-deps@npm:^1.0.0":
+"no-deps@npm:1.0":
+  version: 1.0.1
+  resolution: "no-deps@npm:1.0.1"
+  languageName: node
+  linkType: hard
+
+"no-deps@npm:1.0.0":
   version: 1.0.0
   resolution: "no-deps@npm:1.0.0"
   checksum: 8c0aa9a3b3c1b6da2b1e0d5a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f
+  languageName: node
+  linkType: hard
+
+"one-fixed-dep@npm:^1.0.0":
+  version: 1.0.0
+  resolution: "one-fixed-dep@npm:1.0.0"
+  dependencies:
+    no-deps: 1.0
   languageName: node
   linkType: hard
 
@@ -776,7 +697,7 @@ describe("yarn berry migration", () => {
   version: 1.0.0
   resolution: "one-range-dep@npm:1.0.0"
   dependencies:
-    no-deps: ^1.0.0
+    no-deps: 1
   languageName: node
   linkType: hard
 `,
@@ -784,20 +705,26 @@ describe("yarn berry migration", () => {
     });
 
     const { stderr, exitCode } = await run(dir, "pm", "migrate");
-    expect(stderr).toContain(
-      `warn: skipped "generated@exec:./gen.js#./gen.js::hash=3f4a5b&locator=berry-v6%40workspace%3A." from yarn.lock: unsupported protocol`,
-    );
-    expect(stderr).toContain(
-      `warn: yarn.lock has no entry for 1 dependency (e.g. "generated@exec:./gen.js"); bun will resolve it`,
-    );
     expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("error:");
     expect(exitCode).toBe(0);
 
     const bunLock = await bunLockOf(dir);
-    expect(lockedVersions(bunLock)).toEqual(["no-deps@1.0.0", "one-range-dep@1.0.0"]);
+    expect(lockedVersions(bunLock)).toEqual([
+      "no-deps@1.0.0",
+      "no-deps@1.0.1",
+      "no-deps@1.1.0",
+      "one-fixed-dep@1.0.0",
+      "one-range-dep@1.0.0",
+    ]);
     expect(bunLock).toContain(
-      `"one-range-dep@1.0.0", "http://localhost:1234/one-range-dep/-/one-range-dep-1.0.0.tgz", { "dependencies": { "no-deps": "^1.0.0" } }`,
+      `"one-fixed-dep@1.0.0", "http://localhost:1234/one-fixed-dep/-/one-fixed-dep-1.0.0.tgz", { "dependencies": { "no-deps": "1.0" } }`,
     );
+    expect(bunLock).toContain(
+      `"one-range-dep@1.0.0", "http://localhost:1234/one-range-dep/-/one-range-dep-1.0.0.tgz", { "dependencies": { "no-deps": "1" } }`,
+    );
+    expect(bunLock).toContain(`"one-fixed-dep/no-deps": ["no-deps@1.0.1", `);
+    expect(bunLock).toContain(`"one-range-dep/no-deps": ["no-deps@1.1.0", `);
   });
 
   test.concurrent("an invalid berry lockfile is reported and bun resolves from package.json", async () => {
@@ -890,5 +817,445 @@ catalogs:
     `);
 
     await expectFrozenInstall(dir);
+  });
+
+  // What yarn.lock pins and bun cannot keep fails the migration; nothing is written.
+  const rootEntry = (deps: string[]) => [`resolution: "berry-reject@workspace:."`, `dependencies:`, ...deps];
+  const noDeps100 = { "no-deps@npm:^1.0.0": [`resolution: "no-deps@npm:1.0.0"`] };
+  const rejected: {
+    name: string;
+    manifest?: object;
+    files?: () => Record<string, string>;
+    lock: () => string;
+    error: () => string;
+  }[] = [
+    {
+      name: "a dependency with no entry",
+      manifest: { dependencies: { "no-deps": "^1.0.0", "a-dep": "^1.0.1" } },
+      lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
+      error: () => `error: yarn.lock has no entry for "a-dep@^1.0.1", a dependency of "berry-reject"`,
+    },
+    {
+      name: "a resolutions rule whose target has no entry",
+      manifest: { dependencies: { "no-deps": "^1.0.0" }, resolutions: { "no-deps": "2.0.0" } },
+      lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
+      error: () => `error: yarn.lock has no entry for "no-deps@^1.0.0", a dependency of "berry-reject"`,
+    },
+    {
+      name: "a protocol bun does not have",
+      manifest: { dependencies: { generated: "exec:./gen.js" } },
+      lock: () =>
+        yarnLock({
+          "berry-reject@workspace:.": rootEntry([`  generated: "exec:./gen.js"`]),
+          "generated@exec:./gen.js::locator=berry-reject%40workspace%3A.": [
+            `resolution: "generated@exec:./gen.js#./gen.js::hash=3f4a5b&locator=berry-reject%40workspace%3A."`,
+          ],
+        }),
+      error: () =>
+        `error: yarn.lock entry "generated@exec:./gen.js#./gen.js::hash=3f4a5b&locator=berry-reject%40workspace%3A." uses a protocol bun does not support`,
+    },
+    {
+      name: "a package inside a git repository",
+      manifest: { dependencies: { sub: "git@example.com:org/mono.git#workspace=sub" } },
+      lock: () =>
+        yarnLock({
+          "berry-reject@workspace:.": rootEntry([`  sub: "git@example.com:org/mono.git#workspace=sub"`]),
+          "sub@git@example.com:org/mono.git#workspace=sub": [
+            `resolution: "sub@git@example.com:org/mono.git#workspace=sub&commit=0123456789abcdef0123456789abcdef01234567"`,
+          ],
+        }),
+      error: () =>
+        `error: yarn.lock entry "sub@git@example.com:org/mono.git#workspace=sub&commit=0123456789abcdef0123456789abcdef01234567" is a package inside a git repository, which bun does not support`,
+    },
+    {
+      name: "a patch on a folder dependency",
+      manifest: { dependencies: { local: "patch:local@portal%3A./local#./patches/local.patch" } },
+      files: () => ({
+        "local/package.json": JSON.stringify({ name: "local", version: "1.0.0" }),
+        "patches/local.patch": "",
+      }),
+      lock: () =>
+        yarnLock({
+          "berry-reject@workspace:.": rootEntry([`  local: "patch:local@portal%3A./local#./patches/local.patch"`]),
+          "local@patch:local@portal%3A./local#./patches/local.patch::locator=berry-reject%40workspace%3A.": [
+            `resolution: "local@patch:local@portal%3A./local%3A%3Alocator=berry-reject%2540workspace%253A.#./patches/local.patch::version=1.0.0&hash=1f2e3d&locator=berry-reject%40workspace%3A."`,
+          ],
+          "local@portal:./local::locator=berry-reject%40workspace%3A.": [
+            `resolution: "local@portal:./local::locator=berry-reject%40workspace%3A."`,
+          ],
+        }),
+      error: () =>
+        `error: yarn.lock patches "local" with "patches/local.patch"; bun does not patch packages installed from a project folder`,
+    },
+    {
+      name: "two patch files for one package",
+      manifest: { dependencies: { "no-deps": "patch:no-deps@npm%3A1.0.0#~/a.patch&~/b.patch" } },
+      files: () => ({ "a.patch": "", "b.patch": "" }),
+      lock: () =>
+        yarnLock({
+          "berry-reject@workspace:.": rootEntry([`  no-deps: "patch:no-deps@npm%3A1.0.0#~/a.patch&~/b.patch"`]),
+          "no-deps@npm:1.0.0": [`resolution: "no-deps@npm:1.0.0"`],
+          "no-deps@patch:no-deps@npm%3A1.0.0#~/a.patch&~/b.patch": [
+            `resolution: "no-deps@patch:no-deps@npm%3A1.0.0#~/a.patch&~/b.patch::version=1.0.0&hash=7a6b5c"`,
+          ],
+        }),
+      error: () => `error: yarn.lock patches "no-deps@1.0.0" with 2 files ("a.patch", ...)`,
+    },
+    {
+      name: "two different patches for one package",
+      manifest: {
+        dependencies: { "no-deps": "patch:no-deps@npm%3A1.0.0#~/a.patch", "one-dep": "^1.0.0" },
+        resolutions: { "one-dep/no-deps": "patch:no-deps@npm%3A1.0.0#~/b.patch" },
+      },
+      files: () => ({ "a.patch": "", "b.patch": "" }),
+      lock: () =>
+        yarnLock({
+          "berry-reject@workspace:.": rootEntry([
+            `  no-deps: "patch:no-deps@npm%3A1.0.0#~/a.patch"`,
+            `  one-dep: "npm:^1.0.0"`,
+          ]),
+          "no-deps@npm:1.0.0": [`resolution: "no-deps@npm:1.0.0"`],
+          "no-deps@patch:no-deps@npm%3A1.0.0#~/a.patch": [
+            `resolution: "no-deps@patch:no-deps@npm%3A1.0.0#~/a.patch::version=1.0.0&hash=1a2b3c"`,
+          ],
+          "no-deps@patch:no-deps@npm%3A1.0.0#~/b.patch": [
+            `resolution: "no-deps@patch:no-deps@npm%3A1.0.0#~/b.patch::version=1.0.0&hash=4d5e6f"`,
+          ],
+          "one-dep@npm:^1.0.0": [`resolution: "one-dep@npm:1.0.0"`, `dependencies:`, `  no-deps: "npm:1.0.1"`],
+        }),
+      error: () => `error: yarn.lock patches "no-deps@1.0.0" with both "a.patch" and "b.patch"`,
+    },
+    {
+      name: "a patch file outside the project",
+      manifest: { dependencies: { "no-deps": "patch:no-deps@npm%3A1.0.0#~/../outside.patch" } },
+      lock: () =>
+        yarnLock({
+          "berry-reject@workspace:.": rootEntry([`  no-deps: "patch:no-deps@npm%3A1.0.0#~/../outside.patch"`]),
+          "no-deps@npm:1.0.0": [`resolution: "no-deps@npm:1.0.0"`],
+          "no-deps@patch:no-deps@npm%3A1.0.0#~/../outside.patch": [
+            `resolution: "no-deps@patch:no-deps@npm%3A1.0.0#~/../outside.patch::version=1.0.0&hash=1a2b3c"`,
+          ],
+        }),
+      error: () => `error: yarn.lock patch file "../outside.patch" is outside the project`,
+    },
+    {
+      name: "a workspace package.json does not list",
+      manifest: { dependencies: { "no-deps": "^1.0.0" } },
+      lock: () =>
+        yarnLock({
+          "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]),
+          ...noDeps100,
+          "pkg-x@workspace:packages/pkg-x": [`resolution: "pkg-x@workspace:packages/pkg-x"`],
+        }),
+      error: () => `error: yarn.lock workspace "packages/pkg-x" is not one of the package.json "workspaces"`,
+    },
+    {
+      name: "a lockfile version newer than yarn 4's",
+      manifest: { dependencies: { "no-deps": "^1.0.0" } },
+      lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }, 11),
+      error: () => `error: yarn.lock version 11 is not supported`,
+    },
+    {
+      name: "a field written twice (yarn reads the last, bun the first)",
+      manifest: { dependencies: { "no-deps": "^1.0.0" } },
+      lock: () =>
+        yarnLock({
+          "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]),
+          "no-deps@npm:^1.0.0": [`resolution: "no-deps@npm:1.0.1"`, `resolution: "no-deps@npm:1.0.0"`],
+        }),
+      error: () => `error: yarn.lock has the key "resolution" more than once in one mapping`,
+    },
+    {
+      name: "a descriptor in two entries",
+      manifest: { dependencies: { "no-deps": "^1.0.0" } },
+      lock: () =>
+        yarnLock({
+          "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]),
+          ...noDeps100,
+          "no-deps@npm:1.0.1, no-deps@npm:^1.0.0": [`resolution: "no-deps@npm:1.0.1"`],
+        }),
+      error: () => `error: yarn.lock has more than one entry for "no-deps@npm:^1.0.0"`,
+    },
+    {
+      name: "a YAML merge key (bun expands it, yarn does not)",
+      manifest: { dependencies: { "no-deps": "^1.0.0" } },
+      lock: () =>
+        yarnLock({
+          "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]),
+          "no-deps@npm:^1.0.0": [`<<: { resolution: "no-deps@npm:1.0.1" }`, `resolution: "no-deps@npm:1.0.0"`],
+        }),
+      error: () => `error: yarn.lock has a "<<" merge key`,
+    },
+    {
+      name: "a merge key spelled with an escape",
+      manifest: { dependencies: { "no-deps": "^1.0.0" } },
+      lock: () =>
+        yarnLock({
+          "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]),
+          "no-deps@npm:^1.0.0": [
+            `"\\x3c\\x3C": { resolution: "no-deps@npm:1.0.1" }`,
+            `resolution: "no-deps@npm:1.0.0"`,
+          ],
+        }),
+      error: () => `error: yarn.lock has a "<<" merge key`,
+    },
+    {
+      name: "npmRegistryServer in .yarnrc.yml that is not bun's registry",
+      manifest: { dependencies: { "no-deps": "^1.0.0" } },
+      // the same server under another name: to bun it is another registry
+      files: () => ({ ".yarnrc.yml": `npmRegistryServer: "http://127.0.0.1:${verdaccio.port}/"\n` }),
+      lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
+      error: () =>
+        `error: yarn fetches "no-deps" from http://127.0.0.1:${verdaccio.port}/ and bun is configured to fetch it from ${verdaccio.registryUrl()}; add the registry to bunfig.toml or .npmrc`,
+    },
+    {
+      name: "a scope registry in .yarnrc.yml that is not bun's",
+      manifest: { dependencies: { "@types/is-number": "^1.0.0", "no-deps": "^1.0.0" } },
+      files: () => ({
+        ".yarnrc.yml": `npmScopes:\n  types:\n    npmRegistryServer: "http://127.0.0.1:${verdaccio.port}/"\n`,
+      }),
+      lock: () =>
+        yarnLock({
+          "@types/is-number@npm:^1.0.0": [`resolution: "@types/is-number@npm:1.0.0"`],
+          "berry-reject@workspace:.": rootEntry([`  "@types/is-number": "npm:^1.0.0"`, `  no-deps: "npm:^1.0.0"`]),
+          ...noDeps100,
+        }),
+      error: () => `error: yarn fetches "@types/is-number" from http://127.0.0.1:${verdaccio.port}/`,
+    },
+    {
+      name: "a registry spelled with an environment variable",
+      manifest: { dependencies: { "no-deps": "^1.0.0" } },
+      files: () => ({ ".yarnrc.yml": `npmRegistryServer: "\${REGISTRY}"\n` }),
+      lock: () => yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
+      error: () => `uses an environment variable ("\${REGISTRY}")`,
+    },
+    {
+      name: "the @jsr scope, which yarn fetches from npm.jsr.io by default",
+      manifest: { dependencies: { "@jsr/std__path": "^1.0.0" } },
+      lock: () =>
+        yarnLock({
+          "@jsr/std__path@npm:^1.0.0": [`resolution: "@jsr/std__path@npm:1.0.0"`],
+          "berry-reject@workspace:.": rootEntry([`  "@jsr/std__path": "npm:^1.0.0"`]),
+        }),
+      error: () =>
+        `error: yarn fetches "@jsr/std__path" from https://npm.jsr.io and bun is configured to fetch it from`,
+    },
+    {
+      name: "an __archiveUrl the registry manifest does not list (no integrity for it)",
+      manifest: { dependencies: { "what-bin": "1.0.0" } },
+      lock: () =>
+        yarnLock({
+          "berry-reject@workspace:.": rootEntry([`  what-bin: "npm:1.0.0"`]),
+          "what-bin@npm:1.0.0": [
+            `resolution: "what-bin@npm:1.0.0::__archiveUrl=${encodeURIComponent(`http://127.0.0.1:${verdaccio.port}/what-bin/-/what-bin-1.0.0.tgz`)}"`,
+          ],
+        }),
+      error: () => `error: could not get the integrity of "what-bin@1.0.0" from the registry`,
+    },
+  ];
+  for (const { name, manifest, files, lock, error } of rejected) {
+    test.concurrent(`not migrated: ${name}`, async () => {
+      const packageJson = JSON.stringify({ name: "berry-reject", ...manifest });
+      const { packageDir: dir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: { "package.json": packageJson, "yarn.lock": lock(), ...files?.() },
+      });
+
+      const { stderr, exitCode } = await run(dir, "pm", "migrate");
+      expect(stderr).toContain(error());
+      expect(stderr).not.toContain("migrated lockfile from yarn.lock");
+      expect(existsSync(join(dir, "bun.lock"))).toBeFalse();
+      expect(await Bun.file(join(dir, "package.json")).text()).toBe(packageJson);
+      expect(exitCode).toBe(1);
+    });
+  }
+
+  const missingEntry = () => ({
+    "package.json": JSON.stringify({ name: "berry-reject", dependencies: { "no-deps": "^1.0.0", "a-dep": "^1.0.1" } }),
+    "yarn.lock": yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
+  });
+
+  test.concurrent("a lockfile that is not migrated is reported and bun resolves from package.json", async () => {
+    const { packageDir: dir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: missingEntry(),
+    });
+
+    const { stderr, exitCode } = await run(dir, "install");
+    expect(stderr).toContain(`error: yarn.lock has no entry for "a-dep@^1.0.1", a dependency of "berry-reject"`);
+    expect(stderr).toContain("InvalidYarnBerryLockfile: failed to migrate lockfile: 'yarn.lock'");
+    expect(stderr).not.toContain("migrated lockfile from yarn.lock");
+    // resolved fresh: the newest 1.x, not the 1.0.0 yarn.lock named
+    expect(nodeModulesPackages(dir)).toMatchInlineSnapshot(`
+      "node_modules/a-dep/a-dep@1.0.10
+      node_modules/no-deps/no-deps@1.1.0"
+    `);
+    expect(exitCode).toBe(0);
+    await expectFrozenInstall(dir);
+
+    // with --silent the reasons are not printed, and they do not fail the install either
+    const { packageDir: silentDir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: missingEntry(),
+    });
+    const silent = await run(silentDir, "install", "--silent");
+    expect(silent.stderr).toBe("");
+    expect(lockedVersions(await bunLockOf(silentDir))).toEqual(["a-dep@1.0.10", "no-deps@1.1.0"]);
+    expect(silent.exitCode).toBe(0);
+  });
+
+  // yarn's registry can be set outside the project too
+  const cleanProject = () => ({
+    "package.json": JSON.stringify({ name: "berry-reject", dependencies: { "no-deps": "^1.0.0" } }),
+    "yarn.lock": yarnLock({ "berry-reject@workspace:.": rootEntry([`  no-deps: "npm:^1.0.0"`]), ...noDeps100 }),
+  });
+
+  test.concurrent("yarn's registry from YARN_NPM_REGISTRY_SERVER", async () => {
+    const { packageDir: dir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: cleanProject(),
+    });
+
+    const other = `http://127.0.0.1:${verdaccio.port}/`;
+    const { stderr, exitCode } = await runWithEnv(dir, { YARN_NPM_REGISTRY_SERVER: other }, "pm", "migrate");
+    expect(stderr).toContain(`error: yarn fetches "no-deps" from ${other}`);
+    expect(exitCode).toBe(1);
+
+    // the same project migrates when yarn's registry is bun's
+    const same = await runWithEnv(dir, { YARN_NPM_REGISTRY_SERVER: verdaccio.registryUrl() }, "pm", "migrate");
+    expect(same.stderr).toContain("migrated lockfile from yarn.lock");
+    expect(lockedVersions(await bunLockOf(dir))).toEqual(["no-deps@1.0.0"]);
+    expect(same.exitCode).toBe(0);
+  });
+
+  test.concurrent("yarn's registry from .yarnrc.yml in the home folder and in a parent folder", async () => {
+    const other = `http://127.0.0.1:${verdaccio.port}/`;
+    const { packageDir: dir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "home/.yarnrc.yml": `npmRegistryServer: "${other}"\n`,
+        "parent/.yarnrc.yml": `npmScopes:\n  types:\n    npmRegistryServer: "${other}"\n`,
+        "parent/app/package.json": JSON.stringify({
+          name: "berry-reject",
+          dependencies: { "@types/is-number": "^1.0.0" },
+        }),
+        "parent/app/yarn.lock": yarnLock({
+          "@types/is-number@npm:^1.0.0": [`resolution: "@types/is-number@npm:1.0.0"`],
+          "berry-reject@workspace:.": rootEntry([`  "@types/is-number": "npm:^1.0.0"`]),
+        }),
+        ...cleanProject(),
+      },
+    });
+    await Bun.write(join(dir, "parent", "app", "bunfig.toml"), Bun.file(join(dir, "bunfig.toml")));
+
+    const home = await runWithEnv(dir, { HOME: join(dir, "home"), USERPROFILE: join(dir, "home") }, "pm", "migrate");
+    expect(home.stderr).toContain(`error: yarn fetches "no-deps" from ${other}`);
+    expect(home.exitCode).toBe(1);
+
+    const parent = await run(join(dir, "parent", "app"), "pm", "migrate");
+    expect(parent.stderr).toContain(`error: yarn fetches "@types/is-number" from ${other}`);
+    expect(parent.exitCode).toBe(1);
+  });
+
+  test.concurrent("bun add as the first command keeps what yarn.lock pinned", async () => {
+    const dir = await fixture("basic");
+
+    const { stderr, exitCode } = await run(dir, "add", "one-fixed-dep@1.0.0");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("error:");
+    expect(lockedVersions(await bunLockOf(dir))).toEqual([
+      "@types/is-number@1.0.0",
+      "a-dep@1.0.3",
+      "no-deps@1.0.0",
+      "one-fixed-dep@1.0.0",
+      "one-range-dep@1.0.0",
+      "peer-deps-fixed@1.0.0",
+      "what-bin@1.0.0",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("resolutions: a parent is matched by its locked version, and the first rule wins", async () => {
+    const { packageDir: dir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "berry-rules",
+          dependencies: { "one-fixed-dep": "^1.0.0", "@scoped/create-test-app": "^1.0.0", "one-range-dep": "^1.0.0" },
+          resolutions: {
+            // names the version one-fixed-dep@^1.0.0 is locked to: applies
+            "one-fixed-dep@1.0.0/no-deps": "1.0.1",
+            // names a range, which is not create-test-app's locator: yarn never applies it
+            "@scoped/create-test-app@npm:^1.0.0/no-deps": "2.0.0",
+            // one-range-dep's `no-deps@^1.0.0` matches this rule first, although the next one
+            // names its parent and 1.1.0 has an entry of its own
+            "no-deps@^1.0.0": "1.0.1",
+            "one-range-dep/no-deps": "1.1.0",
+          },
+        }),
+        "yarn.lock": yarnLock({
+          "@scoped/create-test-app@npm:^1.0.0": [
+            `resolution: "@scoped/create-test-app@npm:1.0.0"`,
+            `dependencies:`,
+            `  no-deps: "npm:1.0.0"`,
+            `bin:`,
+            `  create-test-app: bin.js`,
+          ],
+          "berry-rules@workspace:.": [
+            `resolution: "berry-rules@workspace:."`,
+            `dependencies:`,
+            `  "@scoped/create-test-app": "npm:^1.0.0"`,
+            `  one-fixed-dep: "npm:^1.0.0"`,
+            `  one-range-dep: "npm:^1.0.0"`,
+          ],
+          "no-deps@npm:1.0.0": [`resolution: "no-deps@npm:1.0.0"`],
+          "no-deps@npm:1.0.1": [`resolution: "no-deps@npm:1.0.1"`],
+          // entries another project state left behind; no edge reaches them through yarn's rules
+          "no-deps@npm:1.1.0": [`resolution: "no-deps@npm:1.1.0"`],
+          "no-deps@npm:2.0.0": [`resolution: "no-deps@npm:2.0.0"`],
+          "no-deps@npm:^1.0.0": [`resolution: "no-deps@npm:1.1.0"`],
+          "one-fixed-dep@npm:^1.0.0": [
+            `resolution: "one-fixed-dep@npm:1.0.0"`,
+            `dependencies:`,
+            `  no-deps: "npm:1.0.0"`,
+          ],
+          "one-range-dep@npm:^1.0.0": [
+            `resolution: "one-range-dep@npm:1.0.0"`,
+            `dependencies:`,
+            `  no-deps: "npm:^1.0.0"`,
+          ],
+        }),
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const bunLock = await bunLockOf(dir);
+    // create-test-app keeps 1.0.0 (hoisted); the other two get 1.0.1
+    expect([...bunLock.matchAll(/^    "([^"]*no-deps)": \["(no-deps@[^"]+)"/gm)].map(m => [m[1], m[2]])).toEqual([
+      ["no-deps", "no-deps@1.0.0"],
+      ["one-fixed-dep/no-deps", "no-deps@1.0.1"],
+      ["one-range-dep/no-deps", "no-deps@1.0.1"],
+    ]);
+  });
+
+  test.concurrent("a berry lockfile that holds the yarn v1 marker below its first lines", async () => {
+    const { packageDir: dir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        ...cleanProject(),
+        "yarn.lock":
+          cleanProject()["yarn.lock"] +
+          `\n# yarn lockfile v1\n"what-bin@npm:1.0.0":\n  resolution: "what-bin@npm:1.0.0"\n`,
+      },
+    });
+
+    const { stderr, exitCode } = await run(dir, "pm", "migrate");
+    expect(stderr).toContain("migrated lockfile from yarn.lock");
+    expect(lockedVersions(await bunLockOf(dir))).toEqual(["no-deps@1.0.0"]);
+    expect(exitCode).toBe(0);
   });
 });

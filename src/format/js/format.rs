@@ -428,14 +428,34 @@ impl<'a> Format<'a> for Expr<'a> {
     }
 }
 
+/// What [`FormatExpr`] does without options, with a short way for what nearly every expression is:
+/// without comments, without parentheses and not the whole of an optional chain.
 fn format_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
-    // Nearly half of all expressions are names. The names that can need parentheses have 3 to 9 letters.
-    if f.is_quiet() && e.tag() == ExprTag::Ident {
-        let span = e.span();
-        if !(3..=9).contains(&span.len()) || !parentheses::expression::needs_parentheses(e, f) {
-            return write!(f, source_text(span));
-        }
+    if !f.is_quiet() {
+        return format_expression_in_general(e, f);
     }
+    let tag = e.tag();
+    // Nearly half of all expressions are names. The names that can need parentheses have 3 to 9 letters.
+    if tag == ExprTag::Ident {
+        let span = e.span();
+        return match (3..=9).contains(&span.len()) && parentheses::expression::needs_parentheses(e, f) {
+            true => format_expression_in_general(e, f),
+            false => write!(f, source_text(span)),
+        };
+    }
+    if !f.context_mut().has_stack_left() {
+        return;
+    }
+    let is_chain_expression =
+        matches!(tag, ExprTag::Dot | ExprTag::Index | ExprTag::Call | ExprTag::NonNull) && is_chain_root(e);
+    match is_chain_expression || parentheses::expression::needs_parentheses(e, f) {
+        true => format_expression_in_general(e, f),
+        false => write_expression_of(tag, e, ExprOptions::None, f),
+    }
+}
+
+#[inline(never)]
+fn format_expression_in_general<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     FormatExpr::with_options(e, ExprOptions::None).fmt(f);
 }
 
@@ -458,7 +478,13 @@ impl<'a> Format<'a> for FormatNonNullMarks<'a> {
 /// This only finds out where to go on. Each of the functions it goes on in has a frame of its own
 /// size, and none is set up for what is written right here.
 pub(crate) fn write_expression<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Formatter<'a>) {
-    match e.tag() {
+    write_expression_of(e.tag(), e, options, f);
+}
+
+/// `tag`: that of `e`.
+#[inline(always)]
+fn write_expression_of<'a>(tag: ExprTag, e: Expr<'a>, options: ExprOptions, f: &mut Formatter<'a>) {
+    match tag {
         ExprTag::Missing => {}
         ExprTag::Ident | ExprTag::PrivateIdentifier => write!(f, source_text(e.span())),
         ExprTag::This => write!(f, "this"),

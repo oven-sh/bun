@@ -5329,7 +5329,17 @@ pub mod bv2_impl {
                         };
                         let importer = resolve.import_record.importer_source_index as usize;
                         let index = resolve.import_record.import_record_index as usize;
-                        if cached && index < this.graph.ast.items_import_records()[importer].len() {
+                        // Only for a JavaScript importer: a stylesheet's imports are never taken
+                        // from the cache, and an HTML file's assets get their hashed URLs, as in
+                        // the import-record loop.
+                        let importer_is_js = !matches!(
+                            this.graph.input_files.items_loader().get(importer),
+                            Some(Loader::Css | Loader::Html) | None
+                        );
+                        if cached
+                            && importer_is_js
+                            && index < this.graph.ast.items_import_records()[importer].len()
+                        {
                             this.free_list.push(result.namespace);
                             this.free_list.push(result.path);
                             let pretty = this.path_with_pretty_initialized(&path, target).expect("oom");

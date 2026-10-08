@@ -693,6 +693,70 @@ devTest("import.meta.hot.accept(dep) takes an update reaching dep through its im
     await c.expectMessage("accepted list:c");
   },
 });
+devTest("import.meta.hot.accept(dep) sees every path from the change to dep loaded again", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import both from "./both.ts";
+      console.log("index " + both);
+      import.meta.hot.accept("./both.ts", m => console.log("accepted " + m.default));
+    `,
+    // item.ts reaches both.ts by two paths.
+    "both.ts": `
+      import left from "./left.ts";
+      import right from "./right.ts";
+      export default left + "," + right;
+    `,
+    "left.ts": `
+      import item from "./item.ts";
+      export default "left:" + item;
+    `,
+    "right.ts": `
+      import item from "./item.ts";
+      export default "right:" + item;
+    `,
+    "item.ts": `
+      export default "a";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index left:a,right:a");
+    await dev.write("item.ts", `export default "b";`);
+    await c.expectMessage("accepted left:b,right:b");
+  },
+});
+devTest("import.meta.hot.accept(dep) is called once when dep and what it imports change together", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import list from "./list.ts";
+      console.log("index " + list);
+      import.meta.hot.accept("./list.ts", m => console.log("accepted " + m.default));
+    `,
+    "list.ts": `
+      import item from "./item.ts";
+      export default "list:" + item;
+    `,
+    "item.ts": `
+      export default "a";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index list:a");
+    {
+      await using _batch = await dev.batchChanges();
+      await dev.write("item.ts", `export default "b";`);
+      await dev.write("list.ts", `import item from "./item.ts";\nexport default "List:" + item;`);
+    }
+    await c.expectMessage("accepted List:b");
+  },
+});
 devTest("a file served can be saved by renaming another over it", {
   files: {
     "index.html": emptyHtmlFile({

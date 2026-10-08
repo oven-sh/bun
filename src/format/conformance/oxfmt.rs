@@ -41,6 +41,10 @@ fn options_of(line: &[u8], flavor: &[u8]) -> Option<FormatOptions> {
     options.set(b"flavor", flavor).ok()?;
     for option in strings::split(trim_bytes(line, b"{} "), b", ") {
         let (name, value) = strings::split_once(option, b": ")?;
+        // Prettier passes over an option that it does not know.
+        if name == b"jsdoc" && flavor == b"prettier" {
+            continue;
+        }
         options.set(name, trim_bytes(value, b"\"")).ok()?;
     }
     Some(options)

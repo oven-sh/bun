@@ -7,6 +7,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { collect, extract, writeBundle } from "../bundle.ts";
 
+const languages = ["js", "jsx", "typescript", "json", "css", "less", "scss", "graphql", "misc"];
+
 /**
  * A few `format.test.js` have the expected output next to the input, so it is in no snapshot. They are run here with a `runFormatTest` that
  * takes notes, which are written in the form of a snapshot file, in a directory `inline-outputs` next to them.
@@ -17,12 +19,12 @@ async function addInlineOutputs(root: string, files: Map<string, Uint8Array>) {
     const indentation = /^[ \t]*/.exec(strings[0].replace(/^\n/, ""))![0];
     return text.replaceAll(new RegExp(`^${indentation}`, "gm"), "");
   };
-  const ours = ["babel", "typescript", "json", "json5", "jsonc", "json-stringify", "css", "less", "scss"];
+  const ours = ["babel", "typescript", "json", "json5", "jsonc", "json-stringify", "css", "less", "scss", "graphql"];
   const prettier = { getSupportInfo: async () => ({ options: [{ name: "parser", choices: ours.map(value => ({ value })) }] }) };
   const separator = (title: string) => "=".repeat(Math.floor((80 - title.length) / 2)) + title + "=".repeat(Math.ceil((80 - title.length) / 2));
   const escape = (text: string) => text.replace(/[\\`]|\$\{/g, "\\$&");
 
-  for (const test of new Bun.Glob("{js,jsx,typescript,json,misc,css,less,scss}/**/format.test.js").scanSync(root)) {
+  for (const test of new Bun.Glob(`{${languages.join(",")}}/**/format.test.js`).scanSync(root)) {
     const code = readFileSync(join(root, test), "utf8");
     if (!/\boutput\b/.test(code)) continue;
     let snapshot = "";
@@ -31,7 +33,7 @@ async function addInlineOutputs(root: string, files: Map<string, Uint8Array>) {
       fixtures.snippets.forEach((snippet, index) => {
         if (typeof snippet === "string" || snippet.output === undefined) return;
         // The output is the same for all of them. The first of each language stands for the others.
-        const families = new Map(parsers.filter(it => ours.includes(it)).map(it => [/^json|^css|^less|^scss/.test(it) ? it : "js", it]).reverse());
+        const families = new Map(parsers.filter(it => ours.includes(it)).map(it => [/^json|^css|^less|^scss|^graphql/.test(it) ? it : "js", it]).reverse());
         for (const parser of [...families.values()].reverse()) {
           const title = `snippet: ${snippet.name ?? `#${index}`}${Object.keys(options).length ? ` - ${JSON.stringify(options)}` : ""} format`;
           counts.set(title, (counts.get(title) ?? 0) + 1);
@@ -55,7 +57,7 @@ if (source === "--extract" && rest.length === 2) {
 } else if (source && source !== "--extract") {
   const files = new Map<string, Uint8Array>();
   // The snapshots say with which options an input is formatted.
-  for (const language of ["js", "jsx", "typescript", "json", "misc", "css", "less", "scss"]) {
+  for (const language of languages) {
     collect(join(source, "tests/format"), language, files, name => name === "format.test.js");
   }
   await addInlineOutputs(join(source, "tests/format"), files);

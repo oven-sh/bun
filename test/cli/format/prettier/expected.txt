@@ -26,15 +26,16 @@ FAIL rejected typescript/_errors_/babel-ts2/parenthesized-decorators-tagged-temp
 FAIL format css/cursor/test.css cursorOffset=19
 FAIL format css/yaml/dirty.css
 css: format 160/162 (0 syntax errors), rejected 2/2, second format 135/135, CRLF 160/160, CR 160/160, BOM 159/159
+graphql: format 104/104 (0 syntax errors), rejected 2/2, second format 87/87, CRLF 104/104, CR 104/104, BOM 104/104
 js: format 1325/1327 (0 syntax errors), rejected 39/58, second format 1036/1036, CRLF 1315/1315, CR 1315/1315, BOM 1321/1321
 json: format 785/785 (0 syntax errors), rejected 0/0, second format 696/696, CRLF 785/785, CR 785/785, BOM 781/781
 jsx: format 186/186 (0 syntax errors), rejected 0/0, second format 166/166, CRLF 185/185, CR 185/185, BOM 186/186
 less: format 238/238 (0 syntax errors), rejected 4/4, second format 191/191, CRLF 236/236, CR 236/236, BOM 238/238
-misc: format 236/236 (0 syntax errors), rejected 0/0, second format 207/207, CRLF 30/30, CR 30/30, BOM 235/235
+misc: format 267/267 (0 syntax errors), rejected 0/0, second format 234/234, CRLF 34/34, CR 34/34, BOM 266/266
 scss: format 136/136 (0 syntax errors), rejected 1/1, second format 117/117, CRLF 136/136, CR 136/136, BOM 136/136
 typescript: format 746/746 (0 syntax errors), rejected 24/28, second format 599/599, CRLF 745/745, CR 745/745, BOM 733/733
-format: 3812/3816 (99.90%)
-all checks: 18002/18029 (99.85%)
+format: 3947/3951 (99.90%)
+all checks: 18604/18631 (99.86%)
 not run: 17: Flow's type syntax
 not run: 2: an input that Prettier's `typescript` parser rejects: the snapshot is made with `babel-ts`
 not run: 42: embedded CSS, GraphQL, HTML or Markdown, which needs a formatter for that language

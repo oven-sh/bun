@@ -334,7 +334,7 @@ fn is_javascript_parser(name: &[u8]) -> bool {
 /// Prints `FAIL <check> <case> <options>` for each check that fails, how many pass of each kind,
 /// and how many cases are not run for which reason.
 pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
-    let languages = flags.languages.unwrap_or(b"js,jsx,typescript,json,css,less,scss,misc");
+    let languages = flags.languages.unwrap_or(b"js,jsx,typescript,json,css,less,scss,graphql,misc");
     let mut by_directory: BTreeMap<Vec<u8>, Tally> = BTreeMap::new();
     let mut excluded: BTreeMap<&str, usize> = BTreeMap::new();
     let fail = |kind: &str, id: &[u8], described: &[u8]| output_line!("FAIL {kind} {}{}", BStr::new(id), BStr::new(described));

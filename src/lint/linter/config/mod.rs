@@ -66,6 +66,8 @@ use merge::RuleSetting;
 use minimatch::{Minimatch, SplitPath};
 pub(crate) use rc::is_rule_of_oxlint;
 pub use rc::{LoadPlugin, RcFlavor, oxlint_category};
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 use std::sync::Arc;
 
 #[doc(hidden)]
@@ -183,6 +185,94 @@ pub enum FileConfig {
     Matched(Arc<ResolvedConfig>),
 }
 
+/// Which elements of the `files` of all objects can match a file, by what its path starts with. Most patterns of `overrides` name
+/// a directory first, and most files are in none of these.
+#[derive(Default)]
+struct Heads {
+    /// The elements of which a pattern starts with these names, without magic, each with its object.
+    by_head: FxHashMap<Box<[u8]>, SmallVec<[(u32, u32); 2]>>,
+    /// For each element: all that it can match starts with one of the keys that have it.
+    is_listed: Vec<bool>,
+    /// For each object, the number of its first element, and whether all of its elements are listed.
+    objects: Vec<(u32, bool)>,
+}
+
+type Bits = SmallVec<[u64; 4]>;
+
+fn has_bit(bits: &Bits, index: usize) -> bool {
+    bits[index / 64] & (1 << (index % 64)) != 0
+}
+
+/// What is listed for a path: a bit for each element, and one for each object.
+struct Listed {
+    elements: Bits,
+    objects: Bits,
+}
+
+/// What a path starts with that all of `patterns` match. One of them that says so is enough.
+fn heads_of(patterns: &[Pattern]) -> Option<Vec<&[u8]>> {
+    (patterns.iter()).find_map(|it| it.matcher.heads().map(Vec::from_iter))
+}
+
+impl Heads {
+    fn new(objects: &[ConfigObject]) -> Heads {
+        let mut heads = Heads::default();
+        for (index, object) in objects.iter().enumerate() {
+            let first = heads.is_listed.len();
+            for patterns in object.files.iter().flatten() {
+                let element = heads.is_listed.len() as u32;
+                let of_element = heads_of(patterns).filter(|_| object.base_path.is_none());
+                heads.is_listed.push(of_element.is_some());
+                for head in of_element.into_iter().flatten() {
+                    let listed = heads.by_head.entry(head.into()).or_default();
+                    if listed.last() != Some(&(element, index as u32)) {
+                        listed.push((element, index as u32));
+                    }
+                }
+            }
+            let are_all_listed =
+                object.files.is_some() && heads.is_listed[first..].iter().all(|it| *it);
+            heads.objects.push((first as u32, are_all_listed));
+        }
+        heads
+    }
+
+    /// What is listed for what `path` starts with. `None`: it cannot be told.
+    fn of(&self, path: &[u8]) -> Option<Listed> {
+        if self.by_head.is_empty() || bun_core::strings::contains(path, b"//") {
+            return None;
+        }
+        let mut found = Listed {
+            elements: smallvec::smallvec![0; self.is_listed.len().div_ceil(64)],
+            objects: smallvec::smallvec![0; self.objects.len().div_ceil(64)],
+        };
+        let mut look_up = |head: &[u8]| {
+            for &(element, object) in self.by_head.get(head).into_iter().flatten() {
+                found.elements[element as usize / 64] |= 1 << (element % 64);
+                found.objects[object as usize / 64] |= 1 << (object % 64);
+            }
+        };
+        for (at, &byte) in path.iter().enumerate() {
+            if byte == b'/' {
+                look_up(&path[..at]);
+            }
+        }
+        look_up(path);
+        Some(found)
+    }
+
+    /// Whether `files` of `object` can match the path that `found` is for.
+    fn allows_object(&self, found: &Listed, object: usize) -> bool {
+        !self.objects[object].1 || has_bit(&found.objects, object)
+    }
+
+    /// The same for the element at `index` of it.
+    fn allows(&self, found: &Listed, object: usize, index: usize) -> bool {
+        let element = self.objects[object].0 as usize + index;
+        !self.is_listed[element] || has_bit(&found.elements, element)
+    }
+}
+
 /// The configuration of a run. All threads share it.
 pub struct Config {
     base_path: Vec<u8>,
@@ -196,6 +286,7 @@ pub struct Config {
     notes: Vec<Vec<u8>>,
     unknown_rules: Vec<Box<[u8]>>,
     js_plugins: Vec<Arc<js_plugin::Plugin>>,
+    heads: Heads,
     cache: Cache,
 }
 
@@ -335,7 +426,11 @@ impl Config {
         let parts = SplitPath::new(&relative);
         let mut matching: Vec<u32> = Vec::new();
         let mut is_matched = false;
+        let listed = self.heads.of(&relative);
         for (index, object) in self.objects.iter().enumerate() {
+            if (listed.as_ref()).is_some_and(|found| !self.heads.allows_object(found, index)) {
+                continue;
+            }
             let own = object
                 .base_path
                 .as_ref()
@@ -350,11 +445,20 @@ impl Config {
                     let is_ignored = ignores.is_some_and(|it| is_ignored_by(it, parts, false));
                     return (!object.is_global_ignores && !is_ignored, false);
                 };
+                let can_match = (files.iter().enumerate())
+                    .filter(|it| {
+                        (listed.as_ref()).is_none_or(|found| self.heads.allows(found, index, it.0))
+                    })
+                    .map(|it| it.1);
                 let is_universal = |all: &&Vec<Pattern>| all.iter().all(|it| it.is_universal);
-                match path_matches(files.iter().filter(|it| !is_universal(it)), ignores, parts) {
+                match path_matches(
+                    can_match.clone().filter(|it| !is_universal(it)),
+                    ignores,
+                    parts,
+                ) {
                     true => (true, true),
                     false => (
-                        path_matches(files.iter().filter(is_universal), ignores, parts),
+                        path_matches(can_match.filter(is_universal), ignores, parts),
                         false,
                     ),
                 }

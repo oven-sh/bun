@@ -21,6 +21,21 @@ pub(super) struct GlobPart {
     rejects_dots: bool,
 }
 
+impl GlobPart {
+    /// The longest run of ASCII characters that are not magic. What matches has it somewhere.
+    pub(super) fn longest_literal(&self) -> Vec<u8> {
+        let as_ascii = |it: &Token| match it {
+            Token::Unit(unit @ 0..0x80) => Some(*unit as u8),
+            _ => None,
+        };
+        let runs = self
+            .tokens
+            .chunk_by(|a, b| as_ascii(a).is_some() && as_ascii(b).is_some());
+        let longest = runs.max_by_key(|it| it.iter().filter_map(as_ascii).count());
+        longest.into_iter().flatten().filter_map(as_ascii).collect()
+    }
+}
+
 /// What a part is.
 pub(super) enum Parsed {
     /// It has no magic: what it is without its escapes.

@@ -1011,6 +1011,8 @@ struct Expansion {
     head: Vec<u8>,
     /// What the last part ends with, and so what matches, unless that ends with a slash.
     tail: Vec<u8>,
+    /// The longest run of characters without magic in the parts between these, which is somewhere in what matches.
+    inner: Vec<u8>,
 }
 
 impl Expansion {
@@ -1020,14 +1022,29 @@ impl Expansion {
             Part::Literal(literal) => Some(&literal[..]),
             _ => None,
         });
+        let head = literals.collect::<Vec<_>>().join(&b'/');
+        let tail = match parts.last() {
+            Some(Part::Literal(end) | Part::StarExt(end)) => end.clone(),
+            _ => Vec::new(),
+        };
+        // What neither of them covers.
+        let after_head = parts
+            .iter()
+            .take_while(|it| matches!(it, Part::Literal(_)))
+            .count();
+        let before_tail = parts.len() - usize::from(!tail.is_empty());
+        let between = parts.get(after_head..before_tail).unwrap_or_default();
+        let literals_between = between.iter().filter_map(|it| match it {
+            Part::Literal(literal) => Some(literal.clone()),
+            Part::Glob(glob) => Some(glob.longest_literal()),
+            _ => None,
+        });
         Expansion {
+            inner: literals_between.max_by_key(Vec::len).unwrap_or_default(),
+            head,
+            tail,
             globstars: (parts.iter().position(is_globstar))
                 .zip(parts.iter().rposition(is_globstar)),
-            head: literals.collect::<Vec<_>>().join(&b'/'),
-            tail: match parts.last() {
-                Some(Part::Literal(end) | Part::StarExt(end)) => end.clone(),
-                _ => Vec::new(),
-            },
             parts,
         }
     }
@@ -1037,6 +1054,7 @@ impl Expansion {
         path.starts_with(&self.head)
             && (self.head.is_empty() || matches!(path.get(self.head.len()), None | Some(b'/')))
             && (path.ends_with(&self.tail) || path.ends_with(b"/"))
+            && (self.inner.is_empty() || strings::contains(path, &self.inner))
     }
 }
 
@@ -1235,6 +1253,15 @@ impl Minimatch {
             .map(|(section, before)| (*section, file_len - (before + section.len()) as isize))
             .collect();
         Self::match_sections(file, &with_last, at, 0, tail_len > 0, partial) == Some(true)
+    }
+
+    /// What a path that matches starts with, up to a slash or to its end: one of these. `None` if the pattern does not say.
+    pub(crate) fn heads(&self) -> Option<impl Iterator<Item = &[u8]>> {
+        let says = !self.is_comment
+            && !self.is_empty
+            && !self.is_negated
+            && self.set.iter().all(|it| !it.head.is_empty());
+        says.then(|| self.set.iter().map(|it| &it.head[..]))
     }
 
     /// `match(path)`. `flip_negate`: the option `flipNegate`, with which a `!` at the start of the

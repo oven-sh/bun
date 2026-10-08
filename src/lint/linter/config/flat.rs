@@ -587,6 +587,7 @@ impl Reader<'_> {
     pub(super) fn finish(self, keeps_options: bool, accepts_all_plugins: bool) -> Config {
         Config {
             base_path: self.base_path,
+            heads: super::Heads::new(&self.objects),
             objects: self.objects,
             keeps_options,
             accepts_all_plugins,

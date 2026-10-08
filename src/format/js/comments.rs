@@ -671,8 +671,9 @@ impl<'a> Comments<'a> {
             .any(|comment| self.is_suppression_comment(comment))
     }
 
+    /// `prettier-ignore`, or `oxfmt-ignore`, which means the same.
     pub(crate) fn is_suppression_comment(&self, comment: &Comment) -> bool {
-        self.source_text.text_for(&comment.content_span()).trim_ascii() == b"prettier-ignore"
+        matches!(self.source_text.text_for(&comment.content_span()).trim_ascii(), b"prettier-ignore" | b"oxfmt-ignore")
     }
 
     /// A JSDoc comment with `@type` or `@satisfies`.

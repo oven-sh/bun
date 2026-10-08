@@ -15,6 +15,7 @@ pub mod code_path;
 pub mod context;
 pub mod fix;
 pub mod json;
+pub mod language;
 pub mod options;
 pub mod regex;
 pub mod rule;
@@ -31,6 +32,7 @@ pub mod prelude {
     pub use crate::code_path::{CodePath, Origin, Segment};
     pub use crate::context::{Cx, IntoText, Report};
     pub use crate::fix::{Fix, Fixer};
+    pub use crate::language::{Global, LanguageOptions, SourceType};
     pub use crate::options::{Json, Object, Options};
     pub use crate::regex::Regex;
     pub use crate::rule::{Fixable, Kind, Listeners, Message, Meta, NodeTags, Presets, Rule};

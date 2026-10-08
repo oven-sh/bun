@@ -36,6 +36,7 @@ pub use bun_sema::hir::{
     UnOp, VarKind,
 };
 
+use crate::language::LanguageOptions;
 use crate::span::Span;
 use bun_sema::atom::{Atom, Intern};
 use bun_sema::{bind, hir};
@@ -176,11 +177,11 @@ pub struct File<'a> {
     pub(crate) lazy: Lazy,
     pub(crate) types: Option<crate::types::Checker<'a>>,
     pub(crate) sink: crate::context::Sink,
+    language: &'a LanguageOptions,
     body: hir::IdList<hir::StmtId>,
     path: &'a [u8],
     kind: FileKind,
     is_js: bool,
-    is_module: bool,
     has_parse_errors: bool,
 }
 
@@ -192,13 +193,14 @@ impl<'a> File<'a> {
         hir: &'a hir::File<'_>,
         bound: &'a bind::Bound<'_>,
         atoms: &'a dyn Intern,
+        language: &'a LanguageOptions,
         types: Option<crate::types::Checker<'a>>,
     ) -> File<'a> {
         File {
+            language,
             body: hir.body,
             kind: hir.kind,
             is_js: hir.is_js,
-            is_module: hir.has_module_syntax || hir.is_module_by_decree,
             has_parse_errors: hir.has_errors || hir.has_parse_diagnostics,
             hir: Hir::new(hir),
             bound: Bound::new(bound),
@@ -245,10 +247,22 @@ impl<'a> File<'a> {
         self.kind == FileKind::Declaration
     }
 
-    /// It has an `import` or an `export`, or its extension or the configuration makes it a module.
+    /// ESLint's `context.languageOptions`.
+    #[inline]
+    pub fn language(&self) -> &'a LanguageOptions {
+        self.language
+    }
+
+    /// ESLint's `context.settings`.
+    #[inline]
+    pub fn settings(&self) -> &'a crate::options::Json {
+        &self.language.settings
+    }
+
+    /// `languageOptions.sourceType` is `"module"`.
     #[inline]
     pub fn is_module(&self) -> bool {
-        self.is_module
+        self.language.source_type == crate::language::SourceType::Module
     }
 
     /// The parser reported an error. No rule runs on such a file.

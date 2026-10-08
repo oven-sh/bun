@@ -54,7 +54,8 @@ fn lint(entry: &RuleEntry, path: &str, code: &[u8], options: &[Json]) -> Outcome
         before_es2017: false,
     };
     let bound = bind(&hir, bind_options, &atoms, arena);
-    let file = File::new(path.as_bytes(), &hir, &bound, &atoms, None);
+    let language = bun_lint::language::LanguageOptions::default();
+    let file = File::new(path.as_bytes(), &hir, &bound, &atoms, &language, None);
     if file.has_parse_errors() {
         return Outcome {
             messages: Vec::new(),

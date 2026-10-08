@@ -19,14 +19,21 @@ pub(crate) struct Feature {
     pub(crate) name: &'static str,
     /// What the option `ignores` can call it.
     pub(crate) ignore_names: &'static [&'static str],
-    /// The versions of Node.js that have it. `<0`: none.
-    pub(crate) supported: &'static str,
+    /// The versions of Node.js that have it, if any has.
+    pub(crate) supported: Option<&'static str>,
     /// The versions that have it outside strict mode too, if these are fewer.
     pub(crate) strict_mode: Option<&'static str>,
     /// The global variables and their properties that are the feature.
     pub(crate) globals: TraceMap<'static, ()>,
     /// The methods that are the feature, by class.
     pub(crate) prototype: &'static [(&'static str, &'static [&'static str])],
+}
+
+impl Feature {
+    /// `supported` as a range.
+    pub(crate) fn supported_range(&self) -> &'static str {
+        self.supported.unwrap_or("<0")
+    }
 }
 
 const PATTERNS: [usize; 8] = [
@@ -72,8 +79,10 @@ impl Active {
                 .ignore_names
                 .iter()
                 .any(|name| ignores.iter().any(|it| **it == *name.as_bytes()));
-            let everywhere =
-                Range::parse(feature.strict_mode.unwrap_or(feature.supported).as_bytes());
+            let everywhere = feature
+                .strict_mode
+                .unwrap_or_else(|| feature.supported_range());
+            let everywhere = Range::parse(everywhere.as_bytes());
             if is_ignored || everywhere.is_some_and(|it| active.version.is_subset_of(&it)) {
                 continue;
             }

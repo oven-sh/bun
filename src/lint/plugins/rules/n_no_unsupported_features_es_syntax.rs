@@ -389,7 +389,7 @@ impl EsSyntax {
         let Some(data) = FEATURES.get(feature) else {
             return;
         };
-        let mut supported = data.supported;
+        let mut supported = data.supported_range();
         if let (Some(strict_mode), Some(node)) = (data.strict_mode, node) {
             // `normalizeScope`
             let mut scope = node.scope();
@@ -398,11 +398,11 @@ impl EsSyntax {
             }
             if !scope.is_strict() {
                 supported = strict_mode;
-            } else if Range::parse(data.supported.as_bytes()).is_some_and(|it| active.version.is_subset_of(&it)) {
+            } else if Range::parse(data.supported_range().as_bytes()).is_some_and(|it| active.version.is_subset_of(&it)) {
                 return;
             }
         }
-        let message = if data.supported == "<0" { NOT_SUPPORTED_YET } else { NOT_SUPPORTED_TILL };
+        let message = if data.supported.is_none() { NOT_SUPPORTED_YET } else { NOT_SUPPORTED_TILL };
         let report = if is_position { cx.report_at(at.start, message) } else { cx.report(at, message) };
         report.data("featureName", data.name).data("supported", supported).data("version", active.version.raw.clone());
     }

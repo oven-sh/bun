@@ -76,7 +76,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "accessor-properties",
         ignore_names: &["no-accessor-properties", "accessor-properties", "accessorProperties"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -84,7 +84,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "arbitrary-module-namespace-names",
         ignore_names: &["no-arbitrary-module-namespace-names", "arbitrary-module-namespace-names", "arbitraryModuleNamespaceNames"],
-        supported: ">=13.2.0",
+        supported: Some(">=13.2.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -92,7 +92,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-from",
         ignore_names: &["no-array-from", "array-from", "arrayFrom"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Array", TraceMap::new(&[("from", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -100,7 +100,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-isarray",
         ignore_names: &["no-array-isarray", "array-isarray", "arrayIsarray"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Array", TraceMap::new(&[("isArray", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -108,7 +108,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-of",
         ignore_names: &["no-array-of", "array-of", "arrayOf"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Array", TraceMap::new(&[("of", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -116,7 +116,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-copywithin",
         ignore_names: &["no-array-prototype-copywithin", "array-prototype-copywithin", "arrayPrototypeCopywithin"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["copyWithin"])],
@@ -124,7 +124,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-entries",
         ignore_names: &["no-array-prototype-entries", "array-prototype-entries", "arrayPrototypeEntries"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["entries"])],
@@ -132,7 +132,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-every",
         ignore_names: &["no-array-prototype-every", "array-prototype-every", "arrayPrototypeEvery"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["every"])],
@@ -140,7 +140,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-fill",
         ignore_names: &["no-array-prototype-fill", "array-prototype-fill", "arrayPrototypeFill"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["fill"])],
@@ -148,7 +148,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-filter",
         ignore_names: &["no-array-prototype-filter", "array-prototype-filter", "arrayPrototypeFilter"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["filter"])],
@@ -156,7 +156,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-find",
         ignore_names: &["no-array-prototype-find", "array-prototype-find", "arrayPrototypeFind"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["find"])],
@@ -164,7 +164,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-findindex",
         ignore_names: &["no-array-prototype-findindex", "array-prototype-findindex", "arrayPrototypeFindindex"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["findIndex"])],
@@ -172,7 +172,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-findlast-findlastindex",
         ignore_names: &["no-array-prototype-findlast-findlastindex", "array-prototype-findlast-findlastindex", "arrayPrototypeFindlastFindlastindex"],
-        supported: ">=18.0.0",
+        supported: Some(">=18.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["findLast", "findLastIndex"]), ("Int8Array", &["findLast", "findLastIndex"]), ("Uint8Array", &["findLast", "findLastIndex"]), ("Uint8ClampedArray", &["findLast", "findLastIndex"]), ("Int16Array", &["findLast", "findLastIndex"]), ("Uint16Array", &["findLast", "findLastIndex"]), ("Int32Array", &["findLast", "findLastIndex"]), ("Uint32Array", &["findLast", "findLastIndex"]), ("Float32Array", &["findLast", "findLastIndex"]), ("Float64Array", &["findLast", "findLastIndex"]), ("BigInt64Array", &["findLast", "findLastIndex"]), ("BigUint64Array", &["findLast", "findLastIndex"])],
@@ -180,7 +180,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-flat",
         ignore_names: &["no-array-prototype-flat", "array-prototype-flat", "arrayPrototypeFlat"],
-        supported: ">=11.0.0",
+        supported: Some(">=11.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["flat", "flatMap"])],
@@ -188,7 +188,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-foreach",
         ignore_names: &["no-array-prototype-foreach", "array-prototype-foreach", "arrayPrototypeForeach"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["forEach"])],
@@ -196,7 +196,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-includes",
         ignore_names: &["no-array-prototype-includes", "array-prototype-includes", "arrayPrototypeIncludes"],
-        supported: ">=6.0.0",
+        supported: Some(">=6.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["includes"]), ("Int8Array", &["includes"]), ("Uint8Array", &["includes"]), ("Uint8ClampedArray", &["includes"]), ("Int16Array", &["includes"]), ("Uint16Array", &["includes"]), ("Int32Array", &["includes"]), ("Uint32Array", &["includes"]), ("Float32Array", &["includes"]), ("Float64Array", &["includes"]), ("BigInt64Array", &["includes"]), ("BigUint64Array", &["includes"])],
@@ -204,7 +204,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-indexof",
         ignore_names: &["no-array-prototype-indexof", "array-prototype-indexof", "arrayPrototypeIndexof"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["indexOf"])],
@@ -212,7 +212,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-keys",
         ignore_names: &["no-array-prototype-keys", "array-prototype-keys", "arrayPrototypeKeys"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["keys"])],
@@ -220,7 +220,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-lastindexof",
         ignore_names: &["no-array-prototype-lastindexof", "array-prototype-lastindexof", "arrayPrototypeLastindexof"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["lastIndexOf"])],
@@ -228,7 +228,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-map",
         ignore_names: &["no-array-prototype-map", "array-prototype-map", "arrayPrototypeMap"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["map"])],
@@ -236,7 +236,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-reduce",
         ignore_names: &["no-array-prototype-reduce", "array-prototype-reduce", "arrayPrototypeReduce"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["reduce"])],
@@ -244,7 +244,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-reduceright",
         ignore_names: &["no-array-prototype-reduceright", "array-prototype-reduceright", "arrayPrototypeReduceright"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["reduceRight"])],
@@ -252,7 +252,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-some",
         ignore_names: &["no-array-prototype-some", "array-prototype-some", "arrayPrototypeSome"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["some"])],
@@ -260,7 +260,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-toreversed",
         ignore_names: &["no-array-prototype-toreversed", "array-prototype-toreversed", "arrayPrototypeToreversed"],
-        supported: ">=20.0.0",
+        supported: Some(">=20.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["toReversed"]), ("Int8Array", &["toReversed"]), ("Uint8Array", &["toReversed"]), ("Uint8ClampedArray", &["toReversed"]), ("Int16Array", &["toReversed"]), ("Uint16Array", &["toReversed"]), ("Int32Array", &["toReversed"]), ("Uint32Array", &["toReversed"]), ("Float32Array", &["toReversed"]), ("Float64Array", &["toReversed"]), ("BigInt64Array", &["toReversed"]), ("BigUint64Array", &["toReversed"])],
@@ -268,7 +268,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-tosorted",
         ignore_names: &["no-array-prototype-tosorted", "array-prototype-tosorted", "arrayPrototypeTosorted"],
-        supported: ">=20.0.0",
+        supported: Some(">=20.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["toSorted"]), ("Int8Array", &["toSorted"]), ("Uint8Array", &["toSorted"]), ("Uint8ClampedArray", &["toSorted"]), ("Int16Array", &["toSorted"]), ("Uint16Array", &["toSorted"]), ("Int32Array", &["toSorted"]), ("Uint32Array", &["toSorted"]), ("Float32Array", &["toSorted"]), ("Float64Array", &["toSorted"]), ("BigInt64Array", &["toSorted"]), ("BigUint64Array", &["toSorted"])],
@@ -276,7 +276,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-tospliced",
         ignore_names: &["no-array-prototype-tospliced", "array-prototype-tospliced", "arrayPrototypeTospliced"],
-        supported: ">=20.0.0",
+        supported: Some(">=20.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["toSpliced"])],
@@ -284,7 +284,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-values",
         ignore_names: &["no-array-prototype-values", "array-prototype-values", "arrayPrototypeValues"],
-        supported: ">=10.9.0",
+        supported: Some(">=10.9.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["values"])],
@@ -292,7 +292,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-prototype-with",
         ignore_names: &["no-array-prototype-with", "array-prototype-with", "arrayPrototypeWith"],
-        supported: ">=20.0.0",
+        supported: Some(">=20.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["with"]), ("Int8Array", &["with"]), ("Uint8Array", &["with"]), ("Uint8ClampedArray", &["with"]), ("Int16Array", &["with"]), ("Uint16Array", &["with"]), ("Int32Array", &["with"]), ("Uint32Array", &["with"]), ("Float32Array", &["with"]), ("Float64Array", &["with"]), ("BigInt64Array", &["with"]), ("BigUint64Array", &["with"])],
@@ -300,7 +300,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "array-string-prototype-at",
         ignore_names: &["no-array-string-prototype-at", "array-string-prototype-at", "arrayStringPrototypeAt"],
-        supported: ">=16.6.0",
+        supported: Some(">=16.6.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Array", &["at"]), ("String", &["at"]), ("Int8Array", &["at"]), ("Uint8Array", &["at"]), ("Uint8ClampedArray", &["at"]), ("Int16Array", &["at"]), ("Uint16Array", &["at"]), ("Int32Array", &["at"]), ("Uint32Array", &["at"]), ("Float32Array", &["at"]), ("Float64Array", &["at"]), ("BigInt64Array", &["at"]), ("BigUint64Array", &["at"])],
@@ -308,7 +308,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "arrow-functions",
         ignore_names: &["no-arrow-functions", "arrow-functions", "arrowFunctions"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -316,7 +316,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "async-functions",
         ignore_names: &["no-async-functions", "async-functions", "asyncFunctions"],
-        supported: ">=7.6.0",
+        supported: Some(">=7.6.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -324,7 +324,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "async-iteration",
         ignore_names: &["no-async-iteration", "async-iteration", "asyncIteration"],
-        supported: ">=10.0.0",
+        supported: Some(">=10.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -332,7 +332,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "atomics-waitasync",
         ignore_names: &["no-atomics-waitasync", "atomics-waitasync", "atomicsWaitasync"],
-        supported: ">=16.0.0",
+        supported: Some(">=16.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Atomics", TraceMap::new(&[("waitAsync", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -340,7 +340,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "atomics",
         ignore_names: &["no-atomics", "atomics", "atomics"],
-        supported: ">=8.10.0",
+        supported: Some(">=8.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Atomics", TraceMap::new(&[]).read(()))]),
         prototype: &[],
@@ -348,7 +348,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "bigint",
         ignore_names: &["no-bigint", "bigint", "bigint"],
-        supported: ">=10.4.0",
+        supported: Some(">=10.4.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("BigInt", TraceMap::new(&[]).read(())), ("BigInt64Array", TraceMap::new(&[]).read(())), ("BigUint64Array", TraceMap::new(&[]).read(()))]),
         prototype: &[],
@@ -356,7 +356,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "binary-numeric-literals",
         ignore_names: &["no-binary-numeric-literals", "binary-numeric-literals", "binaryNumericLiterals"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -364,7 +364,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "block-scoped-functions",
         ignore_names: &["no-block-scoped-functions", "block-scoped-functions", "blockScopedFunctions"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: Some(">=6.0.0"),
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -372,7 +372,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "block-scoped-variables",
         ignore_names: &["no-block-scoped-variables", "block-scoped-variables", "blockScopedVariables"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: Some(">=6.0.0"),
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -380,7 +380,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "class-fields",
         ignore_names: &["no-class-fields", "class-fields", "classFields"],
-        supported: ">=12.0.0",
+        supported: Some(">=12.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -388,7 +388,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "class-static-block",
         ignore_names: &["no-class-static-block", "class-static-block", "classStaticBlock"],
-        supported: ">=16.11.0",
+        supported: Some(">=16.11.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -396,7 +396,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "classes",
         ignore_names: &["no-classes", "classes", "classes"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: Some(">=6.0.0"),
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -404,7 +404,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "computed-properties",
         ignore_names: &["no-computed-properties", "computed-properties", "computedProperties"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -412,7 +412,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "date-now",
         ignore_names: &["no-date-now", "date-now", "dateNow"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Date", TraceMap::new(&[("now", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -420,7 +420,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "date-prototype-getyear-setyear",
         ignore_names: &["no-date-prototype-getyear-setyear", "date-prototype-getyear-setyear", "datePrototypeGetyearSetyear"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Date", &["getYear", "setYear"])],
@@ -428,7 +428,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "date-prototype-togmtstring",
         ignore_names: &["no-date-prototype-togmtstring", "date-prototype-togmtstring", "datePrototypeTogmtstring"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Date", &["toGMTString"])],
@@ -436,7 +436,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "default-parameters",
         ignore_names: &["no-default-parameters", "default-parameters", "defaultParameters"],
-        supported: ">=6.0.0",
+        supported: Some(">=6.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -444,7 +444,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "destructuring",
         ignore_names: &["no-destructuring", "destructuring", "destructuring"],
-        supported: ">=6.0.0",
+        supported: Some(">=6.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -452,7 +452,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "dynamic-import",
         ignore_names: &["no-dynamic-import", "dynamic-import", "dynamicImport"],
-        supported: "^12.17.0 || >=13.2.0",
+        supported: Some("^12.17.0 || >=13.2.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -460,7 +460,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "error-cause",
         ignore_names: &["no-error-cause", "error-cause", "errorCause"],
-        supported: ">=16.9.0",
+        supported: Some(">=16.9.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -468,7 +468,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "escape-unescape",
         ignore_names: &["no-escape-unescape", "escape-unescape", "escapeUnescape"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("escape", TraceMap::new(&[]).read(())), ("unescape", TraceMap::new(&[]).read(()))]),
         prototype: &[],
@@ -476,7 +476,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "exponential-operators",
         ignore_names: &["no-exponential-operators", "exponential-operators", "exponentialOperators"],
-        supported: ">=7.0.0",
+        supported: Some(">=7.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -484,7 +484,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "export-ns-from",
         ignore_names: &["no-export-ns-from", "export-ns-from", "exportNsFrom"],
-        supported: ">=13.2.0",
+        supported: Some(">=13.2.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -492,7 +492,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "for-of-loops",
         ignore_names: &["no-for-of-loops", "for-of-loops", "forOfLoops"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -500,7 +500,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "function-declarations-in-if-statement-clauses-without-block",
         ignore_names: &["no-function-declarations-in-if-statement-clauses-without-block", "function-declarations-in-if-statement-clauses-without-block", "functionDeclarationsInIfStatementClausesWithoutBlock"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -508,7 +508,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "function-prototype-bind",
         ignore_names: &["no-function-prototype-bind", "function-prototype-bind", "functionPrototypeBind"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Function", &["bind"])],
@@ -516,7 +516,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "generators",
         ignore_names: &["no-generators", "generators", "generators"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -524,7 +524,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "global-this",
         ignore_names: &["no-global-this", "global-this", "globalThis"],
-        supported: ">=12.0.0",
+        supported: Some(">=12.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("globalThis", TraceMap::new(&[]).read(()))]),
         prototype: &[],
@@ -532,7 +532,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "hashbang",
         ignore_names: &["no-hashbang", "hashbang", "hashbang"],
-        supported: ">=12.5.0",
+        supported: Some(">=12.5.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -540,7 +540,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "import-meta",
         ignore_names: &["no-import-meta", "import-meta", "importMeta"],
-        supported: ">=10.4.0",
+        supported: Some(">=10.4.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -548,7 +548,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "initializers-in-for-in",
         ignore_names: &["no-initializers-in-for-in", "initializers-in-for-in", "initializersInForIn"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -556,7 +556,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "intl-datetimeformat-prototype-formatrange",
         ignore_names: &["no-intl-datetimeformat-prototype-formatrange", "intl-datetimeformat-prototype-formatrange", "intlDatetimeformatPrototypeFormatrange"],
-        supported: ">=12.9.0",
+        supported: Some(">=12.9.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Intl.DateTimeFormat", &["formatRange"])],
@@ -564,7 +564,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "intl-datetimeformat-prototype-formattoparts",
         ignore_names: &["no-intl-datetimeformat-prototype-formattoparts", "intl-datetimeformat-prototype-formattoparts", "intlDatetimeformatPrototypeFormattoparts"],
-        supported: ">=12.9.0",
+        supported: Some(">=12.9.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Intl.DateTimeFormat", &["formatToParts"])],
@@ -572,7 +572,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "intl-displaynames",
         ignore_names: &["no-intl-displaynames", "intl-displaynames", "intlDisplaynames"],
-        supported: ">=14.0.0",
+        supported: Some(">=14.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Intl", TraceMap::new(&[("DisplayNames", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -580,7 +580,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "intl-getcanonicallocales",
         ignore_names: &["no-intl-getcanonicallocales", "intl-getcanonicallocales", "intlGetcanonicallocales"],
-        supported: ">=7.0.0",
+        supported: Some(">=7.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Intl", TraceMap::new(&[("getCanonicalLocales", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -588,7 +588,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "intl-listformat",
         ignore_names: &["no-intl-listformat", "intl-listformat", "intlListformat"],
-        supported: ">=12.0.0",
+        supported: Some(">=12.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Intl", TraceMap::new(&[("ListFormat", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -596,7 +596,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "intl-locale",
         ignore_names: &["no-intl-locale", "intl-locale", "intlLocale"],
-        supported: ">=12.0.0",
+        supported: Some(">=12.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Intl", TraceMap::new(&[("Locale", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -604,7 +604,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "intl-numberformat-prototype-formatrange",
         ignore_names: &["no-intl-numberformat-prototype-formatrange", "intl-numberformat-prototype-formatrange", "intlNumberformatPrototypeFormatrange"],
-        supported: ">=19.0.0",
+        supported: Some(">=19.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Intl.NumberFormat", &["formatRange"])],
@@ -612,7 +612,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "intl-numberformat-prototype-formatrangetoparts",
         ignore_names: &["no-intl-numberformat-prototype-formatrangetoparts", "intl-numberformat-prototype-formatrangetoparts", "intlNumberformatPrototypeFormatrangetoparts"],
-        supported: ">=19.0.0",
+        supported: Some(">=19.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Intl.NumberFormat", &["formatRangeToParts"])],
@@ -620,7 +620,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "intl-numberformat-prototype-formattoparts",
         ignore_names: &["no-intl-numberformat-prototype-formattoparts", "intl-numberformat-prototype-formattoparts", "intlNumberformatPrototypeFormattoparts"],
-        supported: ">=10.0.0",
+        supported: Some(">=10.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Intl.NumberFormat", &["formatToParts"])],
@@ -628,7 +628,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "intl-pluralrules-prototype-selectrange",
         ignore_names: &["no-intl-pluralrules-prototype-selectrange", "intl-pluralrules-prototype-selectrange", "intlPluralrulesPrototypeSelectrange"],
-        supported: ">=19.0.0",
+        supported: Some(">=19.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Intl.PluralRules", &["selectRange"])],
@@ -636,7 +636,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "intl-pluralrules",
         ignore_names: &["no-intl-pluralrules", "intl-pluralrules", "intlPluralrules"],
-        supported: ">=10.0.0",
+        supported: Some(">=10.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Intl", TraceMap::new(&[("PluralRules", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -644,7 +644,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "intl-relativetimeformat",
         ignore_names: &["no-intl-relativetimeformat", "intl-relativetimeformat", "intlRelativetimeformat"],
-        supported: ">=12.0.0",
+        supported: Some(">=12.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Intl", TraceMap::new(&[("RelativeTimeFormat", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -652,7 +652,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "intl-segmenter",
         ignore_names: &["no-intl-segmenter", "intl-segmenter", "intlSegmenter"],
-        supported: ">=16.0.0",
+        supported: Some(">=16.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Intl", TraceMap::new(&[("Segmenter", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -660,7 +660,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "intl-supportedvaluesof",
         ignore_names: &["no-intl-supportedvaluesof", "intl-supportedvaluesof", "intlSupportedvaluesof"],
-        supported: ">=18.0.0",
+        supported: Some(">=18.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Intl", TraceMap::new(&[("supportedValuesOf", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -668,7 +668,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "json-superset",
         ignore_names: &["no-json-superset", "json-superset", "jsonSuperset"],
-        supported: ">=10.0.0",
+        supported: Some(">=10.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -676,7 +676,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "json",
         ignore_names: &["no-json", "json", "json"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("JSON", TraceMap::new(&[]).read(()))]),
         prototype: &[],
@@ -684,7 +684,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "keyword-properties",
         ignore_names: &["no-keyword-properties", "keyword-properties", "keywordProperties"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -692,7 +692,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "labelled-function-declarations",
         ignore_names: &["no-labelled-function-declarations", "labelled-function-declarations", "labelledFunctionDeclarations"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -700,7 +700,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "legacy-object-prototype-accessor-methods",
         ignore_names: &["no-legacy-object-prototype-accessor-methods", "legacy-object-prototype-accessor-methods", "legacyObjectPrototypeAccessorMethods"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -708,7 +708,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "logical-assignment-operators",
         ignore_names: &["no-logical-assignment-operators", "logical-assignment-operators", "logicalAssignmentOperators"],
-        supported: ">=15.0.0",
+        supported: Some(">=15.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -716,7 +716,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "malformed-template-literals",
         ignore_names: &["no-malformed-template-literals", "malformed-template-literals", "malformedTemplateLiterals"],
-        supported: ">=8.10.0",
+        supported: Some(">=8.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -724,7 +724,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "map",
         ignore_names: &["no-map", "map", "map"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Map", TraceMap::new(&[]).read(()))]),
         prototype: &[],
@@ -732,7 +732,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "math-acosh",
         ignore_names: &["no-math-acosh", "math-acosh", "mathAcosh"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Math", TraceMap::new(&[("acosh", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -740,7 +740,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "math-asinh",
         ignore_names: &["no-math-asinh", "math-asinh", "mathAsinh"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Math", TraceMap::new(&[("asinh", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -748,7 +748,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "math-atanh",
         ignore_names: &["no-math-atanh", "math-atanh", "mathAtanh"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Math", TraceMap::new(&[("atanh", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -756,7 +756,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "math-cbrt",
         ignore_names: &["no-math-cbrt", "math-cbrt", "mathCbrt"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Math", TraceMap::new(&[("cbrt", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -764,7 +764,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "math-clz32",
         ignore_names: &["no-math-clz32", "math-clz32", "mathClz32"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Math", TraceMap::new(&[("clz32", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -772,7 +772,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "math-cosh",
         ignore_names: &["no-math-cosh", "math-cosh", "mathCosh"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Math", TraceMap::new(&[("cosh", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -780,7 +780,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "math-expm1",
         ignore_names: &["no-math-expm1", "math-expm1", "mathExpm1"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Math", TraceMap::new(&[("expm1", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -788,7 +788,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "math-fround",
         ignore_names: &["no-math-fround", "math-fround", "mathFround"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Math", TraceMap::new(&[("fround", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -796,7 +796,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "math-hypot",
         ignore_names: &["no-math-hypot", "math-hypot", "mathHypot"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Math", TraceMap::new(&[("hypot", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -804,7 +804,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "math-imul",
         ignore_names: &["no-math-imul", "math-imul", "mathImul"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Math", TraceMap::new(&[("imul", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -812,7 +812,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "math-log10",
         ignore_names: &["no-math-log10", "math-log10", "mathLog10"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Math", TraceMap::new(&[("log10", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -820,7 +820,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "math-log1p",
         ignore_names: &["no-math-log1p", "math-log1p", "mathLog1p"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Math", TraceMap::new(&[("log1p", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -828,7 +828,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "math-log2",
         ignore_names: &["no-math-log2", "math-log2", "mathLog2"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Math", TraceMap::new(&[("log2", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -836,7 +836,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "math-sign",
         ignore_names: &["no-math-sign", "math-sign", "mathSign"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Math", TraceMap::new(&[("sign", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -844,7 +844,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "math-sinh",
         ignore_names: &["no-math-sinh", "math-sinh", "mathSinh"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Math", TraceMap::new(&[("sinh", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -852,7 +852,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "math-tanh",
         ignore_names: &["no-math-tanh", "math-tanh", "mathTanh"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Math", TraceMap::new(&[("tanh", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -860,7 +860,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "math-trunc",
         ignore_names: &["no-math-trunc", "math-trunc", "mathTrunc"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Math", TraceMap::new(&[("trunc", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -868,7 +868,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "modules",
         ignore_names: &["no-modules", "modules", "modules"],
-        supported: "^12.17.0 || >=13.2.0",
+        supported: Some("^12.17.0 || >=13.2.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -876,7 +876,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "new-target",
         ignore_names: &["no-new-target", "new-target", "newTarget", "new.target"],
-        supported: ">=5.0.0",
+        supported: Some(">=5.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -884,7 +884,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "nullish-coalescing-operators",
         ignore_names: &["no-nullish-coalescing-operators", "nullish-coalescing-operators", "nullishCoalescingOperators"],
-        supported: ">=14.0.0",
+        supported: Some(">=14.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -892,7 +892,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "number-epsilon",
         ignore_names: &["no-number-epsilon", "number-epsilon", "numberEpsilon"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Number", TraceMap::new(&[("EPSILON", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -900,7 +900,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "number-isfinite",
         ignore_names: &["no-number-isfinite", "number-isfinite", "numberIsfinite"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Number", TraceMap::new(&[("isFinite", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -908,7 +908,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "number-isinteger",
         ignore_names: &["no-number-isinteger", "number-isinteger", "numberIsinteger"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Number", TraceMap::new(&[("isInteger", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -916,7 +916,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "number-isnan",
         ignore_names: &["no-number-isnan", "number-isnan", "numberIsnan"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Number", TraceMap::new(&[("isNaN", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -924,7 +924,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "number-issafeinteger",
         ignore_names: &["no-number-issafeinteger", "number-issafeinteger", "numberIssafeinteger"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Number", TraceMap::new(&[("isSafeInteger", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -932,7 +932,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "number-maxsafeinteger",
         ignore_names: &["no-number-maxsafeinteger", "number-maxsafeinteger", "numberMaxsafeinteger"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Number", TraceMap::new(&[("MAX_SAFE_INTEGER", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -940,7 +940,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "number-minsafeinteger",
         ignore_names: &["no-number-minsafeinteger", "number-minsafeinteger", "numberMinsafeinteger"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Number", TraceMap::new(&[("MIN_SAFE_INTEGER", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -948,7 +948,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "number-parsefloat",
         ignore_names: &["no-number-parsefloat", "number-parsefloat", "numberParsefloat"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Number", TraceMap::new(&[("parseFloat", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -956,7 +956,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "number-parseint",
         ignore_names: &["no-number-parseint", "number-parseint", "numberParseint"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Number", TraceMap::new(&[("parseInt", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -964,7 +964,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "numeric-separators",
         ignore_names: &["no-numeric-separators", "numeric-separators", "numericSeparators"],
-        supported: ">=12.5.0",
+        supported: Some(">=12.5.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -972,7 +972,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-assign",
         ignore_names: &["no-object-assign", "object-assign", "objectAssign"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("assign", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -980,7 +980,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-create",
         ignore_names: &["no-object-create", "object-create", "objectCreate"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("create", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -988,7 +988,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-defineproperties",
         ignore_names: &["no-object-defineproperties", "object-defineproperties", "objectDefineproperties"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("defineProperties", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -996,7 +996,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-defineproperty",
         ignore_names: &["no-object-defineproperty", "object-defineproperty", "objectDefineproperty"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("defineProperty", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1004,7 +1004,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-entries",
         ignore_names: &["no-object-entries", "object-entries", "objectEntries"],
-        supported: ">=7.0.0",
+        supported: Some(">=7.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("entries", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1012,7 +1012,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-freeze",
         ignore_names: &["no-object-freeze", "object-freeze", "objectFreeze"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("freeze", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1020,7 +1020,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-fromentries",
         ignore_names: &["no-object-fromentries", "object-fromentries", "objectFromentries"],
-        supported: ">=12.0.0",
+        supported: Some(">=12.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("fromEntries", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1028,7 +1028,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-getownpropertydescriptor",
         ignore_names: &["no-object-getownpropertydescriptor", "object-getownpropertydescriptor", "objectGetownpropertydescriptor"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("getOwnPropertyDescriptor", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1036,7 +1036,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-getownpropertydescriptors",
         ignore_names: &["no-object-getownpropertydescriptors", "object-getownpropertydescriptors", "objectGetownpropertydescriptors"],
-        supported: ">=7.0.0",
+        supported: Some(">=7.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("getOwnPropertyDescriptors", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1044,7 +1044,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-getownpropertynames",
         ignore_names: &["no-object-getownpropertynames", "object-getownpropertynames", "objectGetownpropertynames"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("getOwnPropertyNames", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1052,7 +1052,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-getownpropertysymbols",
         ignore_names: &["no-object-getownpropertysymbols", "object-getownpropertysymbols", "objectGetownpropertysymbols"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("getOwnPropertySymbols", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1060,7 +1060,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-getprototypeof",
         ignore_names: &["no-object-getprototypeof", "object-getprototypeof", "objectGetprototypeof"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("getPrototypeOf", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1068,7 +1068,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-hasown",
         ignore_names: &["no-object-hasown", "object-hasown", "objectHasown"],
-        supported: ">=16.9.0",
+        supported: Some(">=16.9.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("hasOwn", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1076,7 +1076,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-is",
         ignore_names: &["no-object-is", "object-is", "objectIs"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("is", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1084,7 +1084,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-isextensible",
         ignore_names: &["no-object-isextensible", "object-isextensible", "objectIsextensible"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("isExtensible", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1092,7 +1092,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-isfrozen",
         ignore_names: &["no-object-isfrozen", "object-isfrozen", "objectIsfrozen"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("isFrozen", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1100,7 +1100,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-issealed",
         ignore_names: &["no-object-issealed", "object-issealed", "objectIssealed"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("isSealed", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1108,7 +1108,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-keys",
         ignore_names: &["no-object-keys", "object-keys", "objectKeys"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("keys", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1116,7 +1116,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-map-groupby",
         ignore_names: &["no-object-map-groupby", "object-map-groupby", "objectMapGroupby"],
-        supported: ">=21.0.0",
+        supported: Some(">=21.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("groupBy", TraceMap::new(&[]).read(()))])), ("Map", TraceMap::new(&[("groupBy", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1124,7 +1124,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-preventextensions",
         ignore_names: &["no-object-preventextensions", "object-preventextensions", "objectPreventextensions"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("preventExtensions", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1132,7 +1132,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-seal",
         ignore_names: &["no-object-seal", "object-seal", "objectSeal"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("seal", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1140,7 +1140,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-setprototypeof",
         ignore_names: &["no-object-setprototypeof", "object-setprototypeof", "objectSetprototypeof"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("setPrototypeOf", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1148,7 +1148,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-super-properties",
         ignore_names: &["no-object-super-properties", "object-super-properties", "objectSuperProperties"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1156,7 +1156,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "object-values",
         ignore_names: &["no-object-values", "object-values", "objectValues"],
-        supported: ">=7.0.0",
+        supported: Some(">=7.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Object", TraceMap::new(&[("values", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1164,7 +1164,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "octal-numeric-literals",
         ignore_names: &["no-octal-numeric-literals", "octal-numeric-literals", "octalNumericLiterals"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1172,7 +1172,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "optional-catch-binding",
         ignore_names: &["no-optional-catch-binding", "optional-catch-binding", "optionalCatchBinding"],
-        supported: ">=10.0.0",
+        supported: Some(">=10.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1180,7 +1180,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "optional-chaining",
         ignore_names: &["no-optional-chaining", "optional-chaining", "optionalChaining"],
-        supported: ">=14.0.0",
+        supported: Some(">=14.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1188,7 +1188,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "private-in",
         ignore_names: &["no-private-in", "private-in", "privateIn"],
-        supported: ">=16.4.0",
+        supported: Some(">=16.4.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1196,7 +1196,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "promise-all-settled",
         ignore_names: &["no-promise-all-settled", "promise-all-settled", "promiseAllSettled"],
-        supported: ">=12.9.0",
+        supported: Some(">=12.9.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Promise", TraceMap::new(&[("allSettled", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1204,7 +1204,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "promise-any",
         ignore_names: &["no-promise-any", "promise-any", "promiseAny"],
-        supported: ">=15.0.0",
+        supported: Some(">=15.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("AggregateError", TraceMap::new(&[]).read(())), ("Promise", TraceMap::new(&[("any", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1212,7 +1212,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "promise-prototype-finally",
         ignore_names: &["no-promise-prototype-finally", "promise-prototype-finally", "promisePrototypeFinally"],
-        supported: ">=10.0.0",
+        supported: Some(">=10.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Promise", &["finally"])],
@@ -1220,7 +1220,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "promise-withresolvers",
         ignore_names: &["no-promise-withresolvers", "promise-withresolvers", "promiseWithresolvers"],
-        supported: ">=22.11.0",
+        supported: Some(">=22.11.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Promise", TraceMap::new(&[("withResolvers", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1228,7 +1228,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "promise",
         ignore_names: &["no-promise", "promise", "promise"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Promise", TraceMap::new(&[]).read(()))]),
         prototype: &[],
@@ -1236,7 +1236,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "property-shorthands",
         ignore_names: &["no-property-shorthands", "property-shorthands", "propertyShorthands"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1244,7 +1244,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "proxy",
         ignore_names: &["no-proxy", "proxy", "proxy"],
-        supported: ">=6.0.0",
+        supported: Some(">=6.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Proxy", TraceMap::new(&[]).read(()))]),
         prototype: &[],
@@ -1252,7 +1252,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "reflect",
         ignore_names: &["no-reflect", "reflect", "reflect"],
-        supported: ">=6.0.0",
+        supported: Some(">=6.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Reflect", TraceMap::new(&[]).read(()))]),
         prototype: &[],
@@ -1260,7 +1260,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "regexp-d-flag",
         ignore_names: &["no-regexp-d-flag", "regexp-d-flag", "regexpDFlag"],
-        supported: ">=16.0.0",
+        supported: Some(">=16.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1268,7 +1268,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "regexp-lookbehind-assertions",
         ignore_names: &["no-regexp-lookbehind-assertions", "regexp-lookbehind-assertions", "regexpLookbehindAssertions", "regexpLookbehind"],
-        supported: ">=8.10.0",
+        supported: Some(">=8.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1276,7 +1276,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "regexp-named-capture-groups",
         ignore_names: &["no-regexp-named-capture-groups", "regexp-named-capture-groups", "regexpNamedCaptureGroups"],
-        supported: ">=10.0.0",
+        supported: Some(">=10.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1284,7 +1284,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "regexp-prototype-compile",
         ignore_names: &["no-regexp-prototype-compile", "regexp-prototype-compile", "regexpPrototypeCompile"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("RegExp", &["compile"])],
@@ -1292,7 +1292,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "regexp-prototype-flags",
         ignore_names: &["no-regexp-prototype-flags", "regexp-prototype-flags", "regexpPrototypeFlags"],
-        supported: ">=6.0.0",
+        supported: Some(">=6.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("RegExp", &["flags"])],
@@ -1300,7 +1300,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "regexp-s-flag",
         ignore_names: &["no-regexp-s-flag", "regexp-s-flag", "regexpSFlag", "regexpS"],
-        supported: ">=8.10.0",
+        supported: Some(">=8.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1308,7 +1308,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "regexp-u-flag",
         ignore_names: &["no-regexp-u-flag", "regexp-u-flag", "regexpUFlag", "regexpU"],
-        supported: ">=6.0.0",
+        supported: Some(">=6.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1316,7 +1316,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "regexp-unicode-property-escapes-2019",
         ignore_names: &["no-regexp-unicode-property-escapes-2019", "regexp-unicode-property-escapes-2019", "regexpUnicodePropertyEscapes2019"],
-        supported: ">=12.1.0 || ^10.16.0",
+        supported: Some(">=12.1.0 || ^10.16.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1324,7 +1324,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "regexp-unicode-property-escapes-2020",
         ignore_names: &["no-regexp-unicode-property-escapes-2020", "regexp-unicode-property-escapes-2020", "regexpUnicodePropertyEscapes2020"],
-        supported: ">=13.12.0 || ^12.17.0",
+        supported: Some(">=13.12.0 || ^12.17.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1332,7 +1332,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "regexp-unicode-property-escapes-2021",
         ignore_names: &["no-regexp-unicode-property-escapes-2021", "regexp-unicode-property-escapes-2021", "regexpUnicodePropertyEscapes2021"],
-        supported: ">=17.2.0 || ^16.14.0",
+        supported: Some(">=17.2.0 || ^16.14.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1340,7 +1340,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "regexp-unicode-property-escapes-2022",
         ignore_names: &["no-regexp-unicode-property-escapes-2022", "regexp-unicode-property-escapes-2022", "regexpUnicodePropertyEscapes2022"],
-        supported: ">=19.1.0 || ^18.13.0",
+        supported: Some(">=19.1.0 || ^18.13.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1348,7 +1348,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "regexp-unicode-property-escapes-2023",
         ignore_names: &["no-regexp-unicode-property-escapes-2023", "regexp-unicode-property-escapes-2023", "regexpUnicodePropertyEscapes2023"],
-        supported: "<0",
+        supported: None,
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1356,7 +1356,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "regexp-unicode-property-escapes",
         ignore_names: &["no-regexp-unicode-property-escapes", "regexp-unicode-property-escapes", "regexpUnicodePropertyEscapes", "regexpUnicodeProperties"],
-        supported: ">=10.0.0",
+        supported: Some(">=10.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1364,7 +1364,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "regexp-v-flag",
         ignore_names: &["no-regexp-v-flag", "regexp-v-flag", "regexpVFlag"],
-        supported: ">=20.0.0",
+        supported: Some(">=20.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1372,7 +1372,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "regexp-y-flag",
         ignore_names: &["no-regexp-y-flag", "regexp-y-flag", "regexpYFlag", "regexpY"],
-        supported: ">=6.0.0",
+        supported: Some(">=6.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1380,7 +1380,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "resizable-and-growable-arraybuffers",
         ignore_names: &["no-resizable-and-growable-arraybuffers", "resizable-and-growable-arraybuffers", "resizableAndGrowableArraybuffers"],
-        supported: ">=20.0.0",
+        supported: Some(">=20.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("ArrayBuffer", &["maxByteLength", "resizable", "resize"]), ("SharedArrayBuffer", &["grow", "growable", "maxByteLength"])],
@@ -1388,7 +1388,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "rest-parameters",
         ignore_names: &["no-rest-parameters", "rest-parameters", "restParameters"],
-        supported: ">=6.0.0",
+        supported: Some(">=6.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1396,7 +1396,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "rest-spread-properties",
         ignore_names: &["no-rest-spread-properties", "rest-spread-properties", "restSpreadProperties"],
-        supported: ">=8.3.0",
+        supported: Some(">=8.3.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1404,7 +1404,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "set",
         ignore_names: &["no-set", "set", "set"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Set", TraceMap::new(&[]).read(()))]),
         prototype: &[],
@@ -1412,7 +1412,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "shadow-catch-param",
         ignore_names: &["no-shadow-catch-param", "shadow-catch-param", "shadowCatchParam"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1420,7 +1420,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "shared-array-buffer",
         ignore_names: &["no-shared-array-buffer", "shared-array-buffer", "sharedArrayBuffer"],
-        supported: ">=8.10.0",
+        supported: Some(">=8.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("SharedArrayBuffer", TraceMap::new(&[]).read(()))]),
         prototype: &[],
@@ -1428,7 +1428,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "spread-elements",
         ignore_names: &["no-spread-elements", "spread-elements", "spreadElements"],
-        supported: ">=5.0.0",
+        supported: Some(">=5.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1436,7 +1436,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "string-create-html-methods",
         ignore_names: &["no-string-create-html-methods", "string-create-html-methods", "stringCreateHtmlMethods"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("String", &["anchor", "big", "blink", "bold", "fixed", "fontcolor", "fontsize", "italics", "link", "small", "strike", "sub", "sup"])],
@@ -1444,7 +1444,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "string-fromcodepoint",
         ignore_names: &["no-string-fromcodepoint", "string-fromcodepoint", "stringFromcodepoint"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("String", TraceMap::new(&[("fromCodePoint", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1452,7 +1452,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "string-prototype-codepointat",
         ignore_names: &["no-string-prototype-codepointat", "string-prototype-codepointat", "stringPrototypeCodepointat"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("String", &["codePointAt"])],
@@ -1460,7 +1460,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "string-prototype-endswith",
         ignore_names: &["no-string-prototype-endswith", "string-prototype-endswith", "stringPrototypeEndswith"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("String", &["endsWith"])],
@@ -1468,7 +1468,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "string-prototype-includes",
         ignore_names: &["no-string-prototype-includes", "string-prototype-includes", "stringPrototypeIncludes"],
-        supported: ">=6.0.0",
+        supported: Some(">=6.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("String", &["includes"])],
@@ -1476,7 +1476,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "string-prototype-iswellformed-towellformed",
         ignore_names: &["no-string-prototype-iswellformed-towellformed", "string-prototype-iswellformed-towellformed", "stringPrototypeIswellformedTowellformed"],
-        supported: ">=20.0.0",
+        supported: Some(">=20.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("String", &["isWellFormed", "toWellFormed"])],
@@ -1484,7 +1484,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "string-prototype-matchall",
         ignore_names: &["no-string-prototype-matchall", "string-prototype-matchall", "stringPrototypeMatchall"],
-        supported: ">=12.0.0",
+        supported: Some(">=12.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("String", &["matchAll"])],
@@ -1492,7 +1492,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "string-prototype-normalize",
         ignore_names: &["no-string-prototype-normalize", "string-prototype-normalize", "stringPrototypeNormalize"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("String", &["normalize"])],
@@ -1500,7 +1500,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "string-prototype-padstart-padend",
         ignore_names: &["no-string-prototype-padstart-padend", "string-prototype-padstart-padend", "stringPrototypePadstartPadend"],
-        supported: ">=8.0.0",
+        supported: Some(">=8.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("String", &["padEnd", "padStart"])],
@@ -1508,7 +1508,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "string-prototype-repeat",
         ignore_names: &["no-string-prototype-repeat", "string-prototype-repeat", "stringPrototypeRepeat"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("String", &["repeat"])],
@@ -1516,7 +1516,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "string-prototype-replaceall",
         ignore_names: &["no-string-prototype-replaceall", "string-prototype-replaceall", "stringPrototypeReplaceall"],
-        supported: ">=15.0.0",
+        supported: Some(">=15.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("String", &["replaceAll"])],
@@ -1524,7 +1524,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "string-prototype-startswith",
         ignore_names: &["no-string-prototype-startswith", "string-prototype-startswith", "stringPrototypeStartswith"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("String", &["startsWith"])],
@@ -1532,7 +1532,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "string-prototype-substr",
         ignore_names: &["no-string-prototype-substr", "string-prototype-substr", "stringPrototypeSubstr"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("String", &["substr"])],
@@ -1540,7 +1540,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "string-prototype-trim",
         ignore_names: &["no-string-prototype-trim", "string-prototype-trim", "stringPrototypeTrim"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("String", &["trim"])],
@@ -1548,7 +1548,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "string-prototype-trimleft-trimright",
         ignore_names: &["no-string-prototype-trimleft-trimright", "string-prototype-trimleft-trimright", "stringPrototypeTrimleftTrimright"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("String", &["trimLeft", "trimRight"])],
@@ -1556,7 +1556,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "string-prototype-trimstart-trimend",
         ignore_names: &["no-string-prototype-trimstart-trimend", "string-prototype-trimstart-trimend", "stringPrototypeTrimstartTrimend"],
-        supported: ">=10.0.0",
+        supported: Some(">=10.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("String", &["trimEnd", "trimStart"])],
@@ -1564,7 +1564,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "string-raw",
         ignore_names: &["no-string-raw", "string-raw", "stringRaw"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("String", TraceMap::new(&[("raw", TraceMap::new(&[]).read(()))]))]),
         prototype: &[],
@@ -1572,7 +1572,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "subclassing-builtins",
         ignore_names: &["no-subclassing-builtins", "subclassing-builtins", "subclassingBuiltins"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1580,7 +1580,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "symbol-prototype-description",
         ignore_names: &["no-symbol-prototype-description", "symbol-prototype-description", "symbolPrototypeDescription"],
-        supported: ">=11.0.0",
+        supported: Some(">=11.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[("Symbol", &["description"])],
@@ -1588,7 +1588,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "symbol",
         ignore_names: &["no-symbol", "symbol", "symbol"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Symbol", TraceMap::new(&[]).read(()))]),
         prototype: &[],
@@ -1596,7 +1596,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "template-literals",
         ignore_names: &["no-template-literals", "template-literals", "templateLiterals"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1604,7 +1604,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "top-level-await",
         ignore_names: &["no-top-level-await", "top-level-await", "topLevelAwait"],
-        supported: ">=14.8.0",
+        supported: Some(">=14.8.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1612,7 +1612,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "trailing-commas",
         ignore_names: &["no-trailing-commas", "trailing-commas", "trailingCommas"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1620,7 +1620,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "trailing-function-commas",
         ignore_names: &["no-trailing-function-commas", "trailing-function-commas", "trailingFunctionCommas", "trailingCommasInFunctions"],
-        supported: ">=8.0.0",
+        supported: Some(">=8.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1628,7 +1628,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "typed-arrays",
         ignore_names: &["no-typed-arrays", "typed-arrays", "typedArrays"],
-        supported: ">=0.10.0",
+        supported: Some(">=0.10.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("Int8Array", TraceMap::new(&[]).read(())), ("Uint8Array", TraceMap::new(&[]).read(())), ("Uint8ClampedArray", TraceMap::new(&[]).read(())), ("Int16Array", TraceMap::new(&[]).read(())), ("Uint16Array", TraceMap::new(&[]).read(())), ("Int32Array", TraceMap::new(&[]).read(())), ("Uint32Array", TraceMap::new(&[]).read(())), ("Float32Array", TraceMap::new(&[]).read(())), ("Float64Array", TraceMap::new(&[]).read(())), ("DataView", TraceMap::new(&[]).read(()))]),
         prototype: &[],
@@ -1636,7 +1636,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "unicode-codepoint-escapes",
         ignore_names: &["no-unicode-codepoint-escapes", "unicode-codepoint-escapes", "unicodeCodepointEscapes", "unicodeCodePointEscapes"],
-        supported: ">=4.0.0",
+        supported: Some(">=4.0.0"),
         strict_mode: None,
         globals: TraceMap::EMPTY,
         prototype: &[],
@@ -1644,7 +1644,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "weak-map",
         ignore_names: &["no-weak-map", "weak-map", "weakMap"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("WeakMap", TraceMap::new(&[]).read(()))]),
         prototype: &[],
@@ -1652,7 +1652,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "weak-set",
         ignore_names: &["no-weak-set", "weak-set", "weakSet"],
-        supported: ">=0.12.0",
+        supported: Some(">=0.12.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("WeakSet", TraceMap::new(&[]).read(()))]),
         prototype: &[],
@@ -1660,7 +1660,7 @@ pub(crate) static FEATURES: [Feature; 199] = [
     Feature {
         name: "weakrefs",
         ignore_names: &["no-weakrefs", "weakrefs", "weakrefs"],
-        supported: ">=14.6.0",
+        supported: Some(">=14.6.0"),
         strict_mode: None,
         globals: TraceMap::new(&[("FinalizationRegistry", TraceMap::new(&[]).read(())), ("WeakRef", TraceMap::new(&[]).read(()))]),
         prototype: &[],

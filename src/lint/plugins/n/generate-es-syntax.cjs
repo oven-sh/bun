@@ -67,7 +67,7 @@ for (const [id, meta] of Object.entries(features)) {
   rows.push(`    Feature {
         name: ${JSON.stringify(name)},
         ignore_names: ${strings([id, name, camel, ...(meta.aliases ?? [])])},
-        supported: ${JSON.stringify(meta.supported ?? "<0")},
+        supported: ${meta.supported ? `Some(${JSON.stringify(meta.supported)})` : "None"},
         strict_mode: ${meta.strictMode ? `Some(${JSON.stringify(meta.strictMode)})` : "None"},
         globals: ${isGeneric && traceMaps.length === 1 ? traceMap(traceMaps[0]) : "TraceMap::EMPTY"},
         prototype: &[${prototypes

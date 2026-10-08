@@ -318,17 +318,13 @@ const INFINITY: u32 = u32::MAX;
 
 impl<'a> Paths<'a> {
     fn neighbors(&self, segment: Segment<'a>, direction: Direction) -> Segments<'a> {
-        let Some(outer) = self.outer.filter(|outer| outer.code_path() == segment.code_path()) else {
-            return match direction {
-                Direction::FromStart => segment.prev_segments(),
-                Direction::ToEnd => segment.next_segments(),
-            };
-        };
         let mut all = match direction {
             Direction::FromStart => segment.prev_segments(),
             Direction::ToEnd => segment.next_segments(),
         };
-        all.retain(|it| it.id() <= outer.id() && (direction == Direction::FromStart || segment != outer));
+        if let Some(outer) = self.outer.filter(|outer| outer.code_path() == segment.code_path()) {
+            all.retain(|it| it.id() <= outer.id() && (direction == Direction::FromStart || segment != outer));
+        }
         all
     }
 

@@ -332,10 +332,8 @@ fn is_second_of_array_pattern<'a>(declarator: VarDecl<'a>, name: Name<'a>) -> bo
 /// What is read in a function.
 #[derive(Default)]
 struct Found<'a> {
-    /// In the order of the source.
-    dependencies: Vec<Dependency<'a>>,
-    /// The number of each of `dependencies` in `paths`.
-    numbers: Vec<u32>,
+    /// In the order of the source, each with its number in `paths`.
+    dependencies: Vec<(Dependency<'a>, u32)>,
     /// By the number in `paths`, for those that are found: the position in `dependencies`.
     positions: FxHashMap<u32, u32>,
     paths: Paths<'a>,
@@ -352,8 +350,7 @@ impl<'a> Found<'a> {
             .number_of(&dependency, |it| it.is_found_within = true);
         let at = *self.positions.entry(number).or_insert_with(|| {
             self.paths.get_mut(number).is_found = true;
-            self.dependencies.push(dependency);
-            self.numbers.push(number);
+            self.dependencies.push((dependency, number));
             self.dependencies.len() as u32 - 1
         });
         self.inserted.push(at);
@@ -365,7 +362,7 @@ impl<'a> Found<'a> {
     fn order_of_oxlint(&self, symbols: &[(u32, u32)]) -> Vec<u32> {
         let mut table: FxHashSet<Hashed> = FxHashSet::default();
         for &at in &self.inserted {
-            if let Some(dependency) = self.dependencies.get(at as usize) {
+            if let Some((dependency, _)) = self.dependencies.get(at as usize) {
                 let place = dependency.symbol.and_then(place_of_symbol);
                 table.insert(Hashed {
                     dependency,
@@ -703,14 +700,14 @@ impl<'a> Component<'a> {
         own: Option<Symbol<'a>>,
     ) -> Option<Vec<(Symbol<'a>, Declared<'a>)>> {
         let found = find_dependencies(func, false);
-        if own.is_some() && found.dependencies.iter().any(|it| it.symbol == own) {
+        if own.is_some() && found.dependencies.iter().any(|it| it.0.symbol == own) {
             return None;
         }
         Some(
             found
                 .dependencies
                 .iter()
-                .filter_map(|it| self.variable_of_component(it))
+                .filter_map(|it| self.variable_of_component(&it.0))
                 .collect(),
         )
     }
@@ -1084,11 +1081,11 @@ pub(crate) fn run<'a, R: Rule>(
     }
 
     // Their positions in `found.dependencies`.
-    let mut undeclared: Vec<usize> = (found.dependencies.iter().zip(&found.numbers).enumerate())
-        .filter(|(_, (_, number))| found.paths.get(**number).declared == 0)
+    let mut undeclared: Vec<usize> = (found.dependencies.iter().enumerate())
+        .filter(|(_, (_, number))| found.paths.get(*number).declared == 0)
         // What is read of `foo.current` counts for `foo`.
-        .filter(|(_, (it, number))| !(it.ends_in_current() && found.paths.base(**number).is_found))
-        .filter(|(_, (_, number))| !found.paths.above(**number).any(|it| it.declared != 0))
+        .filter(|(_, (it, number))| !(it.ends_in_current() && found.paths.base(*number).is_found))
+        .filter(|(_, (_, number))| !found.paths.above(*number).any(|it| it.declared != 0))
         .filter(|(_, (it, _))| component.is_dependency(it, memo))
         .map(|it| it.0)
         .collect();
@@ -1104,7 +1101,10 @@ pub(crate) fn run<'a, R: Rule>(
         }
         undeclared.sort_by_key(|at| ranks.get(*at).copied());
     }
-    for number in undeclared.iter().filter_map(|at| found.numbers.get(*at)) {
+    for (_, number) in undeclared
+        .iter()
+        .filter_map(|at| found.dependencies.get(*at))
+    {
         found.paths.get_mut(*number).is_undeclared = true;
     }
     let paths = &found.paths;
@@ -1115,7 +1115,7 @@ pub(crate) fn run<'a, R: Rule>(
         let missing: Vec<(Span, Vec<u8>)> = undeclared
             .iter()
             .filter_map(|at| found.dependencies.get(*at))
-            .map(|it| (it.span, it.text()))
+            .map(|(it, _)| (it.span, it.text()))
             .collect();
         report_missing(
             cx,

@@ -581,6 +581,10 @@ impl ExhaustiveDeps {
     }
 
     fn report_problem<'a>(&self, cx: &Cx<'a, Self>, at: impl Spanned, message: Vec<u8>, suggestion: Option<Suggested>) {
+        self.report_problem_at(cx, at.span(), message, suggestion);
+    }
+
+    fn report_problem_at<'a>(&self, cx: &Cx<'a, Self>, at: Span, message: Vec<u8>, suggestion: Option<Suggested>) {
         let mut report = cx.report(at, TEXT).data("text", message);
         if let Some((description, fixes)) = suggestion {
             if self.enable_dangerous_autofix_this_may_cause_infinite_loops {

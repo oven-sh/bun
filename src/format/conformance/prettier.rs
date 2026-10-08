@@ -282,7 +282,7 @@ fn visualize_end_of_line(text: &[u8]) -> Vec<u8> {
     out
 }
 
-#[derive(Default, Clone, Copy)]
+#[derive(Default)]
 struct Tally {
     /// The output is that of the snapshot.
     format: Count,
@@ -297,7 +297,7 @@ struct Tally {
 }
 
 impl Tally {
-    fn merge(&mut self, other: Tally) {
+    fn merge(&mut self, other: &Tally) {
         self.format.merge(other.format);
         self.syntax_errors += other.syntax_errors;
         self.errors.merge(other.errors);
@@ -307,7 +307,7 @@ impl Tally {
         self.bom.merge(other.bom);
     }
 
-    fn all(self) -> Count {
+    fn all(&self) -> Count {
         let mut all = Count::default();
         [self.format, self.errors, self.second_format, self.crlf, self.cr, self.bom].into_iter().for_each(|it| all.merge(it));
         all
@@ -502,14 +502,14 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
     };
     let mut by_language: BTreeMap<&[u8], Tally> = BTreeMap::new();
     for (directory, tally) in &by_directory {
-        by_language.entry(strings::split(directory, b"/").next().unwrap_or_default()).or_default().merge(*tally);
+        by_language.entry(strings::split(directory, b"/").next().unwrap_or_default()).or_default().merge(tally);
         if flags.table {
             show(directory, tally);
         }
     }
     let mut everything = Tally::default();
     for (language, tally) in &by_language {
-        everything.merge(*tally);
+        everything.merge(tally);
         show(language, tally);
     }
     let percent = |it: Count| 100.0 * it.passed as f64 / it.total.max(1) as f64;

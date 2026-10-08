@@ -1060,15 +1060,15 @@ impl Minimatch {
         it
     }
 
-    /// `#matchOne`, not partial.
-    fn match_plain(file: &[&[u8]], pattern: &[Part]) -> bool {
+    /// `#matchOne`. `partial`: it is enough that the path matches the start of the pattern.
+    fn match_plain(file: &[&[u8]], pattern: &[Part], partial: bool) -> bool {
         let common = file.len().min(pattern.len());
         if !file.iter().zip(pattern).all(|(name, part)| part.test(name)) {
             return false;
         }
         match (file.len() == common, pattern.len() == common) {
             (true, true) => true,
-            (true, false) => false,
+            (true, false) => partial,
             // `a/*` matches `a/b/`.
             _ => common + 1 == file.len() && file[common].is_empty(),
         }
@@ -1081,6 +1081,7 @@ impl Minimatch {
         mut at: usize,
         depth: usize,
         mut saw_tail: bool,
+        partial: bool,
     ) -> Option<bool> {
         let Some(&(section, last)) = sections.first() else {
             for name in &file[at.min(file.len())..] {
@@ -1093,7 +1094,8 @@ impl Minimatch {
         };
         while at as isize <= last {
             let end = (at + section.len()).min(file.len());
-            if Self::match_plain(&file[at.min(end)..end], section) && depth < MAX_GLOBSTAR_RECURSION
+            if Self::match_plain(&file[at.min(end)..end], section, partial)
+                && depth < MAX_GLOBSTAR_RECURSION
             {
                 let rest = Self::match_sections(
                     file,
@@ -1101,6 +1103,7 @@ impl Minimatch {
                     at + section.len(),
                     depth + 1,
                     saw_tail,
+                    partial,
                 );
                 if rest != Some(false) {
                     return rest;
@@ -1111,11 +1114,11 @@ impl Minimatch {
             }
             at += 1;
         }
-        None
+        partial.then_some(true)
     }
 
-    /// `#matchGlobstar`, not partial.
-    fn match_globstar(file: &[&[u8]], pattern: &[Part]) -> bool {
+    /// `#matchGlobstar`
+    fn match_globstar(file: &[&[u8]], pattern: &[Part], partial: bool) -> bool {
         let is_globstar = |part: &Part| matches!(part, Part::GlobStar);
         let (Some(first), Some(last)) = (
             pattern.iter().position(is_globstar),
@@ -1123,12 +1126,17 @@ impl Minimatch {
         ) else {
             return false;
         };
-        let (head, body, tail) = (
-            &pattern[..first],
-            &pattern[(first + 1).min(last)..last],
-            &pattern[last + 1..],
-        );
-        if !head.is_empty() && !Self::match_plain(&file[..head.len().min(file.len())], head) {
+        let (head, body, tail) = match partial {
+            true => (&pattern[..first], &pattern[first + 1..], &pattern[..0]),
+            false => (
+                &pattern[..first],
+                &pattern[(first + 1).min(last)..last],
+                &pattern[last + 1..],
+            ),
+        };
+        if !head.is_empty()
+            && !Self::match_plain(&file[..head.len().min(file.len())], head, partial)
+        {
             return false;
         }
         let at = head.len();
@@ -1138,14 +1146,14 @@ impl Minimatch {
                 return false;
             }
             let start = file.len() - tail.len();
-            if Self::match_plain(&file[start..], tail) {
+            if Self::match_plain(&file[start..], tail, partial) {
                 tail_len = tail.len();
             } else {
                 // `a/**/*` matches `a/b/`.
                 if file.last().is_some_and(|it| !it.is_empty()) || at + tail.len() == file.len() {
                     return false;
                 }
-                if !Self::match_plain(&file[start - 1..], tail) {
+                if !Self::match_plain(&file[start - 1..], tail, partial) {
                     return false;
                 }
                 tail_len = tail.len() + 1;
@@ -1154,7 +1162,7 @@ impl Minimatch {
         if body.is_empty() {
             let between = &file[at.min(file.len() - tail_len)..file.len() - tail_len];
             return !between.iter().any(|name| stops_globstar(name))
-                && (tail_len > 0 || !between.is_empty());
+                && (partial || tail_len > 0 || !between.is_empty());
         }
         let sections: SmallVec<[&[Part]; 4]> = body.split(is_globstar).collect();
         // How many parts are before each section.
@@ -1170,12 +1178,22 @@ impl Minimatch {
         let with_last: SmallVec<[(&[Part], isize); 4]> = (sections.iter().zip(before.iter().rev()))
             .map(|(section, before)| (*section, file_len - (before + section.len()) as isize))
             .collect();
-        Self::match_sections(file, &with_last, at, 0, tail_len > 0) == Some(true)
+        Self::match_sections(file, &with_last, at, 0, tail_len > 0, partial) == Some(true)
     }
 
     /// `match(path)`. `flip_negate`: the option `flipNegate`, with which a `!` at the start of the
     /// pattern is ignored.
     pub(crate) fn matches(&self, path: &[&[u8]], flip_negate: bool) -> bool {
+        self.matches_with(path, flip_negate, false)
+    }
+
+    /// `match(path, partial)`
+    pub(crate) fn matches_path(&self, path: &[u8], flip_negate: bool, partial: bool) -> bool {
+        let is_root = partial && path == b"/" && !self.is_comment && !self.is_empty;
+        is_root || self.matches_with(&split_path(path), flip_negate, partial)
+    }
+
+    fn matches_with(&self, path: &[&[u8]], flip_negate: bool, partial: bool) -> bool {
         if self.is_comment {
             return false;
         }
@@ -1184,8 +1202,8 @@ impl Minimatch {
         }
         let hit = self.set.iter().any(|pattern| {
             match pattern.iter().any(|part| matches!(part, Part::GlobStar)) {
-                true => Self::match_globstar(path, pattern),
-                false => Self::match_plain(path, pattern),
+                true => Self::match_globstar(path, pattern, partial),
+                false => Self::match_plain(path, pattern, partial),
             }
         });
         if flip_negate {

@@ -64,11 +64,31 @@ use std::sync::Arc;
 
 #[doc(hidden)]
 pub mod testing {
-    use super::minimatch::{Minimatch, split_path};
+    use super::minimatch::Minimatch;
 
-    /// `new Minimatch(pattern, { dot: true, flipNegate }).match(path)`
-    pub fn minimatch(pattern: &[u8], path: &[u8], flip_negate: bool) -> bool {
-        Minimatch::new(pattern).matches(&split_path(path), flip_negate)
+    /// `new Minimatch(pattern, { dot: true, flipNegate }).match(path, partial)`
+    pub fn minimatch(pattern: &[u8], path: &[u8], flip_negate: bool, partial: bool) -> bool {
+        Minimatch::new(pattern).matches_path(path, flip_negate, partial)
+    }
+}
+
+/// `new Minimatch(pattern, { dot: true })`: a pattern as ESLint matches it, for the patterns on the
+/// command line.
+pub struct Glob(Minimatch);
+
+impl Glob {
+    pub fn new(pattern: &[u8]) -> Glob {
+        Glob(Minimatch::new(pattern))
+    }
+
+    /// `match(path)`. `path` is separated by `/`.
+    pub fn matches(&self, path: &[u8]) -> bool {
+        self.0.matches_path(path, false, false)
+    }
+
+    /// `match(path, true)`: whether something in the directory `path` can match.
+    pub fn matches_partially(&self, path: &[u8]) -> bool {
+        self.0.matches_path(path, false, true)
     }
 }
 
@@ -226,6 +246,27 @@ impl Config {
             is_ignored = is_ignored_by(ignores, &split_path(&own), is_ignored);
         }
         is_ignored
+    }
+
+    /// The directory that the patterns are relative to.
+    pub fn base_path(&self) -> &[u8] {
+        &self.base_path
+    }
+
+    /// [`Config::is_directory_ignored`] for a directory inside the base path of which it is known that
+    /// no directory that it is in is ignored.
+    pub fn is_directory_ignored_in(&self, directory: &[u8]) -> bool {
+        let mut relative = path::relative(&self.base_path, directory);
+        if relative.is_empty() {
+            return false;
+        }
+        relative.push(b'/');
+        self.is_ignored_globally(&relative)
+    }
+
+    /// Whether a file inside the base path is ignored, if the directory that it is in is not.
+    pub fn is_file_ignored_in(&self, file: &[u8]) -> bool {
+        self.is_ignored_globally(&path::relative(&self.base_path, file))
     }
 
     /// ESLint's `isDirectoryIgnored`. `directory` is absolute.

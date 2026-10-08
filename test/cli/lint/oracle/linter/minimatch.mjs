@@ -55,9 +55,11 @@ for (const pattern of all) {
   // Paths that have a chance: made of the pattern itself.
   const literal = pattern.replace(/^!+/, "").replace(/[*?]+/g, () => rng.pick(names)).replace(/[\\{}()[\]|+@!]/g, "");
   for (const it of [literal, path(), path(), path(), path(), path(), path(), path()]) {
-    const flipNegate = rng.int(4) === 0;
-    cases.push({ pattern, path: it, flipNegate });
-    expected.push(matchers[Number(flipNegate)].match(it));
+    const flipNegate = rng.int(4) === 0, partial = rng.int(4) === 0;
+    // A path that is the start of one that has a chance.
+    const path = partial && rng.int(2) === 0 ? it.split("/").slice(0, 1 + rng.int(3)).join("/") : it;
+    cases.push({ pattern, path, flipNegate, partial });
+    expected.push(matchers[Number(flipNegate)].match(path, partial));
   }
 }
 if (thrown > 0) console.log(`minimatch: ${thrown} patterns left out, minimatch throws`);

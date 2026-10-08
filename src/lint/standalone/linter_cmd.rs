@@ -6,7 +6,7 @@
 //! - `json-parse <cases.json>`: `JSON.parse` for each string.
 //! - `globals <cases.json>`: for each `{ code, filename, languageOptions, names }`, what `File::global` says about each name.
 //! - `environments`: the tables of the `globals` package.
-//! - `minimatch <cases.json>`: for each `{ pattern, path, flipNegate }`, whether it matches.
+//! - `minimatch <cases.json>`: for each `{ pattern, path, flipNegate, partial }`, whether it matches.
 //! - `config <cases.json>`: for each `{ basePath, config, flavor, files, directories }`, the configuration of each file, and
 //!   whether each directory is ignored.
 //! - `project <cases.json>`: for each `{ basePath, config, flavor, extended, sources: { path: code } }`, what is reported for
@@ -405,6 +405,7 @@ fn minimatch(args: &[String]) {
             part(b"pattern"),
             part(b"path"),
             flip_negate,
+            case.get(b"partial").and_then(Json::as_bool) == Some(true),
         ))
     });
     let mut out = Vec::new();

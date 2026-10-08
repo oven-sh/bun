@@ -126,7 +126,7 @@ impl<'a> Locator<'a> {
 // ───────────────────────────── as JSON ─────────────────────────────
 
 /// `JSON.stringify(text)`
-pub(crate) fn write_json_string(out: &mut Vec<u8>, text: &[u8]) {
+pub fn write_json_string(out: &mut Vec<u8>, text: &[u8]) {
     use std::io::Write;
     out.push(b'"');
     for chunk in text.utf8_chunks() {

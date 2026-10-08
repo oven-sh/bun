@@ -39,10 +39,11 @@ mod resolved;
 mod schema;
 mod space;
 
-pub use config::{Config, ConfigError, FileConfig, RcFlavor};
+pub use config::{Config, ConfigError, FileConfig, Glob, RcFlavor};
 pub use fixer::{FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, verify_and_fix};
 pub use globals::{CommentGlobal, GlobalVariable};
-pub use message::{LintMessage, RuleId, Suppression, Utf16Offsets};
+pub use levn::parse_object as parse_levn_object;
+pub use message::{LintMessage, RuleId, Suppression, Utf16Offsets, write_json, write_json_string};
 pub(crate) use per_file::PerFile;
 pub use registry::{Registry, parse_rule_id};
 pub use resolved::{ConfiguredRule, LinterOptions, ResolvedConfig, severity_of};
@@ -296,7 +297,8 @@ fn to_message(diagnostic: Diagnostic, entry: &'static RuleEntry, locator: &Locat
         line,
         column,
         end: (!diagnostic.has_no_end).then(|| match diagnostic.end_position {
-            Some(end) => (end.line, end.column + 1),
+            // A column of -1, which ESLint has, is `u32::MAX`.
+            Some(end) => (end.line, end.column.wrapping_add(1)),
             None => locator.position(diagnostic.span.end),
         }),
         is_fatal: false,

@@ -326,8 +326,9 @@ fn cast_fields(fields: Vec<(Vec<u8>, Node)>) -> Option<Vec<(Vec<u8>, Json)>> {
     Some(out)
 }
 
-/// `None` where levn throws.
-pub(crate) fn parse_object(text: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
+/// `levn.parse("Object", text)`, which also reads `--rule` and `--parser-options` on the command line of
+/// ESLint. `None` where levn throws.
+pub fn parse_object(text: &[u8]) -> Option<Vec<(Vec<u8>, Json)>> {
     let mut tokens = Tokens {
         tokens: tokenize(text),
         at: 0,

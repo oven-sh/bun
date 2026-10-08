@@ -45,6 +45,17 @@ pub fn severity_of(value: &Json) -> Option<Severity> {
     })
 }
 
+/// The options that only the rule of oxlint has: keys of the first option, which is an object. With a configuration of oxlint they
+/// are not validated.
+const ONLY_OF_OXLINT: [(Plugin, &str, &[&str]); 2] = [
+    (
+        Plugin::TypeScript,
+        "no-unused-vars",
+        &["fix", "reportVarsOnlyUsedAsTypes"],
+    ),
+    (Plugin::Import, "no-cycle", &["ignoreTypes"]),
+];
+
 /// An entry of ESLint's `rules`.
 #[derive(Clone)]
 pub struct ConfiguredRule {
@@ -185,6 +196,21 @@ impl ResolvedConfig {
         severity: Severity,
         options: &[Json],
     ) {
+        // The rule gets them. The schema, which is that of ESLint's rule, does not know them.
+        let only_of_oxlint = (ONLY_OF_OXLINT.iter())
+            .find(|it| it.0 == entry.meta.plugin && it.1 == entry.meta.name)
+            .filter(|_| self.prefers_typescript_rules);
+        let without_them: Vec<Json>;
+        let options = match (only_of_oxlint, options) {
+            (Some((_, _, keys)), [Json::Object(entries), rest @ ..]) => {
+                let is_known =
+                    |it: &&(Vec<u8>, Json)| !keys.iter().any(|key| key.as_bytes() == &it.0[..]);
+                let first = Json::Object(entries.iter().filter(is_known).cloned().collect());
+                without_them = std::iter::once(first).chain(rest.iter().cloned()).collect();
+                &without_them[..]
+            }
+            _ => options,
+        };
         if severity != Severity::Off
             && self.error.is_none()
             && let Err(lines) = super::schema::validate(entry.meta, options)

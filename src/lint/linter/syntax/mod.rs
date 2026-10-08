@@ -36,7 +36,11 @@ fn is_tolerated(file: &File, diagnostic: &Diagnostic) -> bool {
     match diagnostic.code {
         // Octal literals and escapes, `\8`, `08`: errors in strict mode only. TypeScript's parser always reports them.
         1121 | 1487 | 1488 | 1489 => {
-            is_espree && language.source_type != SourceType::Module && !language.implied_strict
+            // oxlint goes by whether the file has `import` or `export`. It is not refused here for what may pass there.
+            !language.refuses_what_parser_refuses
+                || is_espree
+                    && language.source_type != SourceType::Module
+                    && !language.implied_strict
         }
         // `import a from "a" assert { .. }`, which typescript-estree accepts.
         2880 => true,

@@ -43,8 +43,6 @@ for (const plugin of ["react-hooks", "import", "n", "oxc"]) {
   if (!existsSync(join(fixtures, plugin))) continue;
   for (const file of readdirSync(join(fixtures, plugin), { recursive: true }).filter(it => it.endsWith(".json"))) {
     const { rule, meta } = JSON.parse(readFileSync(join(fixtures, plugin, file), "utf8"));
-    // An option that only oxlint has.
-    if (plugin === "import" && rule === "no-cycle") meta.schema[0].properties.ignoreTypes = { type: "boolean" };
     add(`${plugin}/${rule}`, { meta: { schema: meta.schema ?? undefined, defaultOptions: meta.defaultOptions ?? undefined } });
   }
 }

@@ -177,6 +177,9 @@ impl Context<'_, '_> {
                 };
                 let bound = bind_for_lint(&hir, bind_options, atoms, arena);
                 let parsed = self.timing.add(&self.timing.parse, started);
+                if hir.mentioned.is_empty() {
+                    self.timing.count(&self.timing.without_filter);
+                }
                 if hir.ran_out_of_stack || bound.ran_out_of_stack {
                     return LintResult {
                         messages: vec![too_deep()],

@@ -1417,6 +1417,8 @@ impl Lexer<'_> {
                 pos
             }
         };
+        // What looked like an escape is none.
+        self.forget_flagged_from(start as u32);
         let quote = src[start];
         let Some(len) = bun_core::strings::index_of_char_usize(&src[start + 1..], quote) else {
             return self.refuse(Refusal::Unterminated);

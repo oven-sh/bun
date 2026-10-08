@@ -1257,6 +1257,50 @@ impl Parser<'_> {
         })
     }
 
+    /// `checkGrammarIndexSignatureParameters`, up to the check of the type of the parameter.
+    /// `comma`: the one at the end of the list. `member`: from the start to the end of the signature.
+    fn check_index_signature_parameters(
+        &mut self,
+        params: Span<ParamId>,
+        comma: Option<u32>,
+        member: (u32, u32),
+    ) {
+        if self.has_failed() {
+            return;
+        }
+        let Some(&first) = self
+            .f
+            .params
+            .get(params.start as usize)
+            .filter(|_| !params.is_empty())
+        else {
+            return self.flag(DiagnosticKind::Grammar, 1096, member, &[]);
+        };
+        let name = self.f.pats.get(first.pat.idx()).map_or(0, |it| it.pos);
+        if params.len() != 1 {
+            return self.flag(DiagnosticKind::Grammar, 1096, (name, 0), &[]);
+        }
+        if let Some(comma) = comma {
+            self.flag(DiagnosticKind::Grammar, 1025, (comma, 0), &[]);
+        }
+        let error = if first.flags.contains(Flags::REST) {
+            Some((first.pos, 1017))
+        } else if first.pos != name {
+            Some((name, 1018))
+        } else if first.flags.contains(Flags::OPTIONAL) {
+            Some((self.question_of_parameter, 1019))
+        } else if first.default.is_some() {
+            Some((name, 1020))
+        } else if first.ty.is_none() {
+            Some((name, 1022))
+        } else {
+            None
+        };
+        if let Some((at, code)) = error {
+            self.flag(DiagnosticKind::Grammar, code, (at, 0), &[]);
+        }
+    }
+
     /// `parseIndexSignatureDeclaration`, at the `[`.
     pub(crate) fn index_signature(
         &mut self,
@@ -1268,20 +1312,14 @@ impl Parser<'_> {
         self.next();
         let saved = self.enter_context(ctx::TYPE, 0);
         let params = self.parameter_list(0, T::CloseBracket);
+        let last = self.prev_end().saturating_sub(1);
+        let comma =
+            (!params.is_empty() && self.lx.src.get(last as usize) == Some(&b',')).then_some(last);
         self.expect(T::CloseBracket);
-        // `checkGrammarIndexSignatureParameters`
-        let is_plain =
-            params.len() == 1
-                && self.f.params.get(params.start as usize).is_some_and(|it| {
-                    it.flags.is_empty() && it.default.is_none() && it.ty.is_some()
-                })
-                && self.lx.src.get(self.prev_end() as usize - 2) != Some(&b',');
-        if !is_plain {
-            self.refuse(Refusal::Reported);
-        }
         let ty = self.type_annotation();
         self.context = saved;
         self.type_member_semicolon();
+        self.check_index_signature_parameters(params, comma, (start.pos, self.prev_end()));
         let func = self.f.add_fn(Func {
             kind: FnKind::IndexSignature,
             flags,
@@ -1401,10 +1439,11 @@ impl Parser<'_> {
             }
             // `parsePropertyOrMethodSignature`
             let name_token = self.token();
-            if name_token == T::BigInt {
-                self.refuse(Refusal::Unsupported);
-            }
             let (mut key, name_kind, name_pos) = self.property_name();
+            // `getDeclarationName`: a bigint name declares nothing.
+            if name_token == T::BigInt {
+                key = PropKey::None;
+            }
             // `getDeclarationName`: a private name outside a class declares nothing.
             if self.classes_around == 0 && matches!(key, PropKey::Private(_)) {
                 key = PropKey::None;

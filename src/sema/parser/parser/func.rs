@@ -342,6 +342,7 @@ impl Parser<'_> {
             pat = self.identifier_or_pattern();
             if self.token() == T::Question {
                 self.js_error((self.pos(), 0), 8009, b"?");
+                self.question_of_parameter = self.pos();
                 self.next();
                 flags |= Flags::OPTIONAL;
             }

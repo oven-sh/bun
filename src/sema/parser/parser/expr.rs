@@ -730,9 +730,9 @@ impl Parser<'_> {
                 }
                 // For Babel `source` is a phase too. It is kept like `defer`: the text tells them
                 // apart.
-                b"defer" => {}
+                b"defer" if self.peek() == T::OpenParen => {}
                 b"source" if self.options.dialect.babel => {}
-                _ => self.refuse(Refusal::Unsupported),
+                _ => return self.other_meta_property_of_import(start),
             }
             self.next();
             is_deferred = true;
@@ -778,6 +778,48 @@ impl Parser<'_> {
                 ExprId::NONE
             }
         }
+    }
+
+    /// At the `x` of `import.x`, which starts at `start`: it is kept as a property of nothing.
+    /// `checkGrammarMetaProperty`, `checkGrammarImportCallExpression`
+    #[cold]
+    fn other_meta_property_of_import(&mut self, start: u32) -> ExprId {
+        if !self.token().is_identifier_or_keyword()
+            || self.token() == T::PrivateIdentifier
+            || self.lx.has_escape
+        {
+            self.refuse(Refusal::Unsupported);
+        }
+        let (name, at, word) = (self.lx.atom, (self.lx.start, self.lx.end), self.lx.text());
+        self.next();
+        // Type arguments, and a call with `?.`, are looked at on the way.
+        if matches!(
+            self.token(),
+            T::LessThan | T::LessThanLessThan | T::QuestionDot
+        ) {
+            self.refuse(Refusal::Unsupported);
+        }
+        match (word, self.token()) {
+            (b"defer", _) => {
+                let after = (at.1, Diagnostic::NO_LENGTH);
+                self.flag(DiagnosticKind::Grammar, 1005, after, &[b"("]);
+            }
+            (_, T::OpenParen) => self.flag(DiagnosticKind::Grammar, 18061, at, &[word]),
+            _ => self.flag(
+                DiagnosticKind::Grammar,
+                17012,
+                at,
+                &[word, b"import", b"meta"],
+            ),
+        }
+        let obj = self.add_expr(ExprKind::Missing, start, start);
+        let kind = ExprKind::Dot {
+            obj,
+            name,
+            name_pos: at.0,
+            chain: Chain::No,
+        };
+        self.add_expr(kind, start, at.1)
     }
 
     /// `collectDynamicImportOrRequireOrJsDocImportCalls`: `argument` is the argument of `import()`
@@ -1466,7 +1508,11 @@ impl Parser<'_> {
                 let parens = self.f.parens.len();
                 let had_await = std::mem::take(&mut self.has_top_level_await);
                 let saved = self.enter_context(0, ctx::DISALLOW_IN | ctx::TYPE);
-                let expression = self.assignment_expression();
+                // "We parse any expression (including a comma expression)."
+                let expression = match self.is_ecmascript {
+                    true => self.assignment_expression(),
+                    false => self.expression(),
+                };
                 self.context = saved;
                 // `parsePropertyName` of the native parser restores `statementHasAwaitIdentifier`, so
                 // that no statement is parsed again for an `await` in a name.

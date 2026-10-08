@@ -165,6 +165,8 @@ pub(crate) struct Parser<'a> {
     /// In Flow: where the last expression statement starts.
     pub(crate) flow_statement_start: u32,
     pub(crate) has_top_level_await: bool,
+    /// The `?` of the last parameter that has one.
+    pub(crate) question_of_parameter: u32,
     /// See `private_name_before_in`: where the last one is.
     pub(crate) private_name_before_in: u32,
     /// `notParenthesizedArrow`: the positions at which a speculative parse has found that no arrow
@@ -230,6 +232,7 @@ impl<'a> Parser<'a> {
             has_type_arguments_in_expressions: is_flow || !options.is_javascript,
             flow_statement_start: u32::MAX,
             has_top_level_await: false,
+            question_of_parameter: 0,
             private_name_before_in: u32::MAX,
             not_arrows: Vec::new(),
             unclaimed_nullable_types: 0,

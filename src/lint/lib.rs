@@ -23,12 +23,19 @@ pub mod options;
 pub mod regex;
 pub mod rule;
 pub mod runner;
+pub mod selector;
 pub mod semantic;
 pub mod source;
 pub mod span;
 pub mod tokens;
 pub mod types;
 pub mod utils;
+
+/// For the harness, which compares the table of `estree` with what typescript-estree and espree produce. Rules have no use for it.
+#[doc(hidden)]
+pub mod estree_for_tests {
+    pub use crate::estree::*;
+}
 
 /// What a rule imports.
 pub mod prelude {

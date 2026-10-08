@@ -72,8 +72,8 @@ pub(crate) fn format_grouped_parameters_with_return_type<'a>(
     group(&format_with(|f| {
         let format_type_parameters = FormatTypeParameters(func).memoized();
         let format_parameters = FormatFormalParameters(func).memoized();
-        let return_type = FormatReturnType(func);
-        let format_return_type = FormatNodeWithoutTrailingComments(&return_type).memoized();
+        let return_type = func.return_type().map(|_| FormatReturnType(func));
+        let format_return_type = return_type.as_ref().map(FormatNodeWithoutTrailingComments).memoized();
 
         format_type_parameters.inspect(f);
         format_parameters.inspect(f);

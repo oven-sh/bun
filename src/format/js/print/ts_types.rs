@@ -82,6 +82,8 @@ fn is_leftmost_intrinsic_in_type_alias<'a>(ty: TypeNode<'a>, name: EntityName<'a
 pub(crate) fn write_ts_literal_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     let text = ty.text();
     match ty.kind() {
+        // A template without substitutions.
+        TypeKind::StringLit(_) if text.starts_with(b"`") => write!(f, FormatSuppressedNode(ty.span())),
         TypeKind::StringLit(_) => {
             write!(f, FormatLiteralStringToken::new(text, false, StringLiteralParentKind::Expression));
         }

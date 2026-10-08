@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::estree_compat::is_assignment_target;
 
 /// Disallow reassigning function parameters.
@@ -31,48 +32,39 @@ fn is_part_of_a_type(func: Func) -> bool {
 
 /// Whether what is at `identifier` is read in order to modify a property of its value.
 /// A name in a type counts as well: `(a as typeof b).c = 1`.
-fn is_modifying_prop(identifier: Node) -> bool {
-    let mut node = identifier;
-    loop {
-        let parent = node.parent();
-        match parent {
-            Node::Expr(parent) => match parent.kind() {
-                // A default value in a destructuring target is part of the left side of the
-                // assignment around it.
-                ExprKind::Assign { target, .. } => {
-                    return Node::Expr(target) == node || is_assignment_target(parent);
-                }
-                ExprKind::Unary {
-                    op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec | UnOp::Delete,
-                    ..
-                } => return true,
-                ExprKind::Call(call) if Node::Expr(call.callee()) != node => return false,
-                ExprKind::Index { index, .. } if Node::Expr(index) == node => return false,
-                ExprKind::Cond { test, .. } if Node::Expr(test) == node => return false,
-                _ => {}
-            },
-            Node::Prop(prop) => {
-                if matches!(prop.key().map(Key::kind), Some(KeyKind::Computed(key)) if Node::Expr(key) == node) {
-                    return false;
-                }
-            }
-            Node::Stmt(statement) => {
-                return match statement.kind() {
-                    StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => {
-                        matches!(left.kind(), StmtKind::Expr(target) if Node::Expr(target) == node)
-                    }
-                    _ => false,
-                };
-            }
-            Node::Func(func) if is_part_of_a_type(func) => {}
-            Node::Param(_) if matches!(node, Node::Type(_)) => {}
-            // The others are in a `TSTypeParameterDeclaration`.
-            Node::TypeParam(_) if matches!(parent.parent(), Node::Type(_)) => {}
-            Node::Type(_) | Node::TupleElem(_) | Node::Class(_) | Node::Member(_) => {}
-            _ => return false,
+fn is_modifying_prop<'a>(identifier: Node<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
+    let found = known.find(identifier, |node, parent| match parent {
+        Node::Expr(parent) => match parent.kind() {
+            // A default value in a destructuring target is part of the left side of the
+            // assignment around it.
+            ExprKind::Assign { target, .. } => Some(Node::Expr(target) == node || is_assignment_target(parent)),
+            ExprKind::Unary {
+                op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec | UnOp::Delete,
+                ..
+            } => Some(true),
+            ExprKind::Call(call) if Node::Expr(call.callee()) != node => Some(false),
+            ExprKind::Index { index, .. } if Node::Expr(index) == node => Some(false),
+            ExprKind::Cond { test, .. } if Node::Expr(test) == node => Some(false),
+            _ => None,
+        },
+        Node::Prop(prop) => {
+            matches!(prop.key().map(Key::kind), Some(KeyKind::Computed(key)) if Node::Expr(key) == node)
+                .then_some(false)
         }
-        node = parent;
-    }
+        Node::Stmt(statement) => Some(match statement.kind() {
+            StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => {
+                matches!(left.kind(), StmtKind::Expr(target) if Node::Expr(target) == node)
+            }
+            _ => false,
+        }),
+        Node::Func(func) if is_part_of_a_type(func) => None,
+        Node::Param(_) if matches!(node, Node::Type(_)) => None,
+        // The others are in a `TSTypeParameterDeclaration`.
+        Node::TypeParam(_) if matches!(parent.parent(), Node::Type(_)) => None,
+        Node::Type(_) | Node::TupleElem(_) | Node::Class(_) | Node::Member(_) => None,
+        _ => Some(false),
+    });
+    found == Some(true)
 }
 
 impl NoParamReassign {
@@ -81,7 +73,7 @@ impl NoParamReassign {
             || self.ignored_property_assignments_for_regex.iter().any(|ignored| ignored.test(name))
     }
 
-    fn check_variable<'a>(&self, pat: Pat<'a>, cx: &Cx<'a, Self>) {
+    fn check_variable<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
         let Some(symbol) = pat.symbol() else {
             return;
         };
@@ -99,7 +91,7 @@ impl NoParamReassign {
         }
     }
 
-    fn check_references<'a>(&self, symbol: Symbol<'a>, cx: &Cx<'a, Self>) {
+    fn check_references<'a>(&self, symbol: Symbol<'a>, cx: &mut Cx<'a, Self>) {
         // A destructuring assignment with a default value writes to the same identifier twice.
         let mut previous = None;
         for reference in symbol.references() {
@@ -111,7 +103,7 @@ impl NoParamReassign {
             if reference.is_write() {
                 cx.report(at, ASSIGNMENT_TO_FUNCTION_PARAM).data("name", reference.name());
             } else if self.props
-                && matches!(reference.node(), node @ (Node::Expr(_) | Node::Type(_)) if is_modifying_prop(node))
+                && matches!(reference.node(), node @ (Node::Expr(_) | Node::Type(_)) if is_modifying_prop(node, &mut cx.state))
                 && !self.is_ignored_property_assignment(reference.name().bytes())
             {
                 cx.report(at, ASSIGNMENT_TO_FUNCTION_PARAM_PROP).data("name", reference.name());
@@ -122,7 +114,8 @@ impl NoParamReassign {
 
 impl Rule for NoParamReassign {
     const META: Meta = Meta::eslint("no-param-reassign", Kind::Suggestion);
-    type State<'a> = ();
+    /// `is_modifying_prop`
+    type State<'a> = AncestorMemo<'a, bool>;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -141,11 +134,12 @@ impl Rule for NoParamReassign {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
         on.params(|rule, param, cx| {
             if param.func().is_some_and(Func::has_body) {
                 param.pat().for_each_binding(&mut |pat| rule.check_variable(pat, cx));
             }
         });
+        AncestorMemo::default()
     }
 }

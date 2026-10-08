@@ -1,6 +1,6 @@
 use super::decorators::FormatDecorators;
 use crate::js::format::{FormatTypeAnnotation, format_node_without_comments};
-use crate::js::utils::call_expression::{is_angular_test_wrapper, is_test_call_expression};
+use crate::js::utils::call_expression::{is_angular_test_wrapper, is_test_call_expression_in_flavor};
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -47,7 +47,7 @@ fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
         // whose parameters can break.
         || matches!(
             func.as_ast_nodes().parent(),
-            AstNodes::CallExpression(call) if is_test_call_expression(call) && !is_angular_test_wrapper(call)
+            AstNodes::CallExpression(call) if is_test_call_expression_in_flavor(call, f) && !is_angular_test_wrapper(call)
         )
     {
         ParameterLayout::Hug

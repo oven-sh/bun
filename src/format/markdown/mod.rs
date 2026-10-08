@@ -134,6 +134,7 @@ fn format_embedded(
         check_ignore_pragma: false,
         is_in_markdown: true,
         is_mdx_jsx,
+        is_mdx_es_syntax: language == MDX_ES_SYNTAX,
         ..options.clone()
     };
     let mut out = Vec::new();

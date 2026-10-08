@@ -403,8 +403,7 @@ impl Preprocessor<'_> {
             // Prettier's `htmlToJsx`
             Kind::Html
                 if self.is_mdx
-                    && around.paragraph.is_none()
-                    && self.tree.kind(node.parent) != Some(Kind::TableCell)
+                    && !self.tree.kind(node.parent).is_some_and(super::printer::Printer::is_inline_wrapper)
                     && !super::inline::has_html_comment(self.tree.str(self.text, node.value)) =>
             {
                 if let Some(node) = self.tree.get_mut(id) {

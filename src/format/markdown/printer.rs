@@ -375,7 +375,7 @@ impl<'a> Printer<'a, '_> {
         )
     }
 
-    fn is_inline_wrapper(kind: Kind) -> bool {
+    pub(crate) fn is_inline_wrapper(kind: Kind) -> bool {
         Self::is_inline(kind) || matches!(kind, Kind::TableCell | Kind::Paragraph | Kind::Heading)
     }
 

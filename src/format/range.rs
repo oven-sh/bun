@@ -44,6 +44,12 @@ pub fn format_with_cursor<'a>(
     parse: impl FnOnce(&[u8], &mut dyn for<'b> FnMut(&'b File<'b>)),
 ) -> Result<Option<u32>, FormatError> {
     let text = file.text();
+    let is_import_or_export = |statement: Stmt<'a>| {
+        statement.is_exported() || matches!(statement.kind(), StmtKind::Import(_) | StmtKind::ExportNamed(_) | StmtKind::ExportDefault(_))
+    };
+    if options.is_mdx_es_syntax && !file.body().iter().all(is_import_or_export) {
+        return Err(FormatError::SyntaxError);
+    }
     let first = if text.starts_with(BOM) { BOM.len() } else { 0 };
     let Offsets { start, end, cursor } = Offsets::new(text, first, options);
     if start >= end && text.len() > first {

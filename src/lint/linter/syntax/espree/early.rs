@@ -1360,7 +1360,7 @@ impl<'a> Checks<'a, '_> {
             };
             let before = file.end_of_token_before(arrow.start);
             if strings::index_of_any(
-                file.slice(crate::span::Span::new(before, arrow.start)),
+                file.slice(crate::span::Span::before(before, arrow)),
                 b"\n\r",
             )
             .is_none()

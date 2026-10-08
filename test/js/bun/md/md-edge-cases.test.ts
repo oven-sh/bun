@@ -1801,3 +1801,9 @@ describe.concurrent("importing .md modules", () => {
     expect(exitCode).not.toBe(0);
   });
 });
+
+describe("empty list items and paragraphs", () => {
+  test.each(["1. ", "* \t"])("%j does not interrupt a paragraph", marker => {
+    expect(Markdown.html(`a\n${marker}\nb\n`)).not.toContain("<li>");
+  });
+});

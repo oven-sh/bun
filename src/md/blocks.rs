@@ -353,8 +353,9 @@ impl Parser<'_> {
 
                     // List mark can't interrupt paragraph unless it's > or ordered starting at 1
                     if effective_pivot_type == LineType::Text && n_parents == self.n_containers {
-                        if (cont_result.off >= self.size
-                            || helpers::is_newline(self.ch(cont_result.off)))
+                        let after_mark =
+                            helpers::line_indentation(self.text, 0, cont_result.off).off;
+                        if (after_mark >= self.size || helpers::is_newline(self.ch(after_mark)))
                             && container.ch != b'>'
                         {
                             // Blank after list mark can't interrupt paragraph

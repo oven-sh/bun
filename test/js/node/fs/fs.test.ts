@@ -3235,6 +3235,24 @@ it.if(isPosix)("realpathSync resolves root, regular files, and symlinks", () => 
   expect(realpathSync(linkPath)).toBe(self);
 });
 
+// realpath(3) follows `link` before applying the `..` after it, so `link/../x` is
+// a sibling of the link's target; node's JS realpath (and bun's non-native one)
+// collapses the `..` lexically first and lands beside the link (#44585).
+// Windows is excluded: both runtimes go through uv_fs_realpath there, and Win32
+// path normalization drops `link/..` before the handle is opened.
+it.if(isPosix)("realpathSync.native follows a symlink before a following ..", async () => {
+  using dir = tempDir("fs-realpath-native-dotdot", { "real/inner/.keep": "", "real/x": "", "x": "" });
+  const base = realpathSync.native(String(dir));
+  symlinkSync("real/inner", join(base, "link"));
+  const input = `${base}/link/../x`;
+  const viaCallback = new Promise<string>((resolve, reject) =>
+    fs.realpath.native(input, (err, resolved) => (err ? reject(err) : resolve(resolved))),
+  );
+  expect(realpathSync.native(input)).toBe(join(base, "real", "x"));
+  expect(await viaCallback).toBe(join(base, "real", "x"));
+  expect(realpathSync(input)).toBe(join(base, "x"));
+});
+
 // src/sys/sys.zig getFdPath has an exhaustive per-OS switch: .windows
 // (GetFinalPathNameByHandle), .mac (F_GETPATH), .linux (/proc/self/fd, also
 // covers Android), .freebsd (fcntl F_KINFO + struct_kinfo_file). On every

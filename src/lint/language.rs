@@ -3,7 +3,7 @@
 
 use crate::linter::globals::ConfigGlobals;
 use crate::options::Json;
-use bun_sema::resolve::ScriptKind;
+use bun_sema::resolve::{Dialect, ScriptKind};
 use std::sync::OnceLock;
 
 /// ESLint's `languageOptions.sourceType`.
@@ -103,9 +103,11 @@ pub struct LanguageOptions {
     pub config_globals: OnceLock<ConfigGlobals>,
 }
 
-/// What the parser is told about a file: arguments of `bun_js_parser::sema::summarize`.
+/// What the parser is told about a file: arguments of `bun_js_parser::sema::summarize_as`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct ParseOptions {
+    /// Whose reading of the syntax counts where parsers differ: that of acorn for espree.
+    pub dialect: Dialect,
     /// The language, if it is not the one that the name of the file stands for.
     pub script_kind: Option<ScriptKind>,
     pub experimental_decorators: bool,
@@ -361,6 +363,10 @@ impl LanguageOptions {
             },
         };
         ParseOptions {
+            dialect: Dialect {
+                ecmascript: self.parser == Parser::Espree,
+                script: self.scope_source_type() != SourceType::Module,
+            },
             script_kind,
             experimental_decorators: self.experimental_decorators,
             every_file_is_a_module: self.scope_source_type() == SourceType::Module,

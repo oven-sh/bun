@@ -56,7 +56,8 @@ pub(crate) fn with_file<R>(
     let atoms = Interner::new_in(&session);
     let arena = session.arena();
     let options = language.parse_options(path.as_bytes());
-    let mut hir = bun_js_parser::sema::summarize(
+    let mut hir = bun_js_parser::sema::summarize_as(
+        options.dialect,
         arena,
         path.as_bytes(),
         options.script_kind,

@@ -600,23 +600,22 @@ impl<'a> Checks<'a> {
         }
     }
 
-    /// Octal literals and escapes pass in a script ([`is_tolerated`](super::is_tolerated)), but not where its code is strict.
+    /// Octal literals and escapes are errors where the code is strict. The parser reports them wherever they are, as its own
+    /// errors ([`is_tolerated`](super::is_tolerated) lets them pass in a script) or beside them.
     fn octals_in_strict_code(&mut self) {
-        if self.is_all_strict || !self.is_whole {
-            return;
-        }
         let file = self.file;
         let is_octal = |it: &&Diagnostic| {
-            it.kind == DiagnosticKind::Parse && matches!(it.code, 1121 | 1487 | 1488 | 1489)
+            matches!(it.kind, DiagnosticKind::Parse | DiagnosticKind::Grammar)
+                && matches!(it.code, 1121 | 1487 | 1488 | 1489)
         };
         for it in file.hir.diagnostics.iter().filter(is_octal) {
-            let around = file
-                .scopes()
-                .filter(|scope| scope.span().contains_offset(it.start));
-            if around
-                .max_by_key(|scope| scope.span().start)
-                .is_some_and(Scope::is_strict)
-            {
+            let is_strict = self.is_all_strict
+                || self.is_whole
+                    && (file.scopes())
+                        .filter(|scope| scope.span().contains_offset(it.start))
+                        .max_by_key(|scope| scope.span().start)
+                        .is_some_and(Scope::is_strict);
+            if is_strict {
                 self.error_of_parser(Some(it), it.start);
             }
         }

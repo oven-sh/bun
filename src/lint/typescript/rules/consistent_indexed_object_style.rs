@@ -1,6 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ts_utils::{FixOrSuggest, get_fix_or_suggest};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 
 /// Require or disallow the `Record` type.
 pub struct ConsistentIndexedObjectStyle {
@@ -47,62 +48,152 @@ fn find_parent_declaration(ty: TypeNode<'_>) -> Option<Alias<'_>> {
     }
 }
 
-type Visited<'a> = FxHashSet<Node<'a>>;
+type Nodes<'a> = SmallVec<[Node<'a>; 4]>;
 
-fn is_deeply_referencing_type<'a>(node: Node<'a>, super_var: Symbol<'a>, visited: &mut Visited<'a>) -> bool {
-    // Something on the chain is circular, but it is not the reference that is checked.
-    if !visited.insert(node) {
-        return false;
-    }
+/// What typescript-eslint's `isDeeplyReferencingType` goes on with from `node`. It looks a name up in `scope`, that of the type
+/// that must not refer to itself, wherever the name is written.
+fn referenced_by<'a>(node: Node<'a>, scope: Scope<'a>) -> Nodes<'a> {
+    let types = |types: &[TypeNode<'a>]| -> Nodes<'a> { types.iter().map(|it| Node::Type(*it)).collect() };
     match node {
         Node::Type(ty) => match ty.kind() {
-            TypeKind::Object(members) => {
-                members.iter().any(|it| is_deeply_referencing_type(it.into(), super_var, visited))
-            }
-            TypeKind::IndexedAccess { obj, index } => {
-                [index, obj].into_iter().any(|it| is_deeply_referencing_type(it.into(), super_var, visited))
-            }
-            TypeKind::Mapped(mapped) => {
-                mapped.ty().is_some_and(|it| is_deeply_referencing_type(it.into(), super_var, visited))
-            }
-            TypeKind::Cond { check, extends, yes, no } => [check, extends, no, yes]
-                .into_iter()
-                .any(|it| is_deeply_referencing_type(it.into(), super_var, visited)),
-            TypeKind::Union(types) | TypeKind::Intersection(types) => any_is_referencing(types, super_var, visited),
+            TypeKind::Object(members) => members.iter().map(Node::Member).collect(),
+            TypeKind::IndexedAccess { obj, index } => types(&[index, obj]),
+            TypeKind::Mapped(mapped) => mapped.ty().map(Node::Type).into_iter().collect(),
+            TypeKind::Cond { check, extends, yes, no } => types(&[check, extends, no, yes]),
+            TypeKind::Union(types) | TypeKind::Intersection(types) => types.iter().map(Node::Type).collect(),
             TypeKind::Ref { name, args } => {
-                name.as_ident().is_some_and(|it| is_name_referencing(it.name(), super_var, visited))
-                    || any_is_referencing(args, super_var, visited)
+                let named = name.as_ident().and_then(|it| scope.resolve_name(it.name()));
+                let declarations = named.into_iter().flat_map(|it| it.declarations().filter_map(Declaration::node));
+                declarations.chain(args.iter().map(Node::Type)).collect()
             }
-            _ => false,
+            _ => Nodes::new(),
         },
         Node::Stmt(statement) => match statement.kind() {
-            StmtKind::TypeAlias(alias) => is_deeply_referencing_type(alias.ty().into(), super_var, visited),
-            StmtKind::Interface(interface) => {
-                interface.members().iter().any(|it| is_deeply_referencing_type(it.into(), super_var, visited))
-            }
-            _ => false,
+            StmtKind::TypeAlias(alias) => types(&[alias.ty()]),
+            StmtKind::Interface(interface) => interface.members().iter().map(Node::Member).collect(),
+            _ => Nodes::new(),
         },
-        Node::Member(member) if member.kind() == MemberKind::IndexSignature => (member.func())
-            .and_then(Func::return_type)
-            .is_some_and(|it| is_deeply_referencing_type(it.into(), super_var, visited)),
-        _ => false,
+        Node::Member(member) if member.kind() == MemberKind::IndexSignature => {
+            member.func().and_then(Func::return_type).map(Node::Type).into_iter().collect()
+        }
+        _ => Nodes::new(),
     }
 }
 
-fn any_is_referencing<'a>(types: List<'a, TypeNode<'a>>, super_var: Symbol<'a>, visited: &mut Visited<'a>) -> bool {
-    types.iter().any(|it| is_deeply_referencing_type(it.into(), super_var, visited))
+/// What refers to what, with the names looked up in one scope. A node is looked at once, however many types are asked about: the
+/// nodes that refer to each other are found as the strongly connected components of the graph.
+#[derive(Default)]
+pub struct References<'a> {
+    /// The nodes that have been looked at, in that order.
+    numbers: FxHashMap<Node<'a>, u32>,
+    /// The component of each. What a component refers to has a smaller number.
+    components: FxHashMap<Node<'a>, u32>,
+    /// How many nodes each component has.
+    sizes: Vec<u32>,
 }
 
-/// The `Identifier` case of `isDeeplyReferencingType`, which compares names and not variables.
-fn is_name_referencing<'a>(name: Name<'a>, super_var: Symbol<'a>, visited: &mut Visited<'a>) -> bool {
-    if name == super_var.name() && super_var.references().next().is_some() {
-        return true;
+impl<'a> References<'a> {
+    /// Finds the components of `root` and of all that it refers to.
+    fn explore(&mut self, root: Node<'a>, scope: Scope<'a>) {
+        struct Frame<'a> {
+            node: Node<'a>,
+            referenced: Nodes<'a>,
+            next: usize,
+            number: u32,
+            /// The least number of the nodes without a component yet that it refers to.
+            lowest: u32,
+        }
+        let mut stack: Vec<Frame<'a>> = Vec::new();
+        // The nodes that have no component yet.
+        let mut open: Vec<Node<'a>> = Vec::new();
+        let mut entering = Some(root).filter(|it| !self.numbers.contains_key(it));
+        loop {
+            if let Some(node) = entering.take() {
+                let number = self.numbers.len() as u32;
+                self.numbers.insert(node, number);
+                open.push(node);
+                stack.push(Frame {
+                    node,
+                    referenced: referenced_by(node, scope),
+                    next: 0,
+                    number,
+                    lowest: number,
+                });
+            }
+            let Some(top) = stack.last_mut() else {
+                return;
+            };
+            if let Some(&next) = top.referenced.get(top.next) {
+                top.next += 1;
+                match self.numbers.get(&next) {
+                    None => entering = Some(next),
+                    Some(&number) if !self.components.contains_key(&next) => top.lowest = top.lowest.min(number),
+                    Some(_) => {}
+                }
+                continue;
+            }
+            let (node, number, lowest) = (top.node, top.number, top.lowest);
+            stack.pop();
+            if lowest == number {
+                let (component, before) = (self.sizes.len() as u32, open.len());
+                while let Some(member) = open.pop() {
+                    self.components.insert(member, component);
+                    if member == node {
+                        break;
+                    }
+                }
+                self.sizes.push((before - open.len()) as u32);
+            }
+            if let Some(below) = stack.last_mut() {
+                below.lowest = below.lowest.min(lowest);
+            }
+        }
     }
-    super_var.scope().resolve_name(name).is_some_and(|it| {
-        it.declarations()
-            .filter_map(Declaration::node)
-            .any(|it| is_deeply_referencing_type(it, super_var, visited))
-    })
+
+    /// Whether there is a way from `from` to `to`, which is not empty.
+    fn leads(&mut self, from: Node<'a>, to: Node<'a>, scope: Scope<'a>) -> bool {
+        self.explore(from, scope);
+        let (Some(&start), Some(&end)) = (self.components.get(&from), self.components.get(&to)) else {
+            return false;
+        };
+        if start == end {
+            return from != to || self.sizes.get(start as usize).is_some_and(|it| *it > 1);
+        }
+        if start < end {
+            return false;
+        }
+        // From one component to another, which is rare: through the components in between.
+        let mut visited: FxHashSet<Node<'a>> = FxHashSet::default();
+        let mut stack = vec![from];
+        while let Some(node) = stack.pop() {
+            match self.components.get(&node) {
+                Some(&component) if component == end => return true,
+                Some(&component) if component > end && visited.insert(node) => stack.extend(referenced_by(node, scope)),
+                _ => {}
+            }
+        }
+        false
+    }
+}
+
+/// By the scope in which the names are looked up.
+pub type State<'a> = FxHashMap<Scope<'a>, References<'a>>;
+
+/// typescript-eslint's `isDeeplyReferencingType` of each of `nodes`: whether it refers to `super_var`, directly or through other
+/// types. It compares names and not variables.
+fn is_deeply_referencing_type<'a>(nodes: impl IntoIterator<Item = Node<'a>>, super_var: Symbol<'a>, state: &mut State<'a>) -> bool {
+    if super_var.references().next().is_none() {
+        return false;
+    }
+    // Only its name leads to its declarations.
+    let scope = super_var.scope();
+    let references = state.entry(scope).or_default();
+    let declarations: Nodes<'a> = super_var.declarations().filter_map(Declaration::node).collect();
+    nodes.into_iter().any(|node| declarations.iter().any(|it| references.leads(node, *it, scope)))
+}
+
+fn any_is_referencing<'a>(types: List<'a, TypeNode<'a>>, super_var: Symbol<'a>, state: &mut State<'a>) -> bool {
+    is_deeply_referencing_type(types.iter().map(Node::Type), super_var, state)
 }
 
 /// typescript-eslint's `checkMembers`. `node`: the type literal, or the statement of `interface`.
@@ -113,7 +204,7 @@ fn check_members<'a>(
     parent: Option<(Stmt<'a>, Ident<'a>)>,
     interface: Option<Interface<'a>>,
     is_safe_fix: bool,
-    cx: &Cx<'a, ConsistentIndexedObjectStyle>,
+    cx: &mut Cx<'a, ConsistentIndexedObjectStyle>,
 ) {
     let Some(member) = members.first() else {
         return;
@@ -139,7 +230,7 @@ fn check_members<'a>(
     };
     if let Some((declaration, name)) = parent
         && let Some(super_var) = Node::Stmt(declaration).scope().resolve_name(name.name())
-        && is_deeply_referencing_type(node, super_var, &mut Visited::default())
+        && is_deeply_referencing_type([node], super_var, &mut cx.state)
     {
         return;
     }
@@ -225,20 +316,20 @@ impl ConsistentIndexedObjectStyle {
         if let Some(alias) = find_parent_declaration(ty)
             && let Some(super_var) = Node::Type(ty).scope().resolve_name(alias.name().name())
         {
-            let visited = &mut Visited::default();
+            let visited = &mut cx.state;
             let is_circular = match ty.parent() {
                 Node::Type(parent) => match parent.kind() {
                     // The parent is the list of type arguments.
                     TypeKind::Ref { args, .. } | TypeKind::Typeof { args, .. } | TypeKind::Import { args, .. } => {
                         any_is_referencing(args, super_var, visited)
                     }
-                    _ => is_deeply_referencing_type(parent.into(), super_var, visited),
+                    _ => is_deeply_referencing_type([parent.into()], super_var, visited),
                 },
-                parent @ Node::Stmt(_) => is_deeply_referencing_type(parent, super_var, visited),
+                parent @ Node::Stmt(_) => is_deeply_referencing_type([parent], super_var, visited),
                 // ESLint has no node between a mapped type and its constraint.
                 Node::TypeParam(param) => match param.parent() {
                     outer @ Node::Type(mapped) if mapped.tag() == TypeTag::Mapped => {
-                        is_deeply_referencing_type(outer, super_var, visited)
+                        is_deeply_referencing_type([outer], super_var, visited)
                     }
                     _ => false,
                 },
@@ -278,7 +369,7 @@ impl Rule for ConsistentIndexedObjectStyle {
         .fixable(Fixable::Code)
         .has_suggestions()
         .presets(Presets::STYLISTIC);
-    type State<'a> = ();
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         ConsistentIndexedObjectStyle {
@@ -286,10 +377,10 @@ impl Rule for ConsistentIndexedObjectStyle {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         if !self.prefers_record {
             on.types([TypeTag::Ref], Self::check_type_reference);
-            return;
+            return State::default();
         }
         on.stmts([StmtTag::Interface], |_, statement, cx| {
             if let StmtKind::Interface(interface) = statement.kind() {
@@ -313,5 +404,6 @@ impl Rule for ConsistentIndexedObjectStyle {
                 check_members(members, ty.into(), parent, None, true, cx);
             }
         });
+        State::default()
     }
 }

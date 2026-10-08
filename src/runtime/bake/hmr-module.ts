@@ -319,7 +319,9 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
     if (!mod) {
       mod = new HMRModule(id, true);
       registry.set(id, mod);
-    } else if (mod.esm) {
+    } else {
+      // Loaded again (or once ESM): new exports, and the ESM view of the old ones
+      // dropped, or importers would be handed what the module exported before.
       mod.esm = false;
       mod.cjs = {
         id,
@@ -432,7 +434,9 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     if (!mod) {
       mod = new HMRModule(id, true);
       registry.set(id, mod);
-    } else if (mod.esm) {
+    } else {
+      // Loaded again (or once ESM): new exports, and the ESM view of the old ones
+      // dropped, or importers would be handed what the module exported before.
       mod.esm = false;
       mod.cjs = {
         id,
@@ -772,13 +776,18 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     }
   }
 
-  // Reload all modules
+  // Reload all modules. Each is marked stale before any loads: one loaded first (an importer sent along with what it
+  // imports) would otherwise be handed the old version of a module further on in the list.
   const promises: Promise<HMRModule>[] = [];
+  const selfAccepts = new Map<HMRModule, HotAcceptFunction | null>();
   for (const mod of toReload) {
     mod.state = State.Stale;
-    const selfAccept = mod.selfAccept;
+    selfAccepts.set(mod, mod.selfAccept);
     mod.selfAccept = null;
     mod.depAccepts = null;
+  }
+  for (const mod of toReload) {
+    const selfAccept = selfAccepts.get(mod);
 
     let modOrPromise: HMRModule | Promise<HMRModule>;
     try {

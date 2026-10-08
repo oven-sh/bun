@@ -105,6 +105,27 @@ devTest("import.meta.hot.accept patches imports", {
     expect(await c.js<string>`callFunction()`).toBe("B!3!6");
   },
 });
+devTest("import.meta.hot.accept patches an imported JSON file each time it changes", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["a.ts"],
+    }),
+    "a.ts": `
+      import words from "./i18n.json";
+      console.log(words.word);
+      import.meta.hot.accept();
+    `,
+    "i18n.json": `{ "word": "one" }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("one");
+    await dev.write("i18n.json", `{ "word": "two" }`);
+    await c.expectMessage("two");
+    await dev.write("i18n.json", `{ "word": "three" }`);
+    await c.expectMessage("three");
+  },
+});
 devTest("import.meta.hot.accept specifier", {
   timeoutMultiplier: 3,
   files: {

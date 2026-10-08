@@ -1,7 +1,7 @@
 // JSDirectStreamSource — a `type:"direct"` underlying source, converted ONCE at stream
 // construction: the user object (the `this` of every call) and its pull / cancel / close
 // methods. Held by the stream while DirectPending, then by whichever consumer takes the
-// stream (JSDirectStreamController, JSDirectSinkCloseState, JSOneShotDirectSink); nobody
+// stream (JSDirectStreamController, the native sink controller, JSOneShotDirectSink); nobody
 // reads a property of the user object after construction.
 // Internal cell: no prototype, no constructor, never exposed to JS.
 #pragma once
@@ -31,12 +31,6 @@ public:
 
     static JSDirectStreamSource* create(JSC::VM&, JSC::Structure*, JSC::JSValue underlyingSource, JSC::JSObject* pull, JSC::JSObject* cancel, JSC::JSObject* close);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
-
-    static size_t allocationSize(Checked<size_t> inlineCapacity)
-    {
-        ASSERT_UNUSED(inlineCapacity, inlineCapacity == 0U);
-        return sizeof(JSDirectStreamSource);
-    }
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;

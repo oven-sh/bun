@@ -7,7 +7,7 @@
 // through transforms to consumer.
 
 const { validateAbortSignal } = require("internal/validators");
-const { isAnyArrayBuffer, isPromise, isUint8Array } = require("node:util/types");
+const { isAnyArrayBuffer, isPromise, isUint8Array }: typeof import("node:util/types") = require("node:util/types");
 
 const {
   arrayBufferViewToUint8Array,
@@ -225,7 +225,7 @@ function* processTransformResultSync(result) {
   }
   // Iterable or Generator
   if (isSyncIterable(result)) {
-    const batch = [];
+    const batch: Uint8Array[] = [];
     for (const item of result) {
       for (const chunk of flattenTransformYieldSync(item)) {
         batch.push(chunk);
@@ -296,7 +296,7 @@ async function* processTransformResultAsync(result) {
   }
   // Check for async iterable/generator first
   if (isAsyncIterable(result)) {
-    const batch = [];
+    const batch: Uint8Array[] = [];
     for await (const item of result) {
       if (isUint8Array(item)) {
         batch.push(item);
@@ -313,7 +313,7 @@ async function* processTransformResultAsync(result) {
   }
   // Sync Iterable or Generator
   if (isSyncIterable(result)) {
-    const batch = [];
+    const batch: Uint8Array[] = [];
     for (const item of result) {
       if (isUint8Array(item)) {
         batch.push(item);
@@ -359,6 +359,8 @@ async function appendTransformResultAsync(target, result) {
  * @param {Array<Function>} run - Array of stateless transform functions
  * @yields {Uint8Array[]}
  */
+type StatelessTransform = (chunks: Uint8Array[] | null, options?: { __proto__?: null; signal: AbortSignal }) => unknown;
+
 function* applyFusedStatelessSyncTransforms(source, run) {
   for (const chunks of source) {
     let current = chunks;
@@ -415,7 +417,7 @@ function* withFlushSync(source) {
 function* applyStatefulSyncTransform(source, transform) {
   const output = transform(withFlushSync(source));
   for (const item of output) {
-    const batch = [];
+    const batch: Uint8Array[] = [];
     for (const chunk of flattenTransformYieldSync(item)) {
       batch.push(chunk);
     }
@@ -434,7 +436,7 @@ function* createSyncPipeline(source, transforms) {
 
   // Apply transforms - fuse consecutive stateless transforms into a single
   // generator layer to avoid unnecessary generator ticks.
-  let statelessRun = [];
+  let statelessRun: StatelessTransform[] = [];
 
   for (let i = 0; i < transforms.length; i++) {
     const transform = transforms[i];
@@ -549,7 +551,7 @@ async function* applyStatefulAsyncTransform(source, transform, options) {
       continue;
     }
     // Slow path: flatten arbitrary transform yield
-    const batch = [];
+    const batch: Uint8Array[] = [];
     for await (const chunk of flattenTransformYieldAsync(item)) {
       batch.push(chunk);
     }
@@ -625,7 +627,7 @@ async function* createAsyncPipeline(source, transforms, signal) {
   // DO NOT pass a pre-built options object.
   let current = normalized;
   const transformSignal = controller.signal;
-  let statelessRun = [];
+  let statelessRun: StatelessTransform[] = [];
 
   for (let i = 0; i < transforms.length; i++) {
     const transform = transforms[i];

@@ -219,11 +219,11 @@ yourself with Bun.serve().
     },
     {} as Record<string, HTMLBundle>,
   );
-  var server: Server;
+  var server: Server<undefined>;
   getServer: {
     try {
       server = Bun.serve({
-        static: staticRoutes,
+        routes: staticRoutes,
         development:
           env.NODE_ENV !== "production"
             ? {
@@ -249,7 +249,7 @@ yourself with Bun.serve().
         for (let remainingTries = 5; remainingTries > 0; remainingTries--) {
           try {
             server = Bun.serve({
-              static: staticRoutes,
+              routes: staticRoutes,
               development:
                 env.NODE_ENV !== "production"
                   ? {

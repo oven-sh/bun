@@ -7421,7 +7421,7 @@ describe("http2 a header block the encoder refuses does not reach the HPACK tabl
 // node checks maxSendHeaderBlockLength on nghttp2's bound for the uncompressed block:
 // 12 + 12 per field + the name and value bytes + 5. For respond({ ":status": 200, "x-a": value })
 // without a date field that is 54 + value.length. The check runs before the encoder, so a
-// refused block leaves the HPACK table alone and the session goes on.
+// refused block leaves the HPACK table alone.
 describe("http2 maxSendHeaderBlockLength on a server response", () => {
   const PAGE = { ":status": 200, "x-app": "shop", "x-build": "7" };
   function get(session, path, informational = []) {
@@ -7439,7 +7439,7 @@ describe("http2 maxSendHeaderBlockLength on a server response", () => {
     return promise;
   }
 
-  it("sends a block at the limit, resets the stream for a block over it, and keeps the session", async () => {
+  it("sends a block at the limit and resets the stream for a block over it", async () => {
     const held = [];
     const allHeld = Promise.withResolvers();
     const events = [];
@@ -7458,24 +7458,31 @@ describe("http2 maxSendHeaderBlockLength on a server response", () => {
         if (held.length === 3) allHeld.resolve();
         return;
       }
-      if (path.startsWith("/hint/")) {
+      const [, route, length] = path.split("/");
+      const value = Buffer.alloc(Number(length), "a").toString();
+      if (route === "hint") {
         // A refused 1xx block leaves the stream open for the final response.
-        const length = Number(path.slice("/hint/".length));
-        stream.additionalHeaders({ ":status": 103, "x-a": Buffer.alloc(length, "a").toString() });
+        stream.additionalHeaders({ ":status": 103, "x-a": value });
         stream.respond({ ...PAGE });
         return stream.end("page");
       }
-      const length = Number(path.slice("/value/".length));
-      stream.respond({ ":status": 200, "x-a": Buffer.alloc(length, "a").toString() }, { sendDate: false });
+      stream.respond({ ":status": 200, "x-a": value }, { sendDate: false });
       for (const waiting of held.splice(0)) {
         waiting.respond({ ...PAGE });
         waiting.end("page");
       }
-      stream.end();
+      // A refused block has closed the stream by now.
+      setImmediate(() => stream.closed || stream.end());
     });
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
-    client.on("error", err => events.push("client session error " + err.code));
+    const connect = () => {
+      const session = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      session.on("error", err => events.push("client session error " + err.code));
+      return session;
+    };
+    const client = connect();
+    // node closes a session after a frame error, so the 1xx block has a session of its own.
+    const hinted = connect();
     try {
       const primed = await get(client, "/page");
       const atTheLimit = await get(client, "/value/246");
@@ -7488,8 +7495,7 @@ describe("http2 maxSendHeaderBlockLength on a server response", () => {
         atTheLimit: { status: atTheLimit[":status"], length: atTheLimit["x-a"]?.length },
         overTheLimit,
         held: await Promise.all(holds),
-        later: await get(client, "/page"),
-        afterRefusedHint: await get(client, "/hint/247", informational),
+        afterRefusedHint: await get(hinted, "/hint/247", informational),
         informational,
         events,
       }).toEqual({
@@ -7500,7 +7506,6 @@ describe("http2 maxSendHeaderBlockLength on a server response", () => {
           message: "Stream closed with error code NGHTTP2_FRAME_SIZE_ERROR",
         },
         held: [PAGE, PAGE, PAGE],
-        later: PAGE,
         afterRefusedHint: PAGE,
         informational: [],
         events: [
@@ -7511,6 +7516,7 @@ describe("http2 maxSendHeaderBlockLength on a server response", () => {
       });
     } finally {
       client.destroy();
+      hinted.destroy();
       server.close();
     }
   });

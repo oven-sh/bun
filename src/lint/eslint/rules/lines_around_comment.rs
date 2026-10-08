@@ -179,16 +179,11 @@ fn is_free_before<'a>(file: &'a File<'a>, comment: Token<'a>, line: u32) -> bool
     if is_blank(file.line_text(line)) {
         return true;
     }
-    for other in file.comments_in(Span::new(0, comment.start())).rev() {
-        let end = file.line_of(other.end());
-        if end < line {
-            break;
-        }
-        if end == line || file.line_of(other.start()) == line {
-            return true;
-        }
-    }
-    false
+    // The last that ends on `line` or above, and the one after it, which can start on `line`.
+    let is_on_line = |other: Token<'a>| file.line_of(other.end()) == line || file.line_of(other.start()) == line;
+    let above = file.comments_in(Span::new(0, file.line_span(line + 1).start)).next_back();
+    let next = file.comments_in(Span::new(above.map_or(0, Token::end), comment.start())).next();
+    above.is_some_and(is_on_line) || next.is_some_and(is_on_line)
 }
 
 /// The same for the line after `comment`.
@@ -196,16 +191,12 @@ fn is_free_after<'a>(file: &'a File<'a>, comment: Token<'a>, line: u32) -> bool 
     if is_blank(file.line_text(line)) {
         return true;
     }
-    for other in file.comments_in(Span::new(comment.end(), file.span().end)) {
-        let start = file.line_of(other.start());
-        if start > line {
-            break;
-        }
-        if start == line || file.line_of(other.end()) == line {
-            return true;
-        }
-    }
-    false
+    // The first that starts on `line` or below, and the one before it, which can end on `line`.
+    let is_on_line = |other: Token<'a>| file.line_of(other.start()) == line || file.line_of(other.end()) == line;
+    let end = file.span().end;
+    let below = file.comments_in(Span::new(file.line_span(line).start, end)).next();
+    let previous = file.comments_in(Span::new(comment.end(), below.map_or(end, Token::start))).next_back();
+    below.is_some_and(is_on_line) || previous.is_some_and(is_on_line)
 }
 
 impl LinesAroundComment {

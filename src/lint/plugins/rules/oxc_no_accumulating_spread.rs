@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use rustc_hash::FxHashMap;
 
 /// Prevents using object or array spreads on accumulators in `Array.prototype.reduce()` and in loops.
 pub struct NoAccumulatingSpread;
@@ -9,16 +10,17 @@ const LOOP_SPREAD: Message = Message::new("loopSpread", "Do not spread accumulat
 
 impl Rule for NoAccumulatingSpread {
     const META: Meta = Meta::plugin(Plugin::Oxc, "no-accumulating-spread", Kind::Suggestion);
-    type State<'a> = ();
+    /// What is first assigned to, for each variable that was asked about.
+    type State<'a> = FxHashMap<Symbol<'a>, Option<Expr<'a>>>;
 
     fn new(_: &Options) -> Self {
         NoAccumulatingSpread
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
         let loops = [StmtTag::For, StmtTag::ForIn, StmtTag::ForOf, StmtTag::While, StmtTag::DoWhile];
         if !file.mentions_any(&["reduce", "reduceRight"]) && !file.has_stmts(loops) {
-            return;
+            return FxHashMap::default();
         }
         on.exprs([ExprTag::Spread], |_, spread, cx| {
             if let ExprKind::Spread(argument) = spread.kind()
@@ -40,10 +42,11 @@ impl Rule for NoAccumulatingSpread {
                 }
             }
         });
+        FxHashMap::default()
     }
 }
 
-fn check<'a>(spread: Node<'a>, argument: Expr<'a>, cx: &Cx<'a, NoAccumulatingSpread>) {
+fn check<'a>(spread: Node<'a>, argument: Expr<'a>, cx: &mut Cx<'a, NoAccumulatingSpread>) {
     if argument.tag() != ExprTag::Ident || argument.is_parenthesized() {
         return;
     }
@@ -105,7 +108,7 @@ fn check_reduce_usage<'a>(spread: Node<'a>, pat: Pat<'a>, cx: &Cx<'a, NoAccumula
     }
 }
 
-fn check_loop_usage<'a>(spread: Node<'a>, pat: Pat<'a>, symbol: Symbol<'a>, cx: &Cx<'a, NoAccumulatingSpread>) {
+fn check_loop_usage<'a>(spread: Node<'a>, pat: Pat<'a>, symbol: Symbol<'a>, cx: &mut Cx<'a, NoAccumulatingSpread>) {
     let Node::VarDecl(declarator) = pat.parent() else {
         return;
     };
@@ -116,7 +119,8 @@ fn check_loop_usage<'a>(spread: Node<'a>, pat: Pat<'a>, symbol: Symbol<'a>, cx: 
         return;
     }
     // Only the first assignment counts.
-    let Some(target) = symbol.references().find(|it| it.is_write() && !it.is_init()).and_then(Reference::expr) else {
+    let first_assignment = || symbol.references().find(|it| it.is_write() && !it.is_init()).and_then(Reference::expr);
+    let Some(target) = *cx.state.entry(symbol).or_insert_with(first_assignment) else {
         return;
     };
     let Node::Expr(assignment) = target.parent() else {

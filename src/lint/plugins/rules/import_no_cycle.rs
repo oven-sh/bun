@@ -135,10 +135,16 @@ impl Settings {
 /// `import { a } from "./me"; export { a }`.
 fn oxlint_allows_self_reference<'a>(file: &'a File<'a>, specifier: &[u8]) -> bool {
     let is_it = |spec: Option<Name<'a>>| spec.is_some_and(|it| it.bytes() == specifier);
-    let is_exported = |local: Name<'a>| {
-        file.body().iter().any(|stmt| {
-            matches!(stmt.kind(), StmtKind::ExportNamed(export) if export.spec().is_none() && export.items().iter().any(|it| it.local().name() == local))
-        })
+    let mut exported: Option<FxHashSet<Name<'a>>> = None;
+    let mut is_exported = |local: Name<'a>| {
+        let exported = exported.get_or_insert_with(|| {
+            let exports = file.body().iter().filter_map(|stmt| match stmt.kind() {
+                StmtKind::ExportNamed(export) if export.spec().is_none() => Some(export.items()),
+                _ => None,
+            });
+            exports.flatten().map(|it| it.local().name()).collect()
+        });
+        exported.contains(&local)
     };
     file.body().iter().any(|stmt| match stmt.kind() {
         StmtKind::ExportNamed(export) => is_it(export.spec()) && !export.items().is_empty(),
@@ -292,8 +298,9 @@ impl NoCycle {
             return;
         };
         let requests = requests_of(file, Flavor::Oxlint);
-        for (at, request) in requests.iter().enumerate() {
-            if requests[..at].iter().any(|it| it.specifier == request.specifier) || self.ignore_types && request.is_only_importing_types {
+        let mut seen = FxHashSet::default();
+        for request in &requests {
+            if !seen.insert(request.specifier) || self.ignore_types && request.is_only_importing_types {
                 continue;
             }
             let Some(imported) = modules.resolve(file.path(), request.specifier, false).map(|it| it.module) else {

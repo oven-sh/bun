@@ -1,5 +1,9 @@
 FAIL oxfmt cases/blocks/empty-enum.ts { printWidth: 80 }
 FAIL oxfmt cases/blocks/empty-enum.ts { printWidth: 100 }
+FAIL oxfmt cases/casts/as-an-argument.js { printWidth: 80 }
+FAIL oxfmt cases/casts/as-an-argument.js { printWidth: 100 }
+FAIL oxfmt cases/casts/in-a-chain-of-operators.js { printWidth: 80 }
+FAIL oxfmt cases/casts/in-a-chain-of-operators.js { printWidth: 100 }
 FAIL oxfmt cases/classes/semicolon-on-a-later-line.js { printWidth: 80 }
 FAIL oxfmt cases/classes/semicolon-on-a-later-line.js { printWidth: 100 }
 FAIL oxfmt cases/classes/semicolon-on-a-later-line.ts { printWidth: 80 }
@@ -10,6 +14,10 @@ FAIL oxfmt cases/comments/after-the-dot-of-a-member.js { printWidth: 80 }
 FAIL oxfmt cases/comments/after-the-dot-of-a-member.js { printWidth: 100 }
 FAIL oxfmt cases/comments/white-space-that-is-not-ascii.js { printWidth: 80 }
 FAIL oxfmt cases/comments/white-space-that-is-not-ascii.js { printWidth: 100 }
+FAIL oxfmt cases/ignore/comment-that-trails-on-its-own-line.ts { printWidth: 80 }
+FAIL oxfmt cases/ignore/comment-that-trails-on-its-own-line.ts { printWidth: 100 }
+FAIL oxfmt cases/ignore/semicolon-behind-the-comment.js { printWidth: 80 }
+FAIL oxfmt cases/ignore/semicolon-behind-the-comment.js { printWidth: 100 }
 FAIL oxfmt cases/jsx-narrow/group-with-nothing-but-text.jsx { printWidth: 35 }
-as Prettier prints them: 40/42
-as oxfmt prints them, in its flavor: 25/36
+as Prettier prints them: 52/54
+as oxfmt prints them, in its flavor: 29/48

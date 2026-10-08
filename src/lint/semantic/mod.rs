@@ -21,7 +21,7 @@
 //! | `sourceCode.markVariableAsUsed(name, node)` | [`Node::mark_variable_as_used`] |
 //! | `Reference` | [`Reference`] |
 //! | `reference.identifier` | [`Reference::ident`], [`Reference::expr`], [`Reference::node`] |
-//! | `reference.resolved` | [`Reference::symbol`], [`Expr::symbol`] |
+//! | `reference.resolved` | [`Reference::symbol`], [`Expr::symbol`]. If it has no `defs`: [`Reference::global`] |
 //! | `reference.from` | [`Reference::scope`] |
 //! | `reference.isRead()`, `isWrite()`, .. | [`Reference::is_read`], [`Reference::is_write`], .. |
 //! | `reference.isValueReference`, `isTypeReference` | [`Reference::is_value`], [`Reference::is_type`] |
@@ -43,7 +43,7 @@
 //! - **Globals that the file does not declare are not symbols**: what the configuration, the
 //!   ECMAScript version, a `/* global */` comment or a TypeScript `lib` defines. A reference to one
 //!   resolves to nothing and is among [`File::unresolved_references`]. In ESLint it resolves to a
-//!   variable of the global scope without definitions.
+//!   variable of the global scope without definitions: [`Reference::global`], `File::global`.
 //! - **A class declaration is one symbol**, in the scope around the class. ESLint has a second
 //!   variable for the name in the scope of the class, which the references inside the class
 //!   resolve to. The name of a class *expression* is a symbol of the scope of the class, as in
@@ -82,13 +82,13 @@ pub(crate) trait Binding {
     fn symbol(&self, id: SymbolId) -> Option<RawSymbol>;
     fn declarations(&self, id: SymbolId) -> &[Decl];
     /// The symbol that stands for `id` here: of the two symbols of an exported declaration, the
-    /// one that is exported. `None` if there is no `id`.
-    fn canonical(&self, id: SymbolId) -> Option<SymbolId>;
+    /// one that is exported. And whether there are `refused_declarations`. `None` if there is no
+    /// `id`.
+    fn canonical(&self, id: SymbolId) -> Option<(SymbolId, bool)>;
     /// Every declaration of something that a name can refer to, with its canonical symbol.
     fn declarations_in_scopes(&self, into: &mut Vec<(SymbolId, Decl)>);
-    /// Some declaration conflicts with an earlier one of the same name, and has a symbol of its
-    /// own.
-    fn has_refused_declarations(&self) -> bool;
+    /// The declarations that conflict with an earlier one of the same name. Each has a symbol of
+    /// its own.
     fn refused_declarations(&self, into: &mut Vec<Decl>);
 }
 
@@ -112,9 +112,9 @@ impl Binding for bind::Bound<'_> {
     fn declarations(&self, id: SymbolId) -> &[Decl] {
         self.symbols.get(id.idx()).map_or(&[], |symbol| symbol.decls.as_slice())
     }
-    fn canonical(&self, id: SymbolId) -> Option<SymbolId> {
+    fn canonical(&self, id: SymbolId) -> Option<(SymbolId, bool)> {
         let exported = self.symbols.get(id.idx())?.export_symbol;
-        Some(if exported.is_some() { exported } else { id })
+        Some((if exported.is_some() { exported } else { id }, !self.redeclarations.is_empty()))
     }
     fn declarations_in_scopes(&self, into: &mut Vec<(SymbolId, Decl)>) {
         for (i, symbol) in self.symbols.iter().enumerate() {
@@ -145,9 +145,6 @@ impl Binding for bind::Bound<'_> {
                 }
             }
         }
-    }
-    fn has_refused_declarations(&self) -> bool {
-        !self.redeclarations.is_empty()
     }
     fn refused_declarations(&self, into: &mut Vec<Decl>) {
         into.extend(self.redeclarations.iter().map(|it| it.decl));
@@ -222,8 +219,8 @@ impl<'a> Symbol<'a> {
     /// The symbol that the binder's `id` is, or is one declaration of.
     #[inline]
     pub(crate) fn some(file: &'a File<'a>, id: SymbolId) -> Option<Self> {
-        let id = file.binding.canonical(id)?;
-        if file.binding.has_refused_declarations()
+        let (id, has_refused_declarations) = file.binding.canonical(id)?;
+        if has_refused_declarations
             && let Some(index) = file.variables().of_symbol(file.scope_tree(), id)
         {
             return Some(Symbol::at(file, index));
@@ -649,6 +646,18 @@ impl<'a> Reference<'a> {
     pub fn symbol(self) -> Option<Symbol<'a>> {
         let variable = self.raw().variable;
         (variable != scopes::NONE).then(|| Symbol::at(self.file, variable))
+    }
+
+    /// The global variable that ESLint resolves it to: what the configuration, the version of
+    /// ECMAScript, a `/* global */` comment or a library of TypeScript defines under its name.
+    /// `None` if the file declares what it refers to, or if nothing defines it: then it is what
+    /// `no-undef` reports.
+    pub fn global(self) -> Option<crate::linter::globals::GlobalVariable<'a>> {
+        if self.raw().variable != scopes::NONE {
+            return None;
+        }
+        let global = self.file.global(self.name().bytes())?;
+        ((self.is_value() && global.accepts(false)) || (self.is_type() && global.accepts(true))).then_some(global)
     }
 
     #[inline]

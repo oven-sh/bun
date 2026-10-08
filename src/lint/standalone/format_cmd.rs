@@ -173,6 +173,14 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
         }
         return bun_format::markdown::format(code, options, &mut Default::default(), &mut out).map(|()| with_cursor(code, out));
     }
+    let is_mdx = match &options.parser {
+        Some(parser) => &parser[..] == b"mdx",
+        None => bun_format::markdown::is_mdx_path(name),
+    };
+    if is_mdx {
+        let mut out = Vec::new();
+        return bun_format::markdown::format_mdx(code, options, &mut Default::default(), &mut out).map(|()| with_cursor(code, out));
+    }
     let is_graphql = match &options.parser {
         Some(parser) => &parser[..] == b"graphql",
         None => bun_format::graphql::is_graphql_path(name),
@@ -257,6 +265,7 @@ fn is_other_language(path: &Path) -> bool {
         || bun_format::graphql::is_graphql_path(path)
         || bun_format::yaml::is_yaml_path(path)
         || bun_format::markdown::is_markdown_path(path)
+        || bun_format::markdown::is_mdx_path(path)
 }
 
 /// The files at `paths` and in the directories at `paths` that can be formatted.

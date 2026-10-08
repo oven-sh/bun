@@ -199,7 +199,8 @@ pub(crate) fn format_node<'a>(
     if f.is_quiet() {
         return write(f);
     }
-    let is_suppressed = f.comments().is_suppressed(span.start);
+    let is_suppressed =
+        f.comments().is_suppressed(span.start) || f.comments().has_trailing_suppression_comment(span.end);
     format_leading_comments(span).fmt(f);
     if is_suppressed {
         f.around_cursor(span, |f| FormatSuppressedNode(span).fmt(f));
@@ -573,6 +574,10 @@ fn format_statement<'a>(statement: Stmt<'a>, is_before_another: bool, f: &mut Fo
     }
     let span = statement.span();
     if f.has_no_comments_in(Span::new(0, span.end)) {
+        // `// prettier-ignore` on a line of its own after the last statement.
+        if !is_before_another && f.comments().has_trailing_suppression_comment(span.end) {
+            return format_statement_with_comments(statement, f);
+        }
         f.in_scope_without_comments(span, |f| write_statement(statement, f));
         // A comment that starts its line leads the next statement.
         if is_before_another && f.comments().unprinted_comments().first().is_none_or(|it| it.preceded_by_newline()) {

@@ -693,11 +693,29 @@ impl<'a> Comments<'a> {
         self.comments_before_iter(start).any(|comment| self.is_suppression_comment(comment))
     }
 
-    /// `statement(); // prettier-ignore`
+    /// Whether a `prettier-ignore` comment trails the node that ends at `pos`: Prettier goes by any
+    /// comment of a node. `statement(); // prettier-ignore`, and on a line of its own if nothing
+    /// follows in what the node is in.
     pub(crate) fn has_trailing_suppression_comment(&self, pos: u32) -> bool {
-        self.end_of_line_comments_after(pos)
-            .iter()
-            .any(|comment| self.is_suppression_comment(comment))
+        if self.end_of_line_comments_after(pos).iter().any(|comment| self.is_suppression_comment(comment)) {
+            return true;
+        }
+        let (mut end, mut is_suppressed) = (pos, false);
+        for comment in self.comments_after(pos) {
+            let is_adjacent = self
+                .source_text
+                .all_bytes_match(end, comment.start(), |b| b.is_ascii_whitespace() || matches!(b, b',' | b';'));
+            if !is_adjacent {
+                break;
+            }
+            is_suppressed |= self.is_suppression_comment(comment);
+            end = comment.end();
+        }
+        is_suppressed
+            && matches!(
+                self.source_text.as_bytes().get(end as usize..).unwrap_or_default().trim_ascii_start().first(),
+                None | Some(b'}' | b']' | b')')
+            )
     }
 
     /// `prettier-ignore`, or `oxfmt-ignore`, which means the same.

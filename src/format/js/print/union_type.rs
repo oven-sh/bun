@@ -68,6 +68,13 @@ pub(crate) fn write_ts_union_type_in<'a>(
         write!(f, [prints_own_comments.then_some(format_leading_comments), group(&format_args!(if_group_breaks(&"| "), members))]);
         if prints_own_comments {
             write_trailing_comments_of(AstNodes::TSUnionType(ty), f);
+            // Prettier does not attach comments to the `: T` of a property signature.
+            if f.comments().next_start() != u32::MAX
+                && matches!(parent, AstNodes::TSTypeAnnotation(_))
+                && matches!(parent.parent(), AstNodes::TSPropertySignature(_))
+            {
+                write_trailing_comments_of(parent, f);
+            }
         }
     });
     if !prints_own_comments {

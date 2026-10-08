@@ -124,7 +124,7 @@ struct FormatReturnType<'a>(Func<'a>);
 
 impl Spanned for FormatReturnType<'_> {
     fn span(&self) -> Span {
-        self.0.return_type().map_or(Span::default(), TypeNode::annotation_span)
+        self.0.return_type().map(TypeNode::annotation_span).unwrap_or_default()
     }
 }
 

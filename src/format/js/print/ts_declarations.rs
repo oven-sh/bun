@@ -41,7 +41,7 @@ pub(crate) fn write_ts_interface_declaration<'a>(statement: Stmt<'a>, interface:
             };
             // A comment after `extends` on its line leads the type. All others trail what is before.
             is_member || {
-                let previous_end = type_params.angle_brackets_span().unwrap_or(id.span()).end;
+                let previous_end = type_params.angle_brackets_span().unwrap_or_else(|| id.span()).end;
                 let comments = f.comments().comments_in_range(previous_end, first.span().start);
                 comments.iter().any(|comment| comment.preceded_by_newline() || comment.followed_by_newline())
                     || comments.first().is_some_and(|comment| {

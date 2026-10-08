@@ -22,7 +22,20 @@ use std::cell::Cell;
 /// `A.B.C`. `parent`: what it is a name in.
 pub(crate) fn entity_name<'a>(name: EntityName<'a>, parent: AstNodes<'a>) -> impl Format<'a> {
     format_with(move |f: &mut Formatter<'a>| {
-        f.join_with(".").entries(name.parts().map(|part| identifier(part, parent)));
+        if f.is_quiet() {
+            f.join_with(".").entries(name.parts().map(|part| identifier(part, parent)));
+            return;
+        }
+        // The next name is what follows a name, which `parent` does not tell.
+        let mut parts = name.parts().peekable();
+        while let Some(part) = parts.next() {
+            let part = identifier(part, parent);
+            let Some(next) = parts.peek() else {
+                return write!(f, part);
+            };
+            let comments = format_trailing_comments(name.span(), part.span(), next.span().start);
+            write!(f, [FormatNodeWithoutTrailingComments(&part), comments, "."]);
+        }
     })
 }
 
@@ -321,7 +334,8 @@ pub(crate) fn write_ts_import_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) 
     // Up to what follows the `)`, they lead or trail the module specifier.
     let has_comment = !f.is_quiet() && {
         let following = name.first().map(|it| it.span()).or_else(|| args.angle_brackets_span());
-        f.comments().has_comment_in_range(ty.span().start, following.map_or(ty.span().end, |it| it.start))
+        let span = ty.span();
+        f.comments().has_comment_in_range(span.start, following.map_or(span.end, |it| it.start))
     };
 
     write!(f, is_typeof.then_some("typeof "));

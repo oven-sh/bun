@@ -196,7 +196,7 @@ impl<'a> FormatTypeArguments<'a> {
         let before = f.comments().comments_in_range(outer.start, inner.start);
         let after = f.comments().comments_in_range(inner.end, outer.end);
         before.iter().chain(after).any(|comment| comment.is_line())
-            || after.last().or(before.last()).is_some_and(|comment| comment.followed_by_newline())
+            || after.last().or_else(|| before.last()).is_some_and(|comment| comment.followed_by_newline())
     }
 }
 

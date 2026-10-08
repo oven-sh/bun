@@ -77,8 +77,9 @@ Rules in JavaScript are slower than the built-in ones. A file costs nothing extr
 Plugins run inside `bun lint`, on the threads that lint, as they run inside `eslint`:
 
 - What a plugin prints goes to the terminal, and `process.exit()` ends the run.
+- Its `process.on("exit")` handlers run after the report.
 - A rule that throws ends the run with exit code `2`. With an `.oxlintrc.json` the error is reported for the file, and the run goes on.
-- Each thread loads the plugins for itself, so state at the top level of a module is per thread.
+- Each thread loads the plugins for itself, so state at the top level of a module is per thread, and so are the handlers.
 
 Three things are not there for a rule in JavaScript:
 

@@ -70,7 +70,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             type_arguments = p.type_arguments_of_import_call(logged, errors);
         }
 
-        if level.gt(Level::Call) {
+        // espree accepts `new import("a")`.
+        if level.gt(Level::Call) && !p.is_ecmascript() {
             let r = js_lexer::range_of_identifier(p.source, loc);
             p.log().add_range_error(
                 Some(p.source),

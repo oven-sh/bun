@@ -9,8 +9,9 @@ use bun_ast::{LexerLog, Loc, Log, Range, Source, TypeScriptKind};
 use bun_core::Environment;
 use bun_core::fmt::hex_digit_value_u32;
 pub(crate) use bun_core::lexer::{
-    char_and_size, end_of_run, is_type_script_identifier_part, is_white_space_single_line,
-    is_whitespace, last_char, peek_unicode_escape, scan_identifier_parts, starts_with_line_break,
+    char_and_size, end_of_run, is_recent_identifier_part, is_recent_identifier_start,
+    is_type_script_identifier_part, is_white_space_single_line, is_whitespace, last_char,
+    peek_unicode_escape, scan_identifier_parts, starts_with_line_break,
 };
 use bun_core::strings;
 use bun_core::strings::CodepointIterator;
@@ -500,7 +501,20 @@ impl<'a> Lexer<'a> {
     /// `IsIdentifierPart`, by TypeScript's table for the type checker.
     #[inline]
     fn is_identifier_part(&self, c: CodePoint) -> bool {
-        is_identifier_continue(c) || (self.tolerant && is_type_script_identifier_part(c))
+        is_identifier_continue(c)
+            || (self.tolerant && c >= 0x80 && self.is_other_identifier_part(c))
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn is_other_identifier_part(&self, c: CodePoint) -> bool {
+        is_type_script_identifier_part(c) || (self.is_ecmascript && is_recent_identifier_part(c))
+    }
+
+    /// `IsIdentifierStart`, by acorn's table where the dialect is that of acorn.
+    #[inline]
+    fn is_identifier_start(&self, c: CodePoint) -> bool {
+        is_identifier_start(c) || (self.is_ecmascript && is_recent_identifier_start(c))
     }
 
     // deinit → Drop (see impl Drop below)
@@ -1734,9 +1748,9 @@ impl<'a> Lexer<'a> {
                     break;
                 };
                 let fits = if name.is_empty() {
-                    is_identifier_start(c)
+                    self.is_identifier_start(c)
                 } else {
-                    is_type_script_identifier_part(c)
+                    self.is_identifier_part(c)
                 };
                 let Some(c) = char::from_u32(c as u32).filter(|_| fits) else {
                     break;
@@ -1872,9 +1886,9 @@ impl<'a> Lexer<'a> {
                     let fits =
                         peek_unicode_escape(self.contents, self.end).is_some_and(|(c, _)| {
                             if is_first {
-                                is_identifier_start(c)
+                                self.is_identifier_start(c)
                             } else {
-                                is_type_script_identifier_part(c)
+                                self.is_identifier_part(c)
                             }
                         });
                     if !fits && !is_first {
@@ -2241,7 +2255,7 @@ impl<'a> Lexer<'a> {
                                 .scan_identifier_with_escapes(IdentifierKind::Private)?
                                 .contents;
                         } else {
-                            if !is_identifier_start(self.code_point) {
+                            if !self.is_identifier_start(self.code_point) {
                                 // The '#' case of `Scan`. Only the "#" is consumed.
                                 if self.code_point == 0x21 && self.tolerate(self.start, 2, 18026) {
                                     self.token = T::TSyntaxError;
@@ -2324,7 +2338,7 @@ impl<'a> Lexer<'a> {
                 }
                 0x40 => {
                     self.step_with(contents);
-                    if self.jsc_builtin_syntax && is_identifier_start(self.code_point) {
+                    if self.jsc_builtin_syntax && self.is_identifier_start(self.code_point) {
                         while self.is_identifier_part(self.code_point) {
                             self.step_with(contents);
                         }
@@ -2779,7 +2793,7 @@ impl<'a> Lexer<'a> {
                         continue;
                     }
 
-                    if is_identifier_start(self.code_point) {
+                    if self.is_identifier_start(self.code_point) {
                         self.step_with(contents);
                         while self.is_identifier_part(self.code_point) {
                             self.step_with(contents);
@@ -3833,7 +3847,7 @@ impl<'a> Lexer<'a> {
                         continue;
                     }
 
-                    if is_identifier_start(self.code_point) {
+                    if self.is_identifier_start(self.code_point) {
                         self.step();
                         while self.is_identifier_part(self.code_point) || self.code_point == 0x2D {
                             self.step();
@@ -3854,7 +3868,7 @@ impl<'a> Lexer<'a> {
                         if self.code_point == 0x3A {
                             self.step();
 
-                            if is_identifier_start(self.code_point) {
+                            if self.is_identifier_start(self.code_point) {
                                 while self.is_identifier_part(self.code_point)
                                     || self.code_point == 0x2D
                                 {
@@ -4851,7 +4865,7 @@ impl<'a> Lexer<'a> {
         }
 
         // Identifiers can't occur immediately after numbers;
-        if is_identifier_start(self.code_point) {
+        if self.is_identifier_start(self.code_point) {
             return self.recover_invalid_number();
         }
         Ok(())
@@ -5084,7 +5098,7 @@ impl<'a> Lexer<'a> {
             pos += 1;
         }
         self.move_to(pos);
-        if !is_identifier_start(self.code_point) {
+        if !self.is_identifier_start(self.code_point) {
             return;
         }
         let identifier_start = pos;

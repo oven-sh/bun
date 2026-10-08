@@ -1421,7 +1421,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             T::TAsteriskEquals => self.lexer.split_token(T::TEquals),
             _ => self.lexer.next()?,
         }
-        if matches!(token, T::TAsterisk | T::TAsteriskEquals) {
+        // Its `parseJSDocUnknownOrNullableType`: a "?" by itself.
+        let is_unknown_type = token == T::TQuestion
+            && self.is_typescript_5()
+            && matches!(
+                self.lexer.token,
+                T::TComma
+                    | T::TCloseBrace
+                    | T::TCloseParen
+                    | T::TGreaterThan
+                    | T::TGreaterThanGreaterThan
+                    | T::TGreaterThanGreaterThanGreaterThan
+                    | T::TEquals
+                    | T::TBar
+            );
+        if matches!(token, T::TAsterisk | T::TAsteriskEquals) || is_unknown_type {
             if KEEP {
                 self.emit_jsdoc_all_type(pos);
             }

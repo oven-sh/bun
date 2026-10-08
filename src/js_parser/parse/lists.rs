@@ -440,7 +440,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             T::TIdentifier => {
                 use Modifier::*;
                 match Modifier::find(self.word()) {
-                    Some(PAccessor | PPublic | PPrivate | PProtected | PStatic | PReadonly) => {
+                    Some(PAccessor | PPublic | PPrivate | PProtected | PStatic | PReadonly)
+                        if !self.is_ecmascript() =>
+                    {
                         self.is_start_of_declaration()
                             || !self.look_ahead(|p| {
                                 p.step()
@@ -663,6 +665,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     self.is_identifier_in_context()
                 } else {
                     self.is_start_of_left_hand_side_expression()
+                        || token == T::TLessThan && self.is_ecmascript()
                 };
                 starts && !self.is_await_keyword() && !self.is_heritage_clause_keyword()
             }

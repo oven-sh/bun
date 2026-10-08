@@ -1788,27 +1788,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             p.lexer.raw()
         };
         let escaped_word = p.lexer.escaped_word();
+        if raw == b"let"
+            && match p.is_ecmascript() {
+                true => !p.is_let_declaration(opts),
+                false => p.is_tolerant() && p.is_parameter_of_arrow_function(opts),
+            }
+        {
+            return Ok(ExprOrLetStmt {
+                stmt_or_expr: js_ast::StmtOrExpr::Expr(p.parse_expr(Level::Lowest)?),
+                ..Default::default()
+            });
+        }
         if raw == b"let" {
             p.lexer.next()?;
 
             // `parseDeclarationWorker`, `parseForOrForInOrForOfStatement`: after modifiers and in
             // the head of a "for", "let" starts a declaration list whatever follows it. Only
             // `parseStatement` asks `isLetDeclaration`.
-            let is_declaration = p.is_tolerant()
-                && (opts.is_for_loop_init && !p.is_ecmascript() || p.statement_has_modifiers());
+            let is_declaration =
+                p.is_tolerant() && (opts.is_for_loop_init || p.statement_has_modifiers());
             match p.lexer.token {
                 token
                     if is_declaration
                         || matches!(token, T::TIdentifier | T::TOpenBracket | T::TOpenBrace) =>
                 {
                     if opts.lexical_decl == LexicalDecl::AllowAll
+                        || !p.lexer.has_newline_before
                         || p.lexer.token == T::TOpenBracket
-                        || match p.is_ecmascript() {
-                            // acorn's `isLet`: where only a statement is allowed, it is a name.
-                            true => p.lexer.has_unicode_escape(),
-                            // `isLetDeclaration` does not check for line breaks.
-                            false => !p.lexer.has_newline_before || p.is_tolerant(),
-                        }
+                        // `isLetDeclaration` does not check for line breaks.
+                        || p.is_tolerant()
                     {
                         p.lexer.keyword_was_taken(escaped_word);
                         if opts.lexical_decl != LexicalDecl::AllowAll {
@@ -1914,7 +1922,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
             p.lexer.next_token()?;
 
-            let mut value = if p.lexer.is_contextual_keyword(b"using") {
+            let mut value = if p.lexer.is_contextual_keyword(b"using")
+                && !(p.lexer.has_newline_before && p.is_ecmascript())
+            {
                 'value: {
                     // const using_loc = p.saveExprCommentsHere();
                     let using_range = p.lexer.range();
@@ -2015,6 +2025,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             p.parse_suffix(e, Level::Lowest, None, EFlags::None)?;
         }
         Ok(result)
+    }
+
+    /// acorn's `isLet`, at a `let`: whether it starts a declaration. Where only a statement is
+    /// allowed it is a name, unless a `[` follows.
+    #[cold]
+    #[inline(never)]
+    fn is_let_declaration(&mut self, opts: &ParseStatementOptions<'a>) -> bool {
+        let is_declaration_allowed = opts.lexical_decl == LexicalDecl::AllowAll;
+        self.statement_has_modifiers()
+            || self.next_token_matches(|p| match p.lexer.token {
+                T::TOpenBracket => true,
+                T::TIdentifier => is_declaration_allowed || p.lexer.has_unicode_escape(),
+                T::TOpenBrace => is_declaration_allowed,
+                T::TIn | T::TInstanceof => false,
+                _ => is_declaration_allowed && p.lexer.is_identifier_or_keyword(),
+            })
+    }
+
+    /// At a `let` that `isLetDeclaration` is asked about: `let => 1`.
+    #[cold]
+    #[inline(never)]
+    fn is_parameter_of_arrow_function(&mut self, opts: &ParseStatementOptions<'a>) -> bool {
+        !opts.is_for_loop_init
+            && !self.statement_has_modifiers()
+            && self.next_token_matches(|p| p.lexer.token == T::TEqualsGreaterThan)
     }
 
     pub(crate) fn parse_binding(&mut self, opts: ParseBindingOptions) -> Result<Binding, Error> {
@@ -3348,6 +3383,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         self.lexer.is_log_disabled = true;
         let result = self.lexer.next().is_ok()
             && self.lexer.is_contextual_keyword(b"using")
+            && !(self.lexer.has_newline_before && self.is_ecmascript())
             && self.lexer.next().is_ok()
             && matches!(self.lexer.token, T::TIdentifier | T::TOpenBrace)
             && !self.lexer.has_newline_before;

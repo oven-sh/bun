@@ -290,6 +290,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if self.fn_or_arrow_data_parse.is_top_level
             && old_await == AwaitOrYield::AllowExpr
             && !self.lexer.await_name_seen
+            && !self.is_ecmascript()
         {
             self.fn_or_arrow_data_parse.allow_await = AwaitOrYield::AllowIdent;
         }

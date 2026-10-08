@@ -15,6 +15,7 @@ mod parser_cmd;
 mod regex_cmd;
 mod selector_cmd;
 mod semantic_cmd;
+mod test_only_rules;
 mod tokens_cmd;
 mod types_cmd;
 mod utils_eslint_cmd;
@@ -100,7 +101,10 @@ fn lint(
     language_options: &Json,
     settings: &Json,
 ) -> Outcome {
-    let outcome = linter_cmd::lint_case(entry, code, path, options, language_options, settings);
+    outcome_of(entry, code, linter_cmd::lint_case(entry, code, path, options, language_options, settings))
+}
+
+fn outcome_of(entry: &'static RuleEntry, code: &[u8], outcome: linter_cmd::CaseOutcome) -> Outcome {
     Outcome {
         has_parse_errors: (outcome.messages.iter()).any(|it| it.is_fatal && it.message.starts_with(b"Parsing error")),
         messages: outcome.messages.iter().map(|it| reported(entry, code, it)).collect(),
@@ -201,7 +205,8 @@ fn run_fixture(fixture: &Json, entry: &'static RuleEntry) -> (Tally, String) {
     let (mut tally, mut failures) = (Tally::default(), String::new());
     let cases = fixture.get(b"cases").and_then(Json::as_array).unwrap_or_default();
     for (index, case) in cases.iter().enumerate() {
-        let is_skipped = !matches!(case.get(b"skip"), None | Some(Json::Null));
+        let has_test_only_rules = str_of(case, "skip").is_some_and(test_only_rules::is_known);
+        let is_skipped = !matches!(case.get(b"skip"), None | Some(Json::Null)) && !has_test_only_rules;
         let is_type_aware = case.get(b"typeAware").and_then(Json::as_bool) == Some(true);
         if is_skipped || is_type_aware {
             tally.skipped += 1;
@@ -212,7 +217,13 @@ fn run_fixture(fixture: &Json, entry: &'static RuleEntry) -> (Tally, String) {
         let options = case.get(b"options").and_then(Json::as_array).unwrap_or_default();
         let language_options = case.get(b"languageOptions").unwrap_or(&Json::Null);
         let settings = case.get(b"settings").unwrap_or(&Json::Null);
-        let outcome = std::panic::catch_unwind(|| lint(entry, path, code, options, language_options, settings));
+        let outcome = std::panic::catch_unwind(|| match has_test_only_rules {
+            true => {
+                let outcome = test_only_rules::lint_case(entry, code, path, options, language_options, settings);
+                outcome_of(entry, code, outcome)
+            }
+            false => lint(entry, path, code, options, language_options, settings),
+        });
         // The order of what starts at the same place depends on the order in which ESLint visits the nodes.
         let in_order = |mut messages: Vec<Reported>| {
             messages.sort_by(|a, b| {

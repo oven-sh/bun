@@ -1803,15 +1803,71 @@ pub mod lexer {
         is_identifier_part(c as u32) || matches!(c, 0x30FB | 0xFF65)
     }
 
-    /// `scanIdentifierParts`: the end of the identifier that continues at `at`.
+    /// What is ID_Start for acorn 8.19 (Unicode 17) and not yet for `is_identifier_start` (Unicode
+    /// 15.1), in ranges that include their ends.
+    static RECENT_ID_START: &[(u32, u32)] = &[
+        (0x558, 0x558), (0x58B, 0x58C), (0x88F, 0x88F), (0xC5C, 0xC5C), (0xCDC, 0xCDC),
+        (0x1C89, 0x1C8A), (0x208F, 0x208F), (0x209D, 0x209F), (0xA7CB, 0xA7CF), (0xA7D2, 0xA7D2),
+        (0xA7D4, 0xA7D4), (0xA7DA, 0xA7DD), (0xA7E2, 0xA7E2), (0xA7F1, 0xA7F1), (0xAB6C, 0xAB6D),
+        (0x105C0, 0x105F3), (0x107BB, 0x107BF), (0x10940, 0x10959), (0x10D4A, 0x10D65),
+        (0x10D6F, 0x10D85), (0x10EC2, 0x10EC7), (0x10ED9, 0x10EEE), (0x11380, 0x11389),
+        (0x1138B, 0x1138B), (0x1138E, 0x1138E), (0x11390, 0x113B5), (0x113B7, 0x113B7),
+        (0x113D1, 0x113D1), (0x113D3, 0x113D3), (0x11B0A, 0x11B0A), (0x11BC0, 0x11BE0),
+        (0x11DB0, 0x11DDB), (0x11DF1, 0x11DF1), (0x1246F, 0x1246F), (0x12475, 0x1247F),
+        (0x12550, 0x12686), (0x13460, 0x143FA), (0x16100, 0x1611D), (0x16D40, 0x16D6C),
+        (0x16EA0, 0x16EB8), (0x16EBB, 0x16ED3), (0x16FF2, 0x16FF6), (0x187F8, 0x187FF),
+        (0x18CD6, 0x18CDA), (0x18CFF, 0x18CFF), (0x18D09, 0x18D20), (0x18D80, 0x18DF2),
+        (0x18E00, 0x19191), (0x191A0, 0x191D2), (0x1B123, 0x1B128), (0x1B168, 0x1B168),
+        (0x1D6A6, 0x1D6A6), (0x1DF1F, 0x1DF24), (0x1DF2B, 0x1DF81), (0x1DF90, 0x1DF96),
+        (0x1DFCD, 0x1DFFF), (0x1E5D0, 0x1E5ED), (0x1E5F0, 0x1E5F0), (0x1E6C0, 0x1E6DE),
+        (0x1E6E0, 0x1E6E2), (0x1E6E4, 0x1E6E5), (0x1E6E7, 0x1E6ED), (0x1E6F0, 0x1E6F4),
+        (0x1E6FE, 0x1E6FF), (0x2B73A, 0x2B73F), (0x2B81E, 0x2B81E), (0x2CEA2, 0x2CEAD),
+        (0x323B0, 0x33479), (0x3D000, 0x3FC3F),
+    ];
+
+    /// The same for ID_Continue, without `RECENT_ID_START`.
+    static RECENT_ID_CONTINUE: &[(u32, u32)] = &[
+        (0x5C8, 0x5C9), (0x897, 0x897), (0xB53, 0xB54), (0x1ACF, 0x1AF0), (0x10D40, 0x10D49),
+        (0x10D69, 0x10D6D), (0x10ECB, 0x10ECF), (0x10EF0, 0x10EFC), (0x113B8, 0x113C0),
+        (0x113C2, 0x113C2), (0x113C5, 0x113C5), (0x113C7, 0x113CA), (0x113CC, 0x113D0),
+        (0x113D2, 0x113D2), (0x113E1, 0x113E2), (0x116D0, 0x116E3), (0x11B60, 0x11B67),
+        (0x11BF0, 0x11BF9), (0x11DE0, 0x11DE9), (0x11DF0, 0x11DF0), (0x11F5A, 0x11F5A),
+        (0x1611E, 0x16139), (0x16D70, 0x16D79), (0x1CCF0, 0x1CCF9), (0x1D127, 0x1D128),
+        (0x1D250, 0x1D252), (0x1D25B, 0x1D25C), (0x1D25F, 0x1D25F), (0x1D280, 0x1D281),
+        (0x1E5EE, 0x1E5EF), (0x1E5F1, 0x1E5FA), (0x1E6E3, 0x1E6E3), (0x1E6E6, 0x1E6E6),
+        (0x1E6EE, 0x1E6EF), (0x1E6F5, 0x1E6F5),
+    ];
+
+    fn is_in_ranges(ranges: &[(u32, u32)], c: u32) -> bool {
+        let after = ranges.partition_point(|range| range.0 <= c);
+        after > 0 && c <= ranges[after - 1].1
+    }
+
+    /// Whether only a parser that knows a Unicode version after 15.1 lets `c` start an identifier.
+    #[cold]
+    pub fn is_recent_identifier_start(c: CodePoint) -> bool {
+        c >= 0x558 && is_in_ranges(RECENT_ID_START, c as u32)
+    }
+
+    /// The same for a character that continues an identifier.
+    #[cold]
+    pub fn is_recent_identifier_part(c: CodePoint) -> bool {
+        c >= 0x558
+            && (is_in_ranges(RECENT_ID_START, c as u32)
+                || is_in_ranges(RECENT_ID_CONTINUE, c as u32))
+    }
+
+    /// `scanIdentifierParts`: the end of the identifier that continues at `at`. Of any identifier
+    /// that some parser has accepted.
     pub fn scan_identifier_parts(text: &[u8], mut at: usize) -> usize {
+        let is_part = |c| is_type_script_identifier_part(c) || is_recent_identifier_part(c);
         loop {
-            at = end_of_run(text, at, is_type_script_identifier_part);
+            at = end_of_run(text, at, is_part);
             if text.get(at) != Some(&b'\\') {
                 return at;
             }
             match peek_unicode_escape(text, at) {
-                Some((c, len)) if is_type_script_identifier_part(c) => at += len,
+                Some((c, len)) if is_part(c) => at += len,
                 _ => return at,
             }
         }

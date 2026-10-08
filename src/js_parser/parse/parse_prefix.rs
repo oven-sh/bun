@@ -349,6 +349,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     // identifier, so `parseUnaryExpressionOrHigher` reports it on the left of `**`.
                     if p.lexer.token == T::TAsteriskAsterisk
                         && p.is_tolerant()
+                        && !p.is_ecmascript()
                         && level.lt(Level::Prefix)
                     {
                         p.lexer.ts_error_about(name_range, 17006, b"await");
@@ -1611,7 +1612,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let full_start = p.lexer.full_start();
         // Use NextInsideJSXElement() instead of Next() so we parse "<<" as "<"
         p.lexer.next_inside_jsx_element()?;
-        let element = p.parse_jsx_element(less_than, full_start)?;
+        let old_allow_in = p.allow_in;
+        p.allow_in = old_allow_in || !p.stays_in_head_of_for();
+        let element = p.parse_jsx_element(less_than, full_start);
+        p.allow_in = old_allow_in;
+        let element = element?;
         // The last ">" is left to the caller. Nothing is consumed for a ">" that is missing: a
         // conflict marker that ended the children stays the current token.
         if p.lexer.token == T::TGreaterThan {

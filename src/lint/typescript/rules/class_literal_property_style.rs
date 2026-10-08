@@ -2,6 +2,7 @@ use bun_lint::prelude::*;
 use bun_lint::utils::ts_utils::{
     FixOrSuggest, MemberAccessValue, get_fix_or_suggest, get_static_member_access_value, is_assignee,
 };
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Enforce that literals on classes are exposed in a consistent style.
 pub struct ClassLiteralPropertyStyle {
@@ -12,9 +13,17 @@ pub struct ClassLiteralPropertyStyle {
 pub struct State<'a> {
     /// What a constructor assigns to a property of `this`, with the class whose body the assignment
     /// is in.
-    excluded: Vec<(Class<'a>, MemberAccessValue<'a>)>,
+    excluded: FxHashSet<(Class<'a>, MemberAccessValue<'a>)>,
     /// The `readonly` properties whose value is a literal.
     properties: Vec<Member<'a>>,
+    /// The names of the setters of the classes that have many members.
+    setters: FxHashMap<Class<'a>, FxHashSet<MemberAccessValue<'a>>>,
+}
+
+/// The name of a setter.
+fn name_of_setter(element: Member<'_>) -> Option<MemberAccessValue<'_>> {
+    let is_setter = element.kind() == MemberKind::Setter && !element.flags().contains(Flags::ABSTRACT);
+    get_static_member_access_value(element).filter(|_| is_setter)
 }
 
 const PREFER_FIELD_STYLE: Message =
@@ -86,14 +95,18 @@ impl ClassLiteralPropertyStyle {
         if !is_supported_literal(argument) {
             return;
         }
-        if let Some(name) = truthy_name(get_static_member_access_value(member))
-            && class.members().iter().any(|element| {
-                element.kind() == MemberKind::Setter
-                    && !element.flags().contains(Flags::ABSTRACT)
-                    && get_static_member_access_value(element).as_ref() == Some(&name)
-            })
-        {
-            return;
+        if let Some(name) = truthy_name(get_static_member_access_value(member)) {
+            let members = class.members();
+            let has_setter = match members.len() <= 16 {
+                true => members.iter().any(|element| name_of_setter(element).as_ref() == Some(&name)),
+                false => {
+                    let setters = cx.state.setters.entry(class).or_insert_with(|| members.iter().filter_map(name_of_setter).collect());
+                    setters.contains(&name)
+                }
+            };
+            if has_setter {
+                return;
+            }
         }
         let file = cx.file();
         let fix_or_suggest = match member.decorators().next() {
@@ -147,7 +160,7 @@ impl ClassLiteralPropertyStyle {
             && let Some(class) = class
             && let Some(name) = truthy_name(get_static_member_access_value(access))
         {
-            cx.state.excluded.push((class, name));
+            cx.state.excluded.insert((class, name));
         }
     }
 
@@ -167,14 +180,14 @@ impl ClassLiteralPropertyStyle {
 
     /// `"getters"`
     fn check_properties<'a>(&self, cx: &mut Cx<'a, Self>) {
-        let State { excluded, properties } = std::mem::take(&mut cx.state);
+        let State { excluded, properties, .. } = std::mem::take(&mut cx.state);
         for member in properties {
             let (Node::Class(class), Some(key), Some(value)) = (member.parent(), member.key(), member.init()) else {
                 continue;
             };
             if !excluded.is_empty()
                 && let Some(name) = truthy_name(get_static_member_access_value(member))
-                && excluded.iter().any(|it| it.0 == class && it.1 == name)
+                && excluded.contains(&(class, name))
             {
                 continue;
             }

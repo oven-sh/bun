@@ -24,7 +24,6 @@ use crate::ast::{
     BinOp, Case, Chain, Expr, ExprKind, File, Flags, FnBody, FnKind, Func, Ident, Key, KeyKind, Member,
     MemberKind, Name, Node, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, UnOp, VarKind,
 };
-use crate::language::{Global, SourceType};
 use crate::semantic::{Declaration, Reference, Scope, Symbol};
 use crate::span::{Position, Span, Spanned};
 use crate::tokens::{Token, TokenKind, skip_trivia, skip_trivia_back, token_len};
@@ -1104,23 +1103,16 @@ pub fn get_parenthesised_text<'a>(node: impl Into<Node<'a>>) -> &'a [u8] {
 
 // ───────────────────────────── scopes ─────────────────────────────
 
-/// Whether the configuration defines the global variable `name`: `languageOptions.globals`, what
-/// `languageOptions.ecmaVersion` defines, and for CommonJS `exports`, `global`, `module` and
-/// `require`.
-pub fn is_configured_global(file: &File<'_>, name: &[u8]) -> bool {
-    let language = file.language();
-    match language.global(name) {
-        Some(global) => global != Global::Off,
-        None => {
-            ecmascript_global_since(name).is_some_and(|since| since <= language.ecma_version)
-                || (language.source_type == SourceType::CommonJs
-                    && matches!(name, b"exports" | b"global" | b"module" | b"require"))
-        }
-    }
+/// Whether something other than the code of the file defines the global variable `name`, as a
+/// value: [`File::global`].
+#[inline]
+pub fn is_configured_global<'a>(file: &'a File<'a>, name: &[u8]) -> bool {
+    file.global(name).is_some_and(|global| global.accepts(false))
 }
 
 /// ESLint's `sourceCode.isGlobalReference`: `e` is an identifier that refers to a global variable
-/// which the configuration defines and the file does not declare.
+/// which the file does not declare, but the configuration, a `/* global */` comment or a library of
+/// TypeScript does.
 pub fn is_global_reference(e: Expr<'_>) -> bool {
     // What only an assignment in JavaScript declares, such as `module.exports = ..`, is not declared
     // as far as ESLint is concerned.

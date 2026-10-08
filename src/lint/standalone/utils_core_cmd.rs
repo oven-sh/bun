@@ -53,7 +53,7 @@ impl<'a> Facts<'a> {
             return;
         }
         self.add("node", node, "");
-        if utils::estree_type_name(node).starts_with("JSX") {
+        if utils::estree_type_name(node).starts_with("JSX") || utils::is_in_type_query(e) {
             return;
         }
         self.add("precedence", node, ast_utils::get_precedence(e));

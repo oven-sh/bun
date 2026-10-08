@@ -17,7 +17,8 @@ use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
 use bun_sema::atom::{Intern, Interner, InternerPerThread};
-use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format_in};
+use bun_js_parser::sema::Summary;
+use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format_in, try_bind_for_format_in};
 use bun_sema::hir::Diagnostic;
 use bun_sema::resolve::Dialect;
 use bun_sema::session::Session;
@@ -80,7 +81,7 @@ fn with_file<R>(how: &How, text: &[u8], then: impl for<'a> FnOnce(&'a File<'a>, 
     let session = how.memory;
     let arena = session.arena();
     let options = language.parse_options(path);
-    bun_js_parser::sema::with_summary(
+    bun_js_parser::sema::with_summary_in_place(
         Dialect::babel(how.is_script),
         (arena, session),
         path,
@@ -90,19 +91,29 @@ fn with_file<R>(how: &How, text: &[u8], then: impl for<'a> FnOnce(&'a File<'a>, 
         options.experimental_decorators,
         options.every_file_is_a_module,
         // The names are the file's own.
-        |mut hir, atoms| {
+        |mut summary, atoms| {
+            // To tell which imports are used takes symbols.
+            let needs_symbols = how.resolved.options.sort_imports.as_deref().is_some_and(|it| it.needs_symbols());
+            let mut recycled = Recycled::of_this_thread();
+            // Where the parser has left it, if that will do.
+            if !needs_symbols
+                && let Summary::InPlace(hir) = &mut summary
+                && let Some(bound) = try_bind_for_format_in(&**hir, &mut recycled)
+            {
+                let file = File::new(path, &**hir, bound, atoms, &language, None).with_text(text);
+                return then(&file, hir.diagnostics.first());
+            }
+            let mut hir = summary.into_arena((arena, session));
             hir.text = Cow::Borrowed(text);
             let bind_options = BindOptions {
                 emit_standard_class_fields: true,
                 before_es2020: false,
                 before_es2017: false,
             };
-            // To tell which imports are used takes symbols.
-            if how.resolved.options.sort_imports.as_deref().is_some_and(|it| it.needs_symbols()) {
+            if needs_symbols {
                 let bound = bind(&hir, bind_options, atoms, arena);
                 return then(&File::new(path, &hir, &bound, atoms, &language, None), hir.diagnostics.first());
             }
-            let mut recycled = Recycled::of_this_thread();
             let bound = bind_for_format_in(&hir, bind_options, atoms, &mut recycled);
             then(&File::new(path, &hir, bound, atoms, &language, None), hir.diagnostics.first())
         },

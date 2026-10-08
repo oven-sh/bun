@@ -1,15 +1,16 @@
 //! `bun-lint tokens ..`
 //!
 //! - `dump <file>`: the tokens and the comments of a file, one per line.
-//! - `batch <cases.jsonl>`: for each line `{ path, code, ecmaVersion? }`, a line
+//! - `batch <cases.jsonl>`: for each line `{ path, code, ecmaVersion?, sourceType? }`, a line
 //!   `{ "errors": bool, "tokens": [type, start, end, ..], "comments": [..] }`. A type is an index
 //!   into `TYPES`, positions are in UTF-16 code units.
 //! - `query <cases.jsonl>`: the same with `queries: [[method, a.start, a.end, b.start, b.end, includeComments], ..]`.
 //!   A line of answers for each: the ranges of the tokens, or 0 or 1. The code has to be ASCII.
 //! - `bench <files..>`: the speed of the scan.
+//! - `fuzz <rounds> <files..>`: scans damaged copies of the files, and checks that the tokens are in order and in bounds.
 
 use bun_lint::ast::File;
-use bun_lint::language::LanguageOptions;
+use bun_lint::language::{LanguageOptions, SourceType};
 use bun_lint::options::Json;
 use bun_lint::span::Span;
 use bun_lint::tokens::{Token, TokenKind, Tokens};
@@ -56,6 +57,11 @@ fn language_of(case: &Json) -> LanguageOptions {
     if let Some(Json::Number(version)) = case.get(b"ecmaVersion") {
         language.ecma_version = *version as u32;
     }
+    language.source_type = match case.get(b"sourceType").and_then(Json::as_str) {
+        Some(b"script") => SourceType::Script,
+        Some(b"commonjs") => SourceType::CommonJs,
+        _ => SourceType::Module,
+    };
     language
 }
 
@@ -183,12 +189,75 @@ fn bench(paths: &[String]) {
     );
 }
 
+/// What is wrong with the tokens and comments of `file`, if anything.
+fn check<'a>(file: &'a File<'a>) -> Option<String> {
+    let mut end = 0;
+    for token in file.tokens().with_comments() {
+        if token.start() < end || token.end() <= token.start() || token.end() as usize > file.text().len() {
+            return Some(format!("{token:?} at {}..{} after {end}", token.start(), token.end()));
+        }
+        end = token.end();
+    }
+    None
+}
+
+fn fuzz(rounds: usize, paths: &[String]) {
+    const BYTES: &[u8] = b"<>/{}()[]`'\"$\\#*=!-.?:;,@ \n\rax0e_\xE2\x80\xA8\xC2\xA0\xFF\xF0";
+    let mut seed = 0x2545_F491_4F6C_DD1Du64;
+    let mut random = |below: usize| {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed % below.max(1) as u64) as usize
+    };
+    std::panic::set_hook(Box::new(|_| {}));
+    let (mut scanned, mut panics) = (0, 0);
+    for path in paths {
+        let Ok(original) = std::fs::read(path) else {
+            continue;
+        };
+        for _ in 0..rounds {
+            let mut code = original.clone();
+            for _ in 0..1 + random(4) {
+                let at = random(code.len());
+                let len = random(12).min(code.len() - at);
+                match random(5) {
+                    0 => drop(code.drain(at..at + len)),
+                    1 => code.truncate(at),
+                    2 => {
+                        let copy = code[at..at + len].to_vec();
+                        let to = random(code.len());
+                        code.splice(to..to, copy);
+                    }
+                    _ => {
+                        let inserted: Vec<u8> = (0..1 + random(3)).map(|_| BYTES[random(BYTES.len())]).collect();
+                        code.splice(at..at, inserted);
+                    }
+                }
+            }
+            let problem = std::panic::catch_unwind(|| crate::with_file(path, &code, &LanguageOptions::default(), check));
+            scanned += 1;
+            let problem = match problem {
+                Ok(None) => continue,
+                Ok(Some(problem)) => problem,
+                Err(_) => "panic".to_owned(),
+            };
+            panics += 1;
+            let saved = format!("fuzz-{panics}-{}", path.rsplit('/').next().unwrap_or_default());
+            let _ = std::fs::write(&saved, &code);
+            println!("{saved}: {problem}");
+        }
+    }
+    println!("{scanned} texts, {panics} problems");
+}
+
 pub(crate) fn run(args: &[String]) {
     match args {
         [command, path] if command == "dump" => dump(path),
         [command, path] if command == "batch" => batch(path),
         [command, path] if command == "query" => query(path),
         [command, paths @ ..] if command == "bench" => bench(paths),
-        _ => println!("usage: bun-lint tokens dump <file> | batch <cases.jsonl> | query <cases.jsonl> | bench <files..>"),
+        [command, rounds, paths @ ..] if command == "fuzz" => fuzz(rounds.parse().unwrap_or(1), paths),
+        _ => println!("usage: bun-lint tokens dump <file> | batch <cases.jsonl> | query <cases.jsonl> | bench <files..> | fuzz <rounds> <files..>"),
     }
 }

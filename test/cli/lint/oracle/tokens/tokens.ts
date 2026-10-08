@@ -2,7 +2,7 @@
 // JavaScript, typescript-estree for TypeScript.
 //
 //   bun tokens.ts --bin <bun-lint> --eslint <checkout> --typescript-eslint <checkout> --scratch <dir>
-//                 [--fixtures <conformance/fixtures>].. [--files <dir>].. [--jobs N] [--examples N] [--rejected] [--compare-rejected] [--parsers]
+//                 [--fixtures <conformance/fixtures>].. [--files <dir>].. [--strings-of <file.js>].. [--listed edge-cases.txt] [--jobs N] [--examples N] [--rejected] [--compare-rejected] [--parsers]
 //
 // `--rejected` lists the cases that only `bun lint` rejects, `--compare-rejected` compares them nevertheless. `--parsers` compares typescript-estree with espree on the JavaScript cases instead: how the two differ.
 import { spawnSync } from "node:child_process";
@@ -66,7 +66,7 @@ function run(cases: Case[], name: string): Result {
     });
   } else {
     const input = join(scratch, `cases-${name}.jsonl`);
-    writeFileSync(input, accepted.map(({ it }) => JSON.stringify({ path: it.path, code: it.code, ecmaVersion: it.ecmaVersion }) + "\n").join(""));
+    writeFileSync(input, accepted.map(({ it }) => JSON.stringify({ path: it.path, code: it.code, ecmaVersion: it.ecmaVersion, sourceType: it.sourceType }) + "\n").join(""));
     const ran = spawnSync(option(args, "--bin")!, ["tokens", "batch", input], { maxBuffer: 1 << 30, encoding: "utf8" });
     const lines = ran.stdout.split("\n").filter(Boolean);
     if (lines.length !== accepted.length) {

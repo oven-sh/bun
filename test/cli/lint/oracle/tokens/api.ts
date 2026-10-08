@@ -2,7 +2,7 @@
 // text, every method is called with nodes, tokens and comments of it, and with pairs of them.
 //
 //   bun api.ts --bin <bun-lint> --eslint <checkout> --typescript-eslint <checkout> --scratch <dir>
-//              [--fixtures <conformance/fixtures>].. [--files <dir>].. [--jobs N] [--examples N]
+//              [--fixtures <conformance/fixtures>].. [--files <dir>].. [--strings-of <file.js>].. [--listed edge-cases.txt] [--jobs N] [--examples N]
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -116,7 +116,7 @@ function run(cases: Case[], name: string): Result {
     asked.push({ it, ...ask(new SourceCode({ text: it.code, ast }), ast, seed) });
   });
   const input = join(scratch, `queries-${name}.jsonl`);
-  writeFileSync(input, asked.map(({ it, queries }) => JSON.stringify({ path: it.path, code: it.code, ecmaVersion: it.ecmaVersion, queries }) + "\n").join(""));
+  writeFileSync(input, asked.map(({ it, queries }) => JSON.stringify({ path: it.path, code: it.code, ecmaVersion: it.ecmaVersion, sourceType: it.sourceType, queries }) + "\n").join(""));
   const ran = spawnSync(option(args, "--bin")!, ["tokens", "query", input], { maxBuffer: 1 << 30, encoding: "utf8" });
   const lines = ran.stdout.split("\n").filter(Boolean);
   if (lines.length !== asked.length) throw new Error(`bun-lint stopped (${ran.signal ?? ran.status}) at ${asked[lines.length]?.it.id}\n${ran.stderr.slice(-2000)}`);

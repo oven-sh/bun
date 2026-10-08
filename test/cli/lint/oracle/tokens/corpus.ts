@@ -65,6 +65,51 @@ export function fileCases(root: string): Case[] {
   return cases;
 }
 
+/**
+ * The strings in a JavaScript file, each as a source text. For ESLint's own tests of `SourceCode`
+ * (`tests/lib/languages/js/source-code/*.js`), whose inputs are strings in the test file. Those that are not code are
+ * dropped later, when the parser rejects them.
+ */
+export function stringCases(file: string, espree: any): Case[] {
+  const cases: Case[] = [];
+  const visit = (node: any) => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) return node.forEach(visit);
+    const code =
+      node.type === "Literal" ? node.value : node.type === "TemplateLiteral" && node.quasis.length === 1 ? node.quasis[0].value.cooked : null;
+    if (typeof code === "string" && code.length > 2) {
+      cases.push({ id: `${file}:${node.loc.start.line}`, path: "file.js", code, parser: "espree", ecmaVersion: LATEST, sourceType: "module", jsx: true });
+    }
+    for (const key in node) visit(node[key]);
+  };
+  visit(espree.parse(readFileSync(file, "utf8"), { ecmaVersion: "latest", sourceType: "script", loc: true }));
+  return cases;
+}
+
+/** The texts of a file like `edge-cases.txt`, which explains the format. */
+export function listedCases(file: string): Case[] {
+  const cases: Case[] = [];
+  let path = "file.js";
+  let sourceType: Case["sourceType"] = "module";
+  readFileSync(file, "utf8")
+    .split("\n")
+    .forEach((line, index) => {
+      if (line === "" || line.startsWith("# ")) return;
+      if (line.startsWith("=== ")) {
+        const words = line.split(" ");
+        path = words[1];
+        sourceType = words[2] === "script" ? "script" : path.endsWith(".cjs") ? "commonjs" : "module";
+        return;
+      }
+      const code = line.replace(/\\(n|r|\\|u[0-9a-f]{4})/g, (_, it) =>
+        it === "n" ? "\n" : it === "r" ? "\r" : it === "\\" ? "\\" : String.fromCharCode(parseInt(it.slice(1), 16)),
+      );
+      const isJs = /\.[cm]?jsx?$/.test(path);
+      cases.push({ id: `${file}:${index + 1}`, path, code, parser: isJs ? "espree" : "typescript", ecmaVersion: LATEST, sourceType, jsx: isJs || path.endsWith("x") });
+    });
+  return cases;
+}
+
 /** Without the cases that only repeat the input of another. ESLint removes a BOM before it parses. */
 export function prepare(cases: Case[]): Case[] {
   const seen = new Set<string>();
@@ -75,12 +120,14 @@ export function prepare(cases: Case[]): Case[] {
   });
 }
 
-/** `--fixtures <dir>` and `--files <dir>`, each any number of times. */
+/** `--fixtures <dir>`, `--files <dir>`, `--strings-of <file>` and `--listed <file>`, each any number of times. */
 export function casesFromArguments(args: string[]): Case[] {
   const cases: Case[] = [];
   args.forEach((arg, i) => {
     if (arg === "--fixtures") cases.push(...fixtureCases(args[i + 1]));
     if (arg === "--files") cases.push(...fileCases(args[i + 1]));
+    if (arg === "--listed") cases.push(...listedCases(args[i + 1]));
+    if (arg === "--strings-of") cases.push(...stringCases(args[i + 1], loadParsers(args).espree));
   });
   return prepare(cases);
 }
@@ -129,5 +176,7 @@ export function parse(parsers: Parsers, it: Case, parser = it.parser): any {
         });
   // As the constructor of `SourceCode` does.
   if (text !== it.code && ast.comments.length > 0) ast.comments[0].type = "Shebang";
+  // What espree makes of a `#!` with nothing after it, which ESLint leaves alone.
+  if (ast.comments[0]?.type === "Hashbang") ast.comments[0].type = "Shebang";
   return ast;
 }

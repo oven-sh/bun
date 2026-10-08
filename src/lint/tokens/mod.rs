@@ -146,7 +146,8 @@ pub enum TokenKind {
     RegularExpression,
     String,
     Template,
-    /// `// ..`
+    /// `// ..`. In a JavaScript file that is not a module also `<!-- ..` and, at the start of a
+    /// line, `--> ..`.
     Line,
     /// `/* .. */`
     Block,
@@ -213,6 +214,8 @@ impl<'a> Token<'a> {
     pub fn comment_value(self) -> &'a [u8] {
         let span = match self.raw.kind {
             TokenKind::Block => self.span().shrink(2, 2),
+            TokenKind::Line if self.text().starts_with(b"<!--") => self.span().shrink(4, 0),
+            TokenKind::Line if self.text().starts_with(b"-->") => self.span().shrink(3, 0),
             TokenKind::Line | TokenKind::Shebang => self.span().shrink(2, 0),
             _ => self.span(),
         };

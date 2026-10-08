@@ -14,7 +14,9 @@ use super::{RawToken, TokenKind, TokenStore, skip_trivia, skip_trivia_back};
 use crate::ast::File;
 use bun_core::{lexer, strings};
 use bun_sema::atom::known;
-use bun_sema::hir::{self, BinOp, ExprKind, Flags, MemberKind, ModifierKind, NameKind, PropKey, StmtKind};
+use bun_sema::hir::{
+    self, BinOp, ExprKind, Flags, MemberKind, ModifierKind, NameKind, PropKey, StmtKind, TypeNodeKind,
+};
 
 /// The two parsers agree on where every token is. They disagree on the type of some words.
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -23,6 +25,8 @@ enum Dialect {
     /// - `static`, `let` and `yield` are a `Keyword` wherever they are, even as the name of a
     ///   property. Up to ES5 only `static` is.
     /// - Every name in a JSX tag is a `JSXIdentifier`.
+    /// - Unless the file is a module, `<!--` starts a comment, and so does `-->` at the start of a
+    ///   line.
     Espree { is_es5: bool },
     /// TypeScript files: typescript-estree.
     /// - `implements`, `interface`, `let`, `package`, `private`, `protected`, `public`, `static`
@@ -30,6 +34,7 @@ enum Dialect {
     /// - In a JSX tag `this` is a `Keyword`, and both names of `a:b` are an `Identifier`.
     /// - Anywhere inside a JSX element, the `a` and the `b` of the expression `a.b` are a
     ///   `JSXIdentifier`.
+    /// - A `#!` with nothing after it on its line is not a comment.
     TypeScript,
 }
 
@@ -97,6 +102,7 @@ fn operator_after(text: &[u8], mut at: u32) -> u32 {
 }
 
 impl Marks {
+    #[inline(never)]
     fn new(file: &File, dialect: Dialect) -> Marks {
         let (hir, text) = (&file.hir, file.text());
         let is_typescript = dialect == Dialect::TypeScript;
@@ -157,12 +163,6 @@ impl Marks {
             marks.name(text, spec.local_pos);
             marks.name(text, spec.pos);
         }
-        for elem in hir.tuple_elems {
-            if elem.name.is_some() {
-                let start = if elem.has_dots { skip_trivia(text, elem.start + 3) } else { elem.start };
-                marks.name(text, start);
-            }
-        }
         for stmt in hir.stmts {
             if let StmtKind::ExportStar { alias, alias_pos, .. } = stmt.kind
                 && alias.is_some()
@@ -170,20 +170,12 @@ impl Marks {
                 marks.name(text, alias_pos);
             }
         }
-        for pat in hir.pats {
-            // `function f(this: T) {}`
-            if matches!(pat.kind, hir::PatKind::Ident(known::this)) {
-                marks.names.push(pat.pos);
-            }
-        }
-        for name in hir.names {
-            // `typeof this.a`
-            if name.text == known::this && !name.is_qualified() {
-                marks.names.push(name.pos());
-            }
-        }
         if is_typescript {
+            marks.names_of_typescript(file);
             marks.strict_mode_keywords(file);
+        }
+        if marks_accesses {
+            marks.accesses_in_types(file);
         }
         if !marks.regexes.is_sorted() {
             marks.regexes.sort_unstable();
@@ -203,11 +195,60 @@ impl Marks {
     /// Marks the name at `at` if it is a reserved word.
     #[inline]
     fn name(&mut self, text: &[u8], at: u32) {
-        let rest = text.get(at as usize..).unwrap_or_default();
-        if rest.first().is_some_and(|&first| STARTS_RESERVED_WORD[first as usize]) {
-            let word = &rest[..rest.iter().take(11).take_while(|&&b| IDENTIFIER_PART[b as usize]).count()];
-            if !matches!(Word::of(word), Word::Name | Word::Strict | Word::StrictAndEspree) {
-                self.names.push(at);
+        let len = Chunk::at(text, at as usize).count(identifier_parts);
+        let word = text.get(at as usize..at as usize + len).unwrap_or_default();
+        if !matches!(Word::of(word), Word::Name | Word::Strict | Word::StrictAndEspree) {
+            self.names.push(at);
+        }
+    }
+
+    /// `A.B` in a type is not an expression, with two exceptions.
+    fn accesses_in_types(&mut self, file: &File) {
+        let hir = &file.hir;
+        let names = |names: hir::Span<hir::NameId>| hir.names.get(names.range()).unwrap_or_default().iter();
+        // The operand of `typeof a.b` is an expression in the HIR only.
+        let mut operands = Vec::new();
+        for ty in hir.types {
+            if let TypeNodeKind::Typeof { name, .. } = ty.kind {
+                operands.extend(names(name).map(|name| name.pos()));
+            }
+        }
+        if !operands.is_empty() {
+            operands.sort_unstable();
+            self.accesses.list.retain(|at| operands.binary_search(at).is_err());
+        }
+        // What a class implements and what an interface extends is an expression for TypeScript.
+        let of_classes = hir.classes.iter().flat_map(|it| [it.implements, it.other_implements]);
+        let of_interfaces = hir.interfaces.iter().flat_map(|it| [it.extends, it.other_heritage]);
+        for list in of_classes.chain(of_interfaces) {
+            for &ty in hir.ids.get(list.range()).unwrap_or_default() {
+                if let Some(TypeNodeKind::Ref { name, .. }) = hir.types.get(ty as usize).map(|ty| ty.kind)
+                    && name.len() > 1
+                {
+                    self.accesses.list.extend(names(name).map(|name| name.pos()));
+                }
+            }
+        }
+    }
+
+    fn names_of_typescript(&mut self, file: &File) {
+        let (hir, text) = (&file.hir, file.text());
+        for elem in hir.tuple_elems {
+            if elem.name.is_some() {
+                let start = if elem.has_dots { skip_trivia(text, elem.start + 3) } else { elem.start };
+                self.name(text, start);
+            }
+        }
+        for pat in hir.pats {
+            // `function f(this: T) {}`
+            if matches!(pat.kind, hir::PatKind::Ident(known::this)) {
+                self.names.push(pat.pos);
+            }
+        }
+        for name in hir.names {
+            // `typeof this.a`
+            if name.text == known::this && !name.is_qualified() {
+                self.names.push(name.pos());
             }
         }
     }
@@ -267,26 +308,70 @@ impl Marks {
     }
 }
 
-const fn table(is: [&[u8]; 2]) -> [bool; 256] {
-    let mut table = [false; 256];
-    let mut i = 0;
-    while i < is.len() {
-        let mut j = 0;
-        while j < is[i].len() {
-            table[is[i][j] as usize] = true;
-            j += 1;
-        }
-        i += 1;
-    }
-    table
+const ONES: u64 = 0x0101_0101_0101_0101;
+const HIGH_BITS: u64 = ONES * 0x80;
+
+/// For 8 bytes that are all below 0x80: the high bit of each that is `byte`.
+#[inline]
+const fn equal_to(bytes: u64, byte: u8) -> u64 {
+    !((bytes ^ (ONES * byte as u64)) + ONES * 0x7F)
+}
+
+/// The same for each that is in `first..=last`.
+#[inline]
+const fn between(bytes: u64, first: u8, last: u8) -> u64 {
+    (bytes + ONES * (0x80 - first as u64)) & !(bytes + ONES * (0x7F - last as u64))
 }
 
 /// The ASCII characters that continue an identifier.
-const IDENTIFIER_PART: [bool; 256] =
-    table([b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ", b"0123456789_$"]);
+#[inline]
+const fn identifier_parts(bytes: u64) -> u64 {
+    between(bytes | (ONES * 0x20), b'a', b'z') | between(bytes, b'0', b'9') | equal_to(bytes, b'_') | equal_to(bytes, b'$')
+}
 
-/// The first letters of the words that [`Word::of`] knows.
-const STARTS_RESERVED_WORD: [bool; 256] = table([b"bcdefilnprstvwy", b""]);
+/// The whitespace of ASCII, and the control characters, which are in no token.
+#[inline]
+const fn blanks(bytes: u64) -> u64 {
+    !(bytes + ONES * (0x7F - b' ' as u64))
+}
+
+/// 16 bytes of the text, to classify at once: a loop over the bytes of a word or of an indentation
+/// ends in a branch that the processor cannot predict.
+#[derive(Copy, Clone)]
+struct Chunk(u64, u64);
+
+impl Chunk {
+    const LEN: usize = 16;
+
+    /// The bytes from `at`. Zeros after the end of the text.
+    #[inline]
+    fn at(text: &[u8], at: usize) -> Chunk {
+        match text.get(at..).and_then(|rest| rest.first_chunk::<16>()) {
+            Some(bytes) => {
+                let bytes = u128::from_le_bytes(*bytes);
+                Chunk(bytes as u64, (bytes >> 64) as u64)
+            }
+            None => Chunk::at_end(text, at),
+        }
+    }
+
+    #[cold]
+    fn at_end(text: &[u8], at: usize) -> Chunk {
+        let (rest, mut bytes) = (text.get(at..).unwrap_or_default(), [0; 16]);
+        bytes[..rest.len()].copy_from_slice(rest);
+        let bytes = u128::from_le_bytes(bytes);
+        Chunk(bytes as u64, (bytes >> 64) as u64)
+    }
+
+    /// How many bytes from the start are of a class of ASCII characters. `class` gets 8 bytes with
+    /// their high bits cleared and sets the high bit of each that is of the class.
+    #[inline]
+    fn count(self, class: impl Fn(u64) -> u64) -> usize {
+        let others = |bytes: u64| !(class(bytes & !HIGH_BITS) & !bytes) & HIGH_BITS;
+        let (first, second) = (others(self.0).trailing_zeros() / 8, others(self.1).trailing_zeros() / 8);
+        (first + if first == 8 { second } else { 0 }) as usize
+    }
+}
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Word {
@@ -298,28 +383,87 @@ enum Word {
     Enum,
     Null,
     Boolean,
-    /// `let`, `static`, `yield`
+    /// Reserved in strict mode, and what espree always takes for a keyword.
     StrictAndEspree,
     /// Reserved in strict mode.
     Strict,
 }
 
 impl Word {
+    const ALL: [(&'static [u8], Word); 45] = [
+        (b"break", Word::Reserved),
+        (b"case", Word::Reserved),
+        (b"catch", Word::Reserved),
+        (b"class", Word::ReservedSinceEs6),
+        (b"const", Word::ReservedSinceEs6),
+        (b"continue", Word::Reserved),
+        (b"debugger", Word::Reserved),
+        (b"default", Word::Reserved),
+        (b"delete", Word::Reserved),
+        (b"do", Word::Reserved),
+        (b"else", Word::Reserved),
+        (b"enum", Word::Enum),
+        (b"export", Word::ReservedSinceEs6),
+        (b"extends", Word::ReservedSinceEs6),
+        (b"false", Word::Boolean),
+        (b"finally", Word::Reserved),
+        (b"for", Word::Reserved),
+        (b"function", Word::Reserved),
+        (b"if", Word::Reserved),
+        (b"implements", Word::Strict),
+        (b"import", Word::ReservedSinceEs6),
+        (b"in", Word::Reserved),
+        (b"instanceof", Word::Reserved),
+        (b"interface", Word::Strict),
+        (b"let", Word::StrictAndEspree),
+        (b"new", Word::Reserved),
+        (b"null", Word::Null),
+        (b"package", Word::Strict),
+        (b"private", Word::Strict),
+        (b"protected", Word::Strict),
+        (b"public", Word::Strict),
+        (b"return", Word::Reserved),
+        (b"static", Word::StrictAndEspree),
+        (b"super", Word::ReservedSinceEs6),
+        (b"switch", Word::Reserved),
+        (b"this", Word::Reserved),
+        (b"throw", Word::Reserved),
+        (b"true", Word::Boolean),
+        (b"try", Word::Reserved),
+        (b"typeof", Word::Reserved),
+        (b"var", Word::Reserved),
+        (b"void", Word::Reserved),
+        (b"while", Word::Reserved),
+        (b"with", Word::Reserved),
+        (b"yield", Word::StrictAndEspree),
+    ];
+
+    /// No two of `ALL` have the same.
+    #[inline]
+    const fn hash(first: u8, second: u8, len: usize) -> usize {
+        (first as usize * 11 + second as usize * 123 + len) % 128
+    }
+
+    const BY_HASH: [(&'static [u8], Word); 128] = {
+        let mut table: [(&[u8], Word); 128] = [(b"", Word::Name); 128];
+        let mut i = 0;
+        while i < Word::ALL.len() {
+            let word = Word::ALL[i].0;
+            let hash = Word::hash(word[0], word[1], word.len());
+            assert!(table[hash].0.is_empty());
+            table[hash] = Word::ALL[i];
+            i += 1;
+        }
+        table
+    };
+
     #[inline]
     fn of(word: &[u8]) -> Word {
-        match word {
-            b"break" | b"case" | b"catch" | b"continue" | b"debugger" | b"default" | b"delete" | b"do"
-            | b"else" | b"finally" | b"for" | b"function" | b"if" | b"in" | b"instanceof" | b"new"
-            | b"return" | b"switch" | b"this" | b"throw" | b"try" | b"typeof" | b"var" | b"void"
-            | b"while" | b"with" => Word::Reserved,
-            b"class" | b"const" | b"export" | b"extends" | b"import" | b"super" => Word::ReservedSinceEs6,
-            b"enum" => Word::Enum,
-            b"null" => Word::Null,
-            b"true" | b"false" => Word::Boolean,
-            b"let" | b"static" | b"yield" => Word::StrictAndEspree,
-            b"implements" | b"interface" | b"package" | b"private" | b"protected" | b"public" => Word::Strict,
-            _ => Word::Name,
-        }
+        let &[first, second, ..] = word else {
+            return Word::Name;
+        };
+        let (candidate, kind) = Word::BY_HASH[Word::hash(first, second, word.len())];
+        if candidate == word { kind } else { Word::Name }
     }
 }
 
@@ -361,6 +505,8 @@ struct Scanner<'a> {
     comments: Vec<RawToken>,
     marks: Marks,
     dialect: Dialect,
+    /// `<!--` and `-->` start a comment.
+    has_html_comments: bool,
     frames: Vec<Frame>,
     /// The `{` that are open in the innermost frame.
     braces: u32,
@@ -385,6 +531,7 @@ pub(super) fn scan(file: &File) -> TokenStore {
         comments: Vec::new(),
         marks: Marks::new(file, dialect),
         dialect,
+        has_html_comments: file.is_javascript() && !file.is_module(),
         frames: Vec::new(),
         braces: 0,
         angles: 0,
@@ -392,6 +539,9 @@ pub(super) fn scan(file: &File) -> TokenStore {
     };
     if text.starts_with(b"#!") {
         scanner.line_comment(TokenKind::Shebang);
+        if scanner.at == 2 && dialect == Dialect::TypeScript {
+            scanner.comments.clear();
+        }
     }
     let mut mode = Mode::Code;
     while scanner.at < text.len() {
@@ -450,11 +600,22 @@ impl Scanner<'_> {
     /// Tokens of JavaScript and TypeScript, until something else starts or continues.
     fn code(&mut self) -> Mode {
         let text = self.text;
-        while let Some(&first) = text.get(self.at) {
-            let at = self.at;
+        loop {
+            let mut at = self.at;
+            loop {
+                let blank = Chunk::at(text, at).count(blanks);
+                at += blank;
+                if blank < Chunk::LEN || at >= text.len() {
+                    break;
+                }
+            }
+            let Some(&first) = text.get(at) else {
+                self.at = text.len();
+                return Mode::Code;
+            };
+            self.at = at;
             let next = self.byte(at + 1);
             match first {
-                b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C => self.at += 1,
                 b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' | b'\\' => self.word(),
                 b'(' | b')' | b'[' | b']' | b';' | b',' | b':' | b'~' | b'@' => self.punctuator(1),
                 b'{' => {
@@ -492,6 +653,9 @@ impl Scanner<'_> {
                     (b'=', _) => 2,
                     _ => 1,
                 }),
+                b'-' if next == b'-' && self.has_html_comments && self.is_html_close_comment() => {
+                    self.line_comment(TokenKind::Line);
+                }
                 b'+' | b'-' => self.punctuator(if next == first || next == b'=' { 2 } else { 1 }),
                 b'%' | b'^' => self.punctuator(if next == b'=' { 2 } else { 1 }),
                 b'*' | b'&' | b'|' => self.punctuator(match (next, self.byte(at + 2)) {
@@ -514,6 +678,9 @@ impl Scanner<'_> {
                         None => self.punctuator(if next == b'=' { 2 } else { 1 }),
                     },
                 },
+                b'<' if next == b'!' && self.has_html_comments && text[at..].starts_with(b"<!--") => {
+                    self.line_comment(TokenKind::Line);
+                }
                 b'<' => {
                     if self.marks.elements.has(at) {
                         self.punctuator(1);
@@ -553,7 +720,22 @@ impl Scanner<'_> {
                 _ => self.at += 1,
             }
         }
-        Mode::Code
+    }
+
+    /// At `--`: whether a `>` follows and no token precedes on the line.
+    #[cold]
+    fn is_html_close_comment(&self) -> bool {
+        let Some(last) = self.tokens.last() else {
+            return self.byte(self.at + 2) == b'>';
+        };
+        let mut between = &self.text[last.end as usize..self.at];
+        while let Some(found) = strings::index_of_any(between, b"\n\r\xE2") {
+            if lexer::starts_with_line_break(&between[found..]) {
+                return self.byte(self.at + 2) == b'>';
+            }
+            between = &between[found + 1..];
+        }
+        false
     }
 
     /// At a character that is not ASCII: whitespace, or the start of an identifier.
@@ -576,21 +758,24 @@ impl Scanner<'_> {
     }
 
     /// An identifier or a keyword.
-    #[inline]
+    #[inline(always)]
     fn word(&mut self) {
         let (text, start) = (self.text, self.at);
         let mut end = start;
-        while let Some(&b) = text.get(end)
-            && IDENTIFIER_PART[b as usize]
-        {
-            end += 1;
+        loop {
+            let parts = Chunk::at(text, end).count(identifier_parts);
+            end += parts;
+            if parts < Chunk::LEN {
+                break;
+            }
         }
         if matches!(text.get(end), Some(b'\\' | 0x80..)) {
             return self.unusual_word(end);
         }
         let mut kind = TokenKind::Identifier;
-        if STARTS_RESERVED_WORD[text[start] as usize] && end - start <= 10 {
-            kind = self.kind_of_word(Word::of(&text[start..end]));
+        let word = Word::of(&text[start..end]);
+        if word != Word::Name {
+            kind = self.kind_of_word(word);
         }
         if kind == TokenKind::Identifier && self.elements > 0 && self.marks.accesses.has(start) {
             kind = TokenKind::JsxIdentifier;
@@ -694,16 +879,22 @@ impl Scanner<'_> {
     fn string(&mut self, quote: u8) {
         let (text, start) = (self.text, self.at);
         let mut end = start + 1;
-        while let Some(&b) = text.get(end) {
-            end += 1;
-            match b {
-                b'\\' => end += if text[end..].starts_with(b"\r\n") { 2 } else { 1 },
-                b'\n' | b'\r' => {
-                    end -= 1;
+        loop {
+            let plain = Chunk::at(text, end).count(|bytes| {
+                !(equal_to(bytes, quote) | equal_to(bytes, b'\\') | equal_to(bytes, b'\n') | equal_to(bytes, b'\r') | equal_to(bytes, 0))
+            });
+            end += plain;
+            if plain == Chunk::LEN {
+                continue;
+            }
+            match text.get(end) {
+                Some(b'\\') => end += if text[end + 1..].starts_with(b"\r\n") { 3 } else { 2 },
+                Some(0 | 0x80..) => end += 1,
+                Some(&b) => {
+                    end += usize::from(b == quote);
                     break;
                 }
-                _ if b == quote => break,
-                _ => {}
+                None => break,
             }
         }
         self.token(TokenKind::String, start, end);

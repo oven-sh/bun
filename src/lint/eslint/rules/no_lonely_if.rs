@@ -14,8 +14,8 @@ fn fix<'a>(fixer: Fixer<'a>, node: Stmt<'a>, block: Stmt<'a>) -> Option<Fix> {
     };
     let (outer, inner) = (block.span(), node.span());
     // Comments would be lost.
-    if !text::is_blank(file.slice(Span::new(outer.start + 1, inner.start)))
-        || !text::is_blank(file.slice(Span::new(inner.end, outer.end - 1)))
+    if !text::is_blank(file.slice(Span::before(outer.start + 1, inner)))
+        || !text::is_blank(file.slice(Span::after(inner, outer.end - 1)))
     {
         return None;
     }
@@ -31,7 +31,7 @@ fn fix<'a>(fixer: Fixer<'a>, node: Stmt<'a>, block: Stmt<'a>) -> Option<Fix> {
         // No semicolon would be inserted after the `if` statement any more.
         return None;
     }
-    let is_next_to_else = file.slice(Span::new(0, outer.start)).ends_with(b"else");
+    let is_next_to_else = file.slice(Span::before(0, outer)).ends_with(b"else");
     let separator: &[u8] = if is_next_to_else { b" " } else { b"" };
     Some(fixer.replace(outer, [separator, node.text()].concat()))
 }

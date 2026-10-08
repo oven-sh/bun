@@ -159,17 +159,21 @@ fn previous_statement(statement: Stmt<'_>) -> Option<Stmt<'_>> {
     if statement.is_exported() {
         return None;
     }
-    let body = match statement.parent() {
-        Node::File(file) => file.body(),
-        Node::Func(func) => func.body_statements()?,
+    body_of(statement.parent())?.before(statement.span().start)
+}
+
+/// `parent.body`, if that is a list of statements.
+pub(super) fn body_of(parent: Node<'_>) -> Option<List<'_, Stmt<'_>>> {
+    match parent {
+        Node::File(file) => Some(file.body()),
+        Node::Func(func) => func.body_statements(),
         Node::Stmt(parent) => match parent.kind() {
-            StmtKind::Block(body) => body,
-            StmtKind::Module(module) => module.body(),
-            _ => return None,
+            StmtKind::Block(body) => Some(body),
+            StmtKind::Module(module) => Some(module.body()),
+            _ => None,
         },
-        _ => return None,
-    };
-    body.before(statement.span().start)
+        _ => None,
+    }
 }
 
 /// The `VariableDeclaration` of the same kind right before `statement`.

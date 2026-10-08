@@ -80,9 +80,9 @@ impl WrapIife {
                 // The parentheses are only around the call: the `)` moves to the function.
                 let file = fixer.file();
                 let paren_after = skip_trivia(file.text(), e.span().end);
-                let moved = file.slice(Span::new(inner.span().end, paren_after));
+                let moved = file.slice(Span::after(inner.span(), paren_after));
                 fixer.replace(
-                    Span::new(inner.span().end, paren_after + 1),
+                    Span::after(inner.span(), paren_after + 1),
                     [&b")"[..], moved].concat(),
                 )
             });

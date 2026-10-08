@@ -96,8 +96,8 @@ fn check(mode: Mode, last: LastItem, cx: &Cx<'_, CommaDangle>) {
             });
         }
     } else if !has_comma {
-        cx.report(Span::new(last.end, next_location(source, last.end)), MISSING).fix(|fixer| {
-            let at = Span::empty(last.end);
+        let at = Span::empty(last.end);
+        cx.report(Span::after(at, next_location(source, last.end)), MISSING).fix(|fixer| {
             let (trailing, next) = (file.token_before(at)?, file.token_after(at)?);
             Some([
                 fixer.insert_after(trailing, ","),

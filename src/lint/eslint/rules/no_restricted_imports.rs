@@ -136,18 +136,18 @@ impl NamePattern {
         let (mut is_escaped, mut is_in_class) = (false, false);
         for c in source.chars() {
             let escape = match c {
-                '\n' => "n",
-                '\r' => "r",
-                '\u{2028}' => "u2028",
-                '\u{2029}' => "u2029",
-                _ => "",
+                '\n' => Some("n"),
+                '\r' => Some("r"),
+                '\u{2028}' => Some("u2028"),
+                '\u{2029}' => Some("u2029"),
+                _ => None,
             };
-            if !is_escaped && (!escape.is_empty() || c == '/' && !is_in_class) {
+            if !is_escaped && (escape.is_some() || c == '/' && !is_in_class) {
                 text.push(b'\\');
             }
             match escape {
-                "" => text.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
-                _ => text.extend_from_slice(escape.as_bytes()),
+                Some(escape) => text.extend_from_slice(escape.as_bytes()),
+                None => text.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
             }
             match c {
                 _ if is_escaped => is_escaped = false,

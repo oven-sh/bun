@@ -76,7 +76,7 @@ fn gaps(elements: impl Iterator<Item = Option<Element>>) -> impl Iterator<Item =
     let mut previous: Option<Element> = None;
     elements.filter_map(move |element| {
         let before = std::mem::replace(&mut previous, element)?;
-        Some(Span::new(before.outer.end, element?.outer.start))
+        Some(before.outer.between(element?.outer))
     })
 }
 

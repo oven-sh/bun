@@ -44,7 +44,7 @@ impl TemplateTagSpacing {
             Some(type_args) => type_args.end,
             None => call.callee().outer_span().end,
         };
-        let between = Span::new(tag_end, literal.span().start);
+        let between = Span::before(tag_end, literal.span());
         let has_whitespace = has_whitespace(cx.file(), between);
         if self.is_never && has_whitespace {
             cx.report(between, UNEXPECTED).fix(|fixer| {

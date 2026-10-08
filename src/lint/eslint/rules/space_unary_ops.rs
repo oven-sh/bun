@@ -61,7 +61,7 @@ impl SpaceUnaryOps {
         } else if second > first.end && can_be_adjacent(cx.file(), first.start, second) {
             cx.report(e, UNEXPECTED_AFTER_WORD)
                 .data("word", word)
-                .fix(|fixer| fixer.remove(Span::new(first.end, second)));
+                .fix(|fixer| fixer.remove(Span::after(first, second)));
         }
     }
 
@@ -82,7 +82,7 @@ impl SpaceUnaryOps {
         } else if second > first.end {
             cx.report(e, UNEXPECTED_AFTER).data("operator", operator).fix(|fixer| {
                 can_be_adjacent(fixer.file(), first.start, second)
-                    .then(|| fixer.remove(Span::new(first.end, second)))
+                    .then(|| fixer.remove(Span::after(first, second)))
             });
         }
     }
@@ -102,7 +102,7 @@ impl SpaceUnaryOps {
         } else if second.start > first_end {
             cx.report(e, UNEXPECTED_BEFORE)
                 .data("operator", operator)
-                .fix(|fixer| fixer.remove(Span::new(first_end, second.start)));
+                .fix(|fixer| fixer.remove(Span::before(first_end, second)));
         }
     }
 

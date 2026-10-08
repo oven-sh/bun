@@ -192,7 +192,7 @@ fn is_free_before<'a>(file: &'a File<'a>, comment: Token<'a>, line: u32) -> bool
     }
     // The last that ends on `line` or above, and the one after it, which can start on `line`.
     let is_on_line = |other: Token<'a>| file.line_of(other.end()) == line || file.line_of(other.start()) == line;
-    let above = file.comments_in(Span::new(0, file.line_span(line + 1).start)).next_back();
+    let above = file.comments_in(Span::before(0, file.line_span(line + 1))).next_back();
     let next = file.comments_in(Span::new(above.map_or(0, Token::end), comment.start())).next();
     above.is_some_and(is_on_line) || next.is_some_and(is_on_line)
 }

@@ -1,4 +1,4 @@
-use super::accessor_pairs::{MAX_KEYS_TO_COMPARE_IN_PAIRS, key_groups};
+use super::accessor_pairs::{self, MAX_KEYS_TO_COMPARE_IN_PAIRS, key_groups};
 use bun_lint::prelude::*;
 use smallvec::SmallVec;
 
@@ -35,32 +35,21 @@ struct Accessor<'a> {
 }
 
 impl<'a> Accessor<'a> {
-    fn of_member(index: usize, member: Member<'a>) -> Option<Self> {
-        let is_getter = match member.kind() {
-            MemberKind::Getter => true,
-            MemberKind::Setter => false,
-            _ => return None,
-        };
-        Some(Accessor {
+    fn at(index: usize, accessor: accessor_pairs::Accessor<'a>) -> Self {
+        Accessor {
             index,
-            is_getter,
-            key: member.key()?,
-            func: member.func()?,
-        })
+            is_getter: accessor.is_getter,
+            key: accessor.key,
+            func: accessor.func,
+        }
+    }
+
+    fn of_member(index: usize, member: Member<'a>) -> Option<Self> {
+        accessor_pairs::Accessor::of_member(member).map(|it| Accessor::at(index, it))
     }
 
     fn of_prop(index: usize, prop: Prop<'a>) -> Option<Self> {
-        let is_getter = match prop.kind() {
-            PropKind::Getter => true,
-            PropKind::Setter => false,
-            _ => return None,
-        };
-        Some(Accessor {
-            index,
-            is_getter,
-            key: prop.key()?,
-            func: prop.func()?,
-        })
+        accessor_pairs::Accessor::of_prop(prop).map(|it| Accessor::at(index, it))
     }
 }
 

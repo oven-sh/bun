@@ -71,7 +71,7 @@ impl NewlineAfterVar {
         // A semicolon on a line of its own, as some write before a `(`, counts as what follows.
         let (last_end, next_start) = match (statement.semicolon(), declarations.last()) {
             (Some(semicolon), Some(last))
-                if text::has_line_break(file.slice(Span::new(last.span().end, semicolon.start))) =>
+                if text::has_line_break(file.slice(last.span().between(semicolon))) =>
             {
                 (last.span().end, semicolon.start)
             }

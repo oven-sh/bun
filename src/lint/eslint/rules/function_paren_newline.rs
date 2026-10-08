@@ -111,8 +111,8 @@ impl FunctionParenNewline {
             return;
         }
 
-        let after_left = Span::new(left.end, skip_trivia(file.text(), left.end));
-        let before_right = Span::new(before_right, right.start);
+        let after_left = Span::after(left, skip_trivia(file.text(), left.end));
+        let before_right = Span::before(before_right, right);
         let has_left_newline = text::has_line_break(file.slice(after_left));
         let has_right_newline = text::has_line_break(file.slice(before_right));
         let elements: SmallVec<[Span; 8]> = elements.collect();

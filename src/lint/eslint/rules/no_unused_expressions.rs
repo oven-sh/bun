@@ -111,7 +111,17 @@ fn is_in_directive_prologue<'a>(statement: Stmt<'a>, known: &mut Prologue<'a>) -
     if let Some((_, end)) = known.0.filter(|it| it.0 == parent) {
         return statement.span().start < end;
     }
-    let siblings = match parent {
+    let Some(siblings) = body_with_directives(parent) else {
+        return false;
+    };
+    let end = siblings.iter().find(|it| !looks_like_directive(*it)).map_or(u32::MAX, |it| it.span().start);
+    known.0 = Some((parent, end));
+    statement.span().start < end
+}
+
+/// The body of a program, a function or a namespace: what can start with directives.
+pub(super) fn body_with_directives(parent: Node<'_>) -> Option<List<'_, Stmt<'_>>> {
+    match parent {
         Node::File(file) => Some(file.body()),
         Node::Func(func) => func.body_statements(),
         Node::Stmt(parent) => match parent.kind() {
@@ -119,13 +129,7 @@ fn is_in_directive_prologue<'a>(statement: Stmt<'a>, known: &mut Prologue<'a>) -
             _ => None,
         },
         _ => None,
-    };
-    let Some(siblings) = siblings else {
-        return false;
-    };
-    let end = siblings.iter().find(|it| !looks_like_directive(*it)).map_or(u32::MAX, |it| it.span().start);
-    known.0 = Some((parent, end));
-    statement.span().start < end
+    }
 }
 
 /// The whole rule, for an expression statement. typescript-eslint's rule of the same name is no

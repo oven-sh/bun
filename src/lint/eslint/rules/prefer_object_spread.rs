@@ -90,7 +90,7 @@ fn get_start_with_spaces<'a>(file: &'a File<'a>, token: Span) -> u32 {
     if before.is_some_and(|it| it.kind() == TokenKind::Line) {
         return token.start;
     }
-    text::trim_end(file.slice(Span::new(0, token.start))).len() as u32
+    text::trim_end(file.slice(Span::before(0, token))).len() as u32
 }
 
 /// ESLint's `getEndWithSpaces`: the end of `token` and the whitespace after it.

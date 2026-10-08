@@ -41,7 +41,7 @@ impl PaddedBlocks {
             after_last = comment.span();
         }
         let last =
-            last.unwrap_or_else(|| text::trim_end(file.slice(Span::new(0, after_last.start))).len() as u32);
+            last.unwrap_or_else(|| text::trim_end(file.slice(Span::before(0, after_last))).len() as u32);
 
         let has_top_padding = file.line_of(first) - file.line_of(before_first.end) >= 2;
         let has_bottom_padding = file.line_of(after_last.start) - file.line_of(last) >= 2;
@@ -51,7 +51,7 @@ impl PaddedBlocks {
         }
 
         let top = Span::new(before_first.start, first);
-        let bottom = Span::new(last, after_last.start);
+        let bottom = Span::before(last, after_last);
         if requires_padding {
             if !has_top_padding {
                 cx.report(top, ALWAYS_PAD_BLOCK).fix(|fixer| fixer.insert_after(before_first, "\n"));
@@ -62,7 +62,7 @@ impl PaddedBlocks {
         } else {
             if has_top_padding {
                 cx.report(top, NEVER_PAD_BLOCK)
-                    .fix(|fixer| fixer.replace(Span::new(before_first.end, line_start(first)), "\n"));
+                    .fix(|fixer| fixer.replace(Span::after(before_first, line_start(first)), "\n"));
             }
             if has_bottom_padding {
                 cx.report(bottom, NEVER_PAD_BLOCK)

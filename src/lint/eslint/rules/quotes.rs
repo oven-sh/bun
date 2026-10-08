@@ -1,3 +1,4 @@
+use super::no_unused_expressions::body_with_directives;
 use bun_core::strings;
 use bun_lint::language::Parser;
 use bun_lint::prelude::*;
@@ -113,16 +114,7 @@ fn is_in_or_just_after_directive_prologue<'a>(statement: Stmt<'a>, state: &mut S
         return false;
     }
     let parent = statement.parent();
-    let siblings = match parent {
-        Node::File(file) => Some(file.body()),
-        Node::Func(func) => func.body_statements(),
-        Node::Stmt(parent) => match parent.kind() {
-            StmtKind::Module(module) => Some(module.innermost().body()),
-            _ => None,
-        },
-        _ => None,
-    };
-    siblings.is_some_and(|siblings| {
+    body_with_directives(parent).is_some_and(|siblings| {
         statement.span().start <= *state.entry(parent).or_insert_with(|| end_of_directives(siblings))
     })
 }

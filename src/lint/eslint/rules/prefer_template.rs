@@ -10,14 +10,20 @@ const UNEXPECTED_STRING_CONCATENATION: Message = Message::new(
     "Unexpected string concatenation.",
 );
 
+#[derive(Copy, Clone)]
+struct Operands<'a> {
+    left: Expr<'a>,
+    right: Expr<'a>,
+}
+
 /// ESLint's `isConcatenation`: the operands of a `+`.
-fn as_concatenation(e: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
+fn as_concatenation(e: Expr<'_>) -> Option<Operands<'_>> {
     match e.kind() {
         ExprKind::Binary {
             op: BinOp::Add,
             left,
             right,
-        } => Some((left, right)),
+        } => Some(Operands { left, right }),
         _ => None,
     }
 }
@@ -28,7 +34,7 @@ fn any_operand<'a>(e: Expr<'a>, test: fn(Expr<'a>) -> bool) -> bool {
     let mut pending: SmallVec<[Expr<'a>; 8]> = SmallVec::new();
     let mut at = e;
     loop {
-        if let Some((left, right)) = as_concatenation(at) {
+        if let Some(Operands { left, right }) = as_concatenation(at) {
             pending.push(left);
             at = right;
         } else if test(at) {
@@ -56,12 +62,12 @@ fn has_octal_or_non_octal_decimal_escape_sequence(e: Expr<'_>) -> bool {
 }
 
 /// The operands of ESLint's `BinaryExpression`.
-fn as_binary_expression(e: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
+fn as_binary_expression(e: Expr<'_>) -> Option<Operands<'_>> {
     match e.kind() {
         ExprKind::Binary { op, left, right }
             if !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma) =>
         {
-            Some((left, right))
+            Some(Operands { left, right })
         }
         _ => None,
     }
@@ -70,7 +76,7 @@ fn as_binary_expression(e: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
 /// Whether `e` starts with `${` once it is a template. Upstream asks of a template whether the range
 /// of its first `TemplateElement` is empty, which it never is: it includes the delimiters.
 fn starts_with_template_curly(mut e: Expr<'_>) -> bool {
-    while let Some((left, _)) = as_binary_expression(e) {
+    while let Some(Operands { left, .. }) = as_binary_expression(e) {
         e = left;
     }
     !ast_utils::is_string_literal(e)
@@ -78,7 +84,7 @@ fn starts_with_template_curly(mut e: Expr<'_>) -> bool {
 
 fn ends_with_template_curly(e: Expr<'_>) -> bool {
     match as_binary_expression(e) {
-        Some((_, right)) => starts_with_template_curly(right),
+        Some(Operands { right, .. }) => starts_with_template_curly(right),
         None => !ast_utils::is_string_literal(e),
     }
 }
@@ -114,13 +120,13 @@ fn get_text_between<'a>(file: &'a File<'a>, a: Span, b: Span) -> Cow<'a, [u8]> {
     let Some(first) = tokens.next() else {
         return Cow::Borrowed(file.slice(a.between(b)));
     };
-    let mut text = file.slice(Span::new(a.end, first.start())).to_vec();
+    let mut text = file.slice(Span::after(a, first.start())).to_vec();
     let mut at = first.end();
     for token in tokens {
         text.extend_from_slice(file.slice(Span::new(at, token.start())));
         at = token.end();
     }
-    text.extend_from_slice(file.slice(Span::new(at, b.start)));
+    text.extend_from_slice(file.slice(Span::before(at, b)));
     Cow::Owned(text)
 }
 
@@ -202,7 +208,7 @@ impl<'a> TemplateWriter<'a> {
         let mut string_literals = Vec::new();
         let mut pending = vec![top];
         while let Some(e) = pending.pop() {
-            if let Some((left, right)) = as_concatenation(e) {
+            if let Some(Operands { left, right }) = as_concatenation(e) {
                 pending.extend([left, right]);
             } else if ast_utils::is_string_literal(e) {
                 string_literals.push(e.span().start);
@@ -225,7 +231,7 @@ impl<'a> TemplateWriter<'a> {
     }
 
     fn as_concatenation(&self, e: Expr<'a>) -> Option<(Expr<'a>, Concatenation<'a>)> {
-        let (left, right) = as_concatenation(e)?;
+        let Operands { left, right } = as_concatenation(e)?;
         if !self.has_string_literal(e) {
             return None;
         }
@@ -295,7 +301,9 @@ impl<'a> TemplateWriter<'a> {
                     self.text.extend_from_slice(&concatenation.text_before_plus);
                     self.text.push(b'+');
                     self.text.extend_from_slice(&concatenation.text_after_plus);
-                    self.write(right, text_after, b"", false)?;
+                    // As upstream: what is to follow the sum is put before its right operand.
+                    let text_before_right = text_after;
+                    self.write(right, text_before_right, b"", false)?;
                 }
             }
         }

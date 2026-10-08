@@ -1,3 +1,4 @@
+use super::id_length::key_identifier;
 use bun_lint::linter::GlobalVariable;
 use bun_lint::prelude::*;
 use bun_lint::source::ByName;
@@ -36,15 +37,6 @@ pub struct State<'a> {
     unresolved: Option<Vec<Reference<'a>>>,
     /// What is in an object pattern.
     object_patterns: AncestorMemo<'a, ()>,
-}
-
-/// ESTree's `key.name`: the name of a key that is an `Identifier`, in brackets or not.
-fn key_identifier(key: Key<'_>) -> Option<Name<'_>> {
-    match key.kind() {
-        KeyKind::Ident(name) => Some(name),
-        KeyKind::Computed(e) => e.as_ident(),
-        _ => None,
-    }
 }
 
 /// ESLint's `isInsideObjectPattern`.

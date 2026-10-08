@@ -102,7 +102,7 @@ impl OperatorLinebreak {
     /// ESLint's `validateNode`. `left_end`: a position that is not after the end of the token
     /// before the operator. Without a line break from there to `right`, there is nothing to report.
     fn validate<'a>(&self, left_end: u32, right: Expr<'a>, operator: &'static str, cx: &Cx<'a, Self>) {
-        if !text::has_line_break(cx.slice(Span::new(left_end, right.outer_span().start))) {
+        if !text::has_line_break(cx.slice(Span::before(left_end, right.outer_span()))) {
             return;
         }
         let file = cx.file();
@@ -139,7 +139,7 @@ impl OperatorLinebreak {
             ExprKind::Assign { op, target, value } => {
                 let left_end = target.outer_span().end;
                 // The default value in a pattern is not an `AssignmentExpression`.
-                if text::has_line_break(cx.slice(Span::new(left_end, value.outer_span().start)))
+                if text::has_line_break(cx.slice(Span::before(left_end, value.outer_span())))
                     && (op.is_some() || !utils::is_assignment_target(e))
                 {
                     self.validate(left_end, value, assign_op_text(op), cx);

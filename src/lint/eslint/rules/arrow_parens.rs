@@ -59,10 +59,10 @@ impl ArrowParens {
             return;
         }
         // Anything but whitespace and a trailing comma inside the parentheses is a comment.
-        let Some(before_open) = text::trim_end(cx.slice(Span::new(0, name.start))).strip_suffix(b"(") else {
+        let Some(before_open) = text::trim_end(cx.slice(Span::before(0, name))).strip_suffix(b"(") else {
             return;
         };
-        if !matches!(text::trim(cx.slice(Span::new(name.end, close))), b"" | b",") {
+        if !matches!(text::trim(cx.slice(Span::after(name, close))), b"" | b",") {
             return;
         }
         let open = Span::new(before_open.len() as u32, before_open.len() as u32 + 1);
@@ -81,7 +81,7 @@ impl ArrowParens {
                 fixes.push(fixer.insert_before(open, " "));
             }
             fixes.push(fixer.remove(Span::new(open.start, name.start)));
-            fixes.push(fixer.remove(Span::new(name.end, close + 1)));
+            fixes.push(fixer.remove(Span::after(name, close + 1)));
             fixes
         });
     }

@@ -35,14 +35,14 @@ const MISSING_SETTER_IN_TYPE: Message =
 
 /// A `get` or a `set` of an object literal, a class, an interface or a type literal.
 #[derive(Copy, Clone)]
-struct Accessor<'a> {
-    key: Key<'a>,
-    func: Func<'a>,
-    is_getter: bool,
+pub(super) struct Accessor<'a> {
+    pub(super) key: Key<'a>,
+    pub(super) func: Func<'a>,
+    pub(super) is_getter: bool,
 }
 
 impl<'a> Accessor<'a> {
-    fn of_prop(prop: Prop<'a>) -> Option<Self> {
+    pub(super) fn of_prop(prop: Prop<'a>) -> Option<Self> {
         let is_getter = match prop.kind() {
             PropKind::Getter => true,
             PropKind::Setter => false,
@@ -55,7 +55,7 @@ impl<'a> Accessor<'a> {
         })
     }
 
-    fn of_member(member: Member<'a>) -> Option<Self> {
+    pub(super) fn of_member(member: Member<'a>) -> Option<Self> {
         let is_getter = match member.kind() {
             MemberKind::Getter => true,
             MemberKind::Setter => false,

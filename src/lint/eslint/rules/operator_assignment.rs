@@ -129,7 +129,7 @@ impl OperatorAssignment {
             if get_precedence(value) <= get_binary_operator_precedence(op)
                 && !value.is_parenthesized()
             {
-                text.extend_from_slice(file.slice(Span::new(operator.end, value.span().start)));
+                text.extend_from_slice(file.slice(operator.between(value.span())));
                 text.push(b'(');
                 text.extend_from_slice(value.text());
                 text.push(b')');

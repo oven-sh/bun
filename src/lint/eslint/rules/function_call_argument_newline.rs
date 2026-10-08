@@ -40,7 +40,7 @@ impl FunctionCallArgumentNewline {
             let Some(before) = cx.file().tokens_before(current).with_comments().next() else {
                 continue;
             };
-            let between = Span::new(before.end(), current.span().start);
+            let between = Span::before(before.end(), current.span());
             let (message, separator) = match wants_line_breaks {
                 true => (MISSING_LINE_BREAK, "\n"),
                 false => (UNEXPECTED_LINE_BREAK, " "),

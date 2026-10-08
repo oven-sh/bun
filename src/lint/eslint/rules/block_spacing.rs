@@ -25,8 +25,8 @@ impl BlockSpacing {
         }
         let open = Span::new(braces.start, braces.start + 1);
         let close = Span::new(braces.end - 1, braces.end);
-        let after_open = Span::new(open.end, open.end + (inner.len() - content.len()) as u32);
-        let before_close = Span::new(open.end + text::trim_end(inner).len() as u32, close.start);
+        let after_open = Span::after(open, open.end + (inner.len() - content.len()) as u32);
+        let before_close = Span::before(open.end + text::trim_end(inner).len() as u32, close);
 
         if !self.is_valid(cx.slice(after_open)) {
             let report = match self.is_always {

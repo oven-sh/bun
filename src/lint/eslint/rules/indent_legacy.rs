@@ -110,6 +110,11 @@ fn line_start(file: &File<'_>, offset: u32) -> u32 {
     }
 }
 
+/// What is before `offset` on its line.
+fn text_before_on_line<'a>(file: &'a File<'a>, offset: u32) -> &'a [u8] {
+    file.slice(Span::new(line_start(file, offset), offset))
+}
+
 /// ESLint's `getNodeIndent`, of the token that starts at `token`.
 fn get_node_indent(file: &File<'_>, token: u32) -> Indent {
     let line = file.text().get(line_start(file, token) as usize..).unwrap_or_default();
@@ -126,7 +131,7 @@ fn get_node_indent(file: &File<'_>, token: u32) -> Indent {
 
 /// ESLint's `isNodeFirstInLine(node)`, of the node that starts at `start`.
 fn is_node_first_in_line<'a>(file: &'a File<'a>, start: u32) -> bool {
-    let before = file.slice(Span::new(line_start(file, start), start));
+    let before = text_before_on_line(file, start);
     before.iter().all(|byte| matches!(byte, b' ' | b'\t'))
         || (file.token_before(Span::empty(start)))
             .is_none_or(|token| file.line_of(token.end()) != file.line_of(start))
@@ -398,7 +403,7 @@ impl IndentLegacy {
             return;
         };
         let start = last_token.start();
-        if !text::is_blank(file.slice(Span::new(line_start(file, start), start))) {
+        if !text::is_blank(text_before_on_line(file, start)) {
             return;
         }
         let end_indent = get_node_indent(file, start);

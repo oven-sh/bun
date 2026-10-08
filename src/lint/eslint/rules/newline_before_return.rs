@@ -1,3 +1,4 @@
+use super::one_var::body_of;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::text::lines;
@@ -11,15 +12,8 @@ const EXPECTED: Message = Message::new("expected", "Expected newline before retu
 /// holds: it is the first of the list, or the whole body of an `if`, a loop or the like.
 fn previous_sibling(stmt: Stmt<'_>) -> Option<Stmt<'_>> {
     let siblings = match stmt.parent() {
-        Node::File(file) => file.body(),
-        Node::Func(func) => func.body_statements()?,
         Node::Case(case) => case.body(),
-        Node::Stmt(parent) => match parent.kind() {
-            StmtKind::Block(statements) => statements,
-            StmtKind::Module(module) => module.body(),
-            _ => return None,
-        },
-        _ => return None,
+        parent => body_of(parent)?,
     };
     siblings.before(stmt.span().start)
 }
@@ -35,7 +29,7 @@ impl NewlineBeforeReturn {
         };
         let file = cx.file();
         // From the token before the `return`.
-        let gap = Span::new(previous.span().end, stmt.span().start);
+        let gap = previous.span().between(stmt.span());
         let lines_between = line_breaks(file.slice(gap));
         let has_comments = strings::contains_char(file.slice(gap), b'/');
         let is_below_previous = |offset: u32| file.line_of(gap.start) < file.line_of(offset);

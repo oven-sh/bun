@@ -102,7 +102,7 @@ impl CommaStyle {
         &self,
         node: Span,
         is_array: bool,
-        items: impl Iterator<Item = Option<Span>>,
+        items: &mut dyn Iterator<Item = Option<Span>>,
         cx: &Cx<'_, Self>,
     ) {
         let file = cx.file();
@@ -157,7 +157,7 @@ impl CommaStyle {
         if first == last || cx.is_on_same_line(first.end, last.start) {
             return;
         }
-        self.validate_comma(node, false, items.map(Some), cx);
+        self.validate_comma(node, false, &mut items.map(Some), cx);
     }
 
     fn check_expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -173,8 +173,8 @@ impl CommaStyle {
                 if !cx.is_on_same_line(span.start, span.end)
                     && !is_excepted(exceptions.array_expression, exceptions.array_pattern)
                 {
-                    let items = elements.iter().map(|it| (!it.is_missing()).then(|| it.span()));
-                    self.validate_comma(span, true, items, cx);
+                    let mut items = elements.iter().map(|it| (!it.is_missing()).then(|| it.span()));
+                    self.validate_comma(span, true, &mut items, cx);
                 }
             }
             ExprKind::Object(props) => {
@@ -197,8 +197,8 @@ impl CommaStyle {
             PatKind::Array(elements) => {
                 let span = utils::estree_span(Node::Pat(pat));
                 if !cx.is_on_same_line(span.start, span.end) {
-                    let items = elements.iter().map(|it| it.pat().map(|_| it.span()));
-                    self.validate_comma(span, true, items, cx);
+                    let mut items = elements.iter().map(|it| it.pat().map(|_| it.span()));
+                    self.validate_comma(span, true, &mut items, cx);
                 }
             }
             PatKind::Object(props) => {

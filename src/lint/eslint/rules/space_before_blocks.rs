@@ -83,7 +83,7 @@ fn check<'a>(spacing: Spacing, span: Span, block: Block<'a>, cx: &Cx<'a, SpaceBe
         cx.report(span, MISSING_SPACE).fix(|fixer| fixer.insert_before(span, " "));
     } else if spacing == Spacing::Never && has_space {
         cx.report(span, UNEXPECTED_SPACE)
-            .fix(|fixer| fixer.remove(Span::new(preceding.end(), span.start)));
+            .fix(|fixer| fixer.remove(Span::before(preceding.end(), span)));
     }
 }
 

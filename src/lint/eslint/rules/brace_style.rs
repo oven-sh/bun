@@ -37,10 +37,6 @@ const SAME_LINE_CLOSE: Message = Message::new(
     "Closing curly brace appears on the same line as the subsequent block.",
 );
 
-fn has_line_break_between(file: &File<'_>, start: u32, end: u32) -> bool {
-    text::has_line_break(file.slice(Span::new(start, end)))
-}
-
 /// Whether the token before the one at `at` ends on the line that `at` is on.
 fn is_token_before_on_same_line<'a>(file: &'a File<'a>, at: u32) -> bool {
     let before = file.text().get(..at as usize).unwrap_or_default();
@@ -56,10 +52,9 @@ fn is_token_before_on_same_line<'a>(file: &'a File<'a>, at: u32) -> bool {
     file.token_before(here).is_some_and(|token| ast_utils::is_token_on_same_line(file, token, here))
 }
 
-/// ESLint's `removeNewlineBetween`, for the end of the first token and the start of the second.
+/// ESLint's `removeNewlineBetween`, for what is between the two tokens.
 /// There is no fix if a comment is between them.
-fn remove_newline_between(fixer: Fixer<'_>, start: u32, end: u32) -> Option<Fix> {
-    let between = Span::new(start, end);
+fn remove_newline_between(fixer: Fixer<'_>, between: Span) -> Option<Fix> {
     text::is_blank(fixer.file().slice(between)).then(|| fixer.replace(between, " "))
 }
 
@@ -73,12 +68,12 @@ impl BraceStyle {
         let (opening, closing) = (Span::new(open, open + 1), Span::new(close, close + 1));
         let after_opening = skip_trivia(source, opening.end);
         let is_empty = after_opening == close;
-        let is_single_line_exception = self.allow_single_line && is_on_one_line(file, Span::new(opening.end, close));
+        let is_single_line_exception = self.allow_single_line && is_on_one_line(file, Span::after(opening, close));
         let is_opening_on_same_line = is_token_before_on_same_line(file, open);
 
         if self.style != Style::Allman && !is_opening_on_same_line {
             cx.report(opening, NEXT_LINE_OPEN)
-                .fix(|fixer| remove_newline_between(fixer, file.token_before(opening)?.end(), open));
+                .fix(|fixer| remove_newline_between(fixer, file.token_before(opening)?.span().between(opening)));
         }
         if self.style == Style::Allman && is_opening_on_same_line && !is_single_line_exception {
             cx.report(opening, SAME_LINE_OPEN).fix(|fixer| fixer.insert_before(opening, "\n"));
@@ -86,7 +81,7 @@ impl BraceStyle {
         if is_empty || is_single_line_exception {
             return;
         }
-        if !has_line_break_between(file, opening.end, after_opening) {
+        if !text::has_line_break(file.slice(Span::after(opening, after_opening))) {
             cx.report(opening, BLOCK_SAME_LINE).fix(|fixer| fixer.insert_after(opening, "\n"));
         }
         if is_token_before_on_same_line(file, close) {
@@ -102,10 +97,10 @@ impl BraceStyle {
     fn validate_curly_before_keyword<'a>(&self, block: Stmt<'a>, cx: &Cx<'a, Self>) {
         let end = block.span().end;
         let curly = Span::new(end.saturating_sub(1), end);
-        let keyword = skip_trivia(cx.text(), end);
-        let is_on_same_line = !has_line_break_between(cx.file(), end, keyword);
+        let before_keyword = Span::after(curly, skip_trivia(cx.text(), end));
+        let is_on_same_line = !text::has_line_break(cx.slice(before_keyword));
         if self.style == Style::OneTbs && !is_on_same_line {
-            cx.report(curly, NEXT_LINE_CLOSE).fix(|fixer| remove_newline_between(fixer, end, keyword));
+            cx.report(curly, NEXT_LINE_CLOSE).fix(|fixer| remove_newline_between(fixer, before_keyword));
         }
         if self.style != Style::OneTbs && is_on_same_line {
             cx.report(curly, SAME_LINE_CLOSE).fix(|fixer| fixer.insert_after(curly, "\n"));

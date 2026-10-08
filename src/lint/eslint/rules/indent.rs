@@ -157,6 +157,13 @@ struct Tok {
     kind: TokenKind,
 }
 
+impl Tok {
+    #[inline]
+    const fn span(self) -> Span {
+        Span::new(self.start, self.end)
+    }
+}
+
 /// How a token is to be indented: by `offset` levels more than the token `from`, or than the first
 /// column.
 #[derive(Copy, Clone)]
@@ -446,6 +453,12 @@ impl<'a, 'r> Offsets<'a, 'r> {
         }
     }
 
+    /// What is between two tokens.
+    #[inline]
+    fn between(&self, before: usize, after: usize) -> Span {
+        self.token(before).span().between(self.token(after).span())
+    }
+
     #[inline]
     fn token(&self, i: usize) -> Tok {
         self.tokens.get(i).copied().unwrap_or(Tok {
@@ -621,16 +634,16 @@ impl<'a> Offsets<'a, '_> {
         }
     }
 
-    /// ESLint's `setDesiredOffsets`, for the tokens that start in `start..end`. During the walk.
-    fn set_offsets(&mut self, start: u32, end: u32, from: Option<usize>, offset: u32, is_forced: bool) {
-        let (first, after) = (self.lower_bound(start), self.lower_bound(end));
+    /// ESLint's `setDesiredOffsets`, for the tokens that start in `range`. During the walk.
+    fn set_offsets(&mut self, range: Span, from: Option<usize>, offset: u32, is_forced: bool) {
+        let (first, after) = (self.lower_bound(range.start), self.lower_bound(range.end));
         let descriptor = Descriptor {
             from: from.map_or(NONE, |it| it as u32),
             offset,
             is_forced,
         };
         // `from` keeps what it has.
-        match from.filter(|&it| first <= it && it < after && self.token(it).end <= end) {
+        match from.filter(|&it| first <= it && it < after && self.token(it).end <= range.end) {
             Some(own) => {
                 self.assign(first, own, descriptor);
                 self.assign(own + 1, after, descriptor);
@@ -769,7 +782,7 @@ impl<'a> Offsets<'a, '_> {
     }
 
     /// ESLint's `hasBlankLinesBetween`.
-    fn has_blank_lines_between(&mut self, first: usize, second: usize) -> bool {
+    fn has_blank_lines_between(&mut self, above: usize, below: usize) -> bool {
         if self.blank_line_at_or_after.is_empty() {
             let mut blank = u32::MAX;
             self.blank_line_at_or_after = self.first_of_line.clone();
@@ -780,8 +793,8 @@ impl<'a> Offsets<'a, '_> {
                 *slot = blank;
             }
         }
-        let blank = self.blank_line_at_or_after.get(self.token(first).end_line as usize + 1);
-        blank.is_some_and(|&it| it < self.token(second).line)
+        let blank = self.blank_line_at_or_after.get(self.token(above).end_line as usize + 1);
+        blank.is_some_and(|&it| it < self.token(below).line)
     }
 
     /// ESLint's `countTrailingLinebreaks(token.value)`.
@@ -798,7 +811,17 @@ impl<'a> Offsets<'a, '_> {
     /// ESLint's `addElementListIndent`. A hole in an array is `None`.
     fn add_element_list_indent(
         &mut self,
-        elements: impl Iterator<Item = Option<Span>>,
+        mut elements: impl Iterator<Item = Option<Span>>,
+        start: usize,
+        end: usize,
+        offset: Offset,
+    ) {
+        self.add_indent_of_elements(&mut elements, start, end, offset);
+    }
+
+    fn add_indent_of_elements(
+        &mut self,
+        elements: &mut dyn Iterator<Item = Option<Span>>,
         start: usize,
         end: usize,
         offset: Offset,
@@ -807,7 +830,7 @@ impl<'a> Offsets<'a, '_> {
             Offset::Levels(levels) => levels,
             _ => 1,
         };
-        self.set_offsets(self.token(start).end, self.token(end).start, Some(start), levels, false);
+        self.set_offsets(self.between(start, end), Some(start), levels, false);
         self.set_offset(end, Some(start), 0);
 
         // The first token of an element, including the parentheses around it.
@@ -846,7 +869,7 @@ impl<'a> Offsets<'a, '_> {
                 && self.token(last_token).end_line.saturating_sub(self.count_trailing_linebreaks(last_token))
                     > self.token(start).end_line
             {
-                self.set_offsets(previous.end, element.end, Some(first_token_of_previous), 0, false);
+                self.set_offsets(Span::after(previous, element.end), Some(first_token_of_previous), 0, false);
             }
             previous = Some((element, first_token));
         }
@@ -862,7 +885,7 @@ impl<'a> Offsets<'a, '_> {
         {
             (first, last) = (before, after);
         }
-        self.set_offsets(self.token(first).start, self.token(last).end, Some(last_parent_token), 1, false);
+        self.set_offsets(Span::new(self.token(first).start, self.token(last).end), Some(last_parent_token), 1, false);
         Some(())
     }
 
@@ -1154,7 +1177,7 @@ impl<'a> Offsets<'a, '_> {
         if let Some(first) = self.token_from(node.start)
             && !self.has_flag(first, STARTS_IGNORED_NODE)
         {
-            self.set_offsets(node.start, node.end, Some(first), 0, false);
+            self.set_offsets(node, Some(first), 0, false);
         }
         true
     }
@@ -1347,7 +1370,7 @@ impl<'a> Offsets<'a, '_> {
                     let opening_paren = self.token_from(span.start).and_then(|it| self.after(it));
                     let parts = [init.map(|it| it.1), test.map(Expr::span), update.map(Expr::span)];
                     for part in parts.into_iter().flatten() {
-                        self.set_offsets(part.start, part.end, opening_paren, 1, false);
+                        self.set_offsets(part, opening_paren, 1, false);
                     }
                     self.add_blockless_statement_indent(body);
                 }
@@ -1597,8 +1620,7 @@ impl<'a> Offsets<'a, '_> {
     fn switch_statement(&mut self, node: Span, discriminant: Expr<'a>, cases: List<'a, Case<'a>>) -> Option<()> {
         let opening = self.punctuator_from(discriminant.span().end, b"{")?;
         let closing = self.token_until(node.end)?;
-        let (start, end) = (self.token(opening).end, self.token(closing).start);
-        self.set_offsets(start, end, Some(opening), self.rule.switch_case, false);
+        self.set_offsets(self.between(opening, closing), Some(opening), self.rule.switch_case, false);
         if let Some(last) = cases.last() {
             for comment in self.lower_bound(last.span().end)..closing {
                 self.ignore_token(comment);
@@ -1614,7 +1636,7 @@ impl<'a> Offsets<'a, '_> {
             && !is_block
             && let (Some(keyword), Some(after)) = (self.token_from(span.start), self.token_from(span.end))
         {
-            self.set_offsets(self.token(keyword).end, self.token(after).start, Some(keyword), 1, false);
+            self.set_offsets(self.between(keyword, after), Some(keyword), 1, false);
         }
         self.stack.extend(case.test().map(Step::Expr));
         self.stack.extend(body.iter().map(Step::Stmt));
@@ -1643,7 +1665,7 @@ impl<'a> Offsets<'a, '_> {
         // The declarator that starts on the line of the keyword is indented like those that follow.
         let last_declaration = self.token_from(declarations.last()?.span().start)?;
         let is_forced = self.token(last_declaration).line > self.token(first).line;
-        self.set_offsets(node.start, node.end, Some(first), levels, is_forced);
+        self.set_offsets(node, Some(first), levels, is_forced);
         if self.is_punctuator(last, b";") {
             self.ignore_token(last);
         }
@@ -1659,7 +1681,7 @@ impl<'a> Offsets<'a, '_> {
         {
             self.ignore_token(operator);
             self.ignore_token(after);
-            self.set_offsets(self.token(after).start, span.end, Some(operator), 1, false);
+            self.set_offsets(Span::new(self.token(after).start, span.end), Some(operator), 1, false);
             self.set_offset(operator, self.token_until(declaration.binding_span().end), 0);
         }
         self.stack.push(Step::VarPat(declaration));
@@ -1677,7 +1699,7 @@ impl<'a> Offsets<'a, '_> {
         let in_node = || (first..=last).rev();
         let from = in_node().find(|&it| self.token(it).kind == TokenKind::Identifier && self.text_of(it) == b"from")?;
         let source = in_node().find(|&it| self.token(it).kind == TokenKind::String)?;
-        self.set_offsets(self.token(from).start, self.token(source).end, Some(first), 1, false);
+        self.set_offsets(Span::new(self.token(from).start, self.token(source).end), Some(first), 1, false);
         Some(())
     }
 
@@ -1687,7 +1709,7 @@ impl<'a> Offsets<'a, '_> {
         let elements = export.items().iter().map(|it| Some(it.span()));
         self.add_element_list_indent(elements, self.after(first)?, closing, Offset::Levels(1));
         if export.has_from() {
-            self.set_offsets(self.token(closing).end, node.end, Some(first), 1, false);
+            self.set_offsets(Span::after(self.token(closing).span(), node.end), Some(first), 1, false);
         }
         Some(())
     }
@@ -1965,7 +1987,7 @@ impl<'a> Offsets<'a, '_> {
             && let Some(extends) = self.token_before_parens(superclass.span().start)
         {
             let keyword = self.token_from(span.start);
-            self.set_offsets(self.token(extends).start, class.body_span().start, keyword, 1, false);
+            self.set_offsets(Span::before(self.token(extends).start, class.body_span()), keyword, 1, false);
         }
         self.decorators(class.modifiers());
         if let Some(name) = class.name() {
@@ -2080,7 +2102,7 @@ impl<'a> Offsets<'a, '_> {
             let left = self.punctuator_until(key_span.start, b"[")?;
             let right = self.punctuator_from(key_span.end, b"]")?;
             self.set_offset(left, Some(first), 0);
-            self.set_offsets(self.token(left).end, self.token(right).start, Some(left), 1, false);
+            self.set_offsets(self.between(left, right), Some(left), 1, false);
             self.set_offset(right, Some(left), 0);
             right
         } else {
@@ -2229,7 +2251,7 @@ impl<'a> Offsets<'a, '_> {
                     && let Some(operator) = self.token_after_parens(target.span().end)
                 {
                     let last_of_target = self.token_until(target.span().end);
-                    self.set_offsets(self.token(operator).start, span.end, last_of_target, 1, false);
+                    self.set_offsets(Span::new(self.token(operator).start, span.end), last_of_target, 1, false);
                     self.ignore_token(operator);
                     if let Some(after) = self.after(operator) {
                         self.ignore_token(after);
@@ -2436,7 +2458,7 @@ impl<'a> Offsets<'a, '_> {
 
         if is_computed {
             self.set_offset(self.token_until(end)?, Some(first_non_object), 0);
-            self.set_offsets(property.start, property.end, Some(first_non_object), 1, false);
+            self.set_offsets(property, Some(first_non_object), 1, false);
         }
 
         // A property that starts on the line where the object ends is not indented.
@@ -2466,7 +2488,7 @@ impl<'a> Offsets<'a, '_> {
             let next = self.token_after_parens(e.span().end)?;
             let previous = self.token(quasi);
             let from = (previous.line == previous.end_line).then_some(quasi);
-            self.set_offsets(previous.end, self.token(next).start, from, 1, false);
+            self.set_offsets(self.between(quasi, next), from, 1, false);
             self.set_offset(next, from, 0);
             quasi = next;
         }
@@ -2549,7 +2571,7 @@ impl<'a> Offsets<'a, '_> {
                 if self.enter("JSXOpeningFragment", opening)
                     && let (Some(first), Some(last)) = (self.token_from(opening.start), self.token_until(opening.end))
                 {
-                    self.set_offsets(opening.start, opening.end, Some(first), 1, false);
+                    self.set_offsets(opening, Some(first), 1, false);
                     self.match_offset_of(first, last);
                 }
             }
@@ -2573,7 +2595,7 @@ impl<'a> Offsets<'a, '_> {
             }
             false => last,
         };
-        self.set_offsets(name.start, name.end, Some(first), 0, false);
+        self.set_offsets(name, Some(first), 0, false);
         let elements = jsx.attrs().iter().map(|it| Some(it.span()));
         self.add_element_list_indent(elements, first, closing, Offset::Levels(1));
         Some(())
@@ -2590,7 +2612,7 @@ impl<'a> Offsets<'a, '_> {
         match jsx.close_tag() {
             Some(tag) => {
                 if self.enter("JSXClosingElement", span) {
-                    self.set_offsets(tag.span().start, tag.span().end, first, 1, false);
+                    self.set_offsets(tag.span(), first, 1, false);
                 }
                 self.stack.push(Step::JsxName(tag));
             }
@@ -2600,7 +2622,7 @@ impl<'a> Offsets<'a, '_> {
                     && let Some(slash) = self.before(last)
                 {
                     let is_on_same_line = self.token(slash).end_line == self.token(last).line;
-                    self.set_offsets(span.start, span.end, Some(first), 1, false);
+                    self.set_offsets(span, Some(first), 1, false);
                     self.match_offset_of(first, if is_on_same_line { slash } else { last });
                 }
             }
@@ -2649,7 +2671,7 @@ impl<'a> Offsets<'a, '_> {
             && let Some(equals) = self.punctuator_from(name.end, b"=")
         {
             let end = value.jsx_container_span().unwrap_or_else(|| value.span()).end;
-            self.set_offsets(self.token(equals).start, end, self.token_from(name.start), 1, false);
+            self.set_offsets(Span::new(self.token(equals).start, end), self.token_from(name.start), 1, false);
         }
         self.jsx_identifier(name);
         self.stack.extend(value.map(Step::JsxAttributeValue));
@@ -2658,7 +2680,7 @@ impl<'a> Offsets<'a, '_> {
     /// The listener for `JSXExpressionContainer` and `JSXSpreadAttribute`.
     fn braces(&mut self, node: Span) -> Option<()> {
         let (opening, closing) = (self.token_from(node.start)?, self.token_until(node.end)?);
-        self.set_offsets(self.token(opening).end, self.token(closing).start, Some(opening), 1, false);
+        self.set_offsets(self.between(opening, closing), Some(opening), 1, false);
         Some(())
     }
 

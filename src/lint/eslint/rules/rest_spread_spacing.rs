@@ -19,9 +19,9 @@ const EXPECTED_WHITESPACE: Message = Message::new(
 impl RestSpreadSpacing {
     /// `start`: where ESLint's `SpreadElement` or `RestElement` starts. `kind` says what to call
     /// its operator.
-    fn check(&self, start: u32, kind: impl FnOnce() -> &'static str, cx: &Cx<'_, Self>) {
+    fn check(&self, start: u32, kind: &dyn Fn() -> &'static str, cx: &Cx<'_, Self>) {
         let operator = next_token(cx.text(), start);
-        let gap = Span::new(operator.end, skip_trivia(cx.text(), operator.end));
+        let gap = Span::after(operator, skip_trivia(cx.text(), operator.end));
         let has_whitespace = match cx.slice(gap) {
             [] => false,
             between if strings::contains_char(between, b'/') => {
@@ -60,7 +60,7 @@ impl Rule for RestSpreadSpacing {
                 return;
             }
             let kind = || if utils::is_assignment_target(e) { "rest" } else { "spread" };
-            rule.check(e.span().start, kind, cx);
+            rule.check(e.span().start, &kind, cx);
         });
         on.props(|rule, prop, cx| {
             if prop.kind() != PropKind::Spread {
@@ -77,22 +77,22 @@ impl Rule for RestSpreadSpacing {
                 true => "rest property",
                 false => "spread property",
             };
-            rule.check(prop.span().start, kind, cx);
+            rule.check(prop.span().start, &kind, cx);
         });
         on.params(|rule, param, cx| {
             if param.is_rest() {
-                rule.check(param.span().start, || "rest", cx);
+                rule.check(param.span().start, &|| "rest", cx);
             }
         });
         on.pats([PatTag::Array, PatTag::Object], |rule, pat, cx| match pat.kind() {
             PatKind::Array(elements) => {
                 if let Some(rest) = elements.last().filter(|it| it.is_rest()) {
-                    rule.check(rest.span().start, || "rest", cx);
+                    rule.check(rest.span().start, &|| "rest", cx);
                 }
             }
             PatKind::Object(props) => {
                 if let Some(rest) = props.last().filter(|it| it.is_rest()) {
-                    rule.check(rest.span().start, || "rest property", cx);
+                    rule.check(rest.span().start, &|| "rest property", cx);
                 }
             }
             _ => {}

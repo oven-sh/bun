@@ -48,7 +48,7 @@ fn check<'a>(cx: &Cx<'a, SemiStyle>, semicolon: Span, expects_first: bool) {
     // Most are decided by the text next to the semicolon.
     if expects_first {
         let next = skip_trivia(text, semicolon.end);
-        if next as usize >= text.len() || !has_line_break(file.slice(Span::new(semicolon.end, next))) {
+        if next as usize >= text.len() || !has_line_break(file.slice(Span::after(semicolon, next))) {
             return;
         }
     } else {

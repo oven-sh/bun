@@ -68,14 +68,14 @@ impl LinesAroundDirective {
                 (Location::Before, true) => fixer.insert_before(directive, "\n"),
                 (Location::After(end), true) => fixer.insert_after(Span::empty(end), "\n"),
                 (Location::Before, false) => {
-                    let start = directive.span().start;
-                    let before = text::last_code_point(fixer.file().slice(Span::new(0, start)));
+                    let directive = directive.span();
+                    let before = text::last_code_point(fixer.file().slice(Span::before(0, directive)));
                     let len = before.and_then(char::from_u32).map_or(1, char::len_utf8) as u32;
-                    fixer.remove(Span::new(start.saturating_sub(len), start))
+                    fixer.remove(Span::before(directive.start.saturating_sub(len), directive))
                 }
-                (Location::After(end), false) => {
-                    let after = fixer.file().slice(Span::new(end, fixer.file().span().end));
-                    fixer.remove(Span::new(end, end + text::utf16_offset_to_byte(after, 1) as u32))
+                (Location::After(at), false) => {
+                    let after = fixer.file().slice(Span::new(at, fixer.file().span().end));
+                    fixer.remove(Span::new(at, at + text::utf16_offset_to_byte(after, 1) as u32))
                 }
             });
     }

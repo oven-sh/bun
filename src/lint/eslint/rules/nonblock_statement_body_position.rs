@@ -39,7 +39,7 @@ fn validate_statement<'a>(
             None => return,
         },
     };
-    let between = Span::new(token_end, body.span().start);
+    let between = Span::before(token_end, body.span());
     let is_beside = !text::has_line_break(cx.slice(between));
     if is_beside && placement == Placement::Below {
         cx.report(body, EXPECT_LINEBREAK).fix(|fixer| fixer.insert_before(body, "\n"));

@@ -31,7 +31,7 @@ const TOO_LONG_PRIVATE: Message = Message::new(
 );
 
 /// ESTree's `key.name`: the name of a key that is an `Identifier`, in brackets or not.
-fn key_identifier(key: Key<'_>) -> Option<Name<'_>> {
+pub(super) fn key_identifier(key: Key<'_>) -> Option<Name<'_>> {
     match key.kind() {
         KeyKind::Ident(name) => Some(name),
         KeyKind::Computed(e) => e.as_ident(),

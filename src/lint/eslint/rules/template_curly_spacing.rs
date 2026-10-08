@@ -17,7 +17,7 @@ impl TemplateCurlySpacing {
     /// `open`: the end of a `${`. `inner`: what is between it and its `}`, without whitespace and
     /// comments.
     fn check<'a>(&self, open: u32, inner: Span, cx: &mut Cx<'a, Self>) {
-        let next = inner.start - trim_start(cx.slice(Span::new(open, inner.start))).len() as u32;
+        let next = inner.start - trim_start(cx.slice(Span::before(open, inner))).len() as u32;
         self.check_gap(
             Span::new(open, next),
             Span::new(open.saturating_sub(2), open),
@@ -27,7 +27,7 @@ impl TemplateCurlySpacing {
         );
 
         let close = skip_trivia(cx.text(), inner.end);
-        let previous = inner.end + trim_end(cx.slice(Span::new(inner.end, close))).len() as u32;
+        let previous = inner.end + trim_end(cx.slice(Span::after(inner, close))).len() as u32;
         self.check_gap(
             Span::new(previous, close),
             Span::new(close, close + 1),

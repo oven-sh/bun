@@ -108,12 +108,12 @@ fn braces_of_class_body(parent: Node<'_>) -> Option<Span> {
 }
 
 impl Semi {
-    fn report_missing(&self, end: u32, cx: &Cx<'_, Self>) {
-        let report = match ast_utils::get_next_location(cx.file(), cx.position(end)) {
-            Some(next) => cx.report(Span::new(end, cx.offset(next)), MISSING_SEMI),
-            None => cx.report_at(end, MISSING_SEMI),
+    fn report_missing(&self, at: u32, cx: &Cx<'_, Self>) {
+        let report = match ast_utils::get_next_location(cx.file(), cx.position(at)) {
+            Some(next) => cx.report(Span::new(at, cx.offset(next)), MISSING_SEMI),
+            None => cx.report_at(at, MISSING_SEMI),
         };
-        report.fix(|fixer| fixer.insert_after(Span::empty(end), ";"));
+        report.fix(|fixer| fixer.insert_after(Span::empty(at), ";"));
     }
 
     fn report_extra(&self, semi: Span, cx: &Cx<'_, Self>) {

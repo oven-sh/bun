@@ -18,7 +18,7 @@ impl ImplicitArrowLinebreak {
             return;
         }
         let body_start = skip_trivia(cx.text(), arrow.end);
-        let has_linebreak = text::has_line_break(cx.slice(Span::new(arrow.end, body_start)));
+        let has_linebreak = text::has_line_break(cx.slice(Span::after(arrow, body_start)));
         if has_linebreak == self.is_below {
             return;
         }

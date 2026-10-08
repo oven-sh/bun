@@ -24,13 +24,13 @@ const DIVISION: Message = Message::new(
 /// than what is before it.
 fn break_after(e: Expr) -> Option<Span> {
     let file = e.file();
-    let end = e.outer_span().end;
+    let before = e.outer_span();
     // Nearly always the token follows at once.
-    if !matches!(file.text().get(end as usize), Some(b'\t'..=b'\r' | b' ' | b'/' | 0x80..)) {
+    if !matches!(file.text().get(before.end as usize), Some(b'\t'..=b'\r' | b' ' | b'/' | 0x80..)) {
         return None;
     }
-    let open = skip_trivia(file.text(), end);
-    text::has_line_break(file.slice(Span::new(end, open))).then(|| Span::new(open, open + 1))
+    let open = skip_trivia(file.text(), before.end);
+    text::has_line_break(file.slice(Span::after(before, open))).then(|| Span::new(open, open + 1))
 }
 
 impl NoUnexpectedMultiline {
@@ -57,23 +57,21 @@ impl NoUnexpectedMultiline {
         let ExprKind::TaggedTemplate(call) = e.kind() else {
             return;
         };
-        let Some(start) = call.template().map(|it| it.span().start) else {
+        let Some(template) = call.template().map(|it| it.span()) else {
             return;
         };
-        let mut end = call.callee().outer_span().end;
-        if !text::has_line_break(cx.slice(Span::new(end, start))) {
+        if !text::has_line_break(cx.slice(call.callee().outer_span().between(template))) {
             return;
         }
         if !call.type_args().is_empty() {
-            let Some(before) = cx.file().token_before(Span::empty(start)) else {
+            let Some(before) = cx.file().token_before(Span::empty(template.start)) else {
                 return;
             };
-            end = before.end();
-            if !text::has_line_break(cx.slice(Span::new(end, start))) {
+            if !text::has_line_break(cx.slice(before.span().between(template))) {
                 return;
             }
         }
-        cx.report(Span::new(start, start + 1), TAGGED_TEMPLATE);
+        cx.report(Span::new(template.start, template.start + 1), TAGGED_TEMPLATE);
     }
 
     /// `a / b / c` where `/ b /c` looks like a regular expression with the flags `c`.

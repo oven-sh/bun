@@ -120,9 +120,15 @@ fn is_update_of_for(node: Node<'_>) -> bool {
     matches!(parent.kind(), StmtKind::For { update, .. } if update == Some(e))
 }
 
+/// On which of the paths that lead through a segment `super()` is called.
+#[derive(Copy, Clone, Default)]
+struct Called {
+    in_every_path: bool,
+    in_some_paths: bool,
+}
+
 struct SegmentInfo<'a> {
-    called_in_every_paths: bool,
-    called_in_some_paths: bool,
+    called: Called,
     /// The `super()` calls that have been found valid, which a loop can make duplicates.
     valid_nodes: SmallVec<[Expr<'a>; 1]>,
 }
@@ -156,17 +162,17 @@ impl<'a> State<'a> {
 
     fn is_called_in_some_path(&self, segment: Segment<'a>) -> bool {
         segment.is_reachable()
-            && self.seg_info_map.get(&segment.id()).is_some_and(|it| it.called_in_some_paths)
+            && self.seg_info_map.get(&segment.id()).is_some_and(|it| it.called.in_some_paths)
     }
 
     fn is_called_in_every_path(&self, segment: Segment<'a>) -> bool {
         segment.is_reachable()
-            && self.seg_info_map.get(&segment.id()).is_some_and(|it| it.called_in_every_paths)
+            && self.seg_info_map.get(&segment.id()).is_some_and(|it| it.called.in_every_path)
     }
 
-    /// Of the segments before `segment` that have been seen: whether there are any, whether
-    /// `super()` is called in some of them, and whether it is called in all of them.
-    fn seen_prev_segments(&self, segment: Segment<'a>) -> (bool, bool, bool) {
+    /// Of the segments before `segment` that have been seen: whether there are any, and whether
+    /// `super()` is called in some of them and in all of them.
+    fn seen_prev_segments(&self, segment: Segment<'a>) -> (bool, Called) {
         let (mut any, mut some, mut every) = (false, false, true);
         for prev in segment.prev_segments() {
             if self.seg_info_map.contains_key(&prev.id()) {
@@ -175,7 +181,11 @@ impl<'a> State<'a> {
                 every &= self.is_called_in_every_path(prev);
             }
         }
-        (any, some, every)
+        let called = Called {
+            in_every_path: every,
+            in_some_paths: some,
+        };
+        (any, called)
     }
 
     /// Marks the current segments that are reachable as having called `super()`. Returns the id of
@@ -186,9 +196,11 @@ impl<'a> State<'a> {
             if segment.is_reachable()
                 && let Some(info) = self.seg_info_map.get_mut(&segment.id())
             {
-                is_duplicate |= info.called_in_some_paths;
-                info.called_in_some_paths = true;
-                info.called_in_every_paths = true;
+                is_duplicate |= info.called.in_some_paths;
+                info.called = Called {
+                    in_every_path: true,
+                    in_some_paths: true,
+                };
                 last = Some(segment.id());
             }
         }
@@ -255,17 +267,18 @@ impl ConstructorSuper {
         // As upstream, it has been seen before those before it are looked at. One of them is itself if it is all of a loop,
         // as in `do { a(); } while (b);`: then `super()` is never called on every path to it, and to what follows.
         let unknown = SegmentInfo {
-            called_in_some_paths: false,
-            called_in_every_paths: false,
+            called: Called::default(),
             valid_nodes: SmallVec::new(),
         };
         cx.state.seg_info_map.insert(segment.id(), unknown);
-        let (any, some, every) = cx.state.seen_prev_segments(segment);
+        let (any, before) = cx.state.seen_prev_segments(segment);
         if let Some(info) = cx.state.seg_info_map.get_mut(&segment.id()) {
-            info.called_in_some_paths = any && some;
-            // The segment of the update of a `for` is made in advance, before what precedes it is
-            // seen. It is never the only one before another: this makes the others decide.
-            info.called_in_every_paths = any && every || is_update_of_for(node);
+            info.called = Called {
+                // The segment of the update of a `for` is made in advance, before what precedes it is
+                // seen. It is never the only one before another: this makes the others decide.
+                in_every_path: any && before.in_every_path || is_update_of_for(node),
+                in_some_paths: any && before.in_some_paths,
+            };
         }
     }
 
@@ -280,15 +293,17 @@ impl ConstructorSuper {
             return;
         };
         code_path.traverse_segments_between(Some(to_segment), Some(from_segment), |segment, controller| {
-            let (_, some, every) = cx.state.seen_prev_segments(segment);
+            let (_, before) = cx.state.seen_prev_segments(segment);
             // What has not been seen is after the loop.
             let Some(info) = cx.state.seg_info_map.get_mut(&segment.id()) else {
                 controller.skip();
                 return;
             };
-            info.called_in_some_paths |= some;
-            info.called_in_every_paths |= every;
-            if some {
+            info.called = Called {
+                in_every_path: info.called.in_every_path || before.in_every_path,
+                in_some_paths: info.called.in_some_paths || before.in_some_paths,
+            };
+            if before.in_some_paths {
                 for node in std::mem::take(&mut info.valid_nodes) {
                     cx.report(node, DUPLICATE);
                 }

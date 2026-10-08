@@ -72,7 +72,7 @@ impl ArrayBracketSpacing {
         let first = Span::new(brackets.span.start, brackets.span.start + 1);
         let bracket = Span::new(brackets.span.end - 1, brackets.span.end);
 
-        let after_first = Span::new(first.end, skip_trivia(source, first.end));
+        let after_first = Span::after(first, skip_trivia(source, first.end));
         if !text::has_line_break(file.slice(after_first)) {
             let is_spaced = is_space(file, after_first);
             match self.must_be_spaced(brackets.first, brackets.count) {
@@ -105,7 +105,7 @@ impl ArrayBracketSpacing {
                 (bracket, end)
             }
         };
-        let before_last = Span::new(penultimate_end, last.start);
+        let before_last = Span::before(penultimate_end, last);
         if penultimate_end != first.end && !text::has_line_break(file.slice(before_last)) {
             let is_spaced = is_space(file, before_last);
             match self.must_be_spaced(brackets.last, brackets.count) {

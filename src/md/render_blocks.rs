@@ -77,6 +77,9 @@ impl Parser<'_> {
             return Ok(());
         }
 
+        // The alignments are those of the table that was analyzed last.
+        let _ = self.is_table_underline(block_lines[1].beg);
+
         // First line is header, second is underline, rest are body
         self.enter_block(BlockType::Thead, 0, 0)?;
         self.enter_block(BlockType::Tr, 0, 0)?;

@@ -813,3 +813,21 @@ test("disallowed tag followed by form-feed or vertical-tab whitespace is still f
   expect(out).not.toContain("<script ");
   expect(out).toContain("&lt;script ");
 });
+
+// ============================================================================
+// Column alignment belongs to the table
+// ============================================================================
+describe("table alignment", () => {
+  test("each table has the alignment of its own delimiter row", () => {
+    expect(markdown.html("| a | b |\n|:--|--:|\n| c | d |\n\n| e | f |\n|:-:|---|\n| g | h |\n")).toBe(
+      '<table>\n<thead>\n<tr><th align="left">a</th><th align="right">b</th></tr>\n</thead>\n<tbody>\n<tr><td align="left">c</td><td align="right">d</td></tr>\n</tbody>\n</table>\n' +
+        '<table>\n<thead>\n<tr><th align="center">e</th><th>f</th></tr>\n</thead>\n<tbody>\n<tr><td align="center">g</td><td>h</td></tr>\n</tbody>\n</table>\n',
+    );
+  });
+
+  test("a line that only looks like a delimiter row does not change the table before it", () => {
+    expect(markdown.html("| a | b |\n|:--|--:|\n| c | d |\n\nx\n:-:\n")).toBe(
+      '<table>\n<thead>\n<tr><th align="left">a</th><th align="right">b</th></tr>\n</thead>\n<tbody>\n<tr><td align="left">c</td><td align="right">d</td></tr>\n</tbody>\n</table>\n<p>x\n:-:</p>\n',
+    );
+  });
+});

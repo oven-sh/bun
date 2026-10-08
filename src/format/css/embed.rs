@@ -481,7 +481,8 @@ fn is_candidate<'a>(e: Expr<'a>, template: Template<'a>, options: &FormatOptions
         && is_embed_css(e)
 }
 
-fn is_blank(template: Template<'_>) -> bool {
+/// Whether `template` is written ` `` `.
+pub(crate) fn is_blank(template: Template<'_>) -> bool {
     template.quasi_count() == 1 && text::trim(template.raw(0)).is_empty()
 }
 

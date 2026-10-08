@@ -39,12 +39,22 @@ pub(crate) fn write_mapped(content: Interned, map: &mut impl MapString, f: &mut 
                 mapped: FxHashMap::default(),
                 strings: SmallVec::new(),
                 text: Vec::new(),
-                is_one_string: false,
-                has_literal_lines: false,
+                line_breaks: LineBreaks::None,
             };
             mapper.write(content, f);
         }
     }
+}
+
+/// What the line breaks in strings are.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum LineBreaks {
+    /// There are none.
+    None,
+    /// Nothing but characters: see `TextWidth::multiline_string`.
+    Characters,
+    /// A `literalline` each.
+    LiteralLines,
 }
 
 /// Writes elements once more, so that what is known about the groups around them is right for the new texts.
@@ -56,10 +66,7 @@ struct Mapper<'m, M> {
     strings: SmallVec<[FormatElement; 8]>,
     /// The same, put together.
     text: Vec<u8>,
-    /// One of them has line breaks that are nothing but characters.
-    is_one_string: bool,
-    /// One of them has line breaks that are a `literalline` each.
-    has_literal_lines: bool,
+    line_breaks: LineBreaks,
 }
 
 impl<M: MapString> Mapper<'_, M> {
@@ -83,7 +90,9 @@ impl<M: MapString> Mapper<'_, M> {
             return;
         }
         match self.map.changes(&self.text) {
-            true => self.map.write(&self.text, self.is_one_string, f),
+            true => self
+                .map
+                .write(&self.text, self.line_breaks == LineBreaks::Characters, f),
             false => self
                 .strings
                 .iter()
@@ -91,30 +100,33 @@ impl<M: MapString> Mapper<'_, M> {
         }
         self.strings.clear();
         self.text.clear();
-        (self.is_one_string, self.has_literal_lines) = (false, false);
+        self.line_breaks = LineBreaks::None;
     }
 
     fn write(&mut self, content: Interned, f: &mut Formatter<'_>) {
         let source = f.source_text().as_bytes();
         let mut indices = content.range();
         while let Some(&element) = indices.next().and_then(|index| f.storage.pool.get(index)) {
-            let (is_one_string, has_literal_lines) = match element {
-                FormatElement::SourceText(text) | FormatElement::OwnedText(text) => (
-                    text.width.is_one_string(),
-                    text.width.is_multiline() && !text.width.is_one_string(),
-                ),
-                _ => (false, false),
+            let line_breaks = match element {
+                FormatElement::SourceText(text) | FormatElement::OwnedText(text) => {
+                    match (text.width.is_one_string(), text.width.is_multiline()) {
+                        (true, _) => LineBreaks::Characters,
+                        (false, true) => LineBreaks::LiteralLines,
+                        (false, false) => LineBreaks::None,
+                    }
+                }
+                _ => LineBreaks::None,
             };
-            if (is_one_string && self.has_literal_lines)
-                || (has_literal_lines && self.is_one_string)
-            {
-                self.flush(f);
+            if line_breaks != LineBreaks::None {
+                // One string has one kind.
+                if self.line_breaks != LineBreaks::None && self.line_breaks != line_breaks {
+                    self.flush(f);
+                }
+                self.line_breaks = line_breaks;
             }
             if let Some(text) = text_of(&element, source, &f.storage.text) {
                 self.text.extend_from_slice(text);
                 self.strings.push(element);
-                self.is_one_string |= is_one_string;
-                self.has_literal_lines |= has_literal_lines;
                 continue;
             }
             match element {

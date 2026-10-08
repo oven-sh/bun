@@ -7,6 +7,7 @@ use super::Parser;
 use super::js::write_string;
 use super::map_strings::{MapString, write_mapped};
 pub(crate) use super::utilities::is_placeholder_in_js;
+use crate::css::embed::is_blank;
 use crate::css::text;
 use crate::ir::element::{Group, Interned, LineMode};
 use crate::js::context::JsFormatContext;
@@ -71,10 +72,6 @@ fn parser_of<'a>(e: Expr<'a>, template: Template<'a>, f: &Formatter<'a>) -> Opti
     (!is_in_another_language
         && (0..template.quasi_count()).all(|index| template.cooked(index).is_some()))
     .then_some(parser)
-}
-
-fn is_blank(template: Template<'_>) -> bool {
-    template.quasi_count() == 1 && text::trim(template.raw(0)).is_empty()
 }
 
 /// The text of `template`, with placeholders. `counter`: what tells them from those of a template that this one is in

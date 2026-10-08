@@ -302,6 +302,12 @@ impl<'a> Format<'a> for FormatTemplateExpression<'a> {
         let content = format_with(|f| f.write_element(element));
 
         let format_inner = format_with(|f| match layout {
+            // One string, as it is for Prettier: a placeholder in it is going to be a document, which is in nothing of this.
+            TemplateElementLayout::SingleLine if f.options().html_template_depth > 0 => {
+                let printed =
+                    f.print_to_text(&format_with(|f| f.write_without_soft_lines(&content)));
+                f.write_text(&printed, None);
+            }
             TemplateElementLayout::SingleLine => f.write_without_soft_lines(&content),
             TemplateElementLayout::Fit => {
                 let indent = matches!(self.expression, TemplateExpression::Expression(e) if {

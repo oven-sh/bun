@@ -68,29 +68,32 @@ fn lint(
     settings: &Json,
 ) -> Outcome {
     let outcome = linter_cmd::lint_case(entry, code, path, options, language_options, settings);
+    Outcome {
+        has_parse_errors: (outcome.messages.iter()).any(|it| it.is_fatal && it.message.starts_with(b"Parsing error")),
+        messages: outcome.messages.iter().map(|it| reported(entry, code, it)).collect(),
+        output: outcome.output,
+    }
+}
+
+/// What is compared of a message about `code` in a test of the rule `entry`.
+pub(crate) fn reported(entry: &'static RuleEntry, code: &[u8], message: &bun_lint::linter::LintMessage) -> Reported {
     let apply = |fix: &bun_lint::fix::Fix| {
         bun_lint::fix::apply_fixes(code, &mut vec![fix]).unwrap_or_else(|| code.to_vec())
     };
-    Outcome {
-        has_parse_errors: (outcome.messages.iter()).any(|it| it.is_fatal && it.message.starts_with(b"Parsing error")),
-        messages: (outcome.messages.iter())
-            .map(|it| Reported {
-                rule_id: match &it.rule_id {
-                    Some(id) if *id == bun_lint::linter::RuleId::Known(entry.meta) => None,
-                    Some(id) => Some(text(&id.to_vec())),
-                    None => Some(String::new()),
-                },
-                message_id: it.message_id.unwrap_or_default().to_owned(),
-                message: text(&it.message),
-                line: it.line,
-                column: it.column,
-                end: it.end,
-                suggestions: (it.suggestions.iter())
-                    .map(|s| (s.message_id.to_owned(), text(&apply(&s.fix))))
-                    .collect(),
-            })
+    Reported {
+        rule_id: match &message.rule_id {
+            Some(id) if *id == bun_lint::linter::RuleId::Known(entry.meta) => None,
+            Some(id) => Some(text(&id.to_vec())),
+            None => Some(String::new()),
+        },
+        message_id: message.message_id.unwrap_or_default().to_owned(),
+        message: text(&message.message),
+        line: message.line,
+        column: message.column,
+        end: message.end,
+        suggestions: (message.suggestions.iter())
+            .map(|s| (s.message_id.to_owned(), text(&apply(&s.fix))))
             .collect(),
-        output: outcome.output,
     }
 }
 

@@ -242,7 +242,8 @@ fn print_embed_css<'a>(template: Template<'a>, options: &FormatOptions, action: 
         text.extend_from_slice(template.raw(index));
     }
     let text = super::normalize_end_of_line(&text);
-    let Ok(sink) = super::parse_and_print(&text, super::Parser::Scss, options, Sink::to_document()) else {
+    let mut memo = Default::default();
+    let Ok(sink) = super::parse_and_print(&text, super::Parser::Scss, options, Sink::to_document(), &mut memo) else {
         return false;
     };
     let document = doc::strip_trailing_hardline(doc::clean(sink.into_document()));

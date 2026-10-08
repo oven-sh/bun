@@ -1,7 +1,7 @@
 //! Prettier's `print/misc.js`, and the utilities of Prettier that it uses: strings, numbers, units,
 //! and questions about the text around a position.
 
-use super::text;
+use super::text::{self, ByteSet};
 use std::borrow::Cow;
 
 /// The units of `css-units-list`, as they are written.
@@ -119,7 +119,8 @@ pub(crate) fn print_string(raw: &[u8], single_quote: bool, out: &mut Vec<u8>) {
 
 /// `adjustStrings`
 pub(crate) fn adjust_strings(value: &[u8], single_quote: bool) -> Cow<'_, [u8]> {
-    if bun_core::strings::index_of_any(value, b"\"'").is_none() {
+    static QUOTES: ByteSet = ByteSet::new(b"\"'");
+    if QUOTES.find(value, 0).is_none() {
         return Cow::Borrowed(value);
     }
     let mut out = Vec::with_capacity(value.len());
@@ -249,11 +250,14 @@ pub(crate) fn quote_attribute_value(value: Cow<'_, [u8]>, single_quote: bool) ->
 
 /// `maybeToLowerCase`
 pub(crate) fn maybe_to_lower_case(value: &[u8]) -> Cow<'_, [u8]> {
-    let keeps_case = bun_core::strings::index_of_any(value, b"$@#").is_some()
+    static SIGNS: ByteSet = ByteSet::new(b"$@#");
+    static OPEN: ByteSet = ByteSet::new(b"(");
+    static CLOSE: ByteSet = ByteSet::new(b")");
+    let keeps_case = SIGNS.find(value, 0).is_some()
         || value.starts_with(b"%")
         || value.starts_with(b"--")
         || value.starts_with(b":--")
-        || (bun_core::strings::contains_char(value, b'(') && bun_core::strings::contains_char(value, b')'));
+        || (OPEN.find(value, 0).is_some() && CLOSE.find(value, 0).is_some());
     match keeps_case {
         true => Cow::Borrowed(value),
         false => text::to_lower_case(value),

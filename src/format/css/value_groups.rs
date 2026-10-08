@@ -138,7 +138,7 @@ impl<'a> Printer<'a, '_> {
 
     /// `node`: a `value-comma_group`.
     fn shape_of_comma_group(&self, statement: Statement<'_, 'a>, node: ValueRef<'_>) -> Shape {
-        let at_rule = statement.css_ancestor(Kind::AtRule);
+        let at_rule = statement.at_rule;
         if at_rule.is_some_and(|it| self.is_scss_control_directive(it)) {
             Shape::GroupIndent
         } else if node.groups().len() == 2
@@ -164,14 +164,16 @@ impl<'a> Printer<'a, '_> {
         let declaration_prop = statement.css_ancestor(Kind::Decl).map(|node| text::to_lower_case(&node.prop));
         let is_grid_value = parent.is_some_and(|it| it.kind() == ValueKind::Value)
             && declaration_prop.as_ref().is_some_and(|prop| **prop == *b"grid" || prop.starts_with(b"grid-template"));
-        let at_rule = statement.css_ancestor(Kind::AtRule);
+        let at_rule = statement.at_rule;
         let is_control_directive = at_rule.is_some_and(|it| self.is_scss_control_directive(it));
         let has_inline_comment = node.groups().any(is_inline_comment);
         let is_in_paren_group = parent.is_some_and(|it| it.kind() == ValueKind::ParenGroup);
 
-        let inside_url = self.inside_value_function(values, b"url");
-        let inside_calc = self.inside_value_function(values, b"calc");
-        let inside_type = self.inside_value_function(values, b"type");
+        // `insideValueFunctionNode`
+        let function = self.value_function(values);
+        let inside_url = function.is_some_and(|name| text::eq_lower_case(name, b"url"));
+        let inside_calc = function.is_some_and(|name| text::eq_lower_case(name, b"calc"));
+        let inside_type = function.is_some_and(|name| text::eq_lower_case(name, b"type"));
         let is_in_scss_if = self.syntax() == Syntax::Scss
             && is_in_paren_group
             && grandparent.is_some_and(|it| is_func(it) && it.value() == Some(b"if"));
@@ -671,9 +673,12 @@ impl<'a> Printer<'a, '_> {
                 && child.kind() == ValueKind::CommaGroup
                 && let Some(last) = child.groups().next_back()
                 && let Some(end) = last.node().loc.end_offset.filter(|_| last.node().has_source())
-                && is_next_line_empty(self.text(), end as usize)
             {
-                self.sink.hard_line();
+                // It may look at what follows the declaration.
+                self.is_memoizable = false;
+                if is_next_line_empty(self.text(), end as usize) {
+                    self.sink.hard_line();
+                }
             }
         }
         self.sink.end_indent();

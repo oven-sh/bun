@@ -66,6 +66,8 @@ pub(crate) struct Sink<'o> {
     line_start_column: usize,
     /// Whether a group has been written on one line in this line.
     has_group_in_line: bool,
+    /// How many times something else than a text has gone to the output.
+    line_breaks: u32,
     /// The unit takes a document.
     has_failed: bool,
 }
@@ -81,6 +83,7 @@ impl<'o> Sink<'o> {
             flat_groups: 0,
             line_start_column: 0,
             has_group_in_line: false,
+            line_breaks: 0,
             has_failed: false,
         }
     }
@@ -95,6 +98,7 @@ impl<'o> Sink<'o> {
             line_start: 0,
             line_start_column: 0,
             has_group_in_line: false,
+            line_breaks: 0,
             has_failed: false,
         }
     }
@@ -145,6 +149,7 @@ impl<'o> Sink<'o> {
     /// Prints the document that the unit has been written to.
     pub(crate) fn end_document(&mut self) {
         let mut document = Doc::Array(self.frames.pop().map(|(_, parts)| parts).unwrap_or_default());
+        self.line_breaks += 1;
         let column = self.column();
         if let Some(printer) = &mut self.printer {
             self.line_start_column = printer.print_part(&mut document, self.indent, column);
@@ -174,6 +179,26 @@ impl<'o> Sink<'o> {
         if self.has_group_in_line && self.printer.as_ref().is_some_and(|printer| self.column() > printer.width) {
             self.has_failed = true;
         }
+    }
+
+    // ───────────────────────────── what is written again ─────────────────────────────
+
+    /// Where the output is, if that is what is written to, for `written_since`.
+    pub(crate) fn position(&self) -> Option<(usize, u32)> {
+        let printer = self.printer.as_ref().filter(|_| self.is_straight() && !self.has_failed)?;
+        Some((printer.out.len(), self.line_breaks))
+    }
+
+    /// What has been written since `position`, if that is a part of a line, and whether there is a group in the line.
+    pub(crate) fn written_since(&self, (len, line_breaks): (usize, u32)) -> Option<(&[u8], bool)> {
+        let printer = self.printer.as_ref().filter(|_| self.is_straight() && !self.has_failed && self.line_breaks == line_breaks)?;
+        Some((printer.out.get(len..)?, self.has_group_in_line))
+    }
+
+    /// Writes what `written_since` has returned.
+    pub(crate) fn write_again(&mut self, text: &[u8], has_group: bool) {
+        self.text(text);
+        self.has_group_in_line |= has_group;
     }
 
     // ───────────────────────────── the parts of a document ─────────────────────────────
@@ -209,21 +234,25 @@ impl<'o> Sink<'o> {
     }
 
     pub(crate) fn text(&mut self, text: &[u8]) {
-        if text.is_empty() {
-            return;
-        }
-        match (&mut self.printer, self.frames.last_mut()) {
-            (_, Some((_, parts))) => parts.push(Doc::Text(Cow::Owned(text.to_vec()))),
-            (Some(printer), None) => printer.write_text(text),
-            (None, None) => {}
+        match self.frames.last_mut() {
+            Some(_) if text.is_empty() => {}
+            Some((_, parts)) => parts.push(Doc::Text(Cow::Owned(text.to_vec()))),
+            None => {
+                if let Some(printer) = &mut self.printer {
+                    printer.write_text(text);
+                }
+            }
         }
     }
 
     pub(crate) fn token(&mut self, text: &'static str) {
-        match (&mut self.printer, self.frames.last_mut()) {
-            (_, Some((_, parts))) => parts.push(Doc::from(text)),
-            (Some(printer), None) => printer.out.extend_from_slice(text.as_bytes()),
-            (None, None) => {}
+        match self.frames.last_mut() {
+            Some((_, parts)) => parts.push(Doc::from(text)),
+            None => {
+                if let Some(printer) = &mut self.printer {
+                    printer.out.extend_from_slice(text.as_bytes());
+                }
+            }
         }
     }
 
@@ -231,6 +260,7 @@ impl<'o> Sink<'o> {
     fn write_line_break(&mut self) {
         self.check_line();
         self.has_group_in_line = false;
+        self.line_breaks += 1;
         if let Some(printer) = &mut self.printer {
             self.line_start_column = printer.write_hard_line(self.indent);
             self.line_start = printer.out.len();

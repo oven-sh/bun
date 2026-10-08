@@ -5,7 +5,7 @@ use super::Parser as Syntax;
 use super::media_query::{self, MediaNode};
 use super::postcss::{self, Kind, NodeId, Range, Tree};
 use super::selector_parser::{SelectorId, Selectors};
-use super::text;
+use super::text::{self, ByteSet};
 use super::value_parser::{ValueId, Values};
 use std::borrow::Cow;
 
@@ -90,6 +90,8 @@ pub(crate) struct Context<'a> {
     pub(crate) text: &'a [u8],
     /// `options.originalText`
     pub(crate) original_text: &'a [u8],
+    /// Whether that is the same.
+    pub(crate) is_original_text: bool,
     /// `Tree::extra`
     pub(crate) extra: &'a [u8],
     pub(crate) syntax: Syntax,
@@ -454,12 +456,14 @@ impl<'a> Context<'a> {
                 None => Cow::Borrowed(value),
             });
         } else {
-            if let Some(at) = find_directive(value, b"!default") {
+            static BANG: ByteSet = ByteSet::new(b"!");
+            let has_bang = BANG.find(value, 0).is_some();
+            if has_bang && let Some(at) = find_directive(value, b"!default") {
                 node.scss_default = true;
                 node.raw_scss_default = Some(&value[at..]).filter(|it| text::trim(it) != b"!default");
                 value = &value[..at];
             }
-            if let Some(at) = find_directive(value, b"!global") {
+            if has_bang && let Some(at) = find_directive(value, b"!global") {
                 node.scss_global = true;
                 node.raw_scss_global = Some(&value[at..]).filter(|it| text::trim(it) != b"!global");
                 value = &value[..at];

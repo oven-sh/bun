@@ -8,6 +8,7 @@
 pub(crate) mod doc;
 pub(crate) mod embed;
 mod media_query;
+mod memo;
 mod misc;
 mod parse;
 mod postcss;
@@ -19,6 +20,7 @@ mod value_groups;
 mod value_parser;
 
 use self::doc::Doc;
+use self::memo::Memo;
 use self::sink::Sink;
 use crate::options::{EmbeddedLanguageFormatting, QuoteStyle, TrailingCommas};
 use crate::pragma::BeforeParsing;
@@ -62,7 +64,9 @@ pub fn parser_for_path(path: &[u8]) -> Option<Parser> {
 
 /// Everything that is allocated to format a style sheet. It is reused for the next one.
 #[derive(Default)]
-pub struct Scratch {}
+pub struct Scratch {
+    memo: Memo,
+}
 
 /// Prettier's `parseFrontMatter`: the length of the front matter at the start of `text`.
 fn front_matter_len(text: &[u8]) -> Option<usize> {
@@ -168,7 +172,13 @@ pub(crate) fn normalize_end_of_line(text: &[u8]) -> Cow<'_, [u8]> {
 }
 
 /// Parses `text`, whose line breaks are `\n`, and writes it to `sink`.
-fn parse_and_print<'o>(text: &[u8], parser: Parser, options: &FormatOptions, mut sink: Sink<'o>) -> Result<Sink<'o>, FormatError> {
+fn parse_and_print<'o>(
+    text: &[u8],
+    parser: Parser,
+    options: &FormatOptions,
+    mut sink: Sink<'o>,
+    memo: &'o mut Memo,
+) -> Result<Sink<'o>, FormatError> {
     // What is parsed has blanks in the place of the front matter, so that all positions stay.
     let front_matter = front_matter_len(text).map(|len| &text[..len]);
     let mut blanked: Cow<'_, [u8]> = match front_matter {
@@ -231,6 +241,7 @@ fn parse_and_print<'o>(text: &[u8], parser: Parser, options: &FormatOptions, mut
         context: parse::Context {
             text: &blanked,
             original_text: text,
+            is_original_text: matches!(blanked, Cow::Borrowed(_)),
             extra: &tree.extra,
             syntax: parser,
         },
@@ -238,8 +249,11 @@ fn parse_and_print<'o>(text: &[u8], parser: Parser, options: &FormatOptions, mut
         trailing_comma: !matches!(options.trailing_commas, TrailingCommas::None),
         value_stack: Vec::new(),
         blocks: Vec::new(),
+        scratch: Vec::new(),
         has_failed: false,
         sink,
+        memo,
+        is_memoizable: false,
     };
     printer.print_root(&tree, &mut parse::Parsed::default());
     match printer.has_failed {
@@ -253,7 +267,7 @@ pub fn format(
     text: &[u8],
     parser: Parser,
     options: &FormatOptions,
-    _scratch: &mut Scratch,
+    scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
     const BOM: &[u8] = "\u{FEFF}".as_bytes();
@@ -285,10 +299,11 @@ pub fn format(
         out.extend_from_slice(BOM);
     }
     if is_range {
-        parse_and_print(text, parser, options, Sink::to_document()).inspect_err(|_| out.truncate(start))?;
+        parse_and_print(text, parser, options, Sink::to_document(), &mut scratch.memo).inspect_err(|_| out.truncate(start))?;
         doc::print(doc::replace_end_of_line_with_literal_lines(Cow::Borrowed(text)), options, original, out);
         return Ok(());
     }
-    let result = parse_and_print(text, parser, options, Sink::to_output(doc::Printer::new(options, original, out))).map(drop);
+    let sink = Sink::to_output(doc::Printer::new(options, original, out));
+    let result = parse_and_print(text, parser, options, sink, &mut scratch.memo).map(drop);
     result.inspect_err(|_| out.truncate(start))
 }

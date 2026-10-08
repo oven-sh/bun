@@ -18,7 +18,12 @@ pub(crate) fn white_space_len_at_start(text: &[u8]) -> Option<usize> {
 }
 
 fn white_space_len_at_end(text: &[u8]) -> Option<usize> {
-    (1..=3usize).find(|&len| {
+    match *text.last()? {
+        b'\t' | b'\n' | 0x0B | 0x0C | b'\r' | b' ' => return Some(1),
+        0..0x80 => return None,
+        _ => {}
+    }
+    (2..=3usize).find(|&len| {
         text.len().checked_sub(len).and_then(|at| text.get(at..)).and_then(white_space_len_at_start) == Some(len)
     })
 }
@@ -51,11 +56,12 @@ pub(crate) fn trim(text: &[u8]) -> &[u8] {
 
 /// `text.toLowerCase()`
 pub(crate) fn to_lower_case(text: &[u8]) -> Cow<'_, [u8]> {
+    // Neither an upper case letter nor anything that is not ASCII.
+    if text.iter().all(|byte| !matches!(byte, b'A'..=b'Z' | 0x80..)) {
+        return Cow::Borrowed(text);
+    }
     if text.is_ascii() {
-        return match text.iter().any(u8::is_ascii_uppercase) {
-            true => Cow::Owned(text.to_ascii_lowercase()),
-            false => Cow::Borrowed(text),
-        };
+        return Cow::Owned(text.to_ascii_lowercase());
     }
     match std::str::from_utf8(text) {
         Ok(text) => Cow::Owned(text.to_lowercase().into_bytes()),

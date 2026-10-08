@@ -207,10 +207,19 @@ pub(crate) struct Loc {
     source_index: Option<u32>,
     /// `source.start.line`
     pub(crate) start_line: Option<u32>,
-    /// `source.end`: the line and the column.
-    end: Option<(u32, u32)>,
+    /// Whether there is a `source.end`.
+    has_end: bool,
     pub(crate) start_offset: Option<u32>,
     pub(crate) end_offset: Option<u32>,
+}
+
+/// What the parser says of where a node is.
+#[derive(Copy, Clone)]
+struct Source {
+    index: u32,
+    start_line: u32,
+    /// The line and the column.
+    end: (u32, u32),
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -310,11 +319,21 @@ impl ValueNode {
 
     /// Whether it has a `source`, after `calculateLoc`.
     pub(crate) fn has_source(&self) -> bool {
-        self.loc.start_offset.is_some() || self.loc.end.is_some()
+        self.loc.start_offset.is_some() || self.loc.has_end
     }
 
-    fn is_group(&self) -> bool {
-        matches!(self.kind, ValueKind::ParenGroup | ValueKind::CommaGroup)
+    /// A group with nothing in it, which nothing says where it is.
+    fn is_empty_group(&self) -> bool {
+        matches!(self.kind, ValueKind::ParenGroup | ValueKind::CommaGroup) && self.groups.0 == self.groups.1 && !self.has_source()
+    }
+
+    /// `fillEmptyLocFromParent`
+    fn fill_empty_loc(&mut self, parent: &Loc) {
+        if self.is_empty_group() && parent.end_offset.is_some() {
+            self.loc.start_offset = parent.start_offset;
+            self.loc.end_offset = parent.start_offset;
+            self.loc.start_line = parent.start_line;
+        }
     }
 }
 
@@ -411,6 +430,8 @@ struct ValuesParser<'t> {
     /// Where the text of the value starts in `Values::text`, which all positions count from.
     base: usize,
     len: usize,
+    /// Where Prettier takes the value to start in the style sheet.
+    root_offset: u32,
     position: usize,
     current: ValueId,
     spaces: bool,
@@ -441,7 +462,28 @@ impl ValuesParser<'_> {
         Some(self.values.nodes[self.current as usize].last_child).filter(|&id| id != 0)
     }
 
-    fn new_node(&mut self, kind: ValueKind, value: Span, loc: Loc) -> ValueId {
+    fn new_node(&mut self, kind: ValueKind, value: Span, source: Source) -> ValueId {
+        // `calculateNodeLoc`
+        let end = match source.end {
+            (1, column) => column,
+            end => line_column_to_index(end, self.text()),
+        };
+        let (start, end) = match kind {
+            ValueKind::Word => {
+                let value = self.values.text(value);
+                (fix_value_word_loc(value, source.index), fix_value_word_loc(value, end))
+            }
+            ValueKind::Paren => (source.index, source.index + u32::from(self.values.text(value) == b")")),
+            _ => (source.index, end),
+        };
+        let max_end = self.root_offset + self.len as u32;
+        let loc = Loc {
+            source_index: Some(source.index),
+            start_line: Some(source.start_line),
+            has_end: true,
+            start_offset: Some((start + self.root_offset).min(max_end)),
+            end_offset: Some((end + self.root_offset).min(max_end)),
+        };
         let id = self.values.nodes.len() as ValueId;
         self.values.nodes.push(ValueNode {
             value,
@@ -459,12 +501,11 @@ impl ValuesParser<'_> {
     }
 
     /// The `source` and the `sourceIndex` that most nodes get from their token.
-    fn loc_of(token: Token) -> Loc {
-        Loc {
-            source_index: Some(token.pos),
-            start_line: Some(token.line),
-            end: Some((token.end_line, token.end_column)),
-            ..Loc::default()
+    fn loc_of(token: Token) -> Source {
+        Source {
+            index: token.pos,
+            start_line: token.line,
+            end: (token.end_line, token.end_column),
         }
     }
 
@@ -552,12 +593,11 @@ impl ValuesParser<'_> {
             }
         }
         let value = self.span(token.pos as usize, token.end as usize);
-        let loc = Loc {
+        let loc = Source {
             // `this.currToken[4]`, which is a line.
-            source_index: Some(token.end_line),
-            start_line: Some(token.line),
-            end: Some((token.line, token.column)),
-            ..Loc::default()
+            index: token.end_line,
+            start_line: token.line,
+            end: (token.line, token.column),
         };
         self.new_node(ValueKind::Operator, value, loc);
         self.position += 1;
@@ -641,14 +681,14 @@ impl ValuesParser<'_> {
         let mut ind = 0;
         loop {
             let word = &self.text()[word_start..word_start + word_len];
-            let index = text::index_of_char_from(word, b'@', ind + 1).unwrap_or(word_len);
+            static AT: ByteSet = ByteSet::new(b"@");
+            let index = AT.find(word, ind + 1).unwrap_or(word_len);
             let value = &word[ind..index];
             let (start, end) = (word_start + ind, word_start + index);
-            let loc = Loc {
-                source_index: Some(current.pos + ind as u32),
-                start_line: Some(current.line),
-                end: Some((current.end_line, (current.column + index as u32).saturating_sub(1))),
-                ..Loc::default()
+            let loc = Source {
+                index: current.pos + ind as u32,
+                start_line: current.line,
+                end: (current.end_line, (current.column + index as u32).saturating_sub(1)),
             };
             if value.starts_with(b"@") {
                 let value = self.span(start + 1, end);
@@ -657,7 +697,9 @@ impl ValuesParser<'_> {
                 let unit_start = number_prefix_len(value).unwrap_or(0);
                 let unit = &value[unit_start..];
                 // `value.replace(unit, "")` removes the first occurrence, wherever it is.
-                let number = match bun_core::strings::index_of(value, unit) {
+                // It can only start earlier with what can be in a number.
+                let is_elsewhere = matches!(unit.first(), Some(b'+' | b'-' | b'.' | b'e' | b'E' | b'0'..=b'9'));
+                let number = match if is_elsewhere { bun_core::strings::index_of(value, unit) } else { None } {
                     Some(at) if !unit.is_empty() && at != unit_start => {
                         let number = [&value[..at], &value[at + unit.len()..]].concat();
                         self.values.add_text(&number)
@@ -709,6 +751,42 @@ impl Grouper<'_> {
         (self.values.nodes.len() - 1) as ValueId
     }
 
+    /// Adds a group, which is where the nodes in it are: `fillLocFromChildren`, `fillEmptyChildLocs`.
+    fn add_group(&mut self, mut node: ValueNode) -> ValueId {
+        let (nodes, lists) = (&mut self.values.nodes, &self.values.lists);
+        let children = || {
+            let groups = lists.get(node.groups.0 as usize..node.groups.1 as usize).unwrap_or_default();
+            [node.open, node.close].into_iter().filter(|&id| id != 0).chain(groups.iter().copied())
+        };
+        let mut has_empty_group = false;
+        for child in children() {
+            let child = &nodes[child as usize];
+            has_empty_group |= child.is_empty_group();
+            if let (Some(start), Some(end)) = (child.loc.start_offset, child.loc.end_offset) {
+                match (&mut node.loc.start_offset, &mut node.loc.end_offset) {
+                    (Some(first), Some(last)) => {
+                        if start < *first {
+                            node.loc.start_line = child.loc.start_line;
+                        }
+                        *first = start.min(*first);
+                        *last = end.max(*last);
+                    }
+                    _ => {
+                        node.loc.start_offset = Some(start);
+                        node.loc.end_offset = Some(end);
+                        node.loc.start_line = child.loc.start_line;
+                    }
+                }
+            }
+        }
+        if has_empty_group && node.loc.start_offset.is_some() {
+            for child in children() {
+                nodes[child as usize].fill_empty_loc(&node.loc);
+            }
+        }
+        self.add(node)
+    }
+
     /// What is between the parentheses of the function whose `group` is `group`, counted from the start of the
     /// value.
     fn arguments_range(&self, group: ValueId) -> Option<(usize, usize)> {
@@ -726,7 +804,7 @@ impl Grouper<'_> {
             return only;
         }
         let groups = self.values.add_list_from_group(start);
-        self.add(ValueNode {
+        self.add_group(ValueNode {
             groups,
             ..ValueNode::new(ValueKind::CommaGroup)
         })
@@ -734,11 +812,19 @@ impl Grouper<'_> {
 
     /// `parseNestedValue` and `parseValueNode` for the container `id`, and `flattenGroups` for the result.
     fn group_nodes_of(&mut self, id: ValueId) -> ValueId {
+        // A group of one node is that node.
+        let only = self.node(self.node(id).first_child);
+        if only.next_sibling == 0 && matches!(only.kind, ValueKind::Word | ValueKind::String | ValueKind::AtWord | ValueKind::Operator) {
+            return self.node(id).first_child;
+        }
         // The functions in it first.
         let mut child = self.node(id).first_child;
         while child != 0 {
             if self.node(child).kind == ValueKind::Func {
-                self.values.nodes[child as usize].group = self.group_nodes_of(child);
+                let group = self.group_nodes_of(child);
+                self.values.nodes[child as usize].group = group;
+                let loc = self.node(child).loc;
+                self.values.nodes[group as usize].fill_empty_loc(&loc);
             }
             child = self.node(child).next_sibling;
         }
@@ -857,7 +943,7 @@ impl Grouper<'_> {
                         self.values.groups.push(last);
                     }
                     let groups = self.values.add_list_from_groups(paren.groups_start);
-                    let group = self.add(ValueNode {
+                    let group = self.add_group(ValueNode {
                         open: paren.open,
                         close: id,
                         groups,
@@ -892,7 +978,7 @@ impl Grouper<'_> {
             return only;
         }
         let groups = self.values.add_list_from_groups(groups_start);
-        self.add(ValueNode {
+        self.add_group(ValueNode {
             groups,
             ..ValueNode::new(ValueKind::ParenGroup)
         })
@@ -989,105 +1075,6 @@ impl Values {
         (start, self.lists.len() as u32)
     }
 
-    /// The `index`th of the nodes that `calculateNodeLoc` finds in `node`.
-    fn child_for_loc(&self, node: &ValueNode, index: usize) -> Option<ValueId> {
-        match node.kind {
-            ValueKind::Root | ValueKind::Value | ValueKind::Func => Some(node.group).filter(|_| index == 0),
-            ValueKind::ParenGroup => {
-                let parens = [node.open, node.close];
-                let mut parens = parens.iter().copied().filter(|&id| id != 0);
-                let count = parens.clone().count();
-                match index < count {
-                    true => parens.nth(index),
-                    false => self.lists.get(node.groups.0 as usize..node.groups.1 as usize)?.get(index - count).copied(),
-                }
-            }
-            ValueKind::CommaGroup => self.lists.get(node.groups.0 as usize..node.groups.1 as usize)?.get(index).copied(),
-            _ => None,
-        }
-    }
-
-    /// `calculateNodeLoc` for what is in a value. `(base, len)`: where the text of the value is, which starts at
-    /// `root_offset` in the style sheet.
-    fn calculate_loc(&mut self, id: ValueId, (base, len): (usize, usize), root_offset: u32) {
-        let max_end = root_offset + len as u32;
-        let mut node = *self.node(id);
-        if let Some(source_index) = node.loc.source_index
-            && node.kind != ValueKind::Selector
-        {
-            let text = &self.text[base..base + len];
-            let value = self.text(node.value);
-            let start = match node.kind {
-                ValueKind::Word => fix_value_word_loc(value, source_index),
-                _ => source_index,
-            };
-            let end = match (node.kind, node.loc.end) {
-                (ValueKind::Paren, _) => Some(source_index + u32::from(value == b")")),
-                (ValueKind::Word, Some(end)) => Some(fix_value_word_loc(value, line_column_to_index(end, text))),
-                (_, Some(end)) => Some(line_column_to_index(end, text)),
-                (_, None) => None,
-            };
-            node.loc.start_offset = Some((start + root_offset).min(max_end));
-            node.loc.end_offset = end.map(|end| (end + root_offset).min(max_end));
-        }
-
-        let parent_start = |loc: &Loc| loc.start_offset.zip(loc.end_offset).map(|(start, _)| (start, loc.start_line));
-        let own = parent_start(&node.loc);
-        let is_empty_group = |child: &ValueNode| child.is_group() && child.groups.0 == child.groups.1 && !child.has_source();
-        let mut from_children: Option<(u32, u32, Option<u32>)> = None;
-        let mut index = 0;
-        while let Some(child_id) = self.child_for_loc(&node, index) {
-            index += 1;
-            match self.node(child_id).kind {
-                // A selector is the root of a text of its own, and nobody asks where it is.
-                ValueKind::Text | ValueKind::Selector => continue,
-                _ => self.calculate_loc(child_id, (base, len), root_offset),
-            }
-            let child = &mut self.nodes[child_id as usize];
-            // `fillEmptyLocFromParent`
-            if let Some((start, line)) = own
-                && is_empty_group(child)
-            {
-                child.loc.start_offset = Some(start);
-                child.loc.end_offset = Some(start);
-                child.loc.start_line = line;
-            }
-            if let (Some(start), Some(end)) = (child.loc.start_offset, child.loc.end_offset) {
-                from_children = Some(match from_children {
-                    None => (start, end, child.loc.start_line),
-                    Some((first, last, line)) => {
-                        (first.min(start), last.max(end), if start < first { child.loc.start_line } else { line })
-                    }
-                });
-            }
-        }
-        // `fillLocFromChildren`
-        let has_offsets = node.loc.start_offset.is_some() && node.loc.end_offset.is_some();
-        if !(has_offsets && node.loc.end.is_some())
-            && let Some((start, end, line)) = from_children
-        {
-            if !has_offsets {
-                node.loc.start_offset = Some(start);
-                node.loc.end_offset = Some(end);
-            }
-            node.loc.start_line = node.loc.start_line.or(line);
-        }
-        // `fillEmptyChildLocs`
-        if let Some((start, line)) = parent_start(&node.loc) {
-            let mut index = 0;
-            while let Some(child_id) = self.child_for_loc(&node, index) {
-                index += 1;
-                let child = &mut self.nodes[child_id as usize];
-                if is_empty_group(child) {
-                    child.loc.start_offset = Some(start);
-                    child.loc.end_offset = Some(start);
-                    child.loc.start_line = line;
-                }
-            }
-        }
-        self.nodes[id as usize].loc = node.loc;
-    }
-
     /// `value-unknown`
     pub(crate) fn unknown(&mut self, value: &[u8], root_offset: u32) -> ValueId {
         if self.nodes.is_empty() {
@@ -1135,6 +1122,7 @@ impl Values {
                 values: self,
                 base,
                 len: value.len(),
+                root_offset,
                 position: 0,
                 current: container,
                 spaces: false,
@@ -1155,16 +1143,24 @@ impl Values {
         };
         let group = grouper.group_nodes_of(container);
         let is_unbalanced = grouper.is_unbalanced;
+        // `fillLocFromChildren`
+        let loc = self.nodes[group as usize].loc;
+        let loc = Loc {
+            source_index: None,
+            has_end: false,
+            ..if loc.start_offset.is_some() && loc.end_offset.is_some() { loc } else { Loc::default() }
+        };
         self.nodes[container as usize].group = group;
+        self.nodes[container as usize].loc = loc;
         let mut root = ValueNode {
             group: container,
             ..ValueNode::new(ValueKind::Root)
         };
+        root.loc.start_line = loc.start_line;
         root.loc.start_offset = Some(root_offset);
         root.loc.end_offset = Some(root_offset + value.len() as u32);
         self.nodes.push(root);
         let root = (self.nodes.len() - 1) as ValueId;
-        self.calculate_loc(root, (base, value.len()), root_offset);
         match is_unbalanced {
             true => Err(ParseError),
             false => Ok(root),

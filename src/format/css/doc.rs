@@ -708,7 +708,7 @@ impl<'o> Printer<'o> {
     }
 
     pub(crate) fn write_text(&mut self, text: &[u8]) {
-        if self.literal_new_line == b"\n" || !bun_core::strings::contains_char(text, b'\n') {
+        if matches!(self.literal_new_line, [b'\n']) || !bun_core::strings::contains_char(text, b'\n') {
             return self.out.extend_from_slice(text);
         }
         for (index, line) in bun_core::strings::split(text, b"\n").enumerate() {

@@ -324,7 +324,7 @@ fn move_comments<'a>(file: &'a File<'a>, comments: &mut [Comment]) {
             }
             _ if !is_own_line => None,
             [b'.', b'.', ..] => None,
-            [b'.', ..] | [b'?', b'.', ..] => moved_out_of_member_expression(&mut nodes, comment),
+            [b'.', ..] | [b'?', b'.', ..] | [b'[', ..] => moved_out_of_member_expression(&mut nodes, comment),
             // `(a + b // comment ⏎ ).c`
             [b')', ..] => {
                 let after_parentheses = after.iter().position(|b| *b != b')' && !b.is_ascii_whitespace());
@@ -631,6 +631,8 @@ impl<'a> Comments<'a> {
         }
 
         let mut comment_index = 0;
+        // So many trail the node whatever follows them: the last of them ends its line.
+        let mut trailing_count = 0;
         let mut type_cast_comment = None;
         while let Some(comment) = comments.get(comment_index) {
             if comment.end() > following_span_start || comment.end() > enclosing_span.end {
@@ -646,7 +648,7 @@ impl<'a> Comments<'a> {
                 // On a line of its own, or moved to where it is: it leads the next sibling.
                 break;
             } else if comment.followed_by_newline() {
-                return &comments[..=comment_index];
+                trailing_count = comment_index + 1;
             }
             comment_index += 1;
         }
@@ -654,7 +656,7 @@ impl<'a> Comments<'a> {
         // From the end, those that have nothing but blanks and `(` between them and the next
         // sibling lead it.
         let mut gap_end = type_cast_comment.map_or(following_span_start, |c| c.start());
-        for (index, comment) in comments[..comment_index].iter().enumerate().rev() {
+        for (index, comment) in comments[..comment_index].iter().enumerate().skip(trailing_count).rev() {
             let is_adjacent = source_text
                 .all_bytes_match(comment.end(), gap_end, |b| b.is_ascii_whitespace() || b == b'(');
             if !is_adjacent {
@@ -662,7 +664,7 @@ impl<'a> Comments<'a> {
             }
             gap_end = comment.start();
         }
-        &[]
+        &comments[..trailing_count]
     }
 
     /// Whether a `prettier-ignore` comment leads the node that starts at `start`.

@@ -20,16 +20,28 @@ pub enum BeforeParsing<'t> {
     Format(Cow<'t, [u8]>),
 }
 
-/// What the pragmas in `text` and the options about them say.
+/// What the pragmas in `text`, which is JavaScript or TypeScript, and the options about them say.
 pub fn before_parsing<'t>(text: &'t [u8], options: &FormatOptions) -> BeforeParsing<'t> {
-    if (options.require_pragma && !has_pragma(text)) || (options.check_ignore_pragma && has_ignore_pragma(text)) {
+    before_parsing_css(text, 0, options)
+}
+
+/// The same for CSS, SCSS and Less, where the comment can follow front matter: Prettier's
+/// `language-css/pragma.js`. `front_matter_len`: the length of the front matter that `text` starts
+/// with, up to and including its last `---`.
+pub fn before_parsing_css<'t>(text: &'t [u8], front_matter_len: usize, options: &FormatOptions) -> BeforeParsing<'t> {
+    let (front_matter, content) = text.split_at(front_matter_len.min(text.len()));
+    if (options.require_pragma && !has_pragma(content)) || (options.check_ignore_pragma && has_ignore_pragma(content)) {
         return BeforeParsing::LeaveAsItIs;
     }
     // Not if only a part of the file is formatted.
     let is_whole_file = options.range_start.unwrap_or(0) == 0 && options.range_end.is_none_or(|end| end as usize >= utf16_len(text));
-    if options.insert_pragma && !options.require_pragma && is_whole_file && !has_pragma(text) {
+    if options.insert_pragma && !options.require_pragma && is_whole_file && !has_pragma(content) {
         let mut out = Vec::with_capacity(text.len() + 32);
-        insert_pragma(text, &mut out);
+        if !front_matter.is_empty() {
+            out.extend_from_slice(front_matter);
+            out.extend_from_slice(b"\n\n");
+        }
+        insert_pragma(content, &mut out);
         return BeforeParsing::Format(Cow::Owned(out));
     }
     BeforeParsing::Format(Cow::Borrowed(text))

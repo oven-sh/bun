@@ -17,32 +17,35 @@ fn is_init_of_for_statement(stmt: Stmt) -> bool {
         if matches!(parent.kind(), StmtKind::For { init: Some(init), .. } if init == stmt))
 }
 
-/// Whether `e`, the parent of `child`, is a `Pattern` or a `RestElement` of ESLint.
-fn is_pattern<'a>(e: Expr<'a>, child: Expr<'a>) -> bool {
-    match e.kind() {
-        ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Spread(_) => utils::is_assignment_target(e),
-        ExprKind::Assign { target, .. } => target == child && utils::is_assignment_target(e),
-        _ => false,
-    }
-}
-
 /// The first ancestor of `identifier`, an `Expr` or a `Pat`, whose type does not match ESLint's
-/// `PATTERN_TYPE`.
+/// `PATTERN_TYPE`: it is no `Pattern` and no `RestElement`.
 fn skip_patterns<'a>(identifier: Node<'a>) -> Node<'a> {
     let Node::Expr(mut at) = identifier else {
         let mut ancestors = identifier.ancestors();
         let found = ancestors.find(|it| !matches!(it, Node::Pat(_) | Node::PatProp(_) | Node::PatElem(_)));
         return found.unwrap_or(identifier);
     };
+    // What is around a part of a pattern, up to the next assignment, is a part of it too.
+    let mut is_in_pattern = false;
     loop {
         let parent = match at.parent() {
             Node::Prop(property) => property.parent(),
             parent => parent,
         };
-        match parent {
-            Node::Expr(e) if is_pattern(e, at) => at = e,
-            _ => return parent,
+        let Node::Expr(e) = parent else {
+            return parent;
+        };
+        is_in_pattern = match e.kind() {
+            ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Spread(_) => {
+                is_in_pattern || utils::is_assignment_target(e)
+            }
+            ExprKind::Assign { target, .. } => target == at && utils::is_assignment_target(e),
+            _ => false,
+        };
+        if !is_in_pattern {
+            return parent;
         }
+        at = e;
     }
 }
 
@@ -63,30 +66,81 @@ fn can_become_variable_declaration(identifier: Node) -> bool {
     }
 }
 
-fn is_outer_variable_in_destructing<'a>(name: Name<'a>, init_scope: Scope<'a>, file: &'a File<'a>) -> bool {
-    // ESLint resolves a reference to a global of the configuration, except in `through` of the
-    // global scope, which it is taken out of.
-    let is_global = || {
-        init_scope.kind() != ScopeKind::Global && ast_utils::is_configured_global(file, name.bytes())
-    };
-    if init_scope.through().any(|it| it.name() == name && (it.symbol().is_some() || is_global())) {
-        return true;
+/// Whether `scope.through` has a reference to a variable called `name`, which the configuration
+/// defines if `is_global`.
+fn is_name_in_through<'a>(scope: Scope<'a>, name: Name<'a>, is_global: bool) -> bool {
+    if !is_global {
+        // It is a reference to one of the variables of that name around the scope. If these have
+        // few, that is sooner said than by all the references in the scope.
+        let outer = scope.chain().skip(1).filter_map(|it| it.get_name(name));
+        let mut references = outer.flat_map(Symbol::references);
+        for _ in 0..64 {
+            match references.next() {
+                Some(reference) if scope.contains(reference.scope()) => return true,
+                Some(_) => {}
+                None => return false,
+            }
+        }
     }
-    let variable = init_scope.resolve_name(name);
-    variable.is_some_and(|it| it.declarations().any(|def| matches!(def, Declaration::Param(_))))
+    scope.through().any(|it| it.name() == name && (it.symbol().is_some() || is_global))
 }
 
-/// `left`: the left of an `AssignmentExpression`.
-fn has_outer_variables<'a>(left: Expr<'a>, scope: Scope<'a>) -> bool {
-    let is_outer = |name| is_outer_variable_in_destructing(name, scope, left.file());
-    match left.kind() {
-        ExprKind::Object(properties) => properties
-            .iter()
-            .filter(|it| it.kind() != PropKind::Spread)
-            .filter_map(|it| it.value()?.as_ident())
-            .any(is_outer),
-        ExprKind::Array(elements) => elements.iter().filter_map(Expr::as_ident).any(is_outer),
-        _ => false,
+/// What has been found out about the variables, the scopes and the assignments of the file.
+#[derive(Default)]
+struct Known<'a> {
+    /// Whether `scope.through` has a reference to a variable of that name.
+    through: FxHashMap<(Scope<'a>, Name<'a>), bool>,
+    /// Whether an assignment to a pattern keeps the variables of a scope from being `const`.
+    assignments: FxHashMap<(Expr<'a>, Scope<'a>), bool>,
+    /// For a variable that is declared more than once: the identifier to report, and what writes
+    /// to it if there is one.
+    redeclared: FxHashMap<Symbol<'a>, (Option<Node<'a>>, SmallVec<[Node<'a>; 1]>)>,
+}
+
+impl<'a> Known<'a> {
+    fn is_outer_variable_in_destructing(&mut self, name: Name<'a>, init_scope: Scope<'a>, file: &'a File<'a>) -> bool {
+        // ESLint resolves a reference to a global of the configuration, except in `through` of the
+        // global scope, which it is taken out of.
+        let is_global =
+            init_scope.kind() != ScopeKind::Global && ast_utils::is_configured_global(file, name.bytes());
+        // Only to what has the name outside of the scope can a reference lead out of it.
+        if (is_global || init_scope.parent().is_some_and(|it| it.resolve_name(name).is_some()))
+            && (self.through.entry((init_scope, name)))
+                .or_insert_with(|| is_name_in_through(init_scope, name, is_global))
+                .to_owned()
+        {
+            return true;
+        }
+        let variable = init_scope.resolve_name(name);
+        variable.is_some_and(|it| it.declarations().any(|def| matches!(def, Declaration::Param(_))))
+    }
+
+    /// `left`: the left of an `AssignmentExpression`.
+    fn has_outer_variables(&mut self, left: Expr<'a>, scope: Scope<'a>) -> bool {
+        let is_outer = |name| self.is_outer_variable_in_destructing(name, scope, left.file());
+        match left.kind() {
+            ExprKind::Object(properties) => properties
+                .iter()
+                .filter(|it| it.kind() != PropKind::Spread)
+                .filter_map(|it| it.value()?.as_ident())
+                .any(is_outer),
+            ExprKind::Array(elements) => elements.iter().filter_map(Expr::as_ident).any(is_outer),
+            _ => false,
+        }
+    }
+
+    /// Whether `host`, which assigns to `left`, also assigns to what cannot be declared with the
+    /// variables of `scope`. Each of the variables that it writes to asks.
+    fn assigns_to_others(&mut self, host: Expr<'a>, left: Expr<'a>, scope: Scope<'a>) -> bool {
+        if left.tag() == ExprTag::Ident {
+            return false;
+        }
+        if let Some(&known) = self.assignments.get(&(host, scope)) {
+            return known;
+        }
+        let found = self.has_outer_variables(left, scope) || has_member_expression_assignment(left);
+        self.assignments.insert((host, scope), found);
+        found
     }
 }
 
@@ -171,10 +225,51 @@ struct Checked<'a> {
     id: Option<Pat<'a>>,
     /// `None`: the empty string. `Some(None)`: `undefined`.
     name: Option<Option<Name<'a>>>,
+    /// Of the declaration that the last group was in. The groups of a declaration follow each other.
+    declaration: Option<(Stmt<'a>, DeclarationFacts)>,
+}
+
+#[derive(Copy, Clone)]
+struct DeclarationFacts {
+    is_single: bool,
+    is_all_initialized: bool,
+    /// How many elements the patterns have, and how many declarators have none.
+    element_count: usize,
+}
+
+impl<'a> Checked<'a> {
+    fn facts_of(&mut self, statement: Stmt<'a>, declarations: List<'a, VarDecl<'a>>) -> DeclarationFacts {
+        if let Some((known, facts)) = self.declaration
+            && known == statement
+        {
+            return facts;
+        }
+        let (mut count, mut element_count, mut is_all_initialized) = (0, 0, true);
+        for declaration in declarations {
+            count += 1;
+            is_all_initialized &= declaration.init().is_some();
+            element_count += match declaration.pat().kind() {
+                PatKind::Object(properties) => properties.len(),
+                PatKind::Array(elements) => elements.len(),
+                _ => 1,
+            };
+        }
+        let facts = DeclarationFacts {
+            is_single: count == 1,
+            is_all_initialized,
+            element_count,
+        };
+        self.declaration = Some((statement, facts));
+        facts
+    }
 }
 
 impl PreferConst {
-    fn get_identifier_if_should_be_const<'a>(&self, variable: Symbol<'a>) -> Option<Node<'a>> {
+    fn get_identifier_if_should_be_const<'a>(
+        &self,
+        variable: Symbol<'a>,
+        known: &mut Known<'a>,
+    ) -> Option<Node<'a>> {
         let scope = variable.scope();
         if scope.kind() == ScopeKind::Global && variable.is_marked_used() {
             return None;
@@ -188,7 +283,7 @@ impl PreferConst {
                 }
                 if let Some(Node::Expr(host)) = get_destructuring_host(reference)
                     && let ExprKind::Assign { target, .. } = host.kind()
-                    && (has_outer_variables(target, scope) || has_member_expression_assignment(target))
+                    && known.assigns_to_others(host, target, scope)
                 {
                     return None;
                 }
@@ -214,8 +309,16 @@ impl PreferConst {
     }
 
     /// ESLint's `groupByDestructuring`, for one variable.
-    fn group<'a>(&self, variable: Symbol<'a>, groups: &mut Groups<'a>) {
-        let identifier = self.get_identifier_if_should_be_const(variable);
+    fn group<'a>(&self, variable: Symbol<'a>, groups: &mut Groups<'a>, known: &mut Known<'a>) {
+        let is_redeclared = variable.declarations().len() > 1;
+        if is_redeclared && let Some((identifier, hosts)) = known.redeclared.get(&variable) {
+            for &host in hosts {
+                groups.push(host, *identifier);
+            }
+            return;
+        }
+        let identifier = self.get_identifier_if_should_be_const(variable, known);
+        let mut hosts = SmallVec::new();
         let mut previous = None;
         for reference in variable.references() {
             let id = reference.ident().start();
@@ -227,7 +330,14 @@ impl PreferConst {
                 && (identifier.is_some() || is_destructuring(host))
             {
                 groups.push(host, identifier);
+                // One `None` in a group is as good as several.
+                if is_redeclared && identifier.is_some() {
+                    hosts.push(host);
+                }
             }
+        }
+        if is_redeclared {
+            known.redeclared.insert(variable, (identifier, hosts));
         }
     }
 
@@ -257,25 +367,18 @@ impl PreferConst {
             }
         }
 
+        let facts = parent.map(|(statement, declarations)| checked.facts_of(statement, declarations));
         let mut should_fix = count == nodes.len()
-            && parent.is_some_and(|(statement, declarations)| {
+            && parent.zip(facts).is_some_and(|((statement, _), facts)| {
                 matches!(statement.parent(), Node::Stmt(it) if matches!(it.tag(), StmtTag::ForIn | StmtTag::ForOf))
-                    || declarations.iter().all(|it| it.init().is_some())
+                    || facts.is_all_initialized
             });
 
-        if let Some((_, declarations)) = parent
-            && declarations.len() != 1
+        if let Some(facts) = facts
+            && !facts.is_single
         {
             checked.report_count += count;
-            let total: usize = declarations
-                .iter()
-                .map(|it| match it.pat().kind() {
-                    PatKind::Object(properties) => properties.len(),
-                    PatKind::Array(elements) => elements.len(),
-                    _ => 1,
-                })
-                .sum();
-            should_fix = should_fix && checked.report_count == total;
+            should_fix = should_fix && checked.report_count == facts.element_count;
         }
 
         for &node in nodes.iter().flatten() {
@@ -302,7 +405,7 @@ impl PreferConst {
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let mut statements = std::mem::take(&mut cx.state);
         statements.sort_unstable_by_key(|it| it.span().start);
-        let mut groups = Groups::default();
+        let (mut groups, mut known) = (Groups::default(), Known::default());
         for statement in statements {
             let StmtKind::Var(declarations) = statement.kind() else {
                 continue;
@@ -310,7 +413,7 @@ impl PreferConst {
             for declaration in declarations {
                 declaration.pat().for_each_binding(&mut |pat| {
                     if let Some(variable) = pat.symbol() {
-                        self.group(variable, &mut groups);
+                        self.group(variable, &mut groups, &mut known);
                     }
                 });
             }

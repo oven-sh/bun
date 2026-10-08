@@ -984,7 +984,13 @@ pub(crate) struct Minimatch {
     is_empty: bool,
     is_negated: bool,
     /// One for each expansion of the braces in the pattern.
-    set: Vec<Vec<Part>>,
+    set: Vec<Expansion>,
+}
+
+struct Expansion {
+    parts: Vec<Part>,
+    /// Where the first `**` is, and the last one.
+    globstars: Option<(usize, usize)>,
 }
 
 /// `/\{(?:(?!\{).)*\}/.test(pattern)`
@@ -1055,7 +1061,13 @@ impl Minimatch {
             if parts.is_empty() {
                 parts.push(b"");
             }
-            it.set.push(parts.into_iter().map(Part::parse).collect());
+            let parts: Vec<Part> = parts.into_iter().map(Part::parse).collect();
+            let is_globstar = |part: &Part| matches!(part, Part::GlobStar);
+            it.set.push(Expansion {
+                globstars: (parts.iter().position(is_globstar))
+                    .zip(parts.iter().rposition(is_globstar)),
+                parts,
+            });
         }
         it
     }
@@ -1063,15 +1075,15 @@ impl Minimatch {
     /// `#matchOne`. `partial`: it is enough that the path matches the start of the pattern.
     fn match_plain(file: &[&[u8]], pattern: &[Part], partial: bool) -> bool {
         let common = file.len().min(pattern.len());
-        if !file.iter().zip(pattern).all(|(name, part)| part.test(name)) {
-            return false;
-        }
-        match (file.len() == common, pattern.len() == common) {
+        let fits = match (file.len() == common, pattern.len() == common) {
             (true, true) => true,
             (true, false) => partial,
             // `a/*` matches `a/b/`.
             _ => common + 1 == file.len() && file[common].is_empty(),
-        }
+        };
+        // From the end: paths differ less in what they start with.
+        fits && (file[..common].iter().zip(&pattern[..common]).rev())
+            .all(|(name, part)| part.test(name))
     }
 
     /// `#matchGlobStarBodySections`. `None`: no match, and no later position can match either.
@@ -1118,14 +1130,16 @@ impl Minimatch {
     }
 
     /// `#matchGlobstar`
-    fn match_globstar(file: &[&[u8]], pattern: &[Part], partial: bool) -> bool {
+    fn match_globstar(
+        file: &[&[u8]],
+        pattern: &[Part],
+        (first, last): (usize, usize),
+        partial: bool,
+    ) -> bool {
         let is_globstar = |part: &Part| matches!(part, Part::GlobStar);
-        let (Some(first), Some(last)) = (
-            pattern.iter().position(is_globstar),
-            pattern.iter().rposition(is_globstar),
-        ) else {
+        if !partial && first + (pattern.len() - 1 - last) > file.len() {
             return false;
-        };
+        }
         let (head, body, tail) = match partial {
             true => (&pattern[..first], &pattern[first + 1..], &pattern[..0]),
             false => (
@@ -1200,11 +1214,9 @@ impl Minimatch {
         if self.is_empty {
             return matches!(path, [b""]);
         }
-        let hit = self.set.iter().any(|pattern| {
-            match pattern.iter().any(|part| matches!(part, Part::GlobStar)) {
-                true => Self::match_globstar(path, pattern, partial),
-                false => Self::match_plain(path, pattern, partial),
-            }
+        let hit = self.set.iter().any(|it| match it.globstars {
+            Some(globstars) => Self::match_globstar(path, &it.parts, globstars, partial),
+            None => Self::match_plain(path, &it.parts, partial),
         });
         if flip_negate {
             hit

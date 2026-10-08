@@ -80,12 +80,14 @@ pub fn validate_by_id(id: &[u8], options: &[Json]) -> Result<(), Vec<u8>> {
         parts.get(1).and_then(Json::as_array).unwrap_or_default(),
         options,
     )
+    .map(drop)
 }
 
-/// The same for a rule of a JavaScript plugin.
-pub(crate) fn validate_js(rule: &js_plugin::Rule, options: &[Json]) -> Result<(), Vec<u8>> {
+/// The same for a rule of a JavaScript plugin. `Ok`: ESLint's `context.options`, which are `options` with the default options of
+/// the rule, and with the defaults that its schema has.
+pub(crate) fn validate_js(rule: &js_plugin::Rule, options: &[Json]) -> Result<Vec<Json>, Vec<u8>> {
     match &rule.schema {
-        js_plugin::Schema::Any => Ok(()),
+        js_plugin::Schema::Any => Ok(with_js_defaults(rule, options)),
         js_plugin::Schema::None => validate_with(None, &rule.default_options, options),
         js_plugin::Schema::Json(schema) => {
             validate_with(Some(schema), &rule.default_options, options)
@@ -93,20 +95,21 @@ pub(crate) fn validate_js(rule: &js_plugin::Rule, options: &[Json]) -> Result<()
     }
 }
 
-/// ESLint's `context.options` for a rule of a JavaScript plugin.
+/// `options` with the default options of a rule of a JavaScript plugin: what ESLint has for a rule that it does not validate.
 pub(crate) fn with_js_defaults(rule: &js_plugin::Rule, options: &[Json]) -> Vec<Json> {
     deep_merge_arrays(&rule.default_options, options)
 }
 
-/// `schema`: `meta.schema`, if the rule has one. `defaults`: `meta.defaultOptions`.
+/// `schema`: `meta.schema`, if the rule has one. `defaults`: `meta.defaultOptions`. `Ok`: the options as the validation leaves
+/// them, which fills in the defaults of the schema.
 fn validate_with(
     schema: Option<&Json>,
     defaults: &[Json],
     options: &[Json],
-) -> Result<(), Vec<u8>> {
+) -> Result<Vec<Json>, Vec<u8>> {
     let options = deep_merge_arrays(defaults, options);
     if options.is_empty() && !matches!(schema, Some(Json::Object(_))) {
-        return Ok(());
+        return Ok(options);
     }
     // `getRuleOptionsSchema`
     let entry = |key: &[u8], value: Json| (key.to_vec(), value);
@@ -128,8 +131,12 @@ fn validate_with(
         root: &schema,
         errors: Vec::new(),
     };
-    if validator.validate(&schema, &mut Json::Array(options)) {
-        return Ok(());
+    let mut options = Json::Array(options);
+    if validator.validate(&schema, &mut options) {
+        return Ok(match options {
+            Json::Array(options) => options,
+            _ => Vec::new(),
+        });
     }
     let mut message = Vec::new();
     for error in &validator.errors {

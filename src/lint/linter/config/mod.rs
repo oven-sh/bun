@@ -61,7 +61,7 @@ use crate::language::LanguageOptions;
 use crate::options::{Json, Options};
 use crate::rule::Plugin;
 use cache::Cache;
-pub use flat::ConfigError;
+pub use flat::{ConfigError, LoadLocatedPlugin};
 use merge::RuleSetting;
 use minimatch::{Minimatch, split_path};
 pub use rc::{LoadPlugin, RcFlavor, oxlint_category};
@@ -370,6 +370,32 @@ impl Config {
         )
     }
 
+    /// ESLint's `throwRuleNotFoundError` for a plugin that is there. `plugins`: the prefixes of those that the file has.
+    fn missing_js_rule(&self, registry: &Registry, id: &[u8], plugins: &[&[u8]]) -> Vec<u8> {
+        let (prefix, name) = super::registry::parse_rule_id(id);
+        let has_it = |other: &&&[u8]| match **other {
+            b"@" => registry.get(Plugin::Eslint, name).is_some(),
+            other => match find_js_rule(&self.js_plugins, &[other, b"/", name].concat()) {
+                Some(found) => found.is_some(),
+                None => Plugin::of_prefix(other).is_some_and(|it| registry.get(it, name).is_some()),
+            },
+        };
+        let mut message = [
+            b"Key \"rules\": Key \"",
+            id,
+            b"\": Could not find \"",
+            name,
+            b"\" in plugin \"",
+            prefix,
+            b"\".",
+        ]
+        .concat();
+        if let Some(&other) = plugins.iter().find(has_it) {
+            message.extend_from_slice(&[b" Did you mean \"", other, b"/", name, b"\"?"].concat());
+        }
+        message
+    }
+
     /// What ESLint, or oxlint, says about options that the schema of a rule of a JavaScript plugin does not allow.
     /// `lines`: of [`schema::validate_js`].
     fn js_options_error(&self, rule: &js_plugin::Rule, options: &[Json], lines: &[u8]) -> Vec<u8> {
@@ -409,7 +435,7 @@ impl Config {
             understands_oxlint_comments: self.prefers_typescript_rules,
             ..ResolvedConfig::default()
         };
-        let mut plugins: Vec<&Box<[u8]>> = Vec::new();
+        let mut plugins: Vec<&[u8]> = Vec::new();
         for object in indices
             .iter()
             .filter_map(|index| self.objects.get(*index as usize))
@@ -418,7 +444,8 @@ impl Config {
                 config.error.clone_from(&object.error);
                 return config;
             }
-            plugins.extend(object.plugins.iter().chain(&object.foreign_plugins));
+            let of_object = object.plugins.iter().chain(&object.foreign_plugins);
+            plugins.extend(of_object.map(|it| &it[..]));
             merge::deep_merge_into(&mut language_options, &object.language_options);
             merge::deep_merge_into(&mut settings, &object.settings);
             linter.merge_json(&object.linter_options);
@@ -459,7 +486,7 @@ impl Config {
                         ]
                         .concat()
                     }),
-                    plugin if plugins.iter().any(|it| ***it == *plugin) => None,
+                    plugin if plugins.contains(&plugin) => None,
                     plugin => Some(
                         [b"Could not find plugin \"", plugin, b"\" in configuration."].concat(),
                     ),
@@ -470,28 +497,45 @@ impl Config {
                     );
                 }
             }
-            if let Some(Some(rule)) = find_js_rule(&self.js_plugins, &setting.id) {
-                let options: Arc<[Json]> = setting.options.into();
-                if setting.severity != Severity::Off
-                    && config.error.is_none()
-                    && let Err(lines) = schema::validate_js(rule, &options)
-                {
-                    config.error = Some(self.js_options_error(rule, &options, &lines));
+            // What `jsPlugins` names hides a plugin of the same name that is implemented here.
+            let js = find_js_rule(&self.js_plugins, &setting.id);
+            let native = match js.is_some() && self.accepts_all_plugins {
+                true => None,
+                false => config.find_rule(registry, &setting.id),
+            };
+            let entry = match (native, js) {
+                (Some(entry), _) => entry,
+                (None, Some(Some(rule))) => {
+                    let options: Arc<[Json]> = setting.options.into();
+                    let validated = schema::validate_js(rule, &options);
+                    if setting.severity != Severity::Off
+                        && config.error.is_none()
+                        && let Err(lines) = &validated
+                    {
+                        config.error = Some(self.js_options_error(rule, &options, lines));
+                    }
+                    let configured = self.cache.js_rule(rule, &options, || {
+                        let options =
+                            validated.unwrap_or_else(|_| schema::with_js_defaults(rule, &options));
+                        js_plugin::Configured::new(Arc::clone(rule), &options)
+                    });
+                    config.js_rules.push(ConfiguredJsRule {
+                        configured,
+                        severity: setting.severity,
+                        options,
+                    });
+                    continue;
                 }
-                let configured = self.cache.js_rule(rule, &options, || {
-                    let options = schema::with_js_defaults(rule, &options);
-                    js_plugin::Configured::new(Arc::clone(rule), &options)
-                });
-                config.js_rules.push(ConfiguredJsRule {
-                    configured,
-                    severity: setting.severity,
-                    options,
-                });
-                continue;
-            }
-            let Some(entry) = config.find_rule(registry, &setting.id) else {
-                config.has_skipped_rules |= setting.severity != Severity::Off;
-                continue;
+                (None, Some(None)) => {
+                    if setting.severity != Severity::Off && config.error.is_none() {
+                        config.error = Some(self.missing_js_rule(registry, &setting.id, &plugins));
+                    }
+                    continue;
+                }
+                (None, None) => {
+                    config.has_skipped_rules |= setting.severity != Severity::Off;
+                    continue;
+                }
             };
             let options: Arc<[Json]> = setting.options.into();
             config.validate(entry, setting.severity, &options);
@@ -508,13 +552,17 @@ impl Config {
             ));
         }
         if !self.js_plugins.is_empty() {
-            config.js_plugins.clone_from(&self.js_plugins);
+            // ESLint looks for a rule in the plugins that the objects for the file have.
+            let has = |it: &&Arc<js_plugin::Plugin>| {
+                self.accepts_all_plugins || plugins.contains(&&it.name[..])
+            };
+            config.js_plugins = self.js_plugins.iter().filter(has).cloned().collect();
             config.js_settings = Some(js_plugin::FileSettings::new(&config.language));
         }
         // From here on: a rule that is turned off can be configured without its plugin.
         if !self.accepts_all_plugins {
             let mut implemented: Vec<Plugin> = Vec::new();
-            for plugin in plugins.iter().filter_map(|it| Plugin::of_prefix(&it[..])) {
+            for plugin in plugins.iter().filter_map(|it| Plugin::of_prefix(it)) {
                 if !implemented.contains(&plugin) {
                     implemented.push(plugin);
                 }

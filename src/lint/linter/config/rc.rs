@@ -460,6 +460,7 @@ impl Config {
                 notes: Vec::new(),
                 unknown_rules: Vec::new(),
                 js_plugins: Vec::new(),
+                js_locations: Vec::new(),
                 defaults: 0,
             },
             flavor,

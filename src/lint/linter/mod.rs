@@ -41,7 +41,9 @@ mod schema;
 mod space;
 mod syntax;
 
-pub use config::{Config, ConfigError, FileConfig, Glob, LoadPlugin, RcFlavor, oxlint_category};
+pub use config::{
+    Config, ConfigError, FileConfig, Glob, LoadLocatedPlugin, LoadPlugin, RcFlavor, oxlint_category,
+};
 pub use fixer::{FixReport, Fixed, MAX_AUTOFIX_PASSES, apply_fixes, verify_and_fix};
 pub use globals::{CommentGlobal, GlobalVariable};
 pub use levn::parse_object as parse_levn_object;
@@ -182,10 +184,10 @@ impl Named<'_> {
         }
     }
 
-    /// [`schema::validate`]
-    fn validate(self, options: &[Json]) -> Result<(), Vec<u8>> {
+    /// [`schema::validate`]. `Ok`: what a rule of a JavaScript plugin gets as its options.
+    fn validate(self, options: &[Json]) -> Result<Vec<Json>, Vec<u8>> {
         match self {
-            Named::Native(entry) => schema::validate(entry.meta, options),
+            Named::Native(entry) => schema::validate(entry.meta, options).map(|()| Vec::new()),
             Named::Js(rule) => schema::validate_js(rule, options),
         }
     }
@@ -404,7 +406,7 @@ impl Linter {
                 }
                 Err(failure) => {
                     let rule = failure.rule.and_then(|it| running_js.get(it as usize));
-                    match js_failure(&failure.message, rule, file.path(), config) {
+                    match js_failure(&failure, rule, file.path(), config) {
                         Ok(problem) => problems.push(problem),
                         Err(thrown) => {
                             return LintResult {
@@ -502,15 +504,19 @@ fn js_message(report: js_plugin::Report, rule: &RunningJs) -> LintMessage {
     }
 }
 
-/// What becomes of a rule of a JavaScript plugin that throws `message`. `Err`: ESLint throws it on. oxlint reports it for the file.
+/// What becomes of a rule of a JavaScript plugin that throws. `Err`: ESLint throws it on. oxlint reports it for the file.
 fn js_failure(
-    message: &[u8],
+    failure: &js_plugin::Failure,
     rule: Option<&RunningJs>,
     path: &[u8],
     config: &ResolvedConfig,
 ) -> Result<LintMessage, Vec<u8>> {
+    let message = &failure.message[..];
     if !config.prefers_typescript_rules {
         let mut thrown = [message, b"\nOccurred while linting ", path].concat();
+        if let Some(line) = failure.line {
+            thrown.extend_from_slice(format!(":{line}").as_bytes());
+        }
         if let Some(rule) = rule {
             thrown.extend_from_slice(b"\nRule: \"");
             thrown.extend_from_slice(&rule.configured.rule.id);
@@ -571,12 +577,18 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
     /// configuration knows.
     fn find(&mut self, comment: &ConfigComment, id: &[u8]) -> Option<Named<'c>> {
         let config = self.config;
-        let found = match config.find_js_rule(id) {
-            Some(found) => found.map(Named::Js),
-            None => (config.find_rule(&self.linter.registry, id)).map(Named::Native),
+        let js = config.find_js_rule(id);
+        let native = || (config.find_rule(&self.linter.registry, id)).map(Named::Native);
+        let found = match js {
+            // What `jsPlugins` names hides a plugin of the same name that is implemented here.
+            Some(js) if config.skips_unknown_rules => js.map(Named::Js),
+            Some(js) => native().or_else(|| js.map(Named::Js)),
+            None => native(),
         };
         if found.is_none() {
-            if self.config.is_foreign(id) {
+            // All rules of a plugin that is loaded are known.
+            let is_known_to_be_missing = js.is_some() && !config.skips_unknown_rules;
+            if !is_known_to_be_missing && self.config.is_foreign(id) {
                 if !self.skipped.iter().any(|it| **it == *id) {
                     self.skipped.push(id.into());
                 }
@@ -689,15 +701,16 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
                 inline.len() == 1 && existing.is_some_and(|it| it.severity() != Severity::Off);
             // ESLint leaves out what is off only if that is written `0`.
             let is_zero = matches!(inline.first(), Some(Json::Number(n)) if *n == 0.0);
-            if !is_validated
-                && !is_zero
-                && let Err(lines) = rule.validate(options)
-            {
+            let validated = match is_validated || is_zero {
+                true => None,
+                false => Some(rule.validate(options)),
+            };
+            if let Some(Err(lines)) = &validated {
                 let message = quoted(&[
                     b"Inline configuration for rule \"",
                     &id,
                     b"\" is invalid:\n\t",
-                    space::trim(&lines),
+                    space::trim(lines),
                     b"\n",
                 ]);
                 self.error(comment, Some(rule.id()), message);
@@ -721,7 +734,10 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
                             }
                             _ => Cow::Owned(js_plugin::Configured::new(
                                 Arc::clone(js),
-                                &rule.with_defaults(options),
+                                &match validated {
+                                    Some(Ok(options)) => options,
+                                    _ => rule.with_defaults(options),
+                                },
                             )),
                         },
                     };

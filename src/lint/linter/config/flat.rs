@@ -24,6 +24,11 @@ impl ConfigError {
     }
 }
 
+/// Loads a JavaScript plugin: [`Host::load_located`](crate::js_plugin::Host). It is given what `$jsPlugins` has for the plugin, and
+/// the prefix of its rules.
+pub type LoadLocatedPlugin<'l> =
+    dyn FnMut(&Json, &[u8]) -> Result<Arc<js_plugin::Plugin>, Vec<u8>> + 'l;
+
 /// What is collected while the objects are read.
 pub(super) struct Reader<'r> {
     pub(super) registry: &'r Registry,
@@ -34,6 +39,8 @@ pub(super) struct Reader<'r> {
     pub(super) unknown_rules: Vec<Box<[u8]>>,
     /// The JavaScript plugins that are loaded.
     pub(super) js_plugins: Vec<Arc<js_plugin::Plugin>>,
+    /// `$jsPlugins`: where the plugin with a prefix can be loaded from.
+    pub(super) js_locations: Vec<(Box<[u8]>, Json)>,
     /// How many of the objects are ESLint's own.
     pub(super) defaults: usize,
 }
@@ -108,6 +115,8 @@ fn validate_object(entries: &[(Vec<u8>, Json)]) -> Option<Vec<u8>> {
                 ),
                 _ => expected_object(),
             },
+            // Not of ESLint: see `Config::from_flat_json_with_plugins`.
+            b"$jsPlugins" => None,
             b"rules" if !is_object(value) => expected_object(),
             b"rules" => (value.as_object().unwrap_or_default().iter())
                 .find(|it| it.0 != b"__proto__" && RuleSetting::new(&it.0, &it.1).is_none())
@@ -332,6 +341,16 @@ impl Reader<'_> {
                 _ => object.foreign_plugins.push(prefix[..].into()),
             }
         }
+        for (prefix, location) in json
+            .get(b"$jsPlugins")
+            .and_then(Json::as_object)
+            .unwrap_or_default()
+        {
+            if !self.js_locations.iter().any(|it| *it.0 == prefix[..]) {
+                self.js_locations
+                    .push((prefix[..].into(), location.clone()));
+            }
+        }
         for prefix in &typescript_prefixes {
             self.note(&[
                 b"The rules of typescript-eslint are reported as \"@typescript-eslint/..\", not as \"",
@@ -492,6 +511,27 @@ impl Config {
         base_path: &[u8],
         json: &Json,
     ) -> Result<Config, ConfigError> {
+        Self::from_flat(registry, base_path, json, None)
+    }
+
+    /// The same, with the plugins that are not implemented here. An object has beside `plugins` the key `$jsPlugins`, with
+    /// where each of its plugins can be loaded from, by its prefix. One is loaded if a rule of it is enabled that does not exist
+    /// here. A rule that does exist here runs in place of the one of the plugin.
+    pub fn from_flat_json_with_plugins(
+        registry: &Registry,
+        base_path: &[u8],
+        json: &Json,
+        load_plugin: &mut LoadLocatedPlugin<'_>,
+    ) -> Result<Config, ConfigError> {
+        Self::from_flat(registry, base_path, json, Some(load_plugin))
+    }
+
+    fn from_flat(
+        registry: &Registry,
+        base_path: &[u8],
+        json: &Json,
+        load_plugin: Option<&mut LoadLocatedPlugin<'_>>,
+    ) -> Result<Config, ConfigError> {
         let mut reader = Reader {
             registry,
             base_path: path::resolve(b"/", base_path),
@@ -500,6 +540,7 @@ impl Config {
             notes: Vec::new(),
             unknown_rules: Vec::new(),
             js_plugins: Vec::new(),
+            js_locations: Vec::new(),
             defaults: 0,
         };
         let defaults = crate::json::parse(DEFAULT_CONFIG).unwrap_or(Json::Null);
@@ -516,11 +557,32 @@ impl Config {
             }
         }
         read(&mut reader, json, 0)?;
+        if let Some(load) = load_plugin {
+            reader.load_js_plugins(load)?;
+        }
         Ok(reader.finish(true, false))
     }
 }
 
 impl Reader<'_> {
+    /// Loads the plugins of which a rule is enabled that does not exist here.
+    fn load_js_plugins(&mut self, load: &mut LoadLocatedPlugin<'_>) -> Result<(), ConfigError> {
+        for (prefix, location) in std::mem::take(&mut self.js_locations) {
+            let mut unknown = self.unknown_rules.iter();
+            if !unknown.any(|id| parse_rule_id(id).0 == &prefix[..]) {
+                continue;
+            }
+            self.js_plugins
+                .push(load(&location, &prefix).map_err(|why| {
+                    ConfigError::new(&[b"Failed to load the plugin \"", &prefix, b"\": ", &why])
+                })?);
+        }
+        let plugins = &self.js_plugins;
+        self.unknown_rules
+            .retain(|id| find_js_rule(plugins, id).is_none());
+        Ok(())
+    }
+
     pub(super) fn finish(self, keeps_options: bool, accepts_all_plugins: bool) -> Config {
         Config {
             base_path: self.base_path,

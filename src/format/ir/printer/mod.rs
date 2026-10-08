@@ -42,6 +42,8 @@ pub(crate) struct PrinterOptions {
     pub(crate) line_ending: LineEnding,
     pub(crate) indent_style: IndentStyle,
     pub(crate) flavor: Flavor,
+    /// See `FormatOptions::is_in_markdown`.
+    pub(crate) marks_line_breaks_in_texts: bool,
 }
 
 impl PrinterOptions {
@@ -52,6 +54,7 @@ impl PrinterOptions {
             line_ending: options.line_ending.resolve(source),
             indent_style: options.indent_style,
             flavor: options.flavor,
+            marks_line_breaks_in_texts: options.is_in_markdown,
         }
     }
 }
@@ -852,6 +855,9 @@ impl<'d> Printer<'d> {
         }
         let mut last = None;
         for line in lines {
+            if self.options.marks_line_breaks_in_texts {
+                self.out.bytes(b"\r");
+            }
             self.print_line_break();
             self.out.bytes(line);
             last = Some(line);

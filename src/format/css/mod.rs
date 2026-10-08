@@ -248,7 +248,6 @@ fn parse_and_print<'o>(
         single_quote: matches!(options.quote_style, QuoteStyle::Single),
         trailing_comma: !matches!(options.trailing_commas, TrailingCommas::None),
         value_stack: Vec::new(),
-        blocks: Vec::new(),
         scratch: Vec::new(),
         has_failed: false,
         sink,

@@ -119,14 +119,17 @@ impl<'o> Sink<'o> {
         })
     }
 
-    /// Ends the unit that started at `mark`. If it returns `false`, the unit has to be written once more, and
-    /// `end_document` called.
-    pub(crate) fn end_unit(&mut self, mark: &Mark) -> bool {
+    /// Ends a unit. If it returns `false`, the unit has to be written once more, between `start_document` and
+    /// `end_document`.
+    pub(crate) fn end_unit(&mut self) -> bool {
         self.check_line();
         self.has_group_in_line = false;
-        if !std::mem::take(&mut self.has_failed) {
-            return true;
-        }
+        !std::mem::take(&mut self.has_failed)
+    }
+
+    /// Takes back what has been written of the unit that started at `mark`. What is written from now on goes to a
+    /// document.
+    pub(crate) fn start_document(&mut self, mark: &Mark) {
         if let Some(printer) = &mut self.printer {
             printer.out.truncate(mark.len);
         }
@@ -137,7 +140,11 @@ impl<'o> Sink<'o> {
         self.flat_groups = 0;
         self.elements.clear();
         self.is_document = true;
-        false
+    }
+
+    /// Whether a text of `len` characters fits on the line.
+    pub(crate) fn has_room_for(&self, len: usize) -> bool {
+        self.printer.as_ref().is_none_or(|printer| self.line_start_column + (printer.out.len() - self.line_start) + len <= printer.width)
     }
 
     /// Prints the document that the unit has been written to.
@@ -199,6 +206,7 @@ impl<'o> Sink<'o> {
         !self.is_document
     }
 
+    #[inline]
     pub(crate) fn text(&mut self, text: &[u8]) {
         if self.is_document {
             self.elements.text(text);
@@ -207,6 +215,7 @@ impl<'o> Sink<'o> {
         }
     }
 
+    #[inline]
     pub(crate) fn token(&mut self, text: &'static str) {
         if self.is_document {
             self.elements.text(text.as_bytes());

@@ -80,8 +80,6 @@ pub(crate) struct Printer<'a, 'o> {
     pub(crate) trailing_comma: bool,
     /// The nodes of the value that what is being printed is in.
     pub(crate) value_stack: Vec<ValueId>,
-    /// The nodes of the blocks that are being printed.
-    pub(crate) blocks: Vec<NodeId>,
     /// For a text that is made to be written.
     pub(crate) scratch: Vec<u8>,
     /// Prettier throws an error for the style sheet.
@@ -125,12 +123,17 @@ impl<'a> Printer<'a, '_> {
 
     /// Has `write` write something that no group is around and that a line break follows. See `Sink`. Whatever
     /// `write` does besides writing, doing it twice has to be the same as doing it once.
-    fn unit(&mut self, mut write: impl FnMut(&mut Self)) {
+    ///
+    /// `is_too_long`: it will hardly fit on the line.
+    fn unit(&mut self, is_too_long: bool, mut write: impl FnMut(&mut Self)) {
         let mark = self.sink.start_unit();
-        write(self);
+        if !(is_too_long && mark.is_some()) {
+            write(self);
+        }
         if let Some(mark) = mark
-            && !self.sink.end_unit(&mark)
+            && (is_too_long || !self.sink.end_unit())
         {
+            self.sink.start_document(&mark);
             write(self);
             self.sink.end_document();
         }
@@ -204,107 +207,145 @@ impl<'a> Printer<'a, '_> {
     /// `printSequence` for the nodes of `block`, which `scope` is for, and `after` behind a blank unless it is empty.
     fn print_sequence(&mut self, scope: &Scope<'_, 'a>, block: &Node, after: &[u8], parsed: &mut Parsed) {
         let (text, tree) = (self.text(), scope.tree);
-        if block.first_child == 0 && !after.is_empty() {
+        let memo_context = self.memo_context(scope);
+        let mut previous = None;
+        let mut first = block.first_child;
+        if first == 0 && !after.is_empty() {
             self.sink.token(" ");
             self.sink.text(after);
         }
-        let memo_context = self.memo_context(scope);
-        let first = self.blocks.len();
-        self.blocks.extend(tree.children(block));
-        let count = self.blocks.len() - first;
-        let raw = |printer: &Self, index: usize| &tree.nodes[printer.blocks[first + index] as usize];
-        let start_of = |raw: &Node| (raw.start as usize).min(text.len());
-        let is_ignore_comment =
-            |printer: &Self, raw: &Node| raw.kind == Kind::Comment && text::trim(printer.context.of(raw.text)) == b"prettier-ignore";
-
-        let mut start = 0;
-        while start < count {
-            let mut end = start + 1;
-            while end < count && {
-                let (node, next) = (raw(self, end - 1), raw(self, end));
-                (next.kind == Kind::Comment && !has_newline_backwards(text, start_of(next)))
-                    || (next.kind == Kind::AtRule && node.kind != Kind::Comment && self.context.name_of_at_rule(next) == b"else")
-            } {
-                end += 1;
+        while first != 0 {
+            // The nodes from `first` up to `end` are on one line.
+            let mut last = &tree.nodes[first as usize];
+            while let Some(next) = tree.nodes.get(last.next_sibling as usize).filter(|_| last.next_sibling != 0)
+                && ((next.kind == Kind::Comment && !has_newline_backwards(text, (next.start as usize).min(text.len())))
+                    || (next.kind == Kind::AtRule && last.kind != Kind::Comment && self.context.name_of_at_rule(next) == b"else"))
+            {
+                last = next;
             }
-            let mut write = |printer: &mut Self, from: usize, to: usize| {
-                for index in from..to {
-                    if index > start {
-                        printer.sink.token(" ");
-                    }
-                    let id = printer.blocks[first + index];
-                    if index > 0 && is_ignore_comment(printer, raw(printer, index - 1)) {
-                        let end = printer.context.end_of(tree, id, parsed);
-                        printer.sink.text(text.get(start_of(&tree.nodes[id as usize])..end).unwrap_or_default());
-                        continue;
-                    }
-                    let position = memo_context.zip(printer.memo_text(&tree.nodes[id as usize])).zip(printer.sink.position());
-                    if let Some(((context, text), _)) = position
-                        && let Some((output, has_group)) = printer.memo.get(context, text)
-                    {
-                        printer.sink.write_again(output, has_group);
-                        continue;
-                    }
-                    printer.is_memoizable = true;
-                    printer.print_css(scope, id, parsed);
-                    if let Some(((context, text), position)) = position
-                        && printer.is_memoizable
-                        && !printer.has_failed
-                        && let Some((output, has_group)) = printer.sink.written_since(position)
-                    {
-                        printer.memo.insert(context, text, output, has_group);
-                    }
+            let end = last.next_sibling;
+
+            // What has a block takes care of the line that its `{` ends. Everything else goes with the rest of the
+            // line.
+            let mut id = first;
+            while id != end
+                && let raw = &tree.nodes[id as usize]
+                && (raw.kind == Kind::Comment || !self.has_no_block(raw))
+            {
+                if id != first {
+                    self.sink.token(" ");
                 }
-                if to == count && !after.is_empty() {
+                self.print_in_sequence(scope, id, previous, None, parsed, None);
+                previous = Some(raw);
+                id = raw.next_sibling;
+            }
+            let write_after = |printer: &mut Self| {
+                if end == 0 && !after.is_empty() {
                     printer.sink.token(" ");
                     printer.sink.text(after);
                 }
             };
-            // What has a block takes care of the line that its `{` ends. Everything else goes with the rest of the
-            // line.
-            let blocks = (start..end).take_while(|&index| raw(self, index).kind == Kind::Comment || !self.has_no_block(raw(self, index))).count();
-            if blocks > 0 {
-                write(self, start, start + blocks);
+            if id == end {
+                write_after(self);
+            } else {
+                let raw = &tree.nodes[id as usize];
+                // What has been parsed of it is still there when it is written again, if nothing else is parsed.
+                let mut node = None;
+                let is_only_one_parsed = std::iter::successors(Some(raw.next_sibling), |&id| Some(tree.nodes[id as usize].next_sibling))
+                    .take_while(|&id| id != end)
+                    .all(|id| matches!(tree.nodes[id as usize], Node { kind: Kind::Comment, inline: false, end: Some(_), .. }));
+                let is_too_long = raw.end.is_some_and(|end| !self.sink.has_room_for((end - raw.start.min(end)) as usize));
+                self.unit(is_too_long, |printer| {
+                    let (mut id, mut previous) = (id, previous);
+                    while id != end {
+                        if id != first {
+                            printer.sink.token(" ");
+                        }
+                        let node = if is_only_one_parsed { Some(&mut node) } else { None };
+                        printer.print_in_sequence(scope, id, previous, memo_context, parsed, node);
+                        previous = Some(&tree.nodes[id as usize]);
+                        id = tree.nodes[id as usize].next_sibling;
+                    }
+                    write_after(printer);
+                });
             }
-            if start + blocks < end {
-                self.unit(|printer| write(printer, start + blocks, end));
-            }
-            if end < count {
+            previous = Some(last);
+            if end != 0 {
                 self.sink.hard_line();
-                let last = self.blocks[first + end - 1];
-                if is_next_line_empty(text, self.context.end_of(tree, last, parsed)) {
+                let last_end = match last.end {
+                    Some(end) if !last.inline => (end as usize).min(text.len()),
+                    _ => {
+                        let mut id = first;
+                        while tree.nodes[id as usize].next_sibling != end {
+                            id = tree.nodes[id as usize].next_sibling;
+                        }
+                        self.context.end_of(tree, id, parsed)
+                    }
+                };
+                if is_next_line_empty(text, last_end) {
                     self.sink.hard_line();
                 }
             }
-            start = end;
+            first = end;
         }
-        self.blocks.truncate(first);
     }
 
-    /// Prints the node `id`, which is in the block of `parent`.
-    fn print_css(&mut self, parent: &Scope<'_, 'a>, id: NodeId, parsed: &mut Parsed) {
-        let tree = parent.tree;
+    /// Prints the node `id`, which is in the block of `parent` behind `previous`. `converted`: for what is made of it
+    /// if it is not a comment. It is not made again if it is there.
+    fn print_in_sequence(
+        &mut self,
+        parent: &Scope<'_, 'a>,
+        id: NodeId,
+        previous: Option<&Node>,
+        memo_context: Option<u32>,
+        parsed: &mut Parsed,
+        converted: Option<&mut Option<CssNode<'a>>>,
+    ) {
+        let (text, tree) = (self.text(), parent.tree);
         let raw = &tree.nodes[id as usize];
-        if raw.kind == Kind::Comment {
-            let text = self.text();
+        let start = (raw.start as usize).min(text.len());
+        if previous.is_some_and(|it| it.kind == Kind::Comment && text::trim(self.context.of(it.text)) == b"prettier-ignore") {
             let end = self.context.end_of(tree, id, parsed);
-            let comment = text.get((raw.start as usize).min(text.len())..end).unwrap_or_default();
+            return self.sink.text(text.get(start..end).unwrap_or_default());
+        }
+        if raw.kind == Kind::Comment {
+            let comment = text.get(start..self.context.end_of(tree, id, parsed)).unwrap_or_default();
             return self.sink.text(if raw.inline || raw.raw_inline { text::trim_end(comment) } else { comment });
         }
-        let Ok(node) = self.context.convert(tree, id, parsed) else {
+        let position = memo_context.zip(self.memo_text(raw)).zip(self.sink.position());
+        if let Some(((context, text), _)) = position
+            && let Some((output, has_group)) = self.memo.get(context, text)
+        {
+            return self.sink.write_again(output, has_group);
+        }
+
+        let mut own = None;
+        let converted = converted.unwrap_or(&mut own);
+        if converted.is_none() {
+            *converted = self.context.convert(tree, id, parsed).ok();
+        }
+        let Some(node) = converted else {
             self.has_failed = true;
             return;
         };
         let scope = Scope {
-            node: &node,
+            node,
             parent: Some(parent),
             tree,
         };
+        self.is_memoizable = true;
         match node.kind {
             Kind::Root | Kind::Comment => {}
             Kind::Rule => self.print_rule(&scope, raw, parsed),
             Kind::Decl => self.print_declaration(&scope, raw, parsed),
             Kind::AtRule => self.print_at_rule(&scope, raw, parsed),
+        }
+        if let Some(((context, text), position)) = position
+            && self.is_memoizable
+            && !self.has_failed
+            && let Some((output, has_group)) = self.sink.written_since(position)
+        {
+            self.memo.insert(context, text, output, has_group);
         }
     }
 
@@ -332,7 +373,7 @@ impl<'a> Printer<'a, '_> {
                 && bun_core::strings::index_of_any(value, b"\n\r").is_none()
                 && text::index_of_char_from(value, b':', 2).is_some()
         });
-        self.unit(|printer| {
+        self.unit(false, |printer| {
             if let Some(selector) = node.selector {
                 printer.print_selector(statement, selector, None, None);
             }
@@ -356,7 +397,7 @@ impl<'a> Printer<'a, '_> {
         let node = scope.node;
         if let Value::Rule(tree) = &node.value {
             // The lines of the block are written as they come.
-            return self.unit(|printer| {
+            return self.unit(false, |printer| {
                 let is_on_its_own_line = printer.print_name(scope);
                 printer.sink.token("{");
                 let scope = Scope { tree, ..*scope };
@@ -396,7 +437,7 @@ impl<'a> Printer<'a, '_> {
         match node.has_block {
             false => write(self),
             true => {
-                self.unit(write);
+                self.unit(false, write);
                 self.print_block(scope, raw, false, parsed);
             }
         }
@@ -511,7 +552,7 @@ impl<'a> Printer<'a, '_> {
         if self.has_no_block(raw) {
             return self.print_at_rule_up_to_block(statement);
         }
-        self.unit(|printer| printer.print_at_rule_up_to_block(statement));
+        self.unit(false, |printer| printer.print_at_rule_up_to_block(statement));
         self.print_block(scope, raw, false, parsed);
         if self.syntax() == Syntax::Less && scope.node.variable {
             let semicolon = self.semicolon_of_at_rule(scope);

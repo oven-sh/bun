@@ -18,7 +18,7 @@ static void CookieMap__writeFetchHeadersToUWSResponse(CookieMap* cookie_map, JSC
     // Loop over modified cookies and write Set-Cookie headers to the response
     for (auto& cookie : cookie_map->getAllChanges()) {
         auto utf8 = cookie->toString(global_this->vm()).utf8();
-        res->writeHeader("Set-Cookie", utf8.data());
+        res->writeHeader("Set-Cookie", utf8.legacyCStringPointer());
     }
 }
 extern "C" void CookieMap__write(CookieMap* cookie_map, JSC::JSGlobalObject* global_this, UWSResponseKind kind, void* arg2)
@@ -111,8 +111,10 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                 name = nameView.toString();
 
                 if (hasAnyPercentEncoded) {
-                    Bun::UTF8View utf8View(valueView);
-                    value = Bun::decodeURIComponentSIMD(utf8View.bytes());
+                    auto utf8View = Bun::UTF8View::tryCreate(valueView);
+                    if (!utf8View) [[unlikely]]
+                        return Exception { OutOfMemoryError };
+                    value = Bun::decodeURIComponentSIMD(utf8View->bytes());
                 } else {
                     value = valueView.toString();
                 }

@@ -191,7 +191,6 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
             // `formatter` drops here.
         }
     }
-    let _ = func;
     assert!(
         value.is_empty() == global_this.has_exception(),
         "host fn return/exception state mismatch"
@@ -273,12 +272,6 @@ impl IntoHostSetterReturn for JsResult<bool> {
 /// Normalize a constructor body's return type to a nullable `*mut c_void`.
 pub trait IntoHostConstructReturn {
     fn into_host_construct_return(self) -> JsResult<*mut c_void>;
-}
-impl<T> IntoHostConstructReturn for *mut T {
-    #[inline]
-    fn into_host_construct_return(self) -> JsResult<*mut c_void> {
-        Ok(self.cast())
-    }
 }
 impl<T> IntoHostConstructReturn for Box<T> {
     #[inline]
@@ -695,6 +688,7 @@ pub fn host_construct_result<R: IntoHostConstructReturn>(
 /// `#[track_caller]` propagates the caller's `Location` through to
 /// `ExceptionValidationScope::init`.
 #[track_caller]
+#[inline]
 pub fn to_js_host_call(
     global_this: &JSGlobalObject,
     f: impl FnOnce() -> JsResult<JSValue>,

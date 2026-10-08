@@ -10,19 +10,21 @@ use bun_collections::VecExt;
 use crate::JSXImport;
 use crate::p::P;
 
-pub struct ReactCompilerHost<'p, 'a, const TS: bool, const SCAN_ONLY: bool> {
-    p: &'p mut P<'a, TS, SCAN_ONLY>,
+pub struct ReactCompilerHost<'p, 'a, const TS: bool, const SCAN_ONLY: bool, const SEMA: bool> {
+    p: &'p mut P<'a, TS, SCAN_ONLY, SEMA>,
 }
 
-impl<'p, 'a, const TS: bool, const SCAN_ONLY: bool> ReactCompilerHost<'p, 'a, TS, SCAN_ONLY> {
+impl<'p, 'a, const TS: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    ReactCompilerHost<'p, 'a, TS, SCAN_ONLY, SEMA>
+{
     #[inline]
-    pub(crate) fn new(p: &'p mut P<'a, TS, SCAN_ONLY>) -> Self {
+    pub(crate) fn new(p: &'p mut P<'a, TS, SCAN_ONLY, SEMA>) -> Self {
         Self { p }
     }
 }
 
-impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
-    for ReactCompilerHost<'_, 'a, TS, SCAN_ONLY>
+impl<'a, const TS: bool, const SCAN_ONLY: bool, const SEMA: bool> bun_react_compiler::Host
+    for ReactCompilerHost<'_, 'a, TS, SCAN_ONLY, SEMA>
 {
     fn symbols(&self) -> &[js_ast::Symbol] {
         self.p.symbols.as_slice()
@@ -108,6 +110,15 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         ref_
     }
 
+    fn new_local(&mut self, name: &[u8]) -> js_ast::Ref {
+        let p = &mut *self.p;
+        let name = p.arena.alloc_slice_copy(name);
+        let ref_ = p.new_symbol(js_ast::symbol::Kind::Other, name);
+        // current_scope is the FunctionBody of the function being compiled.
+        VecExt::append(&mut p.current_scope_mut().generated, ref_);
+        ref_
+    }
+
     fn new_import_item(&mut self, name: &[u8]) -> js_ast::Ref {
         let p = &mut *self.p;
         let name = p.arena.alloc_slice_copy(name);
@@ -149,7 +160,31 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     }
 }
 
-impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
+impl<'a, const TS: bool, const SCAN_ONLY: bool, const SEMA: bool> P<'a, TS, SCAN_ONLY, SEMA> {
+    /// Drops the replaced body's symbols, or the renamer prints a new local `count` as `count2`.
+    pub(crate) fn drop_symbols_of_replaced_function(&mut self, name: Option<js_ast::Ref>) {
+        let mut body = self.current_scope;
+        debug_assert!(body.kind == js_ast::scope::Kind::FunctionBody);
+        body.members = js_ast::scope::Members::EMPTY;
+        body.children.clear();
+        if let Some(mut args) = body.parent {
+            debug_assert!(args.kind == js_ast::scope::Kind::FunctionArgs);
+            // Still printed: `arguments`, and `name` when a function expression declares it here.
+            let mut kept = js_ast::scope::Members::EMPTY;
+            for (key, member) in args.members.iter() {
+                let kind = self.symbols[member.ref_.inner_index() as usize].kind;
+                if kind == js_ast::symbol::Kind::Arguments || Some(member.ref_) == name {
+                    // SAFETY: `put` stores `key` by reference, so it has to
+                    // outlive `args`. It is already the key of a member of
+                    // `args`, stored under the same contract.
+                    unsafe { kept.put(key, *member) };
+                }
+            }
+            args.members = kept;
+            args.children.retain(|child| *child == body);
+        }
+    }
+
     /// Sets `react_compiler_may_replace_body` for the visit of the pending candidate. Returns the old value.
     pub(crate) fn enter_react_compiler_candidate(
         &mut self,

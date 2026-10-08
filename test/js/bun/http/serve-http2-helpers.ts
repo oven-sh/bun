@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir, tls as tlsCert } from "harness";
 import http2 from "node:http2";
 import net from "node:net";
 import { join } from "node:path";
@@ -14,6 +14,8 @@ export type Fixture = {
   port: number;
   proc: Bun.Subprocess<"pipe", "pipe", "pipe">;
   stderr: () => string;
+  /** Resolves once the fixture has written `marker` to stderr `count` times. */
+  stderrHas(marker: string, count?: number): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 };
 
@@ -30,7 +32,10 @@ export type FixtureOptions = {
 export async function startFixture(opts: FixtureOptions): Promise<Fixture> {
   // The file behind the Bun.file routes. Per fixture, so that no module-level
   // hook has to outlive the test file that first imported this module.
-  const dir = tempDir("serve-http2", { "big.bin": Buffer.alloc(3 * 1024 * 1024 + 17, "0123456789") });
+  const dir = tempDir("serve-http2", {
+    "big.bin": Buffer.alloc(3 * 1024 * 1024 + 17, "0123456789"),
+    "tls.json": JSON.stringify(tlsCert),
+  });
   try {
     return await spawnFixture(opts, dir);
   } catch (err) {
@@ -49,7 +54,7 @@ async function spawnFixture(opts: FixtureOptions, dir: ReturnType<typeof tempDir
       join(String(dir), "big.bin"),
       "--idle-timeout",
       String(opts.idleTimeout ?? 30),
-      ...(opts.tls ? ["--tls"] : []),
+      ...(opts.tls ? ["--tls", join(String(dir), "tls.json")] : []),
       ...(opts.http1 === false ? ["--no-http1"] : []),
       ...(opts.http3 ? ["--http3"] : []),
     ],
@@ -59,8 +64,20 @@ async function spawnFixture(opts: FixtureOptions, dir: ReturnType<typeof tempDir
     stderr: "pipe",
   });
   let stderr = "";
+  let stderrDone = false;
+  let stderrWaiters: (() => void)[] = [];
+  const wakeStderrWaiters = () => {
+    const waiters = stderrWaiters;
+    stderrWaiters = [];
+    for (const wake of waiters) wake();
+  };
   (async () => {
-    for await (const chunk of proc.stderr) stderr += new TextDecoder().decode(chunk);
+    for await (const chunk of proc.stderr) {
+      stderr += new TextDecoder().decode(chunk);
+      wakeStderrWaiters();
+    }
+    stderrDone = true;
+    wakeStderrWaiters();
   })();
   const reader = proc.stdout.getReader();
   let line = "";
@@ -75,6 +92,12 @@ async function spawnFixture(opts: FixtureOptions, dir: ReturnType<typeof tempDir
     port,
     proc,
     stderr: () => stderr,
+    async stderrHas(marker, count = 1) {
+      while (stderr.split(marker).length - 1 < count) {
+        if (stderrDone) throw new Error(`fixture exited before writing ${count} x ${marker}: ${stderr}`);
+        await new Promise<void>(r => stderrWaiters.push(r));
+      }
+    },
     async [Symbol.asyncDispose]() {
       proc.stdin.end();
       await proc.exited;
@@ -226,26 +249,42 @@ export class RawH2 {
   private buf = Buffer.alloc(0);
   private waiters: (() => void)[] = [];
   closed = false;
+  /** The server's FIN arrived: the stream ended in order, with nothing lost behind it. */
+  ended = false;
+  /** Code of the socket error, such as ECONNRESET when the server's kernel reset the connection. */
+  error: string | undefined;
 
-  static async connect(port: number, secure: boolean, opts: { sendPreface?: boolean; settings?: Buffer } = {}) {
+  /** `allowHalfOpen` keeps this side open after the server's FIN, like a client that never closes. */
+  static async connect(
+    port: number,
+    secure: boolean,
+    opts: { sendPreface?: boolean; settings?: Buffer; allowHalfOpen?: boolean } = {},
+  ) {
     const c = new RawH2();
+    const allowHalfOpen = opts.allowHalfOpen ?? false;
     await new Promise<void>((resolve, reject) => {
       const onErr = (e: Error) => reject(e);
       if (secure) {
-        c.socket = tls.connect({ port, host: "127.0.0.1", ALPNProtocols: ["h2"], rejectUnauthorized: false }, () =>
-          resolve(),
-        );
+        // The option reaches the net.Socket under the TLS socket. The types of tls.connect() do not list it.
+        const options = { port, host: "127.0.0.1", ALPNProtocols: ["h2"], rejectUnauthorized: false, allowHalfOpen };
+        c.socket = tls.connect(options as tls.ConnectionOptions, () => resolve());
       } else {
-        c.socket = net.connect({ port, host: "127.0.0.1" }, () => resolve());
+        c.socket = net.connect({ port, host: "127.0.0.1", allowHalfOpen }, () => resolve());
       }
       c.socket.once("error", onErr);
     });
     c.socket.on("data", (d: Buffer) => c.onData(d));
+    c.socket.on("end", () => {
+      c.ended = true;
+      c.wake();
+    });
     c.socket.on("close", () => {
       c.closed = true;
       c.wake();
     });
-    c.socket.on("error", () => {});
+    c.socket.on("error", (e: NodeJS.ErrnoException) => {
+      c.error = e.code ?? e.message;
+    });
     if (opts.sendPreface ?? true) {
       c.socket.write(PREFACE);
       c.socket.write(frame(T.SETTINGS, 0, 0, opts.settings ?? Buffer.alloc(0)));
@@ -277,6 +316,19 @@ export class RawH2 {
 
   write(b: Buffer) {
     this.socket.write(b);
+  }
+
+  /** Resolves once the kernel has taken `b`. */
+  writeFlushed(b: Buffer) {
+    return new Promise<void>((resolve, reject) => this.socket.write(b, err => (err ? reject(err) : resolve())));
+  }
+
+  /** Resolves at the server's FIN; throws if the connection closed without one. */
+  async waitForEnd() {
+    while (!this.ended) {
+      if (this.closed) throw new Error(`connection closed without a FIN (${this.error}); got ${this.describe()}`);
+      await new Promise<void>(r => this.waiters.push(r));
+    }
   }
 
   /** Resolve with the first frame matching `pred`, waiting for more data as needed. */

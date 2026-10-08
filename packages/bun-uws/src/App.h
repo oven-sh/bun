@@ -417,7 +417,7 @@ public:
     /** Closes all connections connected to this server which are not sending a request or waiting for a response. Does not close the listen socket.
      * With closeWhenIdle set, connections that are busy right now are marked to close as soon as their in-flight work completes (graceful shutdown);
      * upgraded WebSockets and CONNECT/Upgrade tunnels never become idle, so they are left alone either way.
-     * Returns the number of connections closed. */
+     * Returns the number of connections closed. An HTTP/2 connection counts when its graceful close starts (Http2Connection::finish). */
     size_t closeIdle(bool closeWhenIdle = false) {
         auto *group = httpContext->getSocketGroup();
         struct us_socket_t *s = group->head_sockets;

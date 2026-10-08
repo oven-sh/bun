@@ -705,6 +705,8 @@ int us_socket_ssl_handshake_callback_has_fired(us_socket_r s) nonnull_fn_decl;
 unsigned int us_socket_ssl_spill_pending(us_socket_r s) nonnull_fn_decl;
 
 struct us_socket_t *us_socket_close(us_socket_r s, int code, void *reason) __attribute__((nonnull(1)));
+/* Closes before it returns. A TLS socket first sends what the kernel takes now: its unsent ciphertext, then close_notify. */
+struct us_socket_t *us_socket_close_now(us_socket_r s) nonnull_fn_decl;
 
 int us_socket_local_port(us_socket_r s) nonnull_fn_decl;
 int us_socket_remote_port(us_socket_r s) nonnull_fn_decl;

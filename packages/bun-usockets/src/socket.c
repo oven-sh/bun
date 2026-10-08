@@ -364,6 +364,12 @@ __attribute__((always_inline)) struct us_socket_t *us_socket_close(struct us_soc
     return us_internal_socket_close_raw(s, code, reason);
 }
 
+struct us_socket_t *us_socket_close_now(struct us_socket_t *s) {
+    /* The graceful close sends what it can and may then wait, for the spill or for the peer. A close defers at most once. */
+    us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+    return us_socket_close(s, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, NULL);
+}
+
 struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) {
 #if defined(LIBUS_USE_LIBUV) || defined(WIN32)
     return 0;

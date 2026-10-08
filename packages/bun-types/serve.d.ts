@@ -937,6 +937,10 @@ declare module "bun" {
      * request in flight close as soon as their response completes. That means
      * it may take some time before all network activity stops.
      *
+     * An HTTP/2 connection gets a GOAWAY frame and the server ends its side of
+     * it. The connection is closed when the client closes its own side, or
+     * after `idleTimeout` (after 8 seconds when that is shorter or disabled).
+     *
      * The returned promise resolves once every connection is closed.
      *
      * @param closeActiveConnections Immediately terminate in-flight requests, websockets, and stop accepting new connections.
@@ -951,7 +955,8 @@ declare module "bun" {
      * In-flight requests and open WebSockets are untouched, and the server
      * keeps accepting new connections.
      *
-     * @returns The number of connections that were closed.
+     * @returns The number of connections that were closed. An HTTP/2
+     * connection counts when the server ends its side of it.
      */
     closeIdleConnections(): number;
 

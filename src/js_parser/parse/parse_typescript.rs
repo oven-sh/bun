@@ -781,13 +781,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             T::TPrivateIdentifier => value.name = js_ast::StoreStr::new(p.lexer.identifier),
             T::TOpenBracket => {
                 p.lexer.next()?;
-                // `[("a")]`: a `ParenthesizedExpression` is no literal.
-                let is_literal = p.lexer.token != T::TOpenParen;
                 let old_allow_in = core::mem::replace(&mut p.allow_in, true);
                 let name = p.parse_expr(Level::Lowest);
                 p.allow_in = old_allow_in;
                 // `["a"]` and `[1]` are names like `"a"` and `1`. Any other expression leaves the member without a name.
                 let name = name?;
+                // `IsStringOrNumericLiteralLike`: not `("a")`, `"a" as const`, `"a"!`, `<T>"a"`.
+                let is_literal = p.last_cast(&name).is_none();
                 match name.data {
                     js_ast::ExprData::EString(string) if is_literal && !string.is_utf16 => {
                         value.name = string.data;
@@ -922,7 +922,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // Parse the initializer
             if p.lexer.token == T::TEquals {
                 p.lexer.next()?;
-                value.value = Some(p.parse_expr(Level::Comma)?);
+                value.value = Some(p.parse_expr_allow_in(Level::Comma)?);
             }
 
             let value_name = value.name;

@@ -256,6 +256,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
             (p.lexer.range(), p.lexer.raw())
         };
+        let escaped_word = if p.is_tolerant() && async_kind != AsyncPrefixExpression::None {
+            p.lexer.escaped_word()
+        } else {
+            None
+        };
 
         p.lexer.next()?;
 
@@ -268,14 +273,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     return p.parse_async_prefix_expr(name_range, full_start, level, flags);
                 }
                 if p.is_tolerant() && !p.lexer.is_log_disabled {
-                    return Self::pfx_escaped_async(p, name_range, full_start, level, flags);
+                    return Self::pfx_escaped_async(
+                        p,
+                        name_range,
+                        escaped_word,
+                        full_start,
+                        level,
+                        flags,
+                    );
                 }
             }
 
             AsyncPrefixExpression::IsAwait => match p.fn_or_arrow_data_parse.allow_await {
                 // `parseParametersWorker`, `parseClassStaticBlockBody`: an await context.
                 AwaitOrYield::ForbidAll if p.is_tolerant() && level.lte(Level::Prefix) => {
-                    return Self::pfx_misplaced_await(p, name_range, raw, level);
+                    return Self::pfx_misplaced_await(p, name_range, escaped_word, level);
                 }
                 AwaitOrYield::ForbidAll => {
                     p.log().add_range_error(
@@ -294,10 +306,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             b"The keyword \"await\" cannot be escaped",
                         );
                     } else {
-                        if is_escaped {
-                            // `nextToken`: it is the keyword it spells, and the escape is reported.
-                            p.lexer.ts_error(name_range, 1260);
-                        }
+                        p.lexer.keyword_was_taken(escaped_word);
 
                         if p.fn_or_arrow_data_parse.is_top_level {
                             p.top_level_await_keyword = name_range;
@@ -327,8 +336,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         && level.lte(Level::Prefix)
                         && Self::pfx_operand_follows_on_same_line(p)
                     {
-                        return Self::pfx_misplaced_await(p, name_range, raw, level);
+                        return Self::pfx_misplaced_await(p, name_range, escaped_word, level);
                     }
+                    // Outside the await context of the top level of a module: a computed name, or the
+                    // initializer of a field, which stays outside it.
+                    p.await_read_as_identifier |=
+                        p.is_tolerant() && p.fn_or_arrow_data_parse.is_top_level;
                     p.lexer.prev_token_was_await_keyword = !p.is_tolerant();
                     p.lexer.fn_or_arrow_start_loc = p.fn_or_arrow_data_parse.needs_async_loc;
                     // `isUpdateExpression`: `await` does not start one even where it is an
@@ -346,7 +359,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 match p.fn_or_arrow_data_parse.allow_yield {
                     // `parseParametersWorker`: a yield context.
                     AwaitOrYield::ForbidAll if p.is_tolerant() && level.lte(Level::Assign) => {
-                        return Self::pfx_misplaced_yield(p, name_range, raw, true);
+                        return Self::pfx_misplaced_yield(p, name_range, escaped_word, true);
                     }
                     AwaitOrYield::ForbidAll => {
                         p.log().add_range_error(
@@ -365,11 +378,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                 b"The keyword \"yield\" cannot be escaped",
                             );
                         } else {
-                            if is_escaped {
-                                // `nextToken`: it is the keyword it spells, and the escape is
-                                // reported.
-                                p.lexer.ts_error(name_range, 1260);
-                            }
+                            p.lexer.keyword_was_taken(escaped_word);
 
                             if level.gt(Level::Assign) {
                                 p.log().add_range_error(
@@ -396,7 +405,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             && level.lte(Level::Assign)
                             && Self::pfx_operand_follows_on_same_line(p)
                         {
-                            return Self::pfx_misplaced_yield(p, name_range, raw, false);
+                            return Self::pfx_misplaced_yield(p, name_range, escaped_word, false);
                         }
                         // Try to gracefully recover if "yield" is used in the wrong place
                         if !p.lexer.has_newline_before {
@@ -483,13 +492,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     fn pfx_misplaced_await(
         p: &mut Self,
         await_range: bun_ast::Range,
-        raw: &[u8],
+        escaped_word: Option<crate::lexer::EscapedWord>,
         level: Level,
     ) -> PResult<Expr> {
-        if AsyncPrefixExpression::find(raw) != AsyncPrefixExpression::IsAwait {
-            // `nextToken`: a keyword that contains an escape.
-            p.lexer.ts_error(await_range, 1260);
-        }
+        p.lexer.keyword_was_taken(escaped_word);
         let value = p.parse_expr(Level::Prefix)?;
         if p.lexer.token == T::TAsteriskAsterisk {
             p.unary_before_exponentiation(level, await_range.loc, b"await")?;
@@ -504,13 +510,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     fn pfx_misplaced_yield(
         p: &mut Self,
         yield_range: bun_ast::Range,
-        raw: &[u8],
+        escaped_word: Option<crate::lexer::EscapedWord>,
         in_generator: bool,
     ) -> PResult<Expr> {
-        if AsyncPrefixExpression::find(raw) != AsyncPrefixExpression::IsYield {
-            // `nextToken`: a keyword that contains an escape.
-            p.lexer.ts_error(yield_range, 1260);
-        }
+        p.lexer.keyword_was_taken(escaped_word);
         if !in_generator && !p.lexer.is_log_disabled {
             p.log().add_range_error(
                 Some(p.source),
@@ -875,12 +878,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     fn pfx_t_at(p: &mut Self) -> PResult<Expr> {
         // Parse decorators before a class expression: @dec class { ... }
         let at_loc = p.lexer.loc();
-        let ts_decorators = p.parse_type_script_decorators()?;
+        // `parseDecoratedExpression`: `parseModifiersEx`, which takes keywords too.
+        // `checkGrammarModifiers` reports them.
+        let mut modifiers = Vec::new();
+        let ts_decorators = if p.is_tolerant() {
+            let allow_await = p.fn_or_arrow_data_parse.allow_await;
+            p.parse_modifiers_of_parameter(allow_await, &mut modifiers)?;
+            let mut decorators = bun_alloc::AstAlloc::vec();
+            decorators.extend(modifiers.iter().filter_map(|modifier| modifier.decorator));
+            modifiers.retain(|modifier| modifier.decorator.is_none());
+            decorators
+        } else {
+            p.parse_type_script_decorators()?
+        };
 
         // Expect class keyword after decorators
         if p.lexer.token != T::TClass {
             if p.is_tolerant() && !p.lexer.is_log_disabled {
-                // `parseDecoratedExpression`: 1109 at the end of the last decorator, and a missing
+                // `parseDecoratedExpression`: 1109 at the end of the last modifier, and a missing
                 // declaration.
                 let node_pos = p.lexer.full_start();
                 p.note_stray_decorators(ts_decorators.slice(), node_pos);
@@ -900,6 +915,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let loc = p.lexer.loc();
         let full_start = p.pos_for_jsdoc();
         let mut class_keyword = p.lexer.range();
+        p.note_parameter_modifiers(&mut class_keyword.loc, &modifiers);
         p.lexer.next()?;
         let mut name: Option<js_ast::LocRef> = None;
 
@@ -1083,9 +1099,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let mut self_errors = DeferredErrors::default();
         let mut comma_after_spread = bun_ast::Loc::default();
 
-        // Allow "in" inside arrays
+        // Allow "in" inside arrays. (`parseArrayLiteralExpression` leaves the context as it is: see
+        // `parse_expr_allow_in`.)
         let old_allow_in = p.allow_in;
-        p.allow_in = true;
+        p.allow_in = old_allow_in || !p.is_tolerant();
         let saved_contexts = p.enter_list(ListKind::ArrayLiteralMembers);
 
         while p.lexer.token != T::TCloseBracket {
@@ -1228,9 +1245,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let mut self_errors = DeferredErrors::default();
         let mut comma_after_spread: bun_ast::Loc = bun_ast::Loc::default();
 
-        // Allow "in" inside object literals
+        // Allow "in" inside object literals. (`parseObjectLiteralElement` does so for the value of a
+        // property only: see `parse_expr_allow_in`.)
         let old_allow_in = p.allow_in;
-        p.allow_in = true;
+        p.allow_in = old_allow_in || !p.is_tolerant();
         let saved_contexts = p.enter_list(ListKind::ObjectLiteralMembers);
 
         while p.lexer.token != T::TCloseBrace {
@@ -1380,22 +1398,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         //     <A = B>(x) => {}
         if Self::IS_TYPESCRIPT_ENABLED && p.is_jsx_enabled() {
             if p.is_ts_arrow_fn_jsx()? {
-                let type_parameters =
-                    p.parse_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
-                p.lexer.expect(T::TOpenParen)?;
-                let mut value = p.parse_paren_expr(
-                    loc,
-                    level,
-                    ParenExprOpts {
-                        force_arrow_fn: true,
-                        full_start,
-                        ..Default::default()
-                    },
-                )?;
-                if matches!(value.data, ExprData::EArrow(_)) {
-                    p.note_type_parameters(&mut value.loc, type_parameters);
-                }
-                return Ok(value);
+                let opts = ParenExprOpts {
+                    force_arrow_fn: true,
+                    full_start,
+                    ..Default::default()
+                };
+                return Self::pfx_generic_arrow_fn(p, loc, level, opts);
             }
         }
 
@@ -1453,6 +1461,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         ParenExprOpts {
                             force_arrow_fn: result
                                 == SkipTypeParameterResult::DefinitelyTypeParameters,
+                            is_after_question_and_before_colon: p.is_tolerant()
+                                && flags == EFlags::AfterQuestionAndBeforeColon,
                             open_paren,
                             full_start,
                             ..Default::default()
@@ -1512,11 +1522,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         Err(crate::Error::SyntaxError)
     }
 
+    /// `parseParenthesizedArrowFunctionExpression` with `allowAmbiguity`, at the `<` of its type
+    /// parameters. `loc`: of its first token.
+    pub(super) fn pfx_generic_arrow_fn(
+        p: &mut Self,
+        loc: bun_ast::Loc,
+        level: Level,
+        opts: ParenExprOpts,
+    ) -> PResult<Expr> {
+        let type_parameters = p.parse_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+        let mut value =
+            if p.lexer.token != T::TOpenParen && p.is_tolerant() && !p.lexer.is_log_disabled {
+                Self::pfx_arrow_without_parameters(p, loc, opts.full_start, opts.is_async)?
+            } else {
+                p.lexer.expect(T::TOpenParen)?;
+                p.parse_paren_expr(loc, level, opts)?
+            };
+        if matches!(value.data, ExprData::EArrow(_)) {
+            p.note_type_parameters(&mut value.loc, type_parameters);
+        }
+        Ok(value)
+    }
+
     /// Whether the `<` the lexer is at opens `<T>`, which is the same tokens as the type parameters
     /// of an arrow function and as the type of a type assertion: it need not be parsed twice.
     #[cold]
     #[inline(never)]
-    fn pfx_is_name_in_angle_brackets(p: &mut Self) -> bool {
+    pub(super) fn pfx_is_name_in_angle_brackets(p: &mut Self) -> bool {
         p.look_ahead(|p| {
             p.step() && p.is_identifier_in_context() && p.step() && p.lexer.token == T::TGreaterThan
         })
@@ -1529,7 +1561,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         // The operand of a unary operator is parsed at Level::Prefix: no lookahead, and `mustBeUnary`.
         let must_be_unary = level.eql(Level::Prefix);
         let starts_jsx = level.lte(Level::Prefix)
-            && !p.lexer.is_less_than_slash()
             && (must_be_unary
                 // `nextTokenIsIdentifierOrKeywordOrGreaterThan`
                 || p.next_token_matches(|p| {
@@ -1578,7 +1609,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if p.lexer.token == T::TGreaterThan {
             p.lexer.next()?;
         }
-        if must_be_unary || p.lexer.token != T::TLessThan || p.lexer.is_less_than_slash() {
+        if must_be_unary || p.lexer.token != T::TLessThan {
             return Ok(element);
         }
         if p.lexer.is_log_disabled {
@@ -1657,6 +1688,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     fn pfx_escaped_async(
         p: &mut Self,
         async_range: bun_ast::Range,
+        escaped_word: Option<crate::lexer::EscapedWord>,
         async_full_start: bun_ast::Loc,
         level: Level,
         flags: EFlags,
@@ -1668,7 +1700,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             _ => false,
         };
         if is_modifier {
-            p.lexer.ts_error(async_range, 1260);
+            p.lexer.keyword_was_taken(escaped_word);
         }
         Ok(expr)
     }
@@ -1709,22 +1741,49 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         p.is_tolerant() && !p.next_token_matches(|p| p.lexer.is_identifier_or_keyword())
     }
 
-    /// `isParenthesizedArrowFunctionExpression`: a lone `=>` where an assignment expression starts
-    /// is treated as an arrow function. `parseParenthesizedArrowFunctionExpression`: 1005 for the
-    /// `(`, and there are no parameters.
+    /// `parseParenthesizedArrowFunctionExpression` with `allowAmbiguity`, at a token other than its
+    /// `(`: 1005, and there are no parameters. `isParenthesizedArrowFunctionExpression`: so for a
+    /// lone `=>` where an assignment expression starts. `loc`, `full_start`: of its first token.
     #[cold]
     #[inline(never)]
-    fn pfx_arrow_without_parameters(p: &mut Self) -> PResult<Expr> {
-        let loc = p.lexer.loc();
+    fn pfx_arrow_without_parameters(
+        p: &mut Self,
+        loc: bun_ast::Loc,
+        full_start: bun_ast::Loc,
+        is_async: bool,
+    ) -> PResult<Expr> {
         p.lexer.expect(T::TOpenParen)?;
         let _ = p.push_scope_for_parse_pass(scope::Kind::FunctionArgs, loc)?;
+        let mut return_type = crate::sema::ts_syntax::TypeId::NONE;
+        if p.lexer.token == T::TColon {
+            p.lexer.next()?;
+            p.skip_typescript_return_type()?;
+            return_type = p.saved_type_or_error();
+        }
         let mut fn_or_arrow_data = FnOrArrowDataParse {
             needs_async_loc: loc,
+            allow_await: if is_async {
+                AwaitOrYield::AllowExpr
+            } else {
+                AwaitOrYield::AllowIdent
+            },
             ..Default::default()
         };
+        let has_arrow_token = p.lexer.token == T::TEqualsGreaterThan;
         let arrow_result = p.parse_arrow_body(&mut [], &mut fn_or_arrow_data);
         p.pop_scope();
-        Ok(p.new_expr(arrow_result?, loc))
+        let mut arrow = arrow_result?;
+        arrow.is_async = is_async;
+        if !has_arrow_token && arrow.prefer_expr && p.lexer.token != T::TComma {
+            // `parseAssignmentExpressionOrHigher` returns the arrow function as is.
+            p.forbid_suffix_after_as_loc = p.lexer.loc();
+        }
+        let mut arrow = p.new_expr(arrow, loc);
+        p.mark_comments_before(&mut arrow.loc, loc, full_start);
+        if return_type.is_some() {
+            p.note_saved_type(&mut arrow.loc, crate::sema::Mark::ReturnType, return_type);
+        }
+        Ok(arrow)
     }
 
     /// `parseUnaryExpressionOrHigher`: the expression that starts at `loc` is the left operand of
@@ -1805,7 +1864,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     && p.is_tolerant()
                     && !p.lexer.is_log_disabled
                 {
-                    return Self::pfx_arrow_without_parameters(p);
+                    let (loc, full_start) = (p.lexer.loc(), p.pos_for_jsdoc());
+                    return Self::pfx_arrow_without_parameters(p, loc, full_start, false);
                 }
                 if p.lexer.token == T::TEndOfFile && p.is_tolerant() && !p.lexer.is_log_disabled {
                     return Self::pfx_missing_at_end_of_file(p);

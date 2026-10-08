@@ -100,10 +100,13 @@ impl Checker<'_, '_> {
         let mut previous_owner = None;
         for &(owner, decorator) in &hir.decorators {
             if previous_owner.replace(owner) != Some(owner)
-                && let DecoratorOwner::Param(p) = owner
+                && matches!(owner, DecoratorOwner::Param(_))
             {
-                // `decorator.Loc`, which starts at the end of the previous token.
-                let at = (file, hir[p].loc.pos, end_of_expr(hir, decorator));
+                // `decorator.Loc`, which starts at the end of the previous token: `export` and
+                // `default` can come before it.
+                let at_sign = self.decorator_position(file, decorator).at_sign;
+                let pos = self.end_of_token_before(file, at_sign);
+                let at = (file, pos, end_of_expr(hir, decorator));
                 self.add_diagnostic(Reported::bare(at, 1206));
             }
         }

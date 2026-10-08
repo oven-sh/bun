@@ -40,6 +40,7 @@ impl Checker<'_, '_> {
                 || unchecked.contain(start)
                 || self.cached_by_emit.contains(&e)
                 || self.is_never_checked(start)
+                || self.is_computed_name_never_checked(file, e)
             {
                 continue;
             }
@@ -183,7 +184,9 @@ impl Checker<'_, '_> {
         if name.is_none() || hir.is_missing(name) {
             return b"(Missing)".to_vec();
         }
-        let written = self.source_text(file, hir.start(name), self.end_of_node(file, name));
+        let (start, end) = (hir.start(name), self.end_of_node(file, name));
+        let start = super::spans::start_of_error_range(hir, start, end);
+        let written = self.source_text(file, start, end);
         // The text of the default library is not retained.
         match hir.text(name) {
             text if written.is_empty() && text.is_some() => self.atoms().bytes(text).to_vec(),
@@ -274,9 +277,6 @@ impl Checker<'_, '_> {
                 continue;
             }
             let symbol = &bound.symbols[local.idx()];
-            if !symbol.flags.contains(SymFlags::ALIAS) || symbol.flags.intersects(SymFlags::VALUE) {
-                continue;
-            }
             if inspected.is_empty() {
                 inspected.resize(bound.symbols.len(), 0);
             }
@@ -374,7 +374,7 @@ pub(super) fn fully_qualified_name(
 ) -> Vec<u8> {
     // `combineValueAndTypeSymbols`: `result.Parent` is that of the value symbol, if it has one.
     if let Some((alias, true)) = c.files().alias_of_transient_symbol(sym)
-        && let Some((object, name, _)) = c.symbol_from_variable(alias)
+        && let Some((object, name)) = c.symbol_from_variable(alias)
         && let (qualified, true) = fully_qualified_name_of_property(c, object, name)
     {
         return qualified;

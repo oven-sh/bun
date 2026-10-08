@@ -6,18 +6,18 @@ mod explain_files;
 
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{self, Bound, Decl, ScopeId, ScopeKind, SymFlags, Symbol, SymbolId};
-use crate::check::errors::SuggestionLookup;
+use crate::check::errors::{SuggestionLookup, is_close};
 use crate::check::spans::{Spans, skip_trivia, skip_trivia_back};
 use crate::components::Components;
 use crate::hir::{self, *};
 use crate::json::Json;
 use crate::resolve::{
     DiagAndArgs, Host, INFERRED_TYPES_CONTAINING_FILE, JsxEmit, ModuleDetection, ModuleKind,
-    Options, Phase, ResolvedModule, Resolver, ScriptTarget, Spent, Tracer, ancestors,
+    Options, PackageId, Phase, ResolvedModule, Resolver, ScriptTarget, Spent, Tracer, ancestors,
     contains_path, displayed_path, file_extension_is_one_of, file_path, format_by_extension,
-    get_lib_file_name, has_ts_implementation_extension, inside, is_javascript, is_javascript_file,
-    is_relative, is_same_path, join, remove_file_extension, supported_extensions,
-    to_file_name_lower_case, to_path, to_path_in,
+    get_base_file_name, get_lib_file_name, has_ts_implementation_extension, inside, is_javascript,
+    is_javascript_file, is_relative, is_same_path, join, path_is_relative, remove_file_extension,
+    supported_extensions, to_file_name_lower_case, to_path, to_path_in, typescript_path,
 };
 use crate::session::{
     Arena, ArenaHashMap, ArenaHashSet, ArenaVec, Session, map_in, set_in, transfer_arena,
@@ -36,6 +36,7 @@ use bun_threading::Guarded;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::io::Write;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
@@ -145,7 +146,7 @@ pub struct Module<'s> {
     /// The `package.json` in `PackageJsonDirectory`, if it has no `PackageJsonType`. `NONE`
     /// otherwise, and unless `module` is `node16` or `node18`: nothing else reads it.
     pub package_json_without_type: Atom,
-    /// `SourceFileMetaData.PackageJsonDirectory`: the directory of the `package.json` nearest to
+    /// `GetNearestAncestorDirectoryWithPackageJson`: the directory of the `package.json` nearest to
     /// the file. None: there is none.
     pub package_json_directory: Atom,
     /// The specifiers that resolve to JavaScript without type declarations, with the resolution
@@ -175,14 +176,14 @@ pub struct Module<'s> {
     /// without `allowArbitraryExtensions`, with the mode they are resolved in. They resolve to no
     /// file (6263).
     pub arbitrary_extension_imports: ArenaFew<'s, (Atom, ResolutionMode)>,
-    /// For each of `arbitrary_extension_imports`: the file it resolves to.
+    /// For each of `arbitrary_extension_imports`: `ResolvedFileName`.
     pub arbitrary_extension_files: ArenaFew<'s, Atom>,
     /// The relative specifiers without an extension, under Node-style module resolution, which
     /// requires one for `import`; and `getSuggestedImportExtension`, if a candidate file exists.
     pub extensionless_imports: ArenaFew<'s, (Atom, Option<&'static [u8]>)>,
     /// `ResolvedFileName` for those of `imports` for which another file is in the program: for a
     /// duplicate of a package file the copy that is kept, for a source of a referenced project its
-    /// declaration file.
+    /// declaration file. And for those for which it is not normalized.
     pub redirected_imports: ArenaFew<'s, (Atom, ResolutionMode, Atom)>,
     /// Those of `imports` that resolve to a declaration file of a referenced project, for which its source is loaded.
     pub project_reference_imports: ArenaFew<'s, (Atom, ResolutionMode)>,
@@ -352,20 +353,6 @@ impl Module<'_> {
     /// neither imports nor exports.
     pub fn is_commonjs(&self) -> bool {
         self.bound.commonjs_indicator.is_some()
-    }
-
-    /// The file that `spec` resolves to in this file, for callers that know the specifier but not
-    /// its position: its resolution for a plain `import`, or else for whatever use requests it
-    /// there. Same lookup as `Files::module_of_specifier`.
-    pub fn imported_file(&self, spec: Atom) -> Option<FileId> {
-        [
-            self.default_mode,
-            ResolutionMode::Import,
-            ResolutionMode::Require,
-            ResolutionMode::None,
-        ]
-        .into_iter()
-        .find_map(|mode| self.imports.get(&(spec, mode)).copied())
     }
 }
 
@@ -561,8 +548,11 @@ pub struct Files<'s> {
     /// The modules with one of `ModuleSymbolLinks::export_collisions` in another file. Filled by
     /// `link`.
     pub modules_with_nested_export_collisions: &'s [Sym],
+    /// By file and identifier, the runs for one identifier in the order in which they began. Filled
+    /// by `link`.
+    failed_lookups: &'s [FailedLookup<'s>],
     /// `symbol.Parent` of a transient symbol, where `mergeSymbolTable` has set it to a symbol of
-    /// another file: the module through which an augmentation has reached the target of an alias.
+    /// another file.
     parents_in_other_files: ArenaHashMap<'s, Sym, Sym>,
 
     /// Some file contains `export type * from`.
@@ -576,6 +566,8 @@ pub struct Files<'s> {
     no_module_links: ModuleSymbolLinks<'s>,
     /// The symbol merge is done: symbols no longer change.
     is_merged: bool,
+    /// Some alias has a `combined_symbol`.
+    has_symbols_to_combine: bool,
     memo: Memo<'s>,
     /// The file order in which declarations of one symbol in several files are considered: it
     /// determines the order of overloads.
@@ -586,13 +578,17 @@ pub struct Files<'s> {
     pub components: Components<'s>,
     /// `global_type` of every name below `known::sym_iterator`, indexed by atom number.
     global_types: &'s [GlobalType],
+    /// The global `Array` or `ReadonlyArray` declares a member whose name begins with a digit. Only
+    /// then can `T[][0]` be anything but `T`.
+    pub arrays_have_numeric_members: bool,
     /// Errors in what the options refer to, not attributable to any file.
     program_errors: &'s [Problem],
     /// `GetIncludeProcessorDiagnostics`: errors about the inclusion of a file in the program,
     /// reported at the reference in another file: that file and the span.
     include_errors: &'s [(FileId, u32, u32, Problem)],
-    /// The `package.json` of each `node_modules` package that contains a file of the program, keyed
-    /// by its directory. Declaration files and messages need module specifiers for such files.
+    /// The `package.json` of each `node_modules` package that contains a file of the program, and
+    /// the one in `Module::package_json_directory` of each file, keyed by its directory.
+    /// Declaration files and messages need module specifiers from their `exports` and `imports`.
     pub package_jsons: ArenaHashMap<'s, &'s [u8], &'s Json>,
     /// `DirectoriesByRealpath`: each directory that is known to be a symlink target, with a symlink
     /// to it, in order. The `package.json` of each is in `package_jsons` under the path of the
@@ -611,6 +607,8 @@ pub struct Files<'s> {
     /// `redirectFilesByPath`, in the order in which `collectFiles` comes to them: the name of a copy
     /// of a package file, and the copy that is in the program.
     package_copies: &'s [(&'s [u8], FileId)],
+    /// `Included::explained_in_diagnostics` of the errors that `load` has made.
+    explained_in_diagnostics: &'s [Vec<u8>],
 }
 
 /// `Files::global_type`
@@ -643,6 +641,9 @@ pub struct ExportCollision {
     /// The `export *` that exported it first. `specifierText` is its specifier.
     pub first: (FileId, StmtId),
     pub name: Atom,
+    /// `targetSymbol` and `sourceSymbol`, where only types tell whether `resolveSymbol` of both is
+    /// one symbol (`Resolve::may_need_types_to_resolve`). If it is, there is no error.
+    pub symbols: Option<(Sym, Sym)>,
 }
 
 /// `ModuleSymbolLinks`. In the arena of the thread that computes them.
@@ -755,26 +756,47 @@ struct Resolution<'r> {
     should_add_file: bool,
     /// `increaseDepth`
     increases_depth: bool,
+    /// `packageId` of the task for `path`. `redirectedParseTask` has none.
+    package_id: Option<PackageId<'r>>,
     /// `resolveExternalModule` asks `GetSourceFileForResolvedModule` for it. Otherwise it resolves
     /// to no file, even if the file is in the program.
     is_importable: bool,
     /// The error of `parseTask.load` for an extension that the program does not support. The file
     /// is not read.
-    unsupported_extension: Option<u32>,
+    unsupported_extension: Option<UnsupportedExtension>,
+}
+
+#[derive(Copy, Clone)]
+struct UnsupportedExtension {
+    code: u32,
+    /// The first specifier in the file that is resolved like this, if there is one.
+    span: Option<(u32, u32)>,
+}
+
+/// What `parse_and_bind` makes of a file of a package. It is the same for every copy of the file
+/// that has the same text.
+struct Parse<'s> {
+    hir: hir::File<'s>,
+    bound: Bound<'s>,
 }
 
 /// `'r`: the paths belong to the `Resolver`.
 struct Loaded<'s, 'r> {
+    /// Without `hir` and `bound` if `parse` has them.
     module: Module<'s>,
+    /// The `Parse` that `load_ahead` returns for it and for the other copies of the file.
+    parse: Option<u32>,
     imports: Vec<Resolution<'r>>,
-    /// (path, is a lib, `increaseDepth`)
-    references: Vec<(&'r [u8], bool, bool)>,
+    /// (path, is a lib, `increaseDepth`, `packageId`)
+    references: Vec<(&'r [u8], bool, bool, Option<PackageId<'r>>)>,
     /// The `/// <reference lib>` to a library that is replaced by a file with an extension that
     /// the program does not support: its span, the file, and the error of `parseTask.load`. The
     /// file is not read.
     unsupported_libs: Vec<(u32, u32, &'r [u8], u32)>,
-    /// `typeResolutionsTrace`, then `resolutionsTrace`
-    traces: Vec<DiagAndArgs>,
+    /// `typeResolutionsTrace`
+    type_resolutions_trace: Vec<DiagAndArgs>,
+    /// `resolutionsTrace`
+    resolutions_trace: Vec<DiagAndArgs>,
 }
 
 /// A file that `Files::load` has found.
@@ -782,12 +804,14 @@ struct Loaded<'s, 'r> {
 struct FoundFile<'s> {
     path: Path<'s>,
     is_lib: bool,
-    /// `parseTaskData.packageId`, as an index into `Found::kept`.
+    /// `parseTaskData.packageId`, of `first`, as an index into `Found::kept`.
     package: Option<u32>,
     /// `taskDataByPath`: the first task for the file, by whichever spelling of its name.
     first: FileId,
     /// The task that loads it reads it. Otherwise it is read if `collectFiles` wants it.
     is_read: bool,
+    /// `Loaded::parse`, until `collectFiles` has given the module its `hir` and `bound`.
+    parse: Option<u32>,
     /// `parseTask.loaded`, of `first`: a task for the file has run that was not elided.
     is_loaded: bool,
     /// `seen` of `collectFiles`, of `first`: the task that it came to first, whose spelling is the
@@ -803,6 +827,8 @@ struct SubTask {
     increases_depth: bool,
     /// `elideOnDepth`
     is_elided_on_depth: bool,
+    /// `packageId`: `Found::package_of_task`.
+    package: Option<u32>,
 }
 
 /// What `Files::load` knows about the files it has found, besides the files themselves.
@@ -810,23 +836,26 @@ struct SubTask {
 struct Found<'s> {
     /// By `FileId`.
     files: Vec<FoundFile<'s>>,
-    /// The index in `kept` for a `Resolver::package_id`.
+    /// The index in `kept` for a `PackageId`.
     by_package_id: FxHashMap<Vec<u8>, u32>,
     /// `packageIdToSourceFile`: the copy of a package file that `collectFiles` came to first.
     kept: Vec<Option<FileId>>,
-    /// Whether `collectFiles` has begun.
-    is_collecting: bool,
 }
 
 impl Found<'_> {
-    /// The index in `kept` for `package_id`, and whether no file has had that id before.
-    fn package(&mut self, package_id: Vec<u8>) -> (u32, bool) {
+    /// `package_id` of a task for `file`, as an index into `kept`. `None` as well if the file has
+    /// an id, which it keeps.
+    fn package_of_task(&mut self, file: FileId, package_id: Option<PackageId>) -> Option<u32> {
+        let data = self.files[file.idx()].first;
+        let id = package_id.filter(|_| self.files[data.idx()].package.is_none())?;
+        let (version, peers) = (id.version, id.peer_dependencies);
+        let key = [id.name, b"@", version, peers, b"/", id.sub_module_name].concat();
         let new = self.kept.len() as u32;
-        let index = *self.by_package_id.entry(package_id).or_insert(new);
+        let index = *self.by_package_id.entry(key).or_insert(new);
         if index == new {
             self.kept.push(None);
         }
-        (index, index == new)
+        Some(index)
     }
 }
 
@@ -944,6 +973,16 @@ pub struct AliasSymbolLinks {
     pub ran_out_of_stack: bool,
 }
 
+/// A run of `getResolvedSymbol` that finds nothing, for the first identifier of an expression that
+/// `getTargetOfAliasLikeExpression` checks. Each run reports, with the spelling suggestion it finds.
+#[derive(Copy, Clone)]
+pub struct FailedLookup<'s> {
+    pub file: FileId,
+    pub identifier: ExprId,
+    /// The aliases for which `tryResolveAlias` returns nil during the run.
+    pub aliases_in_progress: &'s [Sym],
+}
+
 /// The functions that resolve names, exports and aliases. Each of them can call `alias_links`, and
 /// `alias_links` can call each of them.
 ///
@@ -969,6 +1008,18 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
 
     /// Sets `ObjectFlagsMembersResolved` of the type of `symbol`. Returns whether it was not set.
     fn set_members_resolved(&self, symbol: Sym) -> bool;
+
+    /// `findResolutionCycleStartIndex(sym, TypeSystemPropertyNameAliasTarget) >= 0`
+    fn is_alias_in_progress(&self, sym: Sym) -> bool;
+
+    /// `symbolNodeLinks.Get(node).resolvedSymbol != nil` for the identifier `e` of `file`.
+    fn has_resolved_symbol(&self, file: FileId, e: ExprId) -> bool;
+
+    /// Sets `resolvedSymbol` of the identifier `e` of `file`.
+    fn set_resolved_symbol(&self, file: FileId, e: ExprId);
+
+    /// A `FailedLookup` for the identifier `e` of `file` begins.
+    fn note_failed_lookup(&self, file: FileId, e: ExprId);
 
     /// `getSymbol`: whether `sym`, found under a name, matches the requested `meaning`. An alias
     /// has the combined meanings of itself and of every symbol on the chain to its target.
@@ -1139,6 +1190,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         {
             return Some(found);
         }
+        self.resolve_export_by_name(module, known::default);
         if let Some(synthesized) = self.synthetic_default(file, module) {
             return Some(synthesized);
         }
@@ -1316,15 +1368,20 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                     lookup_table.insert(name, node);
                     continue;
                 };
+                let is_one_symbol = self.resolve_symbol(target) == self.resolve_symbol(source);
                 // The module's own exports take precedence.
-                if self.resolve_symbol(target) != self.resolve_symbol(source)
-                    && name != known::export_equals
-                    && !symbols.contains_key(name)
-                {
+                if name == known::export_equals || symbols.contains_key(name) {
+                    continue;
+                }
+                let needs_types = target != source
+                    && (self.may_need_types_to_resolve(target)
+                        || self.may_need_types_to_resolve(source));
+                if needs_types || !is_one_symbol {
                     visit.export_collisions.push(ExportCollision {
                         duplicate: node,
                         first: lookup_table[&name],
                         name,
+                        symbols: needs_types.then_some((target, source)),
                     });
                 }
             }
@@ -1352,6 +1409,30 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         } else {
             Some(symbol)
         }
+    }
+
+    /// Whether `resolveSymbol(sym)` may be a symbol that the tables do not have, which
+    /// `Checker::resolve_alias` finds from types: for `sym` or an alias on the chain to its target,
+    /// `resolveESModuleSymbol` or `combineValueAndTypeSymbols` may create one, or the target may be
+    /// a property.
+    fn may_need_types_to_resolve(&self, mut sym: Sym) -> bool {
+        for _ in 0..32 {
+            if !self.is_non_local_alias(sym) {
+                return false;
+            }
+            if matches!(
+                self.declaration_of_alias_symbol(sym),
+                Some((_, Decl::ImportNamespace(_) | Decl::ExportStarAs(_)))
+            ) || self.is_named_import_from_export_equals(sym)
+            {
+                return true;
+            }
+            match self.alias_target(sym) {
+                Some(next) if next != sym => sym = next,
+                next => return next.is_none(),
+            }
+        }
+        false
     }
 
     /// `typeOnlyExportStarMap[name]` of `module`: the `export type *` that is the only path through
@@ -1480,26 +1561,32 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         self.resolve_alias_as_with(sym, meaning, &mut InTables(self))
     }
 
-    /// `tryResolveAlias(candidate)`, for a spelling suggestion for an unresolved name in the alias
-    /// declaration at `asking`. It skips an alias whose resolution is in progress, so the result
-    /// depends on which resolution started first. tsgo resolves them in source order: an alias
-    /// declared before `asking` is resolved or in progress, and is left alone. An alias declared
-    /// after it has not been started. If it has been started here, by a caller that entered through
-    /// it, it is in a cycle with `asking`, as if `asking` had been first.
-    fn try_resolve_alias(&self, asking: (FileId, u32), candidate: Sym) -> Option<AliasSymbolLinks> {
-        let (file, decl) = self.declaration_of_alias_symbol(candidate)?;
-        ((file, self.start_of_declaration(file, decl)) > asking)
-            .then(|| self.alias_links(candidate))
+    /// `tryResolveAlias`
+    fn try_resolve_alias(&self, symbol: Sym) -> Option<AliasSymbolLinks> {
+        (!self.is_alias_in_progress(symbol)).then(|| self.alias_links(symbol))
+    }
+
+    /// `getResolvedSymbol` of the identifier `e` in `scope` of `file`, limited to its side effects
+    /// on aliases. While the name is looked up it has no `resolvedSymbol`: an alias that the lookup
+    /// resolves can come here again.
+    fn get_resolved_symbol(&self, file: FileId, e: ExprId, scope: ScopeId, name: Atom) {
+        if self.has_resolved_symbol(file, e) {
+            return;
+        }
+        let value = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
+        if self.resolve_name(file, scope, name, value).is_none() {
+            self.note_failed_lookup(file, e);
+            self.on_failed_to_resolve_symbol(file, scope, name, value);
+        }
+        self.set_resolved_symbol(file, e);
     }
 
     /// `onFailedToResolveSymbol`, limited to its side effects on aliases: `getSymbol` resolves an
     /// alias of that name that has not the meaning itself, and `getSpellingSuggestionForName`
     /// every alias it inspects.
-    /// `decl`: the alias declaration in `file` that contains the name.
     fn on_failed_to_resolve_symbol(
         &self,
         file: FileId,
-        decl: Decl,
         scope: ScopeId,
         name: Atom,
         meaning: SymFlags,
@@ -1547,10 +1634,6 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         {
             return;
         }
-        let symbols = &mut InAliasDeclaration {
-            resolver: self,
-            asking: (file, self.start_of_declaration(file, decl)),
-        };
         let name = (name, self.atoms.bytes(name));
         // For the aliases that the search resolves. The suggestion is for the error, which the
         // checker reports.
@@ -1558,7 +1641,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
             Some((file, scope)),
             name,
             meaning,
-            symbols,
+            &mut InTables(self),
             None,
         );
     }
@@ -1576,11 +1659,11 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
     }
 
     /// `resolveESModuleSymbol`, limited to what the symbol tables can answer.
-    /// `is_namespace_import`: `namespaceImport != nil`.
+    /// `namespace_import_in`: the file, if `namespaceImport != nil`.
     fn resolve_es_module_symbol(
         &self,
         module: Sym,
-        is_namespace_import: bool,
+        namespace_import_in: Option<FileId>,
         type_only: &mut Option<TypeOnlyDeclaration>,
     ) -> Sym {
         let mut symbol = self.external_module_symbol(module);
@@ -1589,31 +1672,56 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
             // does so one step at a time.
             symbol = (self.resolve_indirection_alias(symbol, type_only)).unwrap_or(symbol);
         }
+        let Some(file) = namespace_import_in else {
+            return symbol;
+        };
+        // `getTypeWithSyntheticDefaultOnly`: the only member is the synthetic `default`.
+        if self.is_only_importable_as_default(file, module) {
+            return symbol;
+        }
         // `hasSignatures(getTypeOfSymbol(symbol))`
-        if is_namespace_import {
-            self.resolve_members_of_type_of_symbol(symbol);
+        self.resolve_members_of_type_of_symbol(symbol);
+        if !self.has_exports_for_members(symbol) || self.is_shorthand_ambient_module_symbol(symbol)
+        {
+            return symbol;
+        }
+        let has_signatures = SymFlags::FUNCTION | SymFlags::METHOD | SymFlags::CLASS;
+        let has_signatures = self.flags(symbol).intersects(has_signatures);
+        // Whether `cloneTypeAsModuleType` is called with the type itself. With a synthetic default
+        // the members of `moduleType` are the properties of the type, which are resolved, or none
+        // while it is being resolved.
+        let is_cloned = if self.is_commonjs_import_of_esm_file(file, module)
+            && self.module_exports_export(symbol).is_some()
+        {
+            has_signatures
+        } else {
+            (has_signatures
+                || self.type_of_symbol_has_property(symbol, known::default)
+                || self.is_commonjs_to_node(file, module))
+                && self.synthetic_default(file, module).is_none()
+        };
+        // `newAnonymousType` has no `ObjectFlagsMembersResolved` to ask.
+        if is_cloned {
+            self.get_named_members(symbol);
         }
         symbol
     }
 
     /// `resolveStructuredTypeMembers(getTypeOfSymbol(symbol))`, limited to what it does to aliases,
-    /// and to a type whose members are the exports of `symbol`: `getNamedMembers` asks
-    /// `symbolIsValue` of each, which resolves it if it is an alias.
+    /// and to a type whose members are the exports of `symbol`.
     fn resolve_members_of_type_of_symbol(&self, symbol: Sym) {
-        let flags = self.flags(symbol);
-        // `getTypeOfFuncClassEnumModule`
-        let has_exports_for_members = SymFlags::FUNCTION
-            | SymFlags::METHOD
-            | SymFlags::CLASS
-            | SymFlags::ENUM
-            | SymFlags::VALUE_MODULE;
-        if flags.intersects(SymFlags::VARIABLE | SymFlags::PROPERTY)
-            || !flags.intersects(has_exports_for_members)
-            || !self.set_members_resolved(symbol)
-            || self.is_shorthand_ambient_module_symbol(symbol)
+        if self.has_exports_for_members(symbol)
+            && self.set_members_resolved(symbol)
+            && !self.is_shorthand_ambient_module_symbol(symbol)
         {
-            return;
+            self.get_named_members(symbol);
         }
+    }
+
+    /// `getNamedMembers(getExportsOfSymbol(symbol), ..)`, limited to what it does to aliases: it
+    /// asks `symbolIsValue` of each, which resolves it if it is an alias.
+    fn get_named_members(&self, symbol: Sym) {
+        let flags = self.flags(symbol);
         let is_alias_only = |export: Sym| {
             let flags = self.flags(export);
             flags.contains(SymFlags::ALIAS) && !flags.intersects(SymFlags::VALUE)
@@ -1633,9 +1741,100 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
         }
     }
 
+    /// `getTypeOfFuncClassEnumModule`: whether the members of `getTypeOfSymbol(symbol)` are the
+    /// exports of `symbol`.
+    fn has_exports_for_members(&self, symbol: Sym) -> bool {
+        let flags = self.flags(symbol);
+        let has_exports = SymFlags::FUNCTION
+            | SymFlags::METHOD
+            | SymFlags::CLASS
+            | SymFlags::ENUM
+            | SymFlags::VALUE_MODULE;
+        !flags.intersects(SymFlags::VARIABLE | SymFlags::PROPERTY) && flags.intersects(has_exports)
+    }
+
+    /// `resolveExportByName`, limited to what it does to aliases, which is nothing unless `module`
+    /// has `export =`: `getPropertyOfTypeEx(getTypeOfSymbol(exportValue), name, ..)` resolves the
+    /// members of the type, and asks `symbolIsValueEx` of the member `name`.
+    fn resolve_export_by_name(&self, module: Sym, name: Atom) {
+        if self.export(module, known::export_equals).is_none() {
+            return;
+        }
+        let value = self.module_value(module);
+        if !self.has_exports_for_members(value) {
+            return;
+        }
+        self.resolve_members_of_type_of_symbol(value);
+        self.type_of_symbol_has_property(value, name);
+    }
+
+    /// `getPropertyOfTypeEx(getTypeOfSymbol(symbol), name, ..) != nil`, where the members of the
+    /// type are resolved and are the exports of `symbol`.
+    fn type_of_symbol_has_property(&self, symbol: Sym, name: Atom) -> bool {
+        // `getExportsOfSymbol`
+        let member = if self.flags(symbol).intersects(SymFlags::MODULE) {
+            self.module_export(symbol, name)
+        } else {
+            self.export(symbol, name)
+        };
+        // `symbolIsValueEx`
+        member.is_some_and(|member| {
+            let value = SymFlags::VALUE;
+            self.flags(member).intersects(value)
+                || self.symbol_flags_ex(member, true, false).intersects(value)
+        })
+    }
+
     /// `getImmediateAliasedSymbol`
     fn alias_target(&self, sym: Sym) -> Option<Sym> {
         self.alias_links(sym).immediate_target
+    }
+
+    /// `errorNoModuleMemberSymbol` for `name`, which `decl` of `file` imports from `module`,
+    /// limited to its side effects on aliases: `reportNonExportedMember` resolves the local symbol
+    /// of that name, and the exports it is compared with (`getSymbolIfSameReference`). Not with an
+    /// `export =`, where types tell whether there is a member.
+    fn error_no_module_member_symbol(&self, file: FileId, decl: Decl, module: Sym, name: Atom) {
+        if self.options.no_check
+            || self.export(module, known::export_equals).is_some()
+            || !matches!(decl, Decl::Require(_))
+                && self.is_only_importable_as_default(self.emit_syntax_of_import(file), module)
+        {
+            return;
+        }
+        // `getSuggestedSymbolForNonexistentModule`: for an identifier, not for a string literal.
+        let hir = self.hir(file);
+        let start = match decl {
+            Decl::ImportSpec(s) => hir[s].imported_pos,
+            Decl::ExportSpec(s) => hir[s].local_pos,
+            _ => u32::MAX,
+        };
+        let is_identifier = !matches!(hir.text.get(start as usize), Some(b'"' | b'\''));
+        let text = self.atoms.bytes(name);
+        let is_suggestion = |&(other, exported): &(Atom, Sym)| {
+            self.flags(exported).intersects(SymFlags::MODULE_MEMBER)
+                && is_close(text, self.atoms.bytes(other))
+        };
+        let has_suggestion = is_identifier
+            && self.with_exports_of_module(module, |links| {
+                links.resolved_exports.iter().any(is_suggestion)
+            });
+        if has_suggestion || self.export(module, known::default).is_some() {
+            return;
+        }
+        let Some(local) = self.local_of_module(module, name) else {
+            return;
+        };
+        let resolved = |symbol: Sym| {
+            let resolved = self.resolve_symbol(self.canonical(symbol));
+            resolved.map(|resolved| self.canonical(resolved))
+        };
+        // `findInMap`. The entry for the `export *` declarations is no alias.
+        let exports = self.exports(module);
+        let is_exported = (exports.iter()).any(|&(_, it)| resolved(it) == resolved(local));
+        if !is_exported && !self.export_stars_of(module).is_empty() {
+            resolved(local);
+        }
     }
 
     /// `getTargetOfAliasDeclaration` for the declaration `decl` in `file` of `sym`: one step, to a
@@ -1663,7 +1862,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                         return self.default_of_module(file, module);
                     }
                     // `getExternalModuleMember`, `getExportOfModule`
-                    self.resolve_es_module_symbol(module, false, type_only);
+                    self.resolve_es_module_symbol(module, None, type_only);
                     // `nameText != "" || name.Kind == KindStringLiteral`
                     if name.is_none() {
                         return None;
@@ -1673,7 +1872,11 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                     }
                     let star = self.type_only_export_star(module, name);
                     self.mark_symbol_of_alias_declaration_if_type_only(node, star, type_only);
-                    self.module_export_in_table(module, name)
+                    let member = self.module_export_in_table(module, name);
+                    if member.is_none() {
+                        self.error_no_module_member_symbol(file, decl, module, name);
+                    }
+                    member
                 });
             self.mark_symbol_of_alias_declaration_if_type_only(node, None, type_only);
             return target;
@@ -1698,8 +1901,8 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                 .map(|module| {
                     // The `JSImportDeclaration` of an `@import` tag is no `ImportDeclaration`.
                     let is_import_declaration = !hir.is_in_jsdoc(hir[import].namespace_pos);
-                    let symbol =
-                        self.resolve_es_module_symbol(module, is_import_declaration, type_only);
+                    let import_in = is_import_declaration.then_some(file);
+                    let symbol = self.resolve_es_module_symbol(module, import_in, type_only);
                     if self.is_commonjs_import_of_esm_file(file, module)
                         && let Some(found) = self.module_exports_export(symbol)
                     {
@@ -1743,13 +1946,8 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                             .resolve_name(file, scope, names[0], SymFlags::NAMESPACE)
                             .is_none()
                     {
-                        self.on_failed_to_resolve_symbol(
-                            file,
-                            decl,
-                            scope,
-                            names[0],
-                            SymFlags::NAMESPACE,
-                        );
+                        let namespace = SymFlags::NAMESPACE;
+                        self.on_failed_to_resolve_symbol(file, scope, names[0], namespace);
                     }
                     return target;
                 }
@@ -1767,7 +1965,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                 let scope = bound.export_scope[hir[spec].export.idx()];
                 let target = self.resolve_name(file, scope, hir[spec].local, all);
                 if target.is_none() {
-                    self.on_failed_to_resolve_symbol(file, decl, scope, hir[spec].local, all);
+                    self.on_failed_to_resolve_symbol(file, scope, hir[spec].local, all);
                 }
                 target
             }
@@ -1787,7 +1985,7 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                     return None;
                 };
                 self.module_of_specifier_as(file, spec, self.mode_of_import(file, mode))
-                    .map(|module| self.resolve_es_module_symbol(module, false, type_only))
+                    .map(|module| self.resolve_es_module_symbol(module, None, type_only))
             }
             // `getTargetOfImportEqualsDeclaration`: the whole required module.
             Decl::Require(pat) => {
@@ -1851,23 +2049,35 @@ trait Resolve<'s>: std::ops::Deref<Target = Files<'s>> {
                 names.reverse();
                 let scope = *bound.expr_scope.get(&e)?;
                 let target = self.resolve_entity(file, scope, &names, all);
-                // `checkExpressionCached(expression)`: `getResolvedSymbol` of the first name. For an
-                // `ExportAssignment`, `checkExportAssignment` has cached it before.
-                let value = SymFlags::VALUE | SymFlags::EXPORT_VALUE;
-                if target.is_none()
-                    && !matches!(decl, Decl::ExportExpr(_))
-                    && self.resolve_name(file, scope, names[0], value).is_none()
-                {
-                    self.on_failed_to_resolve_symbol(file, decl, scope, names[0], value);
+                // `checkExpressionCached(expression)`
+                if target.is_none() {
+                    self.get_resolved_symbol(file, at, scope, names[0]);
                 }
                 target
             }
             _ => None,
         }
     }
+
+    /// `checkExportAssignment` of the statement `stmt`, limited to its side effects on aliases.
+    fn check_export_assignment(&self, file: FileId, stmt: StmtId) {
+        // `checkGrammarModuleElementContext`, and 1063 or 1319 in a namespace.
+        let is_checked = match self.bound(file).stmt_parent.get(stmt.idx()) {
+            Some(bind::Parent::File) => true,
+            Some(bind::Parent::Module(m)) => {
+                !matches!(self.hir(file)[*m].name, ModuleName::Ident(_))
+            }
+            _ => false,
+        };
+        // `resolveEntityName`, then `checkExpressionCached` of what is not found: here no alias is
+        // in progress for it.
+        if is_checked {
+            self.target_of_alias_like_expression(file, Decl::ExportExpr(stmt));
+        }
+    }
 }
 
-/// `EntityNameLookup` as far as the symbol tables can answer.
+/// `EntityNameLookup` and `SuggestionLookup` as far as the symbol tables can answer.
 struct InTables<'a, R: ?Sized>(&'a R);
 
 impl<'s, R: Resolve<'s> + ?Sized> EntityNameLookup for InTables<'_, R> {
@@ -1880,22 +2090,15 @@ impl<'s, R: Resolve<'s> + ?Sized> EntityNameLookup for InTables<'_, R> {
     }
 }
 
-/// For an unresolved name in the alias declaration at `asking`.
-struct InAliasDeclaration<'a, R: ?Sized> {
-    resolver: &'a R,
-    asking: (FileId, u32),
-}
-
-impl<'s, R: Resolve<'s> + ?Sized> SuggestionLookup for InAliasDeclaration<'_, R> {
+impl<'s, R: Resolve<'s> + ?Sized> SuggestionLookup for InTables<'_, R> {
     fn get_symbol(&mut self, held: Option<Sym>, meaning: SymFlags) -> Option<Sym> {
-        held.filter(|&sym| self.resolver.means(sym, meaning))
+        held.filter(|&sym| self.0.means(sym, meaning))
     }
 
     fn try_resolve_alias(&mut self, candidate: Sym) -> Option<SymFlags> {
-        let InAliasDeclaration { resolver, asking } = *self;
-        let target = resolver.try_resolve_alias(asking, candidate)?.alias_target;
+        let target = self.0.try_resolve_alias(candidate)?.alias_target;
         // `unknownSymbol`
-        Some(target.map_or(SymFlags::PROPERTY, |target| resolver.flags(target)))
+        Some(target.map_or(SymFlags::PROPERTY, |target| self.0.flags(target)))
     }
 }
 
@@ -1940,6 +2143,18 @@ impl<'s> Resolve<'s> for Linked<'_, 's> {
     fn set_members_resolved(&self, _: Sym) -> bool {
         false
     }
+
+    fn is_alias_in_progress(&self, _: Sym) -> bool {
+        false
+    }
+
+    fn has_resolved_symbol(&self, _: FileId, _: ExprId) -> bool {
+        true
+    }
+
+    fn set_resolved_symbol(&self, _: FileId, _: ExprId) {}
+
+    fn note_failed_lookup(&self, _: FileId, _: ExprId) {}
 }
 
 /// `Resolve` while the tables are filled. tsgo pushes `TypeSystemPropertyNameAliasTarget` on
@@ -1966,6 +2181,9 @@ struct AliasResolver<'a, 's> {
     arena: std::cell::OnceCell<&'s Arena>,
     /// The symbols whose type has `ObjectFlagsMembersResolved`.
     members_resolved: std::cell::RefCell<FxHashSet<Sym>>,
+    /// The identifiers that have a `resolvedSymbol`, of those that `get_resolved_symbol` is asked
+    /// for.
+    resolved_symbols: std::cell::RefCell<FxHashSet<(FileId, ExprId)>>,
 }
 
 /// The write buffer of a task of the link step. It is dropped at the barrier after the step. What
@@ -1976,6 +2194,7 @@ struct Resolved<'s> {
     symbol_flags: FxHashMap<Sym, SymFlags>,
     module_links: FxHashMap<Sym, ModuleSymbolLinks<'s>>,
     decls: Vec<(Sym, &'s [(FileId, Decl)])>,
+    failed_lookups: Vec<FailedLookup<'s>>,
 }
 
 impl<'s> std::ops::Deref for AliasResolver<'_, 's> {
@@ -2115,23 +2334,73 @@ fn dynamic_imports<'a>(hir: &'a hir::File) -> Vec<&'a SpecifierUse> {
     found
 }
 
+/// `collectModuleReferences`: `IsAmbientModule(node) && (inAmbientModule ||
+/// HasSyntacticModifier(node, ModifierFlagsAmbient) || file.IsDeclarationFile)`
+fn ambient_module(hir: &hir::File, s: StmtId, is_in_ambient_module: bool) -> Option<ModuleId> {
+    let StmtKind::Module(m) = hir[s].kind else {
+        return None;
+    };
+    let is_ambient = is_in_ambient_module
+        || hir[m].flags.contains(Flags::AMBIENT)
+        || hir.kind == FileKind::Declaration;
+    (is_ambient && !matches!(hir[m].name, ModuleName::Ident(_))).then_some(m)
+}
+
+/// `collectModuleReferences`: the import and export statements that it visits, in order. Of each
+/// where it starts and ends, and `inAmbientModule`. They are the statements of the file, and in a
+/// script those of the ambient modules that it declares. It visits neither a module augmentation
+/// nor a namespace.
+fn module_references(hir: &hir::File) -> Vec<(u32, u32, bool)> {
+    let mut references = Vec::new();
+    let mut visit = |s: StmtId, is_in_ambient_module: bool| {
+        // `IsAnyImportOrReExport`
+        let is_one = matches!(
+            hir[s].kind,
+            StmtKind::Import(_)
+                | StmtKind::ImportEquals(_)
+                | StmtKind::ExportNamed(_)
+                | StmtKind::ExportStar { .. }
+        );
+        if is_one {
+            references.push((hir[s].start, hir[s].loc.end, is_in_ambient_module));
+        }
+        is_one
+    };
+    for s in hir.ids(hir.body) {
+        if !visit(s, false)
+            && !hir.has_module_syntax
+            && let Some(m) = ambient_module(hir, s, false)
+        {
+            for s in hir.ids(hir[m].body) {
+                visit(s, true);
+            }
+        }
+    }
+    // The one for an `@import` inside a statement comes before that statement.
+    references.sort_unstable();
+    references
+}
+
+/// Whether `u` is one of `file.Imports()`. `visited`: the `module_references` of the file.
+fn is_among_imports(visited: &[(u32, u32, bool)], atoms: &Interner, u: &SpecifierUse) -> bool {
+    // `ForEachDynamicImportOrRequireCall` looks at the whole text.
+    if u.kind.is_dynamic() {
+        return u.spec.is_some();
+    }
+    let after = visited.partition_point(|statement| statement.0 <= u.pos);
+    after.checked_sub(1).is_some_and(|at| {
+        let (_, end, is_in_ambient_module) = visited[at];
+        // "Relative external module names are not permitted."
+        u.pos < end && !(is_in_ambient_module && is_relative(atoms.bytes(u.spec)))
+    })
+}
+
 /// `file.ModuleAugmentations` (`collectModuleReferences`): the declarations that they are the names
 /// of.
 fn module_augmentations(hir: &hir::File, atoms: &Interner) -> Vec<ModuleId> {
-    // `IsAmbientModule(node) && (inAmbientModule || HasSyntacticModifier(node, ModifierFlagsAmbient)
-    // || file.IsDeclarationFile)`
-    let ambient_module = |s: StmtId, is_in_ambient_module: bool| {
-        let StmtKind::Module(m) = hir[s].kind else {
-            return None;
-        };
-        let is_ambient = is_in_ambient_module
-            || hir[m].flags.contains(Flags::AMBIENT)
-            || hir.kind == FileKind::Declaration;
-        (is_ambient && !matches!(hir[m].name, ModuleName::Ident(_))).then_some(m)
-    };
     let mut augmentations = Vec::new();
     for s in hir.ids(hir.body) {
-        let Some(m) = ambient_module(s, false) else {
+        let Some(m) = ambient_module(hir, s, false) else {
             continue;
         };
         if hir.has_module_syntax {
@@ -2139,7 +2408,7 @@ fn module_augmentations(hir: &hir::File, atoms: &Interner) -> Vec<ModuleId> {
             continue;
         }
         let nested = hir.ids(hir[m].body);
-        let nested = nested.filter_map(|s| ambient_module(s, true));
+        let nested = nested.filter_map(|s| ambient_module(hir, s, true));
         augmentations.extend(nested.filter(|&nested| {
             !matches!(hir[nested].name, ModuleName::String(name) if is_relative(atoms.bytes(name)))
         }));
@@ -2157,8 +2426,15 @@ fn merges_module_augmentation(bound: &Bound, collected: &[ModuleId], symbol: Sym
     )
 }
 
-/// `getLibraryNameFromLibFileName` and `getInferredLibraryNameResolveFrom`
-fn library_name_and_resolve_from(options: &Options, lib: &[u8]) -> (Vec<u8>, Vec<u8>) {
+/// What `resolveLibrary` is called with.
+struct LibraryName {
+    /// `getLibraryNameFromLibFileName`
+    name: Vec<u8>,
+    /// `getInferredLibraryNameResolveFrom`
+    from: Vec<u8>,
+}
+
+fn library_name_and_resolve_from(options: &Options, lib: &[u8]) -> LibraryName {
     // `dom.iterable` is `@typescript/lib-dom/iterable`, `es2015.symbol.wellknown` is
     // `@typescript/lib-es2015/symbol-wellknown`.
     let mut name = b"@typescript/lib-".to_vec();
@@ -2177,7 +2453,7 @@ fn library_name_and_resolve_from(options: &Options, lib: &[u8]) -> (Vec<u8>, Vec
         b".d.ts__.ts",
     ]
     .concat();
-    (name, from)
+    LibraryName { name, from }
 }
 
 /// `pathForLibFile`: the path `lib.<lib>.d.ts` is read from. The task for it has a `libFile`,
@@ -2185,13 +2461,40 @@ fn library_name_and_resolve_from(options: &Options, lib: &[u8]) -> (Vec<u8>, Vec
 fn lib_path(resolver: &Resolver, options: &Options, lib: &[u8]) -> Vec<u8> {
     // `name != "lib.d.ts"`
     if options.lib_replacement && !lib.is_empty() {
-        let (name, from) = library_name_and_resolve_from(options, lib);
+        let LibraryName { name, from } = library_name_and_resolve_from(options, lib);
         // `resolveLibrary`: always resolved the way `require` resolves.
         if let Some(found) = resolver.resolve_module_name(&name, &from, ResolutionMode::Require) {
             return found.file_name.to_vec();
         }
     }
     lib_file(options, lib)
+}
+
+/// `pathForLibFile`, as far as `traceResolution` shows it. The first time it is asked for `lib`, the
+/// lookups of the resolution go through `cache`, and `libResolution.trace` is put into
+/// `resolutions` (`pathForLibFileResolutions`), which is in the order of its keys.
+fn trace_path_for_lib_file(
+    host: &dyn Host,
+    resolver: &Resolver,
+    options: &Options,
+    lib: &[u8],
+    cache: &mut PackageJsonInfoCache,
+    resolutions: &mut Vec<(Vec<u8>, Vec<DiagAndArgs>)>,
+) {
+    // `name != "lib.d.ts"`
+    if !options.lib_replacement || lib.is_empty() {
+        return;
+    }
+    let LibraryName { name, from } = library_name_and_resolve_from(options, lib);
+    let key = to_path(&from, host.is_case_sensitive()).into_owned();
+    let Err(at) = resolutions.binary_search_by(|known| known.0.cmp(&key)) else {
+        return;
+    };
+    let tracer = Tracer::default();
+    resolver.resolve_module_name_traced(&name, &from, ResolutionMode::Require, Some(&tracer));
+    let mut trace = tracer.into_traces();
+    cache.get_package_json_infos(host, &mut trace);
+    resolutions.insert(at, (key, trace));
 }
 
 /// The tasks of `processAllProgramFiles` for the libraries: for each of `Options::libs` its reason,
@@ -2335,18 +2638,21 @@ fn automatic_type_directives(
         let mut names = host.list_dir(&root);
         names.sort_unstable();
         for name in names {
-            let dir = [&root[..], b"/", &name[..]].concat();
-            if name.starts_with(b".") || !host.is_dir(&dir) {
+            if !host.is_dir(&inside(&root, &name)) {
                 continue;
             }
+            // `CombinePaths(root, normalized)`: a name can be a root (`c:`) or have a `\`.
+            let dir = join(&root, &name);
             // `Typings.Null`: `"typings": null` is how a package declares that it is not needed.
             // It holds whatever value follows for the same name.
             let is_not_needed_package = resolver.package_json(&dir).is_some_and(|fields| {
                 let mut fields = fields.as_object().unwrap_or_default().iter();
                 fields.any(|field| field.0 == b"typings" && field.1 == Json::Null)
             });
-            if !is_not_needed_package {
-                packages.push(name);
+            let normalized = join(b"/", &name);
+            let base_file_name = get_base_file_name(typescript_path(&normalized));
+            if !is_not_needed_package && !base_file_name.starts_with(b".") {
+                packages.push(base_file_name.to_vec());
             }
         }
     }
@@ -2521,7 +2827,7 @@ fn times_among_imports(hir: &File, calls: &ExprsByKind, text: &[u8], u: &Specifi
     let start = start_of(hir, call);
     let is_first = |s: &Stmt| matches!(s.kind, StmtKind::Expr(e) if start_of(hir, e) == start);
     if hir.is_js && hir.stmts.iter().any(is_first) {
-        times += count_outside_jsdoc(&text[at..start as usize]);
+        times += count_after_jsdoc(&text[at..start as usize]);
         at = start as usize;
     }
     for (from, to) in hir.ids(args).filter(|e| !is_token(e)).map(range) {
@@ -2531,9 +2837,15 @@ fn times_among_imports(hir: &File, calls: &ExprsByKind, text: &[u8], u: &Specifi
     (times + count_import_or_require(&text[at..end.max(at)])).max(1)
 }
 
-/// `count_import_or_require` in `trivia`, but for the comments `/** */` in it.
-fn count_outside_jsdoc(trivia: &[u8]) -> usize {
-    let (mut at, mut count) = (0, 0);
+/// `count_import_or_require` in `trivia`, after the last `/** */` in it. `withJSDoc`: a `JSDoc`
+/// begins where the one before it ends, and the first one where its host begins.
+fn count_after_jsdoc(trivia: &[u8]) -> usize {
+    // `isShebangTrivia`
+    let mut at = match trivia.starts_with(b"#!") {
+        true => strings::index_of_any(trivia, b"\n\r").unwrap_or(trivia.len()),
+        false => 0,
+    };
+    let mut end_of_jsdoc = 0;
     while let Some(next) = strings::index_of_char_usize(&trivia[at..], b'/') {
         at += next;
         let rest = &trivia[at..];
@@ -2543,13 +2855,13 @@ fn count_outside_jsdoc(trivia: &[u8]) -> usize {
                 strings::index_of(&rest[2.min(rest.len())..], b"*/").map_or(rest.len(), |it| it + 4)
             }
         };
-        // `/**/` is not one.
-        if !(rest.starts_with(b"/**") && end > 4) {
-            count += count_import_or_require(&rest[..end]);
-        }
         at += end.max(1);
+        // `/**/` is not one.
+        if rest.starts_with(b"/**") && end > 4 {
+            end_of_jsdoc = at;
+        }
     }
-    count
+    count_import_or_require(&trivia[end_of_jsdoc..])
 }
 
 /// `findImportOrRequire`, until there is no more.
@@ -2610,9 +2922,18 @@ pub(crate) fn mode_for_usage_location(
 fn implied_node_format_for_emit(
     resolver: &Resolver,
     path: &[u8],
+    is_lib: bool,
     emit_module_kind: ModuleKind,
 ) -> ResolutionMode {
     let by_extension = format_by_extension(path);
+    // `parseTask.load`: `SourceFileMetaData{ImpliedNodeFormat: ResolutionModeCommonJS}`
+    if is_lib {
+        return if emit_module_kind.is_node() || by_extension == ResolutionMode::Require {
+            ResolutionMode::Require
+        } else {
+            ResolutionMode::None
+        };
+    }
     if by_extension != ResolutionMode::None
         || !file_extension_is_one_of(path, &[b".ts", b".tsx", b".js", b".jsx"])
     {
@@ -2690,10 +3011,12 @@ fn get_resolution_diagnostic(options: &Options, extension: Extension, file: &Fil
 /// `resolveImportsAndModuleAugmentations`: with `importHelpers`, a file that can be emitted with
 /// helpers imports `tslib`.
 fn imports_helpers(options: &Options, hir: &File) -> bool {
+    // A JSON file is bound as a module, and has no `ExternalModuleIndicator`.
+    let is_external_module = hir.has_module_syntax && hir.kind != FileKind::Json;
     options.import_helpers
         && (hir.is_js
             || hir.kind != FileKind::Declaration
-                && (options.isolated_modules || hir.has_module_syntax))
+                && (options.isolated_modules || is_external_module))
 }
 
 /// `addRootFileTask`: the file that is read for the root file `root`, or else the error.
@@ -2730,6 +3053,9 @@ struct Included<'a, 's> {
     roots_end: usize,
     /// Of each of those root files, its index in `roots`.
     root_of_start: &'a [u32],
+    /// The keys of `redirectAndFileFormat` that `createDiagnosticExplainingFile` has stored: a file
+    /// name for each path.
+    explained_in_diagnostics: std::cell::RefCell<Vec<Vec<u8>>>,
 }
 
 /// Where a problem with the inclusion of a file is reported, if that is in a file.
@@ -2840,13 +3166,15 @@ impl Included<'_, '_> {
         if imports_helpers(options, hir) {
             specifiers.push((known::tslib, module.default_mode, 1395, 0, 0));
         }
-        if (module.file_name().ends_with(b".tsx") || module.file_name().ends_with(b".jsx"))
+        if crate::resolve::is_jsx_file_name(module.file_name())
             && let Some(runtime) = jsx_runtime_of(options, hir, atoms)
         {
             specifiers.push((atoms.intern(&runtime), module.default_mode, 1397, 0, 0));
         }
         // `file.Imports()`: the specifiers of statements, then those of `import()`, the call and the type.
         let mut uses = hir.specifier_uses.to_vec();
+        let visited = module_references(hir);
+        uses.retain(|u| is_among_imports(&visited, atoms, u));
         uses.sort_by_key(|u| (u.kind.is_dynamic(), u.pos));
         let calls = (uses.iter().any(|u| u.kind.is_call())).then(|| ExprsByKind::new(hir));
         for u in &uses {
@@ -3150,28 +3478,58 @@ impl Included<'_, '_> {
                 problem = problem.with(2, code, &args);
             }
         }
-        // `explainRedirectAndImpliedFormat`
         let location = preferred_location.and_then(Visit::location);
         let Some(module) = self.modules.get(file.idx()) else {
             return (location, problem);
         };
         let name = visits.first().map_or(module.path.pretty, |it| &it.name[..]);
-        // `redirectFilesByPath`
-        let is_redirects_file =
-            !is_same_path(name, module.file_name(), self.host.is_case_sensitive());
-        if !is_redirects_file && module.project_reference_source.is_some() {
-            let source = self.atoms.bytes(module.project_reference_source);
-            problem = problem.with(1, 1428, &[&displayed_path(source)]);
-        }
-        if is_redirects_file {
-            problem = problem.with(1, 1429, &[&displayed_path(module.file_name())]);
-        } else if let Some((code, args)) =
-            implied_format_reason(resolver, self.options, module, &file_name_as_it_is)
-        {
+        for (code, args) in self.explain_redirect_and_implied_format(resolver, module, name, None) {
             let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
             problem = problem.with(1, code, &args);
         }
         (location, problem)
+    }
+
+    /// `explainRedirectAndImpliedFormat` for the path of `name`, the name of `module` or of a
+    /// `redirectsFile` whose target is `module`: the code and the arguments of each message.
+    /// `to_relative_file_name`: `toFileName` of `ExplainFiles`, or else the caller is
+    /// `createDiagnosticExplainingFile`, which leaves a name as it is. The result for a path is
+    /// stored, so it has the names of whoever asks first. `ExplainFiles` asks last, and once.
+    fn explain_redirect_and_implied_format(
+        &self,
+        resolver: &Resolver,
+        module: &Module,
+        name: &[u8],
+        to_relative_file_name: Option<ToFileName<'_>>,
+    ) -> Vec<(u32, Vec<Vec<u8>>)> {
+        let is_case_sensitive = self.host.is_case_sensitive();
+        let mut explained = self.explained_in_diagnostics.borrow_mut();
+        let is_explained = (explained.iter()).any(|it| is_same_path(it, name, is_case_sensitive));
+        let to_file_name: ToFileName<'_> = match to_relative_file_name {
+            Some(to_relative_file_name) if !is_explained => to_relative_file_name,
+            _ => &file_name_as_it_is,
+        };
+        if to_relative_file_name.is_none() && !is_explained {
+            explained.push(name.to_vec());
+        }
+        let mut result = Vec::new();
+        // `redirectFilesByPath`
+        let is_redirects_file = !is_same_path(name, module.file_name(), is_case_sensitive);
+        if !is_redirects_file && module.project_reference_source.is_some() {
+            let source = self.atoms.bytes(module.project_reference_source);
+            result.push((1428, vec![to_file_name(source)]));
+        }
+        if is_redirects_file {
+            result.push((1429, vec![to_file_name(module.file_name())]));
+        } else {
+            result.extend(implied_format_reason(
+                resolver,
+                self.options,
+                module,
+                to_file_name,
+            ));
+        }
+        result
     }
 
     /// `createDiagnosticExplainingFile` for the `processingDiagnostics` of the tasks that read no
@@ -3389,8 +3747,9 @@ fn implied_format_reason(
     if !module.is_module() {
         return None;
     }
-    // `loadSourceFileMetaData`
+    // `loadSourceFileMetaData`, which `parseTask.load` does not call for a library.
     let scope = ancestors(dirname::<Posix>(module.file_name()))
+        .filter(|_| !module.is_lib)
         .find_map(|dir| Some((resolver.package_json(dir)?, dir)))
         .map(|(json, dir)| (join(dir, b"package.json"), json));
     let is_type_recorded = options.resolves_like_node
@@ -3422,8 +3781,7 @@ pub(crate) fn source_file_may_be_emitted(
     module: &Module,
     is_case_sensitive: bool,
 ) -> bool {
-    if module.is_lib || module.hir.kind == FileKind::Declaration || module.is_from_external_library
-    {
+    if module.hir.kind == FileKind::Declaration || module.is_from_external_library {
         return false;
     }
     // The referenced project emits its own sources.
@@ -3491,15 +3849,10 @@ pub fn declaration_emit_output_file_path(
     [remove_file_extension(&moved), extension].concat()
 }
 
-/// `getOwnEmitOutputFilePath`, with `GetOutputExtension`.
-pub fn own_emit_output_file_path(
-    options: &Options,
-    path: &[u8],
-    common: Option<&[u8]>,
-    is_case_sensitive: bool,
-) -> Vec<u8> {
+/// `GetOutputExtension`
+pub fn get_output_extension(options: &Options, path: &[u8]) -> &'static [u8] {
     let is_one_of = |extensions: [&[u8]; 2]| file_extension_is_one_of(path, &extensions);
-    let extension: &[u8] = if file_extension_is_one_of(path, &[b".json"]) {
+    if file_extension_is_one_of(path, &[b".json"]) {
         b".json"
     } else if options.jsx == JsxEmit::Preserve && is_one_of([b".jsx", b".tsx"]) {
         b".jsx"
@@ -3509,8 +3862,18 @@ pub fn own_emit_output_file_path(
         b".cjs"
     } else {
         b".js"
-    };
+    }
+}
+
+/// `getOwnEmitOutputFilePath`
+pub fn own_emit_output_file_path(
+    options: &Options,
+    path: &[u8],
+    common: Option<&[u8]>,
+    is_case_sensitive: bool,
+) -> Vec<u8> {
     let moved = source_file_path_in_new_dir(&options.out_dir, path, common, is_case_sensitive);
+    let extension = get_output_extension(options, path);
     [remove_file_extension(&moved), extension].concat()
 }
 
@@ -3824,32 +4187,19 @@ impl<'s> Files<'s> {
             let of_file = file_path(path, is_case_sensitive, arena);
             let id = FileId(modules.len() as u32);
             let first = *by_path.files.entry(of_file.text).or_insert(id);
-            // Of the copies of a package file, the one that `collectFiles` comes to first is in the
-            // program. That is probably the one that is found first, so another one is only read
-            // if it turns out to be the one, or for what its resolutions log.
-            let (mut package, mut is_read) = (None, true);
-            if !options.retains_duplicate_packages
-                && let Some(package_id) = resolver.package_id(path)
-            {
-                let (index, is_first) = found.package(package_id);
-                is_read = is_first
-                    || options.trace_resolution
-                    || found.is_collecting && found.kept[index as usize].is_none();
-                package = Some(index);
-            }
             modules.push(None);
             depths.push(u32::MAX);
-            // Another spelling of a name is only read if `collectFiles` comes to it first.
-            is_read &= first == id;
             if !is_case_sensitive {
                 by_name.insert(path, id);
             }
             found.files.push(FoundFile {
                 path: of_file,
                 is_lib,
-                package,
+                package: None,
                 first,
-                is_read,
+                // Another spelling of a name is only read if `collectFiles` comes to it first.
+                is_read: first == id,
+                parse: None,
                 is_loaded: false,
                 named: None,
             });
@@ -3903,6 +4253,17 @@ impl<'s> Files<'s> {
             }
         }
         without_file.append(&mut libs_without_file);
+        // `collectFiles`, `seen[data]`: of the tasks for one path only the first is walked, and
+        // the `processingDiagnostics` of the others are dropped.
+        let mut walked: Vec<Vec<u8>> = Vec::new();
+        without_file.retain(|(visit, _)| {
+            let mut seen = walked.iter();
+            let is_first = !seen.any(|name| is_same_path(name, &visit.name, is_case_sensitive));
+            if is_first {
+                walked.push(visit.name.clone());
+            }
+            is_first
+        });
         let roots_end = starts.len();
         // `addAutomaticTypeDirectiveTasks`: the last of `rootTasks`, for this file name. There is
         // one `parseTaskData` for a path, and `collectFiles` goes on from the first of its tasks: a
@@ -3911,26 +4272,48 @@ impl<'s> Files<'s> {
         let is_containing_file = |found: &FoundFile| {
             is_same_path(found.path.pretty, &containing_file, is_case_sensitive)
         };
-        let directives = if has_root_files && !all_found.files.iter().any(is_containing_file) {
+        let has_automatic_task = has_root_files && !all_found.files.iter().any(is_containing_file);
+        let directives = if has_automatic_task {
             automatic_type_directives(host, &resolver, options)
         } else {
             Vec::new()
         };
+        // Its place in `taskDataByPath`: a sub task for the same file name gets it as `loadedTask`,
+        // so the file is not read. There is no such sub task unless the file exists.
+        let mut automatic_task = None;
+        if has_automatic_task && host.is_file(&containing_file) {
+            let task = add(
+                &containing_file,
+                false,
+                &mut modules,
+                &mut depths,
+                &mut all_found,
+            );
+            // The last of `rootTasks` runs first.
+            all_found.files[task.idx()].is_read = false;
+            all_found.files[task.idx()].is_loaded = true;
+            depths[task.idx()] = 0;
+            automatic_task = Some(task);
+        }
         let automatic_tracer = options.trace_resolution.then(Tracer::default);
         // `subTasks` of that task.
         let mut automatic: Vec<SubTask> = Vec::new();
         for name in &directives {
-            match resolver.resolve_type_reference(
+            match resolver.resolve_type_reference_and_id(
                 name,
                 &containing_file,
                 ResolutionMode::None,
                 automatic_tracer.as_ref(),
             ) {
-                Some((path, is_external)) => automatic.push(SubTask {
-                    file: add(&path, false, &mut modules, &mut depths, &mut all_found),
-                    increases_depth: is_external,
-                    is_elided_on_depth: false,
-                }),
+                Some((path, is_external, package_id)) => {
+                    let file = add(&path, false, &mut modules, &mut depths, &mut all_found);
+                    automatic.push(SubTask {
+                        file,
+                        increases_depth: is_external,
+                        is_elided_on_depth: false,
+                        package: all_found.package_of_task(file, package_id),
+                    });
+                }
                 // `*` matches whatever exists.
                 None if name == b"*" => {}
                 None => {
@@ -3957,6 +4340,7 @@ impl<'s> Files<'s> {
                 file,
                 increases_depth: false,
                 is_elided_on_depth: false,
+                package: None,
             })
             .chain(automatic)
             .map(|task| (task, 0))
@@ -3966,6 +4350,21 @@ impl<'s> Files<'s> {
         // `subTasks` of one file. Reused for the next.
         let mut sub_tasks: Vec<SubTask> = Vec::new();
         let mut package_json_info_cache = PackageJsonInfoCache::default();
+        // `pathForLibFileResolutions`. The libraries of the options are resolved while `rootTasks`
+        // is made.
+        let mut lib_resolutions: Vec<(Vec<u8>, Vec<DiagAndArgs>)> = Vec::new();
+        if options.trace_resolution && has_root_files {
+            for lib in &options.libs {
+                trace_path_for_lib_file(
+                    host,
+                    &resolver,
+                    options,
+                    lib_file_stem(lib),
+                    &mut package_json_info_cache,
+                    &mut lib_resolutions,
+                );
+            }
+        }
         // The last of `rootTasks` runs first.
         let mut automatic_traces = automatic_tracer
             .map(Tracer::into_traces)
@@ -3975,10 +4374,11 @@ impl<'s> Files<'s> {
             .filter(|found| found.is_read)
             .map(|found| (found.path.pretty, found.is_lib))
             .collect();
-        let mut ahead: FxHashMap<&[u8], Box<Loaded>> = match seeds.is_empty() {
-            true => FxHashMap::default(),
-            false => Self::load_ahead(session, host, &resolver, options, &atoms, seeds),
-        };
+        let (mut ahead, mut parses): (FxHashMap<&[u8], Box<Loaded>>, Vec<Option<Parse>>) =
+            match seeds.is_empty() {
+                true => Default::default(),
+                false => Self::load_ahead(session, host, &resolver, options, &atoms, seeds),
+            };
         // `Module::edges` of one file. Reused for the next.
         let mut edges: Vec<FileId> = Vec::new();
         // `Loaded::traces`, indexed by `FileId`.
@@ -4010,6 +4410,9 @@ impl<'s> Files<'s> {
                     task.is_elided_on_depth && depth > options.max_node_module_js_depth
                 };
                 let data = all_found.files[task.file.idx()].first;
+                // "Propagate packageId to data if we have one and data doesn't yet"
+                let package = &mut all_found.files[data.idx()].package;
+                *package = package.or(task.package);
                 let depth = depth + u32::from(task.increases_depth);
                 // "If we're seeing this task at a lower depth than before, reprocess its subtasks to
                 // ensure they are loaded." A task starts them once.
@@ -4083,19 +4486,23 @@ impl<'s> Files<'s> {
                     let mut loaded = *loaded;
                     let _linking = Spent::on(host, Phase::Link);
                     sub_tasks.clear();
-                    for &(path, is_lib, increases_depth) in &loaded.references {
+                    for &(path, is_lib, increases_depth, package_id) in &loaded.references {
+                        let file = add(path, is_lib, &mut modules, &mut depths, &mut all_found);
                         sub_tasks.push(SubTask {
-                            file: add(path, is_lib, &mut modules, &mut depths, &mut all_found),
+                            file,
                             increases_depth,
                             is_elided_on_depth: false,
+                            package: all_found.package_of_task(file, package_id),
                         });
                     }
                     for &(start, end, path, code) in &loaded.unsupported_libs {
                         // One task loads the file, whoever else refers to it.
                         let file_name = displayed_path(path);
                         let is_about_it = |message: &Problem| message.args[0] == *file_name;
+                        let is_for_its_path =
+                            |task: &Visit| is_same_path(&task.name, path, is_case_sensitive);
                         if !unsupported.iter().any(|it| is_about_it(&it.3))
-                            && !without_file.iter().any(|it| is_about_it(&it.1))
+                            && !without_file.iter().any(|it| is_for_its_path(&it.0))
                         {
                             let problem = reference_problem(options, code, path);
                             unsupported.push((*id, start, end, problem));
@@ -4122,22 +4529,16 @@ impl<'s> Files<'s> {
                             }
                             continue;
                         }
-                        if let Some(code) = resolution.unsupported_extension {
+                        if let Some(UnsupportedExtension { code, span }) =
+                            resolution.unsupported_extension
+                        {
                             // One task loads the file, whoever else refers to it.
-                            let module = &loaded.module;
-                            let of_file = module.redirect_for_resolution.unwrap_or(options);
-                            let mode_of = |u: &SpecifierUse| {
-                                mode_for_usage_location(of_file, module.default_mode, u)
-                            };
-                            let uses = module.hir.specifier_uses.iter();
-                            let uses = uses.filter(|u| u.spec == spec && mode_of(u) == mode);
-                            if let Some(u) = uses.min_by_key(|u| u.pos)
+                            if let Some((pos, end)) = span
                                 && !(unsupported.iter())
                                     .any(|it| it.3.args[0] == *displayed_path(path))
                             {
-                                let end = end_of_string_literal(&module.hir.text, u.pos);
                                 let problem = reference_problem(options, code, path);
-                                unsupported.push((*id, u.pos, end, problem));
+                                unsupported.push((*id, pos, end, problem));
                             }
                             continue;
                         }
@@ -4152,6 +4553,7 @@ impl<'s> Files<'s> {
                             is_elided_on_depth: increases_depth
                                 && is_javascript_file(host, path)
                                 && strings::contains(path, b"/node_modules/"),
+                            package: all_found.package_of_task(file, resolution.package_id),
                         });
                     }
                     edges.clear();
@@ -4162,11 +4564,31 @@ impl<'s> Files<'s> {
                         if !is_lib {
                             package_json_info_cache.load_source_file_meta_data(host, path);
                         }
-                        package_json_info_cache.get_package_json_infos(host, &mut loaded.traces);
+                        let mut of_file = std::mem::take(&mut loaded.type_resolutions_trace);
+                        package_json_info_cache.get_package_json_infos(host, &mut of_file);
+                        for &(kind, value, ..) in &loaded.module.hir.references {
+                            if kind == ReferenceKind::Lib
+                                && !options.no_lib
+                                && let Some(lib) = referenced_lib(host, options, atoms.bytes(value))
+                            {
+                                trace_path_for_lib_file(
+                                    host,
+                                    &resolver,
+                                    options,
+                                    &lib,
+                                    &mut package_json_info_cache,
+                                    &mut lib_resolutions,
+                                );
+                            }
+                        }
+                        let of_imports = &mut loaded.resolutions_trace;
+                        package_json_info_cache.get_package_json_infos(host, of_imports);
+                        of_file.append(of_imports);
                         traces.resize_with(traces.len().max(id.idx() + 1), Vec::new);
-                        traces[id.idx()] = std::mem::take(&mut loaded.traces);
+                        traces[id.idx()] = of_file;
                     }
                     loaded.module.path = all_found.files[id.idx()].path;
+                    all_found.files[id.idx()].parse = loaded.parse;
                     modules[id.idx()] = Some(loaded.module);
                     // `w.start(loader, taskByFileName.subTasks, data.lowestDepth)`
                     if starts_sub_tasks {
@@ -4178,7 +4600,6 @@ impl<'s> Files<'s> {
             }
             // `collectFiles`, as far as it decides which copy of a package file is in the program and
             // logs. `declaration_order` puts the files in order.
-            all_found.is_collecting = true;
             seen.resize(modules.len(), false);
             traces.resize_with(modules.len(), Vec::new);
             loop {
@@ -4186,8 +4607,11 @@ impl<'s> Files<'s> {
                     Some(top) => {
                         // Sub tasks that have not been started are not loaded.
                         let has_started = !not_started.contains_key(&top.0);
-                        let module = modules[top.0.idx()].as_ref().filter(|_| has_started);
-                        let edges = module.map_or(&[][..], |it| it.edges);
+                        let edges = match modules[top.0.idx()].as_ref().filter(|_| has_started) {
+                            Some(module) => module.edges,
+                            None if Some(top.0) == automatic_task => &starts[roots_end..],
+                            None => &[],
+                        };
                         let Some(&edge) = edges.get(top.1) else {
                             stack.pop();
                             continue;
@@ -4209,7 +4633,6 @@ impl<'s> Files<'s> {
                 };
                 let FoundFile {
                     path: Path { pretty: path, .. },
-                    mut package,
                     first,
                     ..
                 } = all_found.files[file.idx()];
@@ -4229,16 +4652,10 @@ impl<'s> Files<'s> {
                 if seen[file.idx()] {
                     continue;
                 }
-                // "Propagate packageId to data if we have one and data doesn't yet": the first task
-                // for the file may have none, a root file for one.
-                if package.is_none()
-                    && !options.retains_duplicate_packages
-                    && let Some(package_id) = resolver.package_id(path)
+                // `packageIdToSourceFile != nil && data.packageId.Name != ""`
+                if !options.retains_duplicate_packages
+                    && let Some(package) = all_found.files[first.idx()].package
                 {
-                    package = Some(all_found.package(package_id).0);
-                    all_found.files[file.idx()].package = package;
-                }
-                if let Some(package) = package {
                     let kept = *all_found.kept[package as usize].get_or_insert(file);
                     if kept != file {
                         seen[file.idx()] = true;
@@ -4248,7 +4665,9 @@ impl<'s> Files<'s> {
                         continue;
                     }
                 }
-                if modules[file.idx()].is_none() {
+                if Some(file) == automatic_task {
+                    log.append(&mut automatic_traces);
+                } else if modules[file.idx()].is_none() {
                     // It is the one after all. The step is taken again when it has been read: its
                     // task runs once more, as for the first time.
                     match stack.last_mut() {
@@ -4260,9 +4679,32 @@ impl<'s> Files<'s> {
                         file,
                         increases_depth: false,
                         is_elided_on_depth: false,
+                        package: None,
                     };
                     queued.push((task, std::mem::replace(&mut depths[first.idx()], u32::MAX)));
                     continue 'load;
+                }
+                // The copy that is in the program. Another file has taken the `Parse` if the tasks
+                // gave the two of them different ids.
+                if let Some(slot) = all_found.files[file.idx()].parse.take()
+                    && let Some(module) = &mut modules[file.idx()]
+                {
+                    let parse = parses[slot as usize].take().unwrap_or_else(|| {
+                        let (text, specifies_esm) = (host.read_source(path), module.specifies_esm);
+                        let (hir, bound) = Self::parse_and_bind(
+                            arena,
+                            host,
+                            options,
+                            &atoms,
+                            path,
+                            false,
+                            specifies_esm,
+                            text,
+                        );
+                        Parse { hir, bound }
+                    });
+                    (module.hir, module.bound) = (parse.hir, parse.bound);
+                    rename_private_names(&mut module.hir, &module.bound, &atoms, path);
                 }
                 seen[file.idx()] = true;
                 log.append(&mut traces[file.idx()]);
@@ -4270,6 +4712,10 @@ impl<'s> Files<'s> {
             }
         }
         drop(by_name);
+        // It is no file.
+        if let Some(task) = automatic_task {
+            seen[task.idx()] = false;
+        }
         for file in not_started.into_keys() {
             if let Some(module) = &mut modules[file.idx()] {
                 module.edges = &[];
@@ -4309,14 +4755,16 @@ impl<'s> Files<'s> {
             modules.retain_mut(|module| {
                 file += 1;
                 if let Some(module) = module.as_mut().filter(|_| is_kept[file - 1]) {
-                    // A task that is elided loads nothing.
+                    // A task that is elided loads nothing. `collectFiles` goes on from the task for
+                    // the automatic type directives to its sub tasks.
                     edges.clear();
-                    edges.extend(
-                        module
-                            .edges
-                            .iter()
-                            .filter_map(|edge| renumbered[edge.idx()]),
-                    );
+                    for edge in module.edges {
+                        let tasks = match Some(*edge) == automatic_task {
+                            true => &starts[roots_end..],
+                            false => std::slice::from_ref(edge),
+                        };
+                        edges.extend(tasks.iter().filter_map(|task| renumbered[task.idx()]));
+                    }
                     module.edges = slice_in(&edges, arena);
                     (module.imports).retain(|_, target| match renumbered[target.idx()] {
                         Some(new) => {
@@ -4361,41 +4809,6 @@ impl<'s> Files<'s> {
             for start in &mut starts {
                 *start = renumber(*start);
             }
-        }
-        // `pathForLibFileResolutions`, in the order of its keys.
-        let mut lib_traces = Vec::new();
-        if options.trace_resolution && options.lib_replacement && has_root_files {
-            let mut libs: Vec<Vec<u8>> = (options.libs.iter())
-                .map(|lib| lib_file_stem(lib).to_vec())
-                .collect();
-            for module in modules.iter().flatten().filter(|_| !options.no_lib) {
-                for &(kind, value, ..) in &module.hir.references {
-                    if kind != ReferenceKind::Lib {
-                        continue;
-                    }
-                    libs.extend(referenced_lib(host, options, atoms.bytes(value)));
-                }
-            }
-            let mut lookups: Vec<_> = (libs.iter())
-                .filter(|lib| !lib.is_empty())
-                .map(|lib| library_name_and_resolve_from(options, lib))
-                .map(|(name, from)| {
-                    let path = to_path(&from, host.is_case_sensitive()).into_owned();
-                    (path, name, from)
-                })
-                .collect();
-            lookups.sort();
-            lookups.dedup();
-            let tracer = Tracer::default();
-            for (_, name, from) in &lookups {
-                resolver.resolve_module_name_traced(
-                    name,
-                    from,
-                    ResolutionMode::Require,
-                    Some(&tracer),
-                );
-            }
-            lib_traces = tracer.into_traces();
         }
         for (module, &depth) in modules.iter_mut().flatten().zip(&depths) {
             module.is_from_external_library = depth > 0;
@@ -4453,8 +4866,9 @@ impl<'s> Files<'s> {
             for &(spec, mode, _, source) in &built {
                 redirect(source, module.imports[&(spec, mode)]);
             }
-            let resolved_file_names = built.into_iter().map(|it| (it.0, it.1, it.3));
-            module.redirected_imports = few(resolved_file_names.collect(), arena);
+            let mut redirected = module.redirected_imports.to_vec();
+            redirected.extend(built.into_iter().map(|it| (it.0, it.1, it.3)));
+            module.redirected_imports = few(redirected, arena);
             module.unbuilt_imports = few(unbuilt, arena);
         }
         for (target, source) in redirected_from {
@@ -4493,6 +4907,7 @@ impl<'s> Files<'s> {
             }
         }
         let mut package_jsons: FxHashMap<&'s [u8], Json> = FxHashMap::default();
+        let mut previous_scope = Atom::NONE;
         for module in modules.iter().flatten() {
             let path: &'s [u8] = module.file_name();
             if let Some((_, _, end)) = crate::resolve::node_module_path_parts(path)
@@ -4500,6 +4915,15 @@ impl<'s> Files<'s> {
                 && let Some(json) = resolver.package_json(&path[..end])
             {
                 package_jsons.insert(&path[..end], json);
+            }
+            let scope = module.package_json_directory;
+            if scope.is_some() && scope != std::mem::replace(&mut previous_scope, scope) {
+                let directory = atoms.bytes(scope);
+                if !package_jsons.contains_key(directory)
+                    && let Some(json) = resolver.package_json(directory)
+                {
+                    package_jsons.insert(slice_in(directory, arena), json);
+                }
             }
         }
         let mut linked_directories: &'s [(&'s [u8], &'s [u8])] = &[];
@@ -4643,6 +5067,7 @@ impl<'s> Files<'s> {
             libs_end,
             roots_end,
             root_of_start: &root_of_start,
+            explained_in_diagnostics: Default::default(),
         };
         // None of their reasons is a reference in a file.
         let explained = included.explain_tasks_without_file(&without_file);
@@ -4659,6 +5084,7 @@ impl<'s> Files<'s> {
                 None => program_errors.push(problem),
             }
         }
+        let explained_in_diagnostics = included.explained_in_diagnostics.into_inner();
         let has_type_only_stars = modules.iter().any(|m| {
             m.bound.export_stars.iter().any(|&(_, star)| {
                 matches!(
@@ -4717,6 +5143,7 @@ impl<'s> Files<'s> {
             modules_resolved_at_merge: &[],
             keeps_module_links: false,
             modules_with_nested_export_collisions: &[],
+            failed_lookups: &[],
             parents_in_other_files: map_in(arena),
 
             has_type_only_stars,
@@ -4724,11 +5151,13 @@ impl<'s> Files<'s> {
             is_linked: false,
             no_module_links: ModuleSymbolLinks::empty_in(arena),
             is_merged: false,
+            has_symbols_to_combine: false,
             memo,
             order: &[],
             ranks: &[],
             components: Components::EMPTY,
             global_types: &[],
+            arrays_have_numeric_members: false,
             program_errors: session.keep(program_errors),
             include_errors: session.keep(include_errors),
             package_jsons,
@@ -4740,13 +5169,17 @@ impl<'s> Files<'s> {
             roots_end,
             root_of_start: slice_in(&root_of_start, arena),
             package_copies: slice_in(&package_copies, arena),
+            explained_in_diagnostics: session.keep(explained_in_diagnostics),
         };
         let merging = Spent::on(host, Phase::Merge);
         files.order = slice_in(&files.declaration_order(&starts), arena);
         if options.trace_resolution {
-            package_json_info_cache.get_package_json_infos(host, &mut lib_traces);
             let mut all = log;
-            all.extend(lib_traces);
+            all.extend(
+                lib_resolutions
+                    .into_iter()
+                    .flat_map(|resolution| resolution.1),
+            );
             files.resolution_trace = session.keep(all);
         }
         let ranks = arena.alloc_slice_fill_copy(files.modules.len(), u32::MAX);
@@ -4767,6 +5200,15 @@ impl<'s> Files<'s> {
         let known_names = (0..known::sym_iterator.0).map(Atom);
         files.global_types =
             arena.alloc_slice_fill_iter(known_names.map(|name| files.global_type(name)));
+        let begins_with_digit = |member: &(Atom, Sym)| {
+            let name = files.atoms.bytes(member.0);
+            name.first().is_some_and(u8::is_ascii_digit)
+        };
+        let arrays_have_numeric_members = [known::Array, known::ReadonlyArray]
+            .into_iter()
+            .filter_map(|name| files.global_type_symbol(name))
+            .any(|array| files.members_in_table(array).iter().any(begins_with_digit));
+        files.arrays_have_numeric_members = arrays_have_numeric_members;
         files
     }
 
@@ -4775,6 +5217,10 @@ impl<'s> Files<'s> {
     /// and which of two copies of the same package is used, depend on the order in which files
     /// refer to each other. That order is traversed afterwards, with all of these files already
     /// loaded.
+    ///
+    /// `parseTask.load` parses every copy of a package file, and `collectFiles` drops all but one.
+    /// Here one copy is parsed, and a copy with the same text uses the result to find what it refers
+    /// to, from where it is. The results are returned by `Loaded::parse`.
     fn load_ahead<'r>(
         session: &'s Session,
         host: &dyn Host,
@@ -4782,27 +5228,58 @@ impl<'s> Files<'s> {
         options: &'s Options,
         atoms: &Interner<'s>,
         seeds: Vec<(&'r [u8], bool)>,
-    ) -> FxHashMap<&'r [u8], Box<Loaded<'s, 'r>>> {
+    ) -> (
+        FxHashMap<&'r [u8], Box<Loaded<'s, 'r>>>,
+        Vec<Option<Parse<'s>>>,
+    ) {
         /// Adjacent paths are in the same directory.
         const RUN: usize = 16;
         /// Contents that have been read occupy memory until they are processed.
         const AHEAD: usize = 256;
+        #[derive(Copy, Clone)]
+        struct ToLoad<'r> {
+            path: &'r [u8],
+            is_lib: bool,
+            /// The index in `Shared::slots` for its `PackageId`.
+            package: Option<u32>,
+        }
+        enum Slot<'s, 'r> {
+            /// A thread parses a copy. These copies have been read meanwhile. They become `ready`
+            /// again when it is done.
+            InProgress(Vec<(ToLoad<'r>, Cow<'static, [u8]>)>),
+            Done {
+                parse: Arc<Parse<'s>>,
+                specifies_esm: bool,
+                path: &'r [u8],
+            },
+        }
         struct Shared<'s, 'r> {
-            to_read: std::collections::VecDeque<(&'r [u8], bool)>,
-            ready: Vec<((&'r [u8], bool), Cow<'static, [u8]>)>,
+            to_read: std::collections::VecDeque<ToLoad<'r>>,
+            ready: Vec<(ToLoad<'r>, Cow<'static, [u8]>)>,
             seen: FxHashSet<&'r [u8]>,
-            seen_packages: FxHashSet<Vec<u8>>,
             /// Taken from `to_read` and not in `done` yet.
             in_progress: usize,
             done: FxHashMap<&'r [u8], Box<Loaded<'s, 'r>>>,
+            /// By `PackageId.String`.
+            by_package_id: FxHashMap<Vec<u8>, u32>,
+            slots: Vec<Option<Slot<'s, 'r>>>,
         }
+        // Each copy is in the program, or the log shows what each copy refers to.
+        let shares_parses = !options.retains_duplicate_packages && !options.trace_resolution;
         let shared = Guarded::new(Shared {
             seen: seeds.iter().map(|seed| seed.0).collect(),
-            to_read: seeds.into(),
+            to_read: (seeds.into_iter())
+                .map(|(path, is_lib)| ToLoad {
+                    path,
+                    is_lib,
+                    package: None,
+                })
+                .collect(),
             ready: Vec::new(),
-            seen_packages: FxHashSet::default(),
             in_progress: 0,
             done: FxHashMap::default(),
+            by_package_id: FxHashMap::default(),
+            slots: Vec::new(),
         });
         let has_changed = bun_threading::Condvar::new();
         // What a thread that only reads waits for: it has no use for a file that is ready.
@@ -4818,26 +5295,95 @@ impl<'s> Files<'s> {
                     state.in_progress += count;
                     drop(state);
                     for file in run {
-                        let text = host.read_source(file.0);
+                        let text = host.read_source(file.path);
                         shared.lock().ready.push((file, text));
                         has_changed.notify_one();
                     }
                     state = shared.lock();
-                } else if processes && let Some(((path, is_lib), text)) = state.ready.pop() {
-                    let has_room_again = state.ready.len() == AHEAD;
-                    drop(state);
-                    if has_room_again {
+                } else if processes && let Some((file, text)) = state.ready.pop() {
+                    if state.ready.len() == AHEAD {
                         has_to_read.notify_all();
                     }
+                    let ToLoad {
+                        path,
+                        is_lib,
+                        package,
+                    } = file;
+                    let parsed = match package.map(|slot| &mut state.slots[slot as usize]) {
+                        None => None,
+                        Some(Some(Slot::InProgress(waiting))) => {
+                            waiting.push((file, text));
+                            continue;
+                        }
+                        Some(Some(Slot::Done {
+                            parse,
+                            specifies_esm,
+                            path,
+                        })) => Some((Arc::clone(parse), *specifies_esm, *path)),
+                        Some(slot @ None) => {
+                            *slot = Some(Slot::InProgress(Vec::new()));
+                            None
+                        }
+                    };
+                    drop(state);
                     let arena = *arena.get_or_insert_with(|| session.arena());
-                    let loaded = Box::new(Self::load_one(
-                        arena, host, resolver, options, atoms, path, is_lib, text,
-                    ));
+                    let load_parsed = |specifies_esm: bool, parse: &Parse<'s>| {
+                        let mut loaded = Self::load_parsed(
+                            arena,
+                            host,
+                            resolver,
+                            options,
+                            atoms,
+                            path,
+                            is_lib,
+                            specifies_esm,
+                            &parse.hir,
+                            &parse.bound,
+                        );
+                        loaded.parse = package;
+                        loaded
+                    };
+                    let specifies_esm =
+                        package.is_some() && Self::specifies_esm(resolver, options, path, is_lib);
+                    let mut parsed_now = None;
+                    let loaded = match (package, parsed) {
+                        (Some(_), Some((parse, of_parsed, parsed_path)))
+                            if of_parsed == specifies_esm
+                                && *parse.hir.text == *text
+                                && get_base_file_name(parsed_path) == get_base_file_name(path) =>
+                        {
+                            load_parsed(specifies_esm, &parse)
+                        }
+                        (Some(_), None) => {
+                            let (hir, bound) = Self::parse_and_bind(
+                                arena,
+                                host,
+                                options,
+                                atoms,
+                                path,
+                                is_lib,
+                                specifies_esm,
+                                text,
+                            );
+                            let parse = Arc::new(Parse { hir, bound });
+                            let loaded = load_parsed(specifies_esm, &parse);
+                            parsed_now = Some(Slot::Done {
+                                parse,
+                                specifies_esm,
+                                path,
+                            });
+                            loaded
+                        }
+                        _ => Self::load_one(
+                            arena, host, resolver, options, atoms, path, is_lib, text,
+                        ),
+                    };
+                    let loaded = Box::new(loaded);
                     // The sub tasks, except for whatever depends on a file's depth in packages.
-                    let found = loaded
+                    let found: Vec<(&'r [u8], bool, Option<PackageId<'r>>)> = loaded
                         .references
                         .iter()
-                        .map(|&(path, is_lib, _)| (path, is_lib))
+                        .map(|&(path, is_lib, _, package_id)| (path, is_lib, package_id))
                         .chain(
                             loaded
                                 .imports
@@ -4848,28 +5394,44 @@ impl<'s> Files<'s> {
                                         && !(is_javascript_file(host, it.path)
                                             && strings::contains(it.path, b"/node_modules/"))
                                 })
-                                .map(|it| (it.path, false)),
-                        );
-                    let found: Vec<(&'r [u8], bool, Option<Vec<u8>>)> = found
-                        .map(|(path, is_lib)| (path, is_lib, resolver.package_id(path)))
+                                .map(|it| (it.path, false, it.package_id)),
+                        )
                         .collect();
                     state = shared.lock();
                     let before = state.to_read.len();
-                    for (path, is_lib, package) in found {
-                        if !state.seen.contains(path)
-                            && package.is_none_or(|package| state.seen_packages.insert(package))
-                        {
-                            state.seen.insert(path);
-                            state.to_read.push_back((path, is_lib));
+                    for (path, is_lib, package_id) in found {
+                        if state.seen.insert(path) {
+                            let state = &mut *state;
+                            let package = package_id.filter(|_| shares_parses).map(|id| {
+                                let new = state.slots.len() as u32;
+                                let slot = *state.by_package_id.entry(id.to_bytes()).or_insert(new);
+                                if slot == new {
+                                    state.slots.push(None);
+                                }
+                                slot
+                            });
+                            state.to_read.push_back(ToLoad {
+                                path,
+                                is_lib,
+                                package,
+                            });
                         }
                     }
                     let has_more = state.to_read.len() > before;
+                    let mut has_ready = false;
+                    if let (Some(slot), Some(done)) = (package, parsed_now)
+                        && let Some(Slot::InProgress(waiting)) =
+                            state.slots[slot as usize].replace(done)
+                    {
+                        has_ready = !waiting.is_empty();
+                        state.ready.extend(waiting);
+                    }
                     state.done.insert(path, loaded);
                     state.in_progress -= 1;
                     if has_more || state.in_progress == 0 {
                         has_to_read.notify_all();
                     }
-                    if has_more && reads || state.in_progress == 0 {
+                    if has_more && reads || has_ready || state.in_progress == 0 {
                         has_changed.notify_all();
                     }
                 } else if state.in_progress == 0 && state.to_read.is_empty() {
@@ -4897,10 +5459,20 @@ impl<'s> Files<'s> {
             // Any one of these finishes the load by itself.
             None => host.parallel(threads, &|_| load(true, true)),
         }
-        std::mem::take(&mut shared.lock().done)
+        let mut state = shared.lock();
+        let (done, slots) = (
+            std::mem::take(&mut state.done),
+            std::mem::take(&mut state.slots),
+        );
+        let parse_of = |slot: Option<Slot<'s, 'r>>| match slot {
+            Some(Slot::Done { parse, .. }) => Arc::into_inner(parse),
+            _ => None,
+        };
+        (done, slots.into_iter().map(parse_of).collect())
     }
 
-    /// Everything that depends on the file alone.
+    /// Everything that depends on the text of the file and the kind of file it is. The file that
+    /// gets the result calls `rename_private_names`.
     fn parse_and_bind(
         arena: &'s Arena,
         host: &dyn Host,
@@ -4970,7 +5542,6 @@ impl<'s> Files<'s> {
             };
             bound = bind::bind(&hir, bind_options, atoms, arena);
         }
-        rename_private_names(&mut hir, &bound, atoms, path);
         (hir, bound)
     }
 
@@ -5000,21 +5571,8 @@ impl<'s> Files<'s> {
         is_lib: bool,
         text: Cow<'static, [u8]>,
     ) -> Loaded<'s, 'r> {
-        // `GetImpliedNodeFormatForFile`: a JSON file is neither kind of module, regardless of its
-        // package.
-        let specifies_esm = !path.ends_with(b".json")
-            && (options.resolves_like_node || strings::contains(path, b"/node_modules/"))
-            && resolver.is_ecmascript_module(path);
-        let is_esm = options.resolves_like_node && specifies_esm;
-        let package_json_without_type =
-            if matches!(options.module, ModuleKind::Node16 | ModuleKind::Node18) {
-                resolver
-                    .package_json_without_type(path)
-                    .map_or(Atom::NONE, |found| atoms.intern(&found))
-            } else {
-                Atom::NONE
-            };
-        let (hir, bound) = Self::parse_and_bind(
+        let specifies_esm = Self::specifies_esm(resolver, options, path, is_lib);
+        let (mut hir, bound) = Self::parse_and_bind(
             arena,
             host,
             options,
@@ -5024,6 +5582,56 @@ impl<'s> Files<'s> {
             specifies_esm,
             text,
         );
+        rename_private_names(&mut hir, &bound, atoms, path);
+        let mut loaded = Self::load_parsed(
+            arena,
+            host,
+            resolver,
+            options,
+            atoms,
+            path,
+            is_lib,
+            specifies_esm,
+            &hir,
+            &bound,
+        );
+        (loaded.module.hir, loaded.module.bound) = (hir, bound);
+        loaded
+    }
+
+    /// `parseTask.load`: a library is given `SourceFileMetaData{ImpliedNodeFormat: CommonJS}`,
+    /// whatever `package.json` is above it.
+    /// `GetImpliedNodeFormatForFile`: a JSON file is neither kind of module, regardless of its
+    /// package.
+    fn specifies_esm(resolver: &Resolver, options: &Options, path: &[u8], is_lib: bool) -> bool {
+        !is_lib
+            && !path.ends_with(b".json")
+            && (options.resolves_like_node || strings::contains(path, b"/node_modules/"))
+            && resolver.is_ecmascript_module(path)
+    }
+
+    /// Everything that depends on where the file is. The module is without `hir` and `bound`.
+    fn load_parsed<'r>(
+        arena: &'s Arena,
+        host: &dyn Host,
+        resolver: &Resolver<'r>,
+        options: &'s Options,
+        atoms: &Interner<'s>,
+        path: &[u8],
+        is_lib: bool,
+        specifies_esm: bool,
+        hir: &hir::File<'s>,
+        bound: &Bound<'s>,
+    ) -> Loaded<'s, 'r> {
+        let is_esm = options.resolves_like_node && specifies_esm;
+        let package_json_without_type =
+            if !is_lib && matches!(options.module, ModuleKind::Node16 | ModuleKind::Node18) {
+                resolver
+                    .package_json_without_type(path)
+                    .map_or(Atom::NONE, |found| atoms.intern(&found))
+            } else {
+                Atom::NONE
+            };
         let _resolving = Spent::on(host, Phase::Resolve);
         // `optionsForFile`. Program-wide diagnostics still use the options of the program.
         let (of_program, program_resolver) = (options, resolver);
@@ -5031,21 +5639,27 @@ impl<'s> Files<'s> {
         let options = resolver.options();
         let mut referenced = of_program.referenced_options.iter();
         let redirect_for_resolution = referenced.find(|&it| std::ptr::eq(it, options));
-        let implied_format = implied_node_format_for_emit(program_resolver, path, options.module);
+        let implied_format =
+            implied_node_format_for_emit(program_resolver, path, is_lib, options.module);
         let default_mode = options.default_mode(implied_format);
+        let visited = match hir.specifier_uses.is_empty() {
+            true => Vec::new(),
+            false => module_references(hir),
+        };
+        let is_import = |u: &SpecifierUse| is_among_imports(&visited, atoms, u);
         let mut extensionless_imports = Vec::new();
         // `moduleNames`, each with the mode it is resolved in, and whether it is a synthetic import
         // or one of `file.Imports()`: a module augmentation adds no file to the program.
         let mut module_names: Vec<(Atom, ResolutionMode, bool)> = Vec::new();
-        if imports_helpers(options, &hir) {
+        if imports_helpers(options, hir) {
             module_names.push((known::tslib, default_mode, true));
         }
         // Interned whether or not it resolves: the checker passes it to `module_of_specifier`,
         // which only accepts published atoms.
-        let runtime = jsx_runtime_of(options, &hir, atoms);
+        let runtime = jsx_runtime_of(options, hir, atoms);
         let runtime = runtime.map(|runtime| (atoms.intern(&runtime), runtime));
         // Only a file that can contain JSX tags, according to its file name, imports their runtime.
-        let runtime = runtime.filter(|_| path.ends_with(b".tsx") || path.ends_with(b".jsx"));
+        let runtime = runtime.filter(|_| crate::resolve::is_jsx_file_name(path));
         // Each entry of `moduleNames` is resolved, also one that repeats another.
         let (types_tracer, tracer) = (Tracer::default(), Tracer::default());
         if of_program.trace_resolution {
@@ -5054,34 +5668,59 @@ impl<'s> Files<'s> {
                     resolver.resolve_module_name_traced(name, from, mode, Some(&tracer));
                 }
             };
-            if imports_helpers(options, &hir) {
+            if imports_helpers(options, hir) {
                 trace(b"tslib", default_mode);
             }
             if let Some((_, runtime)) = &runtime {
                 trace(runtime, default_mode);
             }
-            // `collectModuleReferences`
-            let is_import = |u: &&SpecifierUse| {
-                bound.specifiers.contains(&u.spec)
-                    || bound.ambient_specifiers.contains(&u.spec)
-                        && !is_relative(atoms.bytes(u.spec))
-            };
             let statements = hir.specifier_uses.iter().filter(|u| !u.kind.is_dynamic());
             let mut statements: Vec<&SpecifierUse> = statements.collect();
             statements.sort_by_key(|u| u.pos);
-            let uses = statements.into_iter().chain(dynamic_imports(&hir));
-            for u in uses.filter(is_import) {
+            let uses = statements.into_iter().chain(dynamic_imports(hir));
+            for u in uses.filter(|u| is_import(u)) {
                 let mode = mode_for_usage_location(options, default_mode, u);
                 trace(atoms.bytes(u.spec), mode);
             }
             // `getModuleNames`: nothing is resolved for `declare global`.
-            for augmentation in module_augmentations(&hir, atoms) {
+            for augmentation in module_augmentations(hir, atoms) {
                 if let ModuleName::String(name) = hir[augmentation].name {
                     trace(atoms.bytes(name), default_mode);
                 }
             }
         }
+        // `isExtensionlessRelativePathImport`, with the answer of `getSuggestedImportExtension`.
+        let extensionless_import = |spec: Atom| {
+            let text = atoms.bytes(spec);
+            if !options.resolves_like_node
+                || !path_is_relative(text)
+                || strings::contains_char(get_base_file_name(text), b'.')
+            {
+                return None;
+            }
+            let stem = join(dirname::<Posix>(path), text);
+            let for_tsx: &'static [u8] = if options.jsx == JsxEmit::Preserve {
+                b".jsx"
+            } else {
+                b".js"
+            };
+            let suggested = [
+                (&b".mts"[..], &b".mjs"[..]),
+                (b".ts", b".js"),
+                (b".cts", b".cjs"),
+                (b".mjs", b".mjs"),
+                (b".js", b".js"),
+                (b".cjs", b".cjs"),
+                (b".tsx", for_tsx),
+                (b".jsx", b".jsx"),
+                (b".json", b".json"),
+            ]
+            .into_iter()
+            .find(|(e, _)| host.is_file(&[&stem[..], e].concat()));
+            Some((spec, suggested.map(|found| found.1)))
+        };
         if let Some((spec, _)) = runtime {
+            extensionless_imports.extend(extensionless_import(spec));
             module_names.push((spec, default_mode, true));
         }
         // `file.Imports()`, then `file.ModuleAugmentations`: each with its place there. The
@@ -5098,42 +5737,13 @@ impl<'s> Files<'s> {
             .chain(&bound.specifiers)
             .chain(bound.module_augmentations.iter())
         {
-            let text = atoms.bytes(spec);
-            // `isExtensionlessRelativePathImport`. `HasExtension` uses `GetBaseFileName`, which
-            // ignores one trailing slash.
-            let base = text.strip_suffix(b"/").unwrap_or(text);
-            let base = &base[strings::last_index_of_char(base, b'/').map_or(0, |i| i + 1)..];
-            if options.resolves_like_node
-                && (text.starts_with(b"./") || text.starts_with(b"../"))
-                && !strings::contains_char(base, b'.')
-            {
-                let stem = join(dirname::<Posix>(path), text);
-                // `getSuggestedImportExtension`
-                let for_tsx: &[u8] = if options.jsx == JsxEmit::Preserve {
-                    b".jsx"
-                } else {
-                    b".js"
-                };
-                let suggested = [
-                    (&b".mts"[..], &b".mjs"[..]),
-                    (b".ts", b".js"),
-                    (b".cts", b".cjs"),
-                    (b".mjs", b".mjs"),
-                    (b".js", b".js"),
-                    (b".cjs", b".cjs"),
-                    (b".tsx", for_tsx),
-                    (b".jsx", b".jsx"),
-                    (b".json", b".json"),
-                ]
-                .into_iter()
-                .find(|(e, _)| host.is_file(&[&stem[..], e].concat()));
-                extensionless_imports.push((spec, suggested.map(|found| found.1)));
-            }
-            // It is resolved in each mode that a use in the file requests. With each mode, where
-            // the first use in it is in `file.Imports()`.
+            extensionless_imports.extend(extensionless_import(spec));
+            // It is resolved in each mode that one of `file.Imports()` requests. With each mode,
+            // where the first use in it is there.
             let mut modes = [(default_mode, AFTER_IMPORTS); 3];
             let mut count = 0;
-            for u in hir.specifier_uses.iter().filter(|u| u.spec == spec) {
+            let uses = hir.specifier_uses.iter();
+            for u in uses.filter(|u| u.spec == spec && is_import(u)) {
                 let mode = mode_for_usage_location(options, default_mode, u);
                 let place = (u.kind.is_dynamic(), u.pos);
                 match modes[..count].iter_mut().find(|known| known.0 == mode) {
@@ -5168,7 +5778,7 @@ impl<'s> Files<'s> {
         let (mut arbitrary_extension_imports, mut arbitrary_extension_files) =
             (Vec::new(), Vec::new());
         let (mut ts_extension_imports, mut project_reference_imports) = (Vec::new(), Vec::new());
-        let mut unbuilt_imports = Vec::new();
+        let (mut unbuilt_imports, mut redirected_imports) = (Vec::new(), Vec::new());
         for (spec, mode, is_import) in module_names {
             let text = atoms.bytes(spec);
             if text.is_empty() {
@@ -5178,6 +5788,9 @@ impl<'s> Files<'s> {
                 continue;
             };
             let (key, found) = ((spec, mode), resolved.file_name);
+            if resolved.resolved_file_name != found {
+                redirected_imports.push((spec, mode, atoms.intern(resolved.resolved_file_name)));
+            }
             if let Some(id) = resolved.package_id {
                 let package = (atoms.intern(id.name), found.ends_with(b".d.ts"));
                 if !resolved_packages.contains(&package) {
@@ -5202,20 +5815,20 @@ impl<'s> Files<'s> {
                 untyped_import_files.push((atoms.intern(found), package));
             }
             // `resolveExternalModule` asks with the options of the program.
-            let diagnostic = get_resolution_diagnostic(of_program, extension, &hir);
+            let diagnostic = get_resolution_diagnostic(of_program, extension, hir);
             match diagnostic {
                 Some(6142) => jsx_imports.push((spec, mode, atoms.intern(found))),
                 Some(7042) => json_imports.push((spec, mode, atoms.intern(found))),
                 Some(6263) => {
                     arbitrary_extension_imports.push(key);
-                    arbitrary_extension_files.push(atoms.intern(found));
+                    arbitrary_extension_files.push(atoms.intern(resolved.resolved_file_name));
                 }
                 _ => {}
             }
             // "Don't treat redirected files as JS files."
             let is_js_file = is_javascript && !of_program.is_source_of_referenced_project(found);
             let should_add_file = is_import
-                && get_resolution_diagnostic(options, extension, &hir).is_none()
+                && get_resolution_diagnostic(options, extension, hir).is_none()
                 && !options.no_resolve
                 && !(is_js_file && !options.allow_js);
             // `parseTask.load`: the declaration file is read in place of a source of a referenced
@@ -5231,6 +5844,15 @@ impl<'s> Files<'s> {
             } else {
                 None
             };
+            let unsupported_extension = unsupported_extension.map(|code| {
+                let of_file = redirect_for_resolution.unwrap_or(of_program);
+                let mode_of = |u: &SpecifierUse| mode_for_usage_location(of_file, default_mode, u);
+                let uses = hir.specifier_uses.iter();
+                let uses = uses.filter(|u| u.spec == spec && mode_of(u) == mode);
+                let first = uses.min_by_key(|u| u.pos);
+                let span = first.map(|u| (u.pos, end_of_string_literal(&hir.text, u.pos)));
+                UnsupportedExtension { code, span }
+            });
             imports.push(Resolution {
                 spec,
                 mode,
@@ -5238,6 +5860,7 @@ impl<'s> Files<'s> {
                 should_add_file: should_add_file
                     && redirect.is_none_or(|output| host.is_file(output)),
                 increases_depth: resolved.is_external_library_import,
+                package_id: resolved.package_id.filter(|_| redirect.is_none()),
                 is_importable: matches!(diagnostic, None | Some(6142)),
                 unsupported_extension,
             });
@@ -5256,10 +5879,10 @@ impl<'s> Files<'s> {
                     match referenced_file(host, of_program, &referenced_path(value, path), path) {
                         Ok(found) => match of_program.parse_file_redirect(&found) {
                             Some(output) if host.is_file(output) => {
-                                references.push((resolver.keep(output), false, false));
+                                references.push((resolver.keep(output), false, false, None));
                             }
                             Some(_) => {}
-                            None => references.push((resolver.keep(&found), false, false)),
+                            None => references.push((resolver.keep(&found), false, false, None)),
                         },
                         Err(code) => missing_references.push((pos, code)),
                     }
@@ -5277,7 +5900,7 @@ impl<'s> Files<'s> {
                                     let end = pos + value.len() as u32;
                                     unsupported_libs.push((pos, end, found, code));
                                 }
-                                None => libs.push((found, true, false)),
+                                None => libs.push((found, true, false, None)),
                             }
                         }
                         None => missing_references.push((pos, 2726)),
@@ -5290,14 +5913,14 @@ impl<'s> Files<'s> {
                     } else {
                         mode
                     };
-                    match resolver.resolve_type_reference(
+                    match resolver.resolve_type_reference_and_id(
                         value,
                         from,
                         mode,
                         of_program.trace_resolution.then_some(&types_tracer),
                     ) {
-                        Some((found, is_external)) => {
-                            types.push((resolver.keep(&found), false, is_external));
+                        Some((found, is_external, package_id)) => {
+                            types.push((resolver.keep(&found), false, is_external, package_id));
                         }
                         None => missing_references.push((pos, 2688)),
                     }
@@ -5307,8 +5930,8 @@ impl<'s> Files<'s> {
         references.extend(types);
         references.extend(libs);
         let module = Module {
-            hir,
-            bound,
+            hir: hir::File::empty_in(arena, hir.lazy.session),
+            bound: Bound::empty_in(arena),
             is_lib,
             // `load` fills `path`, `imports` and `edges`.
             path: Path::init(b""),
@@ -5333,7 +5956,7 @@ impl<'s> Files<'s> {
                 .package_json_directory(path)
                 .map_or(Atom::NONE, |directory| atoms.intern(directory)),
             edges: &[],
-            redirected_imports: ArenaFew::default(),
+            redirected_imports: few(redirected_imports, arena),
             project_reference_imports: few(project_reference_imports, arena),
             unbuilt_imports: few(unbuilt_imports, arena),
             project_reference_source: Atom::NONE,
@@ -5345,30 +5968,30 @@ impl<'s> Files<'s> {
             transient_symbols: ArenaVec::new_in(arena),
         };
         let mut module = module;
-        module.has_conditional_or_mapped_type = module.hir.types.iter().any(|node| {
+        module.has_conditional_or_mapped_type = hir.types.iter().any(|node| {
             matches!(
                 node.kind,
                 TypeNodeKind::Cond { .. } | TypeNodeKind::Mapped(_)
             )
         });
         module.adds_nothing = !is_lib
-            && matches!(module.hir.kind, FileKind::Ts | FileKind::Tsx)
-            && !module.hir.is_js
-            && module.hir.has_module_syntax
-            && module.bound.global_augmentations.is_empty()
-            && module.bound.ambient_modules.is_empty()
-            && module.bound.pattern_ambient_modules.is_empty()
-            && module.bound.umd_globals.is_empty()
+            && matches!(hir.kind, FileKind::Ts | FileKind::Tsx)
+            && !hir.is_js
+            && hir.has_module_syntax
+            && bound.global_augmentations.is_empty()
+            && bound.ambient_modules.is_empty()
+            && bound.pattern_ambient_modules.is_empty()
+            && bound.umd_globals.is_empty()
             // `make_module_clones`: it adds a symbol to the file of what it imports.
-            && !(module.hir.imports.iter()).any(|import| import.namespace.is_some());
-        let mut traces = types_tracer.into_traces();
-        traces.extend(tracer.into_traces());
+            && !(hir.imports.iter()).any(|import| import.namespace.is_some());
         Loaded {
             module,
+            parse: None,
             imports,
             references,
             unsupported_libs,
-            traces,
+            type_resolutions_trace: types_tracer.into_traces(),
+            resolutions_trace: tracer.into_traces(),
         }
     }
 
@@ -5393,7 +6016,7 @@ impl<'s> Files<'s> {
     pub fn jsx_runtime(&self, file: FileId) -> Option<Atom> {
         let module = &self.modules[file.idx()];
         // `resolveImportsAndModuleAugmentations`: only `ScriptKindTSX` and `ScriptKindJSX` import it.
-        if !module.file_name().ends_with(b".tsx") && !module.file_name().ends_with(b".jsx") {
+        if !crate::resolve::is_jsx_file_name(module.file_name()) {
             return None;
         }
         let runtime = jsx_runtime_of(self.options, &module.hir, &self.atoms)?;
@@ -5519,13 +6142,6 @@ impl<'s> Files<'s> {
                 }
             }
             for (name, sym) in additions {
-                // `mergeSymbol`: "Do not report an error when merging `var globalThis` with the built-in `globalThis`". Nothing else is
-                // done either.
-                if name == known::globalThis
-                    && SymFlags::MODULE.intersects(get_excluded_symbol_flags(self.flags(sym)))
-                {
-                    continue;
-                }
                 // `mergeGlobalSymbol`
                 let merged = match self.globals.get(name).copied() {
                     Some(existing) => self.merge_symbol(existing, sym, false),
@@ -5567,12 +6183,12 @@ impl<'s> Files<'s> {
             }
             let mut collected: Option<Vec<ModuleId>> = None;
             for at in 0..self.modules[file].bound.ambient_modules.len() {
-                let (name, symbol, is_augmentation) = self.modules[file].bound.ambient_modules[at];
+                let (name, symbol, is_global) = self.modules[file].bound.ambient_modules[at];
                 let sym = Sym {
                     file: id,
                     id: symbol,
                 };
-                if is_augmentation {
+                if !is_global {
                     let module = &self.modules[file];
                     let collected = collected
                         .get_or_insert_with(|| module_augmentations(&module.hir, &self.atoms));
@@ -5681,8 +6297,6 @@ impl<'s> Files<'s> {
         if !self.modules.is_empty() && !self.globals.contains_key(known::undefined) {
             self.globals.insert(known::undefined, self.undefined_symbol);
         }
-        let globals = SymbolMap::from_iter_in(self.globals.iter().copied(), self.arena);
-        self.merged_exports.insert(self.global_this_symbol, globals);
         self.make_transient_symbols();
         // The target an alias resolved to during the symbol merge may have become a part of a
         // merged symbol by now.
@@ -5770,6 +6384,16 @@ impl<'s> Files<'s> {
             self.new_symbol(SymFlags::MODULE | SymFlags::MERGED, known::globalThis);
         self.globals
             .insert(known::globalThis, self.global_this_symbol);
+    }
+
+    /// `symbol.Exports` of a transient symbol. `c.globalThisSymbol.Exports = c.globals`: they are one
+    /// table, also while the symbol merge fills it.
+    fn merged_exports_of(&self, symbol: Sym) -> Option<&SymbolMap<'s>> {
+        if symbol == self.global_this_symbol {
+            Some(&self.globals)
+        } else {
+            self.merged_exports.get(&symbol)
+        }
     }
 
     /// `target.Exports` of a transient symbol, during the symbol merge.
@@ -5957,6 +6581,7 @@ impl<'s> Files<'s> {
     fn make_transient_symbols(&mut self) {
         for &file in self.order {
             let created = self.transient_symbols_of(file);
+            self.has_symbols_to_combine |= created.iter().any(|it| it.0.is_combined);
             add_transient_symbols(&mut self.modules[file.idx()], created);
         }
     }
@@ -6006,7 +6631,7 @@ impl<'s> Files<'s> {
         if merged.file == parent.file {
             self.parents_in_other_files.remove(&merged);
             self.symbol_mut(merged).parent = parent.id;
-        } else if self.parent_of_symbol(merged) != Some(parent) {
+        } else {
             self.parents_in_other_files.insert(merged, parent);
         }
     }
@@ -6067,7 +6692,7 @@ impl<'s> Files<'s> {
     /// `symbol.Exports`
     fn exports_in_table(&self, sym: Sym) -> Vec<(Atom, Sym)> {
         let sym = self.holder_of_exports(sym);
-        match self.merged_exports.get(&sym) {
+        match self.merged_exports_of(sym) {
             Some(table) => table.to_vec(),
             None => {
                 let (file, bound) = (sym.file, self.bound(sym.file));
@@ -6400,7 +7025,7 @@ impl<'s> Files<'s> {
     pub fn export_in_table(&self, sym: Sym, name: Atom) -> Option<Sym> {
         let symbol = self.symbol(sym);
         if symbol.flags.contains(SymFlags::MERGED) {
-            if let Some(table) = self.merged_exports.get(&sym) {
+            if let Some(table) = self.merged_exports_of(sym) {
                 return table.get(name).copied();
             }
             if let Some(target) = self.target_of_module_clone(sym) {
@@ -6445,7 +7070,7 @@ impl<'s> Files<'s> {
         let symbol = self.symbol(sym);
         // `None`: the exports recorded by the binder.
         let merged = if symbol.flags.contains(SymFlags::MERGED) {
-            self.merged_exports.get(&sym)
+            self.merged_exports_of(sym)
         } else {
             None
         };
@@ -6460,6 +7085,20 @@ impl<'s> Files<'s> {
             merged: merged.map_or(&[][..], |table| &table[..]).iter(),
             is_as_in_table,
         }
+    }
+
+    /// `moduleSymbol.ValueDeclaration.Locals()[name]`: a local declaration of the file, or of the
+    /// first `declare module "m"`.
+    pub fn local_of_module(&self, module: Sym, name: Atom) -> Option<Sym> {
+        let &(of, decl) = self.decls_of(module).first()?;
+        let bound = self.bound(of);
+        let scope = match decl {
+            Decl::File => 0,
+            Decl::Module(m) => bound.module_scope[m.idx()].idx(),
+            _ => return None,
+        };
+        let local = bound.lookup(bound.scopes.get(scope)?.locals, name)?;
+        Some(self.sym(of, local))
     }
 
     /// `symbol.ValueDeclaration`
@@ -6642,12 +7281,14 @@ impl<'s> Files<'s> {
 
     /// `getParentOfSymbol`
     pub fn parent_of_symbol(&self, sym: Sym) -> Option<Sym> {
-        if !self.parents_in_other_files.is_empty()
+        let symbol = self.symbol(sym);
+        // `mergeSymbolTable` sets the parent of a transient symbol only.
+        if symbol.flags.contains(SymFlags::TRANSIENT)
             && let Some(&parent) = self.parents_in_other_files.get(&sym)
         {
             return Some(self.canonical(parent));
         }
-        let parent = self.symbol(sym).parent;
+        let parent = symbol.parent;
         parent.is_some().then(|| self.sym(sym.file, parent))
     }
 
@@ -6794,24 +7435,7 @@ impl<'s> Files<'s> {
                     _ => meaning & SymFlags::MODULE_MEMBER,
                 };
                 let container = self.sym(file, s.symbol);
-                // `IsSourceFile(location) || IsModuleDeclaration(location) &&
-                // location.Flags&NodeFlagsAmbient != 0 && !IsGlobalScopeAugmentation(location)`
-                let is_external_module = || match s.kind {
-                    ScopeKind::File => true,
-                    ScopeKind::Module(m) => {
-                        let hir = self.hir(file);
-                        let mut around = std::iter::successors(Some(scope), |&at| {
-                            Some(bound.scopes[at.idx()].parent).filter(|parent| parent.is_some())
-                        });
-                        !matches!(hir[m].name, ModuleName::Global)
-                            && (hir.kind == FileKind::Declaration
-                                || around.any(|at| {
-                                    matches!(bound.scopes[at.idx()].kind, ScopeKind::Module(it)
-                                        if hir[it].flags.contains(Flags::AMBIENT))
-                                }))
-                    }
-                    _ => false,
-                };
+                let is_external_module = || bound.is_external_module(self.hir(file), scope);
                 // "First see if the module has an export default and if the local name of that export default matches."
                 if let Some(default) = self.export(container, known::default)
                     && self.flags(default).intersects(meaning)
@@ -6834,6 +7458,21 @@ impl<'s> Files<'s> {
                     && !(is_commonjs && !self.flags(sym).intersects(SymFlags::TYPE))
                 {
                     return Ok(Some(sym));
+                }
+            }
+            // The name of a method or an accessor is a child of it: its locals are searched. From
+            // there `useResult` is false for a type and for a function scoped variable.
+            if let ScopeKind::FunctionName(f) = s.kind {
+                let function = bound.fns[f.idx()].scope;
+                let locals = bound.scopes[function.idx()].locals;
+                let held = bound.lookup(locals, name).map(|id| self.sym(file, id));
+                if let Some(sym) = lookup(SymbolTable::Locals(file, function), held, meaning) {
+                    let flags = self.flags(sym);
+                    let is_function_scoped = (meaning & flags).intersects(SymFlags::VARIABLE)
+                        && flags.intersects(SymFlags::FUNCTION_SCOPED_VARIABLE);
+                    if !(meaning & flags).intersects(SymFlags::TYPE) && !is_function_scoped {
+                        return Ok(Some(sym));
+                    }
                 }
             }
             from = s.kind;
@@ -6923,6 +7562,13 @@ impl<'s> Files<'s> {
         }
     }
 
+    /// `tryFindAmbientModule(moduleName, true /*withAugmentations*/)`: a relative name never
+    /// matches.
+    pub fn try_find_ambient_module(&self, spec: Atom) -> Option<Sym> {
+        let &ambient = self.ambient_modules.get(&spec)?;
+        (!is_relative(self.atoms.bytes(spec))).then(|| self.canonical(ambient))
+    }
+
     /// `resolveExternalModule`: the module that `spec` resolves to in `file` in `mode`.
     pub fn module_of_specifier_as(
         &self,
@@ -6934,11 +7580,8 @@ impl<'s> Files<'s> {
         if spec.is_none() {
             return None;
         }
-        // `tryFindAmbientModule`: a relative name never matches.
-        if let Some(&ambient) = self.ambient_modules.get(&spec)
-            && !is_relative(self.atoms.bytes(spec))
-        {
-            return Some(self.canonical(ambient));
+        if let Some(ambient) = self.try_find_ambient_module(spec) {
+            return Some(ambient);
         }
         // A file that is not a module ends the search anyway.
         if let Some(&target) = self.module(file).imports.get(&(spec, mode)) {
@@ -7064,12 +7707,39 @@ impl<'s> Files<'s> {
     pub fn is_only_importable_as_default(&self, usage: impl Usage, module: Sym) -> bool {
         self.options.module.is_node()
             && usage.mode(self) == ResolutionMode::Import
-            && self
-                .symbol(module)
-                .decls
-                .iter()
-                .any(|d| matches!(d, Decl::File))
-            && self.is_json_module(module.file)
+            && (self.source_file_of_module(module)).is_some_and(|file| self.is_json_module(file))
+    }
+
+    /// `GetSourceFileOfModule`
+    fn source_file_of_module(&self, module: Sym) -> Option<FileId> {
+        let declaration = self.value_declaration(module).or_else(|| {
+            // `GetNonAugmentationDeclaration`
+            let is_augmentation = |&(file, decl): &(FileId, Decl)| {
+                matches!(decl, Decl::Module(m) if self.hir(file)[m].name == ModuleName::Global
+                    || self.is_external_module_augmentation(file, m))
+            };
+            (self.decls_of(module).iter())
+                .find(|&it| !is_augmentation(it))
+                .copied()
+        });
+        declaration.map(|(file, _)| file)
+    }
+
+    /// `IsExternalModuleAugmentation`
+    pub fn is_external_module_augmentation(&self, file: FileId, m: ModuleId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let is_ambient_module = |it: ModuleId| !matches!(hir[it].name, ModuleName::Ident(_));
+        let parent = |it: ModuleId| bound.stmt_parent.get(hir[it].stmt.idx());
+        is_ambient_module(m)
+            && match parent(m) {
+                Some(bind::Parent::File) => hir.has_module_syntax,
+                Some(&bind::Parent::Module(around)) => {
+                    is_ambient_module(around)
+                        && matches!(parent(around), Some(bind::Parent::File))
+                        && !hir.has_module_syntax
+                }
+                _ => false,
+            }
     }
 
     /// `ast.IsJsonSourceFile(file) || tspath.GetDeclarationFileExtension(file.FileName()) ==
@@ -7153,6 +7823,7 @@ impl<'s> Files<'s> {
             Some((module, links))
         });
         let mut nested: Vec<Sym> = at_merge.filter(is_nested).map(|it| *it.0).collect();
+        let mut failed_lookups: Vec<FailedLookup> = Vec::new();
         for tasks in &steps {
             let resolved: Vec<Guarded<Resolved>> = tasks
                 .iter()
@@ -7162,12 +7833,15 @@ impl<'s> Files<'s> {
                 *resolved[at].lock() = self.resolve_files(&tasks[at]);
             });
             for resolved in &resolved {
-                let resolved = std::mem::take(&mut *resolved.lock());
+                let mut resolved = std::mem::take(&mut *resolved.lock());
                 let links = resolved.module_links.iter();
                 nested.extend(links.filter(is_nested).map(|it| *it.0));
+                failed_lookups.append(&mut resolved.failed_lookups);
                 self.publish(resolved);
             }
         }
+        failed_lookups.sort_by_key(|it| (it.file, it.identifier));
+        self.failed_lookups = slice_in(&failed_lookups, self.arena);
         nested.retain(|&module| self.canonical(module) == module);
         nested.sort_unstable();
         nested.dedup();
@@ -7194,9 +7868,19 @@ impl<'s> Files<'s> {
             })
         };
         for sym in files.clone().flat_map(symbols) {
-            if self.flags(sym).contains(SymFlags::ALIAS) {
-                resolver.alias_links(sym);
+            if !self.flags(sym).contains(SymFlags::ALIAS) {
+                continue;
             }
+            // Where the walk comes to an `ExportAssignment`, which declares one of these names.
+            let symbol = self.symbol(sym);
+            if symbol.name == known::default || symbol.name == known::export_equals {
+                for &decl in &symbol.decls {
+                    if let Decl::ExportExpr(stmt) = decl {
+                        resolver.check_export_assignment(sym.file, stmt);
+                    }
+                }
+            }
+            resolver.alias_links(sym);
         }
         let mut decls = Vec::new();
         let mut of_symbol = Vec::new();
@@ -7238,6 +7922,14 @@ impl<'s> Files<'s> {
         for (sym, decls) in resolved.decls {
             self.memo.decls.insert_ref(sym, decls);
         }
+    }
+
+    /// The `FailedLookup`s for the identifier `e` of `file`.
+    pub fn failed_lookups_of(&self, file: FileId, e: ExprId) -> &'s [FailedLookup<'s>] {
+        let all = self.failed_lookups;
+        let from = all.partition_point(|it| (it.file, it.identifier) < (file, e));
+        let count = all[from..].partition_point(|it| (it.file, it.identifier) == (file, e));
+        &all[from..from + count]
     }
 
     /// `means(sym, meaning)`, if no alias has to be resolved for it.
@@ -7445,6 +8137,26 @@ impl<'s> Files<'s> {
         self.transient_symbol_of_alias(alias, true)
     }
 
+    /// Whether `alias`, or an alias on the chain to its target, has a `combined_symbol`: only the
+    /// types tell what `resolveAlias` and `getSymbolFlags` give for it.
+    pub fn has_symbol_to_combine(&self, mut alias: Sym) -> bool {
+        let mut links_followed = 0;
+        while self.has_symbols_to_combine
+            && links_followed < 32
+            && self.flags(alias).contains(SymFlags::ALIAS)
+        {
+            if self.combined_symbol(alias).is_some() {
+                return true;
+            }
+            let Some(next) = self.alias_links(alias).immediate_target else {
+                return false;
+            };
+            alias = next;
+            links_followed += 1;
+        }
+        false
+    }
+
     /// `exportTypeLinks.target` of a symbol that `cloneTypeAsModuleType` created.
     pub fn target_of_module_clone(&self, symbol: Sym) -> Option<Sym> {
         let created = self.transient_symbol(symbol)?;
@@ -7598,6 +8310,7 @@ impl<'a, 's> AliasResolver<'a, 's> {
             buffer: buffer.map(std::cell::RefCell::new),
             arena: Default::default(),
             members_resolved: Default::default(),
+            resolved_symbols: Default::default(),
         }
     }
 }
@@ -7731,6 +8444,31 @@ impl<'s> Resolve<'s> for AliasResolver<'_, 's> {
 
     fn set_members_resolved(&self, symbol: Sym) -> bool {
         self.members_resolved.borrow_mut().insert(symbol)
+    }
+
+    fn is_alias_in_progress(&self, sym: Sym) -> bool {
+        self.in_flight.borrow().iter().any(|begun| begun.0 == sym)
+    }
+
+    fn has_resolved_symbol(&self, file: FileId, e: ExprId) -> bool {
+        self.resolved_symbols.borrow().contains(&(file, e))
+    }
+
+    fn set_resolved_symbol(&self, file: FileId, e: ExprId) {
+        self.resolved_symbols.borrow_mut().insert((file, e));
+    }
+
+    /// Only the link step keeps them.
+    fn note_failed_lookup(&self, file: FileId, e: ExprId) {
+        if let Some(buffer) = &self.buffer {
+            let in_flight = self.in_flight.borrow();
+            let in_progress: SmallVec<[Sym; 4]> = in_flight.iter().map(|begun| begun.0).collect();
+            buffer.borrow_mut().failed_lookups.push(FailedLookup {
+                file,
+                identifier: e,
+                aliases_in_progress: slice_in(&in_progress, self.arena()),
+            });
+        }
     }
 }
 

@@ -78,8 +78,6 @@ pub(super) struct Inference {
     calls: u32,
     /// The parameter type an inference started from.
     original_target: TypeId,
-    /// The source is the type implied by a binding pattern (`patternForType`).
-    pub(super) from_pattern: bool,
     /// `InferenceFlagsAnyDefault`: the call is in a JavaScript file, where a parameter without
     /// inferences is `any`.
     pub(super) any_default: bool,
@@ -133,7 +131,6 @@ impl Inference {
             depth: 0,
             calls: 0,
             original_target: TypeId::NEVER,
-            from_pattern: false,
             any_default: false,
             around_source: MapperId::IDENTITY,
             around: MapperId::IDENTITY,
@@ -1783,6 +1780,11 @@ impl<'p, 's> Checker<'p, 's> {
             Some(last) if last.rest => usize::MAX,
             _ => tp.len(),
         };
+        // `getParameterCount(source)`, then `getThisTypeOfSignature`, then `getTypeAtPosition`.
+        self.request_type_of_rest_parameter(source);
+        let this_types = self
+            .sig_this_type(source)
+            .and_then(|s| self.sig_this_type(target).map(|t| (s, t)));
         let sp = self.sig_params_up_to(source, requested);
         let (source_count, target_count) = (self.parameter_count(&sp), self.parameter_count(&tp));
         let (source_rest, target_rest) =
@@ -1800,11 +1802,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getTypeAtPosition(target, i)`
         self.note_parameter_types_resolved(target, &tp, param_count);
         let mut pairs: SmallVec<[(TypeId, TypeId); 8]> = SmallVec::with_capacity(param_count + 2);
-        if let Some(s) = self.sig_this_type(source)
-            && let Some(t) = self.sig_this_type(target)
-        {
-            pairs.push((s, t));
-        }
+        pairs.extend(this_types);
         for i in 0..param_count {
             let (s, t) = (
                 self.param_type_at(&sp, i).unwrap_or(TypeId::ANY),
@@ -1971,13 +1969,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let keys = match self.data(source) {
                     // `patternForType`, `IndexFlagsNoIndexSignatures`: the `...rest` of a pattern
                     // is not a key.
-                    TypeData::Synth(shape)
-                        if n.from_pattern
-                            || matches!(
-                                shape.literal,
-                                Literalness::Pattern | Literalness::PatternWithComputedNames
-                            ) =>
-                    {
+                    TypeData::Synth(shape) if shape.literal.is_of_pattern() => {
                         let mut keys = Vec::with_capacity(shape.props.len());
                         for prop in &shape.props {
                             keys.extend(self.key_type_of_name(prop.name));
@@ -2868,7 +2860,7 @@ impl<'p, 's> Checker<'p, 's> {
         compare: &mut dyn FnMut(&mut Self, TypeId, TypeId) -> bool,
     ) -> MapperId {
         if !self.has_type_variables(ty) {
-            return MapperId::IDENTITY;
+            return self.mapper_of_context_not_mentioned_in(ty);
         }
         let mut pairs = Vec::new();
         let mentioned = self.params_mentioned_in(ty, &n.params);
@@ -2879,15 +2871,28 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         if pairs.is_empty() {
-            return MapperId::IDENTITY;
+            return self.mapper_of_context_not_mentioned_in(ty);
         }
         self.types().mapper(pairs)
+    }
+
+    /// The mapper of an inference context, for a `ty` that mentions none of its type parameters.
+    /// It is not nil, so `instantiateType` replaces what has
+    /// `ObjectFlags::HAS_OTHER_INSTANTIATION`. Only a type parameter is looked up in a mapper: the
+    /// pair maps nothing.
+    fn mapper_of_context_not_mentioned_in(&self, ty: TypeId) -> MapperId {
+        let flags = self.types().object_flags(ty);
+        if flags.contains(ObjectFlags::HAS_OTHER_INSTANTIATION) {
+            self.types().mapper_of(&[(TypeId::NEVER, TypeId::UNKNOWN)])
+        } else {
+            MapperId::IDENTITY
+        }
     }
 
     /// `context.mapper`, for what `ty` mentions (`InferenceTypeMapper.Map`).
     pub(super) fn fixing_mapper(&mut self, n: &mut Inference, ty: TypeId) -> MapperId {
         if !self.may_mention_type_parameter(ty) {
-            return MapperId::IDENTITY;
+            return self.mapper_of_context_not_mentioned_in(ty);
         }
         let mentioned = self.params_mentioned_in(ty, &n.params);
         let mut pairs = Vec::new();
@@ -2903,7 +2908,7 @@ impl<'p, 's> Checker<'p, 's> {
             pairs.push((n.params[i], self.get_inferred_type(n, i, true)));
         }
         if pairs.is_empty() {
-            return MapperId::IDENTITY;
+            return self.mapper_of_context_not_mentioned_in(ty);
         }
         self.types().mapper(pairs)
     }
@@ -2991,10 +2996,10 @@ impl<'p, 's> Checker<'p, 's> {
                 MapperId::IDENTITY,
                 self.flags(ty) & tf::ENUM_LITERAL == 0 && some(types),
             ),
-            // Not exact: a `Synth` does not say that it is a rest type (`ObjectFlagsObjectRestType`).
             TypeData::Synth(shape) => (
                 shape.mapper,
-                shape.instantiation_expression.is_some()
+                shape.is_object_rest_type
+                    || shape.instantiation_expression.is_some()
                     || shape.symbol_declared_at.is_some_and(|it| it.2.is_some()),
             ),
             _ => return false,
@@ -3010,9 +3015,12 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isNonGenericTopLevelType`
     fn is_non_generic_top_level_type(&self, ty: TypeId) -> bool {
-        let Some(alias) = self.alias_symbol_of_type(ty) else {
-            return false;
-        };
+        self.alias_symbol_of_type(ty)
+            .is_some_and(|alias| self.is_non_generic_top_level_alias(alias))
+    }
+
+    /// The same for a type whose `alias.symbol` is `alias`.
+    pub(super) fn is_non_generic_top_level_alias(&self, alias: Sym) -> bool {
         let declarations = self.files().decls_of(alias);
         let Some((file, declaration)) = declarations.iter().find_map(|&(file, decl)| match decl {
             Decl::Alias(declaration) => Some((file, declaration)),

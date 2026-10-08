@@ -391,6 +391,7 @@ impl<'a> Parser<'a> {
         lexer.jsc_builtin_syntax = options.jsc_builtin_syntax;
         lexer.tolerant = options.tolerant;
         lexer.is_javascript = options.is_javascript;
+        lexer.is_jsx = options.tolerant && options.jsx.parse;
         lexer.step();
         lexer.next()?;
         // Copy the lexer's `NonNull<Log>` so both handles share one provenance
@@ -485,6 +486,7 @@ impl<'a> Parser<'a> {
     /// deeply for the stack is marked `ran_out_of_stack`.
     /// `await_is_a_name`: the top level has no await context, as in a script
     /// (`parseSourceFileWorker`).
+    /// `statements`: `P::statements_with_await_in_names`, before and after.
     /// Also returns whether `await` was parsed as a keyword at the top level.
     #[cold]
     pub(crate) fn parse_for_sema(
@@ -493,6 +495,7 @@ impl<'a> Parser<'a> {
         is_declaration_file: bool,
         is_json: bool,
         await_is_a_name: bool,
+        statements: &mut Vec<bun_ast::Loc>,
         parsing: &core::cell::Cell<core::time::Duration>,
     ) -> (bun_sema::hir::FileBuilder, bool) {
         type Pi<'a> = P<'a, true, false, true>;
@@ -546,13 +549,7 @@ impl<'a> Parser<'a> {
         if await_is_a_name || is_declaration_file || is_json {
             p.fn_or_arrow_data_parse.allow_await = crate::AwaitOrYield::AllowIdent;
         }
-        if p.lexer.token == js_lexer::T::THashbang {
-            if p.lexer.next().is_err() {
-                return (failed(), false);
-            }
-            // `Scan`: a shebang is trivia.
-            p.lexer.token_full_start = 0;
-        }
+        p.statements_with_await_in_names = core::mem::take(statements);
         // The parser is at the first token: these are the comments `getCommentPragmas` processes.
         let leading_comments = p.lexer.all_comments.len();
         let mut opts = ParseStatementOptions {
@@ -573,12 +570,12 @@ impl<'a> Parser<'a> {
             p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts)
         };
         parsing.set(parsing.get() + began.elapsed());
+        *statements = core::mem::take(&mut p.statements_with_await_in_names);
         let awaited = p.top_level_await_keyword.len > 0;
         // Taken before `jsdoc::read_comments` makes the lexer rescan the comments.
         let comment_directives = core::mem::take(&mut p.lexer.comment_directives);
         // Recoverable errors are converted to TypeScript's diagnostics. The checker reports them.
         let mut logged = Vec::new();
-        let has_jsx = p.is_jsx_enabled();
         let mut has_errors = stmts.is_err();
         // The offset of the first error that has no TypeScript equivalent.
         let mut untranslated = None;
@@ -591,14 +588,7 @@ impl<'a> Parser<'a> {
                 bstr::BStr::new(&msg.data.text)
             );
             let source = self.source.contents();
-            match crate::sema::diagnostic(msg, source, has_jsx) {
-                // `checkJSDecoratorSyntax` reports these two as JS diagnostics, which parse errors do not suppress.
-                Some(Some(diagnostic)) if is_js && matches!(diagnostic.code, 1206 | 8038) => {
-                    logged.push(Diagnostic {
-                        kind: DiagnosticKind::Js,
-                        ..diagnostic
-                    });
-                }
+            match crate::sema::diagnostic(msg, source) {
                 Some(diagnostic) => logged.extend(diagnostic),
                 None => {
                     has_errors = true;

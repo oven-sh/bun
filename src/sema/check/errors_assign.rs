@@ -95,83 +95,127 @@ impl Checker<'_, '_> {
             let at = self.span_of_parenthesized_expr(file, e);
             self.check_initializer(file, e, target, at);
         }
-        let by_kind = self.exprs_by_kind(file);
-        self.check_assignments_among(file, by_kind.of(ExprTag::Assign), None);
     }
 
-    /// `checkAssignmentOperator` for those of `assignments` that are `target = value`: the
-    /// comparison. `check_plain_assignment` has the reference check.
+    /// `checkAssignmentOperator` for `assignment`, which is `target = value`: the comparison.
+    /// `check_plain_assignment` has the reference check.
     /// `right_type`: `checkExpression(right)`, where the caller has it.
-    pub(super) fn check_assignments_among(
+    pub(super) fn check_plain_assignment_operator(
         &mut self,
         file: FileId,
-        assignments: &[ExprId],
+        assignment: ExprId,
         right_type: Option<TypeId>,
     ) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        for &assignment in assignments {
-            let i = assignment.idx();
-            let ExprKind::Assign {
-                op: None,
-                target,
-                value,
-            } = hir.exprs[i].kind
-            else {
-                continue;
-            };
-            if bound.is_unchecked(i) {
-                continue;
-            }
-            // `checkReferenceExpression`: only the invalid target is reported.
-            if super::errors_operators::why_no_reference(hir, target, 2364, 2779).is_some() {
-                continue;
-            }
-            // `[a = 1] = x`: a default, not an assignment.
-            if self.is_definite_assignment_target(file, ExprId(i as u32)) {
-                continue;
-            }
-            // `{ a = 1 }` that is not an assignment target (1312): `checkObjectLiteral` checks the
-            // initializer and not the name.
-            if matches!(bound.expr_parent[i], Parent::Prop(p) if hir[p].kind == PropKind::Shorthand)
+        let ExprKind::Assign {
+            op: None,
+            target,
+            value,
+        } = hir[assignment].kind
+        else {
+            return;
+        };
+        if bound.is_unchecked(assignment.idx()) {
+            return;
+        }
+        // `checkReferenceExpression`: only the invalid target is reported.
+        if super::errors_operators::why_no_reference(hir, target, 2364, 2779).is_some() {
+            return;
+        }
+        if self.is_assignment_element_with_initializer(file, assignment) {
+            return;
+        }
+        // `{ a = 1 }` that is not an assignment target (1312): `checkObjectLiteral` checks the
+        // initializer and not the name.
+        let parent = bound.expr_parent[assignment.idx()];
+        if matches!(parent, Parent::Prop(p) if hir[p].kind == PropKind::Shorthand) {
+            return;
+        }
+        // `checkExpression(left)`: an invalid assignment target has the error type, to which
+        // anything is assignable.
+        let left = self.type_of_expr(file, target);
+        if self.is_error_type(left) {
+            return;
+        }
+        let source = match right_type {
+            Some(right_type) => right_type,
+            None => self.type_of_expr(file, value),
+        };
+        // `undefined` assigned to a CommonJS export with more than one declaration is not checked.
+        // The declarations counted are those of the symbol the left side resolves to.
+        if source.is_undefined()
+            && let crate::bind::JsDeclarationKind::ExportsProperty(name) =
+                crate::bind::assignment_declaration_kind(hir, assignment)
+            && let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[target].kind
+        {
+            let object = self.type_of_expr(file, obj);
+            let object = self.apparent_type(object);
+            if let Some((prop, _)) = self.prop_ref(object, name)
+                && let PropSource::Symbol(sym) = prop.source
+                && self.files().decls(sym).len() > 1
             {
-                continue;
+                return;
             }
-            // `checkExpression(left)`: an invalid assignment target has the error type, to which
-            // anything is assignable.
-            let left = self.type_of_expr(file, target);
-            if self.is_error_type(left) {
-                continue;
+        }
+        let head = self.exact_optional_head_message(file, target, source);
+        self.check_assignable_with_end(
+            file,
+            source,
+            left,
+            self.start_of(file, target),
+            self.end_of_expr(file, target),
+            value,
+            head.unwrap_or(2322),
+        );
+    }
+
+    /// Whether `checkDestructuringAssignment` takes the assignment `e` for a target with a default,
+    /// as in `[a = 1] = x`: `e`, as written, is an element or the value of a property of an
+    /// assignment pattern. It is checked with the pattern.
+    pub(super) fn is_assignment_element_with_initializer(&self, file: FileId, e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut node = e;
+        loop {
+            // Parenthesized, it is an expression like any other: `checkReferenceAssignment`.
+            if is_parenthesized(hir, node) {
+                return false;
             }
-            let source = match right_type {
-                Some(right_type) => right_type,
-                None => self.type_of_expr(file, value),
-            };
-            // `checkAssignmentOperator`: `undefined` assigned to a CommonJS export with more than one declaration is not checked. The
-            // declarations counted are those of the symbol the left side resolves to.
-            if source.is_undefined()
-                && let crate::bind::JsDeclarationKind::ExportsProperty(name) =
-                    crate::bind::assignment_declaration_kind(hir, ExprId(i as u32))
-                && let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } = hir[target].kind
-            {
-                let object = self.type_of_expr(file, obj);
-                let object = self.apparent_type(object);
-                if let Some((prop, _)) = self.prop_ref(object, name)
-                    && let PropSource::Symbol(sym) = prop.source
-                    && self.files().decls(sym).len() > 1
+            let is_pattern = node != e;
+            node = match bound.expr_parent[node.idx()] {
+                Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
+                    ExprKind::Array(_) => parent,
+                    ExprKind::Spread(_) if is_pattern => match bound.expr_parent[parent.idx()] {
+                        Parent::Expr(array)
+                            if array.is_some() && matches!(hir[array].kind, ExprKind::Array(_)) =>
+                        {
+                            array
+                        }
+                        _ => return false,
+                    },
+                    ExprKind::Assign {
+                        op: None, target, ..
+                    } if is_pattern => return target == node,
+                    _ => return false,
+                },
+                Parent::Prop(p)
+                    if matches!(
+                        hir[p].kind,
+                        PropKind::Init | PropKind::Shorthand | PropKind::Spread
+                    ) =>
                 {
-                    continue;
+                    let literal = bound.prop_owner[p.idx()];
+                    if literal.is_none() || !matches!(hir[literal].kind, ExprKind::Object(_)) {
+                        return false;
+                    }
+                    literal
                 }
-            }
-            let head = self.exact_optional_head_message(file, target, source);
-            self.check_assignable_with_end(
-                file,
-                source,
-                left,
-                self.start_of(file, target),
-                self.end_of_expr(file, target),
-                value,
-                head.unwrap_or(2322),
-            );
+                // `checkForOfStatement`
+                Parent::Stmt(head) if is_pattern && head.is_some() => {
+                    return matches!(bound.stmt_parent[head.idx()], Parent::Stmt(owner) if owner.is_some()
+                        && matches!(hir[owner].kind, StmtKind::ForOf { left, .. } if left == head));
+                }
+                _ => return false,
+            };
         }
     }
 
@@ -217,10 +261,7 @@ impl Checker<'_, '_> {
         if strict && Self::is_pattern_without_names(hir, decl.pat) {
             return;
         }
-        // `isInAmbientOrTypeNode`: the initializer of an ambient binding pattern is a grammar error and is not compared.
-        if decl.flags.contains(Flags::AMBIENT)
-            && matches!(hir[decl.pat].kind, PatKind::Object(_) | PatKind::Array(_))
-        {
+        if self.is_binding_pattern_in_ambient_or_type_node(file, decl.pat) {
             return;
         }
         let target = self.type_of_pat(file, decl.pat);
@@ -269,7 +310,9 @@ impl Checker<'_, '_> {
         {
             self.check_literals_expected_by_pattern(file, param.default);
         }
-        if strict && Self::is_pattern_without_names(hir, param.pat) {
+        if strict && Self::is_pattern_without_names(hir, param.pat)
+            || self.is_binding_pattern_in_ambient_or_type_node(file, param.pat)
+        {
             return;
         }
         let target = self.param_default_target(file, p);
@@ -306,11 +349,7 @@ impl Checker<'_, '_> {
             }
         }
         let strict = self.p.files.options.strict_null_checks;
-        let is_ambient = self
-            .var_decl_of_pat(file, pat)
-            .is_some_and(|d| hir[d].flags.contains(Flags::AMBIENT));
-        // `isInAmbientOrTypeNode`: the default of a nested binding pattern in an ambient declaration is not compared.
-        if is_ambient && matches!(hir[pat].kind, PatKind::Object(_) | PatKind::Array(_)) {
+        if self.is_binding_pattern_in_ambient_or_type_node(file, pat) {
             return;
         }
         if default.is_some()
@@ -415,18 +454,16 @@ impl Checker<'_, '_> {
                 declared
             };
         }
-        // Resolving the parameter also resolves the enclosing call, whose signature `open_contextual_signature` reads.
+        // Resolving the parameter also resolves the enclosing call, which checks the function.
         let resolved = self.type_of_pat(file, param.pat);
         let func = bound.param_fn[p.idx()];
         if !matches!(hir[param.pat].kind, PatKind::Object(_) | PatKind::Array(_)) {
             return resolved;
         }
-        // A binding pattern is compared with `getWidenedTypeForVariableLikeDeclaration`, not with the type of a symbol.
-        // `contextuallyCheckFunctionExpressionOrObjectLiteralMethod` checks the parameters the first time the function is checked, so
-        // `getContextuallyTypedParameterType` sees the callee's signature before its type arguments are inferred. The adjustments of
-        // `assignContextualParameterTypes` and `assignParameterType` only reach the symbol's type.
+        // A binding pattern is compared with `getWidenedTypeForVariableLikeDeclaration`, not with the type of a symbol. The
+        // adjustments of `assignContextualParameterTypes` and `assignParameterType` only reach the symbol's type.
         let index = (p.0 - hir[func].params.start) as usize;
-        let Some(ty) = self.contextual_param_type(file, func, index) else {
+        let (Some(ty), _) = self.contextual_param_type_at_check(file, func, index) else {
             return resolved;
         };
         let ty = if is_optional { self.optional(ty) } else { ty };
@@ -475,7 +512,8 @@ impl Checker<'_, '_> {
         }
         // For a JSDoc type assertion the error node is the type node.
         let (at, end) = if hir.is_in_jsdoc(hir[ty].pos) {
-            (hir[ty].pos, self.end_of_type_node(file, ty))
+            let start = start_of_type(hir, ty);
+            (start, self.end_of_type_node_from(file, ty, start))
         } else {
             (
                 self.start_inside_parentheses(file, e),
@@ -494,7 +532,7 @@ impl Checker<'_, '_> {
         for &assignment in by_kind.of(ExprTag::Assign) {
             let i = assignment.idx();
             let ExprKind::Assign {
-                op: None,
+                op: None | Some(BinOp::And | BinOp::Or | BinOp::Nullish),
                 target,
                 value,
             } = hir.exprs[i].kind
@@ -503,6 +541,7 @@ impl Checker<'_, '_> {
             };
             if bound.is_unchecked(i)
                 || !matches!(hir[target].kind, ExprKind::Object(_) | ExprKind::Array(_))
+                || self.is_never_checked(hir.exprs[i].pos)
             {
                 continue;
             }
@@ -668,18 +707,6 @@ impl Checker<'_, '_> {
         }
     }
 
-    /// The variable declaration whose name is `pat` or contains `pat`. `None` for a parameter.
-    fn var_decl_of_pat(&self, file: FileId, mut pat: PatId) -> Option<VarDeclId> {
-        use crate::bind::PatParent;
-        loop {
-            match self.bound(file).pat_parent[pat.idx()] {
-                PatParent::Prop(outer, _) | PatParent::Elem(outer, _) => pat = outer,
-                PatParent::Var(d) => return Some(d),
-                PatParent::Param(_) | PatParent::None => return None,
-            }
-        }
-    }
-
     /// FOR SPEED: `check_type_reference_or_import` has run for `node` since `check_file` began, has
     /// reported nothing, and has read nothing provisional. A type node in an expression is checked
     /// by `look_at_type_node` and again by the walk.
@@ -837,7 +864,8 @@ impl Checker<'_, '_> {
         };
         let keys = self.union(&[TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]);
         if at.is_some() && !self.is_assignable(ty, keys) {
-            let error_node = (file, hir[at].pos, self.end_of_type_node(file, at));
+            let start = start_of_type(hir, at);
+            let error_node = (file, start, self.end_of_type_node_from(file, at, start));
             self.check_type_assignable_to(ty, keys, Some(error_node), None);
         }
     }
@@ -1278,47 +1306,27 @@ impl Checker<'_, '_> {
         head_message: Option<u32>,
         mut diagnostic_output: Option<&mut Vec<Reported>>,
     ) -> bool {
-        let relation = Relation::Assignable;
-        let is_related = self.try_is_type_related_to(source, target, relation, false);
-        match is_related {
-            Ok(true) => return true,
-            Ok(false) if error_node.is_none() => return false,
-            Ok(false) => {
-                let output = diagnostic_output.as_deref_mut();
-                if let Some((file, e)) = expr
-                    && self.elaborate_error(
-                        file,
-                        e,
-                        is_effective,
-                        source,
-                        target,
-                        head_message,
-                        output,
-                    )
-                {
-                    return false;
-                }
-            }
-            // The overflow is reported instead of the relation error. The pair is not compared again to elaborate.
-            Err(_) => {}
+        // An overflow of `isTypeRelatedTo` is a failure like any other. The run that has it reports
+        // it at `c.currentNode`.
+        if self.try_is_type_related_to(source, target, Relation::Assignable, false) == Ok(true) {
+            return true;
+        }
+        if error_node.is_none() {
+            return false;
         }
         let output = diagnostic_output.as_deref_mut();
-        let is_assignable =
-            self.check_type_assignable_to_ex(source, target, error_node, head_message, output);
-        // `isTypeRelatedTo` already hit the overflow, with no node to report it on but
-        // `c.currentNode`: the assignment.
-        if let Err(code) = is_related
-            && let Some((file, e)) = expr
-            && let Parent::Expr(whole) = self.bound(file).expr_parent[e.idx()]
-            && whole.is_some()
-            && matches!(self.hir(file)[whole].kind, ExprKind::Assign { value, .. } if value == e)
+        if let Some((file, e)) = expr
+            && self.elaborate_error(file, e, is_effective, source, target, head_message, output)
         {
-            let start = self.start_inside_parentheses(file, whole);
-            let at = (file, start, self.end_inside_parentheses(file, whole));
-            let diagnostic = self.new_diagnostic(at, code, &[Arg::Type(source), Arg::Type(target)]);
-            self.report_diagnostic(diagnostic, diagnostic_output);
+            return false;
         }
-        is_assignable
+        self.check_type_assignable_to_ex(
+            source,
+            target,
+            error_node,
+            head_message,
+            diagnostic_output,
+        )
     }
 
     /// The diagnostics collected in a `diagnosticOutput`.
@@ -1472,7 +1480,8 @@ impl Checker<'_, '_> {
                 continue;
             }
             // `getLiteralTypeFromProperty(.., TypeFlagsStringOrNumberLiteralOrUnique)`
-            let name_type = self.literal_type_from_property_name(file, prop.key, prop.name_kind);
+            let (key, name_kind) = (prop.key, prop.name_kind);
+            let name_type = self.literal_type_from_property_name(file, key, name_kind, prop.pos);
             let Some(name_type) = name_type.filter(|&it| self.property_name_of_type(it).is_some())
             else {
                 continue;

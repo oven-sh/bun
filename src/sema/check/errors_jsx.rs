@@ -34,21 +34,12 @@ impl Checker<'_, '_> {
         let path = self.files().module(file).file_name();
         // The only atom it reads is one that the parser interned.
         let runtime = crate::program::jsx_runtime_of(options, hir, &self.p.files.atoms)
-            .filter(|_| path.ends_with(b".tsx") || path.ends_with(b".jsx"))
+            .filter(|_| crate::resolve::is_jsx_file_name(path))
             .map(|spec| atoms.intern(&spec));
         // `getJsxNamespaceContainerForImplicitImport`: the JSX runtime module is imported
         // implicitly, and must exist.
         let runtime_is_missing =
             runtime.is_some_and(|spec| self.files().module_of_specifier(file, spec).is_none());
-        // `resolveExternalModule`: for a file that resolves but is not a module, that error is
-        // reported.
-        let runtime_is_no_module =
-            runtime.is_some_and(|spec| self.files().module(file).imported_file(spec).is_some());
-        // For JavaScript that is not in the program, the error of `errorOnImplicitAnyModule`.
-        let module = self.files().module(file);
-        let untyped_runtime = runtime
-            .map(|spec| (spec, module.default_mode))
-            .filter(|untyped| !runtime_is_no_module && module.untyped_imports.contains(untyped));
         let (factory, fragment_factory) = (
             jsx_namespace(self.files(), self.atoms(), hir, false),
             jsx_namespace(self.files(), self.atoms(), hir, true),
@@ -89,7 +80,7 @@ impl Checker<'_, '_> {
         // An error reported once per file is reported on the element that is checked first.
         // Elements the walk does not reach come last, in source order.
         let (mut first, mut first_fragment) = (None, None);
-        if runtime_is_missing || checks_fragment_type {
+        if runtime.is_some() || checks_fragment_type {
             // Only this task stores the entry of a JSX element of the file (`is_noted_for_check_file`), so it has evaluated each itself.
             let reached = match self.first_jsx {
                 (of, first, first_fragment) if of == file => (first, first_fragment),
@@ -118,26 +109,25 @@ impl Checker<'_, '_> {
             }
             self.resolved_signature(file, e);
             self.report_call_resolution(file, e);
-            if runtime_is_missing && first == Some(e) {
+            if first == Some(e)
+                && let Some(spec) = runtime
+            {
                 // `checkJsxElement` passes the whole element to `getJsxElementTypeAt`. In a file that is emitted before it is checked,
                 // `MarkLinkedReferencesRecursively` comes first, where `markJsxAliasReferenced` passes the opening element.
                 let is_whole_element = self.p.files.options.no_emit
                     && element.tag.is_some()
                     && element.close_pos != u32::MAX;
                 let end = if is_whole_element { element.end } else { end };
-                if let Some((spec, mode)) = untyped_runtime {
-                    if no_implicit_any {
-                        self.error_on_implicit_any_module(file, spec, mode, (file, start, end));
-                    }
-                } else if let Some(spec) = runtime {
-                    match self.files().module(file).imported_file(spec) {
-                        Some(found) => {
-                            let path = self.files().module(found).file_name();
-                            self.error_at((file, start, end), 2306, &[Arg::Path(path)])
-                        }
-                        None => self.error_at((file, start, end), 2875, &[Arg::Atom(spec)]),
-                    };
-                }
+                // `getJSXRuntimeImportSpecifier`: the specifier of the synthetic import the loader
+                // added, which has no import clause and is nowhere in the text.
+                let specifier = SpecifierUse {
+                    spec,
+                    pos: u32::MAX,
+                    kind: SpecifierKind::Import,
+                    mode: self.files().module(file).default_mode,
+                };
+                let (site, location) = (SpecifierSite::default(), (file, start, end));
+                self.resolve_external_module_at(file, specifier, site, location, Some(2875));
             }
             // `resolveName`, starting at `jsxFactoryLocation`: the tag name, or the opening fragment.
             let scope = bound.expr_scope.get(&e).copied().unwrap_or(ScopeId(0));
@@ -327,7 +317,7 @@ impl Checker<'_, '_> {
             return false;
         }
         self.resolved_signature(file, e);
-        let list = hir[first].pos..self.end_of_type_argument_list(file, type_args);
+        let list = start_of_type(hir, first)..self.end_of_type_argument_list(file, type_args);
         (self.p.call_diagnostics)
             .get_ref(&self.task, &(file, e))
             .is_some_and(|reported| reported.iter().any(|d| list.contains(&d.start)))
@@ -455,7 +445,7 @@ impl Checker<'_, '_> {
             if let Some(first) = hir.ids(jsx.type_args).next() {
                 let end = self.end_of_type_argument_list(file, jsx.type_args);
                 let args = [Arg::Number(0), Arg::Number(jsx.type_args.len())];
-                self.error_at((file, hir[first].pos, end), 2558, &args);
+                self.error_at((file, start_of_type(hir, first), end), 2558, &args);
             }
             return resolved;
         } else {
@@ -882,8 +872,9 @@ impl Checker<'_, '_> {
             return reported;
         };
         let more_than_one_real_children = valid_children.next().is_some();
-        // Where there is no `Iterable`, a list is an array-like or tuple-like type.
-        let has_iterable = self.global_type_symbol(known::Iterable).is_some();
+        // `getGlobalIterableType() != emptyGenericType`. Where there is no such `Iterable`, a list is
+        // an array-like or tuple-like type.
+        let has_iterable = self.global_type_of_arity(known::Iterable, 3).is_some();
         let any_iterable = self.global_ref(
             known::Iterable,
             &[TypeId::ANY, TypeId::VOID, TypeId::UNDEFINED],

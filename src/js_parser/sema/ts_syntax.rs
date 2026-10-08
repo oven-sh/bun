@@ -191,6 +191,8 @@ pub(crate) struct FunctionBody {
     /// `node.End()`
     pub(crate) end: Loc,
     pub(crate) stmts: StoreSlice<Stmt>,
+    /// `NodeFlagsAmbient`, by a `declare` around it.
+    pub(crate) is_ambient: bool,
 }
 
 /// `<T>(this: A, b: B): R`

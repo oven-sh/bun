@@ -163,6 +163,8 @@ pub(crate) struct Import {
     pub(crate) clause_end: u32,
     pub(crate) namespace_start: u32,
     pub(crate) named: Vec<ImportSpecifier>,
+    /// `importClause.NamedBindings` is a `NamedImports`.
+    pub(crate) has_named_imports: bool,
     /// The module specifier and its position. `None` if it is not a string.
     pub(crate) specifier: Option<(StoreStr, u32)>,
     pub(crate) module: Option<ts::ModuleSpecifier>,
@@ -221,6 +223,8 @@ pub(crate) struct Comments {
     pub(crate) list: Vec<JsDoc>,
     /// The HIR nodes of the types in them.
     pub(crate) types: super::clone_types::CommentTypes,
+    /// `File::jsdoc_asterisks`
+    pub(crate) asterisks: Vec<u32>,
 }
 
 impl Comments {
@@ -236,13 +240,18 @@ pub(crate) fn is_jsdoc_like(comment: &[u8]) -> bool {
 }
 
 /// `isObjectOrObjectArrayTypeReference`
-fn is_object_or_object_array(file: &bun_sema::hir::FileBuilder, ty: ts::TypeId) -> bool {
+fn is_object_or_object_array(file: &bun_sema::hir::FileBuilder, mut ty: ts::TypeId) -> bool {
+    // The parser builds `T[][][]..` in a loop, so nothing bounds its depth.
+    while ty.is_some()
+        && let TypeNodeKind::Array(element) = file[ty].kind
+    {
+        ty = element;
+    }
     if ty.is_none() {
         return false;
     }
     match file[ty].kind {
         TypeNodeKind::Keyword(ts::Keyword::Object) => true,
-        TypeNodeKind::Array(element) => is_object_or_object_array(file, element),
         TypeNodeKind::Ref { name, args } => {
             args.is_empty() && file.texts(name).eq([bun_sema::atom::known::Object])
         }
@@ -250,11 +259,13 @@ fn is_object_or_object_array(file: &bun_sema::hir::FileBuilder, ty: ts::TypeId) 
     }
 }
 
-/// Parses every JSDoc comment recorded by the lexer of `p`. `syntax` is the type syntax the parser
-/// saved for the file. The types in the comments become nodes of a separate HIR.
+/// Parses every comment recorded by the lexer of `p` that has one of the `comments::flags` in
+/// `wanted`. `syntax` is the type syntax the parser saved for the file. The types in the comments
+/// become nodes of a separate HIR.
 pub(crate) fn read_comments<'a>(
     p: &mut P<'a, true, false, true>,
     mut syntax: TypeSyntax<'a>,
+    wanted: u8,
 ) -> (TypeSyntax<'a>, Comments) {
     let mut comments = Comments::default();
     if !syntax.save_types || !p.is_tolerant() {
@@ -265,17 +276,20 @@ pub(crate) fn read_comments<'a>(
     let flags = core::mem::take(&mut p.lexer.comment_flags);
     let file = core::mem::take(&mut syntax.b.file);
     let pending = core::mem::take(&mut syntax.b.pending);
+    let function_contexts = core::mem::take(&mut syntax.function_contexts);
     p.type_syntax = Some(Box::new(syntax));
+    // `parseJSDocComment` leaves `statementHasAwaitIdentifier` as it finds it.
+    p.lexer.await_name_seen = false;
     // `PCJSDocComment`: like `PCJsxChildren`, any token is an element of it, so list error recovery
     // never skips a token.
     let outer_contexts = core::mem::replace(
         &mut p.lexer.list_contexts,
         1 << ListKind::JsxChildren as u32,
     );
-    for range in &ranges {
+    for (range, &reported) in ranges.iter().zip(&flags) {
         let (start, end) = (range.loc.to_usize(), range.end_i().min(source.len()));
         let comment = &source[start.min(end)..end];
-        if !is_jsdoc_like(comment)
+        if reported & wanted == 0
             || !comment.ends_with(b"*/")
             || !bun_core::strings::contains_char(comment, b'@')
         {
@@ -288,13 +302,36 @@ pub(crate) fn read_comments<'a>(
         {
             continue;
         }
+        // `withJSDoc`: in the [Await] and [Yield] contexts of its place. Only the names of an
+        // `@import` tag depend on them: types are parsed outside both.
+        let innermost =
+            if function_contexts.is_empty() || !bun_core::strings::contains(comment, b"@import") {
+                None
+            } else {
+                let around = function_contexts
+                    .iter()
+                    .filter(|it| (it.start.to_usize()..it.end.to_usize()).contains(&start));
+                around.max_by_key(|it| it.start.start)
+            };
+        let data = &mut p.fn_or_arrow_data_parse;
+        let outer = (data.allow_await, data.allow_yield, data.is_top_level);
+        if let Some(innermost) = innermost {
+            data.allow_await = innermost.allow_await;
+            data.allow_yield = innermost.allow_yield;
+            data.is_top_level = false;
+        }
         comments.list.push(Reader::read(p, source, start, end));
+        let data = &mut p.fn_or_arrow_data_parse;
+        (data.allow_await, data.allow_yield, data.is_top_level) = outer;
     }
     p.lexer.contents = source;
     p.lexer.all_comments = ranges;
     p.lexer.comment_flags = flags;
     p.lexer.list_contexts = outer_contexts;
     p.lexer.skips_jsdoc_asterisks = false;
+    comments.asterisks = core::mem::take(&mut p.lexer.jsdoc_asterisks);
+    comments.asterisks.sort_unstable();
+    comments.asterisks.dedup();
     let mut syntax = *p.type_syntax.take().expect("set above");
     comments.types.file = core::mem::replace(&mut syntax.b.file, file);
     comments.types.pending = core::mem::replace(&mut syntax.b.pending, pending);
@@ -495,8 +532,7 @@ impl<'p, 'a> Reader<'p, 'a> {
             .drain(before.0..)
             .filter(|msg| msg.kind == bun_ast::Kind::Err);
         let diagnostics = errors.filter_map(|msg| {
-            // `ScanJSDocToken` does not scan `</` as one token.
-            let mut diagnostic = super::diagnostic(&msg, source, false)??;
+            let mut diagnostic = super::diagnostic(&msg, source)??;
             if diagnostic.kind == DiagnosticKind::Parse {
                 diagnostic.kind = DiagnosticKind::JsDoc;
             }
@@ -928,13 +964,23 @@ impl<'p, 'a> Reader<'p, 'a> {
         self.leave_lexer(result);
     }
 
+    /// `isIdentifier`, of the word `word`. The top level is outside the [Await] context.
+    fn is_identifier(&self, word: &[u8]) -> bool {
+        let data = &self.p.fn_or_arrow_data_parse;
+        let off = crate::AwaitOrYield::AllowIdent;
+        crate::lexer::keyword(word).is_none()
+            && !(word == b"await" && data.allow_await != off && !data.is_top_level)
+            && !(word == b"yield" && data.allow_yield != off)
+    }
+
     /// `parseImportTag`, starting at the token after the tag name.
     fn read_import(&mut self) -> Import {
         // Either only whitespace remains in the comment (`skipWhitespaceOrAsterisk` does not consume it), or `ScanJSDocToken` returned
-        // `KindUnknown`, for example for a quote or a slash. `parseModuleSpecifier` reports TS1109 without consuming the token.
+        // `KindUnknown`, for example for a quote or a slash, or a token of its own: `#a` is no private name and a backtick opens no
+        // template. `parseModuleSpecifier` reports TS1109 without consuming the token.
         let cannot_start_expression = matches!(
             self.token,
-            Token::Whitespace | Token::NewLine | Token::Unknown
+            Token::Whitespace | Token::NewLine | Token::Unknown | Token::Hash | Token::Backtick
         );
         if !self.is_in_lexer && cannot_start_expression {
             self.error_at_token(1109);
@@ -949,7 +995,7 @@ impl<'p, 'a> Reader<'p, 'a> {
         };
         // `isIdentifier`, `parseIdentifier`: the token after the tag name is one of
         // `ScanJSDocToken`, whose words can contain `-`.
-        if self.token == Token::Word && crate::lexer::keyword(self.token_value()).is_none() {
+        if self.token == Token::Word && self.is_identifier(self.token_value()) {
             import.default = Some(self.name_at_word());
             self.next_token();
         }
@@ -1002,6 +1048,7 @@ impl<'p, 'a> Reader<'p, 'a> {
                     }
                 } else {
                     // `parseNamedImports`
+                    import.has_named_imports = true;
                     p.parse_import_clause()?;
                     let syntax = p.type_syntax_mut();
                     let specifiers = syntax.module_syntax.last().and_then(|kept| kept.specifiers);
@@ -1129,6 +1176,12 @@ impl<'p, 'a> Reader<'p, 'a> {
                     // After a second asterisk no tag starts on the line.
                     state = State::SavingComments;
                     indent += self.token_len();
+                }
+                Token::OpenBrace if !in_fenced_code_block => {
+                    state = State::SavingComments;
+                    if !self.link() {
+                        indent += self.token_len();
+                    }
                 }
                 Token::At | Token::OpenBrace => {
                     state = State::saving(in_fenced_code_block);
@@ -1281,6 +1334,18 @@ impl<'p, 'a> Reader<'p, 'a> {
                     indent += self.token_len();
                     is_text = false;
                 }
+                Token::OpenBrace if !in_fenced_code_block => {
+                    state = State::SavingComments;
+                    let start = self.start;
+                    if self.link() {
+                        is_text = false;
+                        has_text = true;
+                        if self.saves_comment_text {
+                            self.comment_text
+                                .extend_from_slice(&self.text[start..self.end]);
+                        }
+                    }
+                }
                 Token::At | Token::OpenBrace => state = State::saving(in_fenced_code_block),
                 Token::Backtick => {
                     backticks += 1;
@@ -1326,6 +1391,65 @@ impl<'p, 'a> Reader<'p, 'a> {
             && self.next_jsdoc() == Token::At
             && self.next_jsdoc() == Token::Word
             && matches!(self.token_value(), b"link" | b"linkcode" | b"linkplain")
+    }
+
+    /// `parseJSDocLink`, up to the `}`, the line break or the end that closes it. False: there is
+    /// none, and nothing is consumed.
+    fn link(&mut self) -> bool {
+        let mark = self.mark();
+        if !self.is_at_link() {
+            self.rewind(&mark);
+            return false;
+        }
+        self.next_jsdoc();
+        self.skip_whitespace();
+        self.link_name();
+        while !matches!(
+            self.token,
+            Token::CloseBrace | Token::NewLine | Token::EndOfFile
+        ) {
+            self.next_jsdoc();
+        }
+        true
+    }
+
+    /// `parseJSDocLinkName`
+    fn link_name(&mut self) {
+        if self.token != Token::Word {
+            return;
+        }
+        self.link_identifier(true);
+        while self.eat(Token::Dot) {
+            // `createMissingIdentifier`
+            if !self.is_at_private_identifier() {
+                self.link_identifier(true);
+            }
+        }
+        while self.is_at_private_identifier() {
+            // `ReScanHashToken`
+            self.reset_pos(self.start + 1);
+            self.next_jsdoc();
+            self.link_identifier(false);
+        }
+    }
+
+    /// `parseIdentifierName`, or `parseIdentifier` unless `allows_reserved_words`. A missing name is
+    /// reported, and the token is not consumed.
+    fn link_identifier(&mut self, allows_reserved_words: bool) {
+        let is_word = self.token == Token::Word && !self.is_at_private_identifier();
+        let is_reserved_word = is_word && crate::lexer::keyword(self.token_value()).is_some();
+        if is_word && (allows_reserved_words || !is_reserved_word) {
+            self.next_token();
+        } else if self.token == Token::EndOfFile {
+            self.error(self.full_start(), 0, 1003);
+        } else {
+            self.error_at_token(if is_reserved_word { 1359 } else { 1003 });
+        }
+    }
+
+    /// `KindPrivateIdentifier`, which only `Scan` returns.
+    fn is_at_private_identifier(&self) -> bool {
+        self.is_in_lexer && self.p.lexer.token == T::TPrivateIdentifier
     }
 
     // ───────────────────────────── tags ─────────────────────────────

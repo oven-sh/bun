@@ -70,6 +70,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         self.parse_expr_common(level, None, EFlags::None, &mut expr)?;
         Ok(expr)
     }
+    /// `parseExpressionAllowIn`, `doInContext(p, NodeFlagsDisallowInContext, false, ..)`.
+    /// TypeScript's parser stays in the context of the head of a "for" through function bodies,
+    /// class bodies, and array and object literals, and leaves it here.
+    #[inline]
+    pub(crate) fn parse_expr_allow_in(&mut self, level: Level) -> Result<Expr, Error> {
+        if !self.is_tolerant() {
+            return self.parse_expr(level);
+        }
+        let old_allow_in = core::mem::replace(&mut self.allow_in, true);
+        let expr = self.parse_expr(level);
+        self.allow_in = old_allow_in;
+        expr
+    }
     #[inline]
     pub(crate) fn parse_expr_with_flags(
         &mut self,
@@ -216,10 +229,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         p.lexer.expect(T::TOpenBrace)?;
         let mut properties = BumpVec::<G::Property>::new_in(p.arena);
 
-        // Allow "in" and private fields inside class bodies
+        // Allow "in" and private fields inside class bodies. (`parseClassMembers` leaves the context
+        // as it is: see `parse_expr_allow_in`.)
         let old_allow_in = p.allow_in;
         let old_allow_private_identifiers = p.allow_private_identifiers;
-        p.allow_in = true;
+        p.allow_in = old_allow_in || !p.is_tolerant();
         p.allow_private_identifiers = true;
 
         // A scope is needed for private identifiers
@@ -681,7 +695,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     #[inline(never)]
     fn parse_jsx_attribute_value_without_braces(&mut self) -> Result<Option<Expr>, Error> {
         let p = self;
-        if p.is_at_less_than_token() {
+        if p.lexer.token == T::TLessThan {
             let first = p.lexer.loc();
             return p.parse_jsx_elements_in_attribute_value(first).map(Some);
         }
@@ -692,11 +706,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let range = p.lexer.range();
         p.lexer.ts_error(range, 1145);
         Ok(None)
-    }
-
-    /// `KindLessThanToken`, which "</" is not.
-    fn is_at_less_than_token(&self) -> bool {
-        self.lexer.token == T::TLessThan && !self.lexer.is_less_than_slash()
     }
 
     /// `parseJsxElementOrSelfClosingElementOrFragment` in an expression context, at its "<".
@@ -715,7 +724,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if p.lexer.token == T::TGreaterThan {
             p.lexer.next_inside_jsx_element()?;
         }
-        if !p.is_at_less_than_token() {
+        if p.lexer.token != T::TLessThan {
             return Ok(element);
         }
         if p.lexer.is_log_disabled {
@@ -864,6 +873,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             };
             p.fn_or_arrow_data_parse.allow_yield = AwaitOrYield::AllowIdent;
             p.fn_or_arrow_data_parse.is_top_level = false;
+            // `parseParameterEx` parses an initializer in the context of the arrow function.
+            p.allow_in = old_allow_in;
         }
 
         // Scan over the comma-separated arguments or expressions
@@ -890,12 +901,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 && p.is_tolerant()
                 && attempt != ArrowAttempt::NeverArrow
                 && level.lte(Level::Assign)
-                && p.is_modifier_kind()
-                && p.parse_arrow_parameter_modifiers(items_list.len(), &mut parameter_modifiers)?
+                && (p.is_modifier_kind() || (p.lexer.token == T::TAt && are_parameters))
+                && p.parse_arrow_parameter_modifiers(
+                    items_list.len(),
+                    &old_fn_or_arrow_data,
+                    &mut parameter_modifiers,
+                )?
             {
                 with_modifiers |= 1u32 << items_list.len().min(31);
             }
-            let is_spread = p.lexer.token == T::TDotDotDot;
+            // `parseParenthesizedExpression`: no expression starts with the dots.
+            let is_spread = p.lexer.token == T::TDotDotDot
+                && (attempt != ArrowAttempt::NeverArrow || opts.is_async);
 
             if is_spread {
                 spread_range = p.lexer.range();
@@ -915,7 +932,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
 
             // We don't know yet whether these are arguments or expressions, so parse
-            p.latest_arrow_arg_loc = p.lexer.loc();
+            // (`parseParenthesizedExpression`: a "?" after a name is the conditional operator.)
+            p.latest_arrow_arg_loc = if attempt == ArrowAttempt::NeverArrow {
+                bun_ast::Loc::EMPTY
+            } else {
+                p.lexer.loc()
+            };
 
             let mut item = Expr::EMPTY;
             let mut has_type = false;
@@ -1181,16 +1203,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     continue;
                 }
                 let mut binding = binding;
-                let is_typescript_ctor_field = with_modifiers & (1u32 << i.min(31)) != 0;
-                if is_typescript_ctor_field {
-                    let modifiers: Vec<crate::sema::ts_syntax::Modifier> = parameter_modifiers
+                let mut ts_decorators = bun_alloc::AstAlloc::vec();
+                let mut is_typescript_ctor_field = false;
+                if with_modifiers & (1u32 << i.min(31)) != 0 {
+                    let of_parameter = parameter_modifiers
                         .iter()
                         .filter(|modifier| modifier.0 == i)
-                        .map(|modifier| modifier.1)
-                        .collect();
-                    p.note_parameter_modifiers(&mut binding.loc, &modifiers);
+                        .map(|modifier| modifier.1);
+                    ts_decorators.extend(of_parameter.clone().filter_map(|it| it.decorator));
+                    let keywords: Vec<crate::sema::ts_syntax::Modifier> =
+                        of_parameter.filter(|it| it.decorator.is_none()).collect();
+                    is_typescript_ctor_field = !keywords.is_empty();
+                    p.note_parameter_modifiers(&mut binding.loc, &keywords);
                 }
                 args.push(G::Arg {
+                    ts_decorators,
                     binding,
                     default: tuple.expr,
                     is_typescript_ctor_field,
@@ -1344,21 +1371,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if items.len() > 0 {
             p.log_expr_errors(&mut errors);
             if spread_range.len > 0 {
-                if !p.is_tolerant() || p.lexer.is_log_disabled {
-                    p.log().add_range_error(
-                        Some(p.source),
-                        type_colon_range,
-                        b"Unexpected \"...\"",
-                    );
-                    return Err(crate::Error::SyntaxError);
-                }
-                // `parsePrimaryExpression`: no expression starts with the dots.
-                p.lexer.ts_error(spread_range, 1109);
-                for item in items.iter_mut() {
-                    if let js_ast::expr::Data::ESpread(spread) = item.data {
-                        *item = spread.value;
-                    }
-                }
+                p.log()
+                    .add_range_error(Some(p.source), type_colon_range, b"Unexpected \"...\"");
+                return Err(crate::Error::SyntaxError);
             }
 
             let mut value = if p.is_tolerant() {
@@ -1461,15 +1476,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     fn parse_missing_parameter_name(&mut self, has_modifiers: bool) -> Result<Expr, Error> {
         let p = self;
         // `createIdentifierWithDiagnostic`
-        let range = p.lexer.range();
-        let code = if p.lexer.token == T::TPrivateIdentifier {
-            18009
-        } else if p.lexer.token.is_reserved_word() || p.lexer.token == T::TEscapedKeyword {
-            1359
+        if p.lexer.token == T::TPrivateIdentifier {
+            let range = p.lexer.range();
+            p.lexer.ts_error(range, 18009);
         } else {
-            1003
-        };
-        p.lexer.ts_error(range, code);
+            p.lexer.expected(T::TIdentifier)?;
+        }
         p.latest_arrow_arg_loc = p.lexer.full_start();
         let ref_ = p.store_name_in_ref(b"");
         let name = Expr::init_identifier(ref_, p.latest_arrow_arg_loc);
@@ -1589,8 +1601,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             && !(self.lexer.identifier == b"await"
                 && data.allow_await != AwaitOrYield::AllowIdent
                 // TypeScript parses the statements of a file outside any [Await] context, whether
-                // or not await is allowed there.
-                && !(data.is_top_level && data.allow_await == AwaitOrYield::AllowExpr))
+                // or not await is allowed there. `reparseTopLevelAwait` parses those again in it
+                // that have an identifier `await`.
+                && !(data.is_top_level
+                    && data.allow_await == AwaitOrYield::AllowExpr
+                    && !self.lexer.await_name_seen))
             && !(self.lexer.identifier == b"yield" && data.allow_yield != AwaitOrYield::AllowIdent)
     }
 
@@ -1664,6 +1679,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
         }
 
+        // `parseClassDeclarationOrExpression` restores `statementHasAwaitIdentifier` after an
+        // ambient class: `reparseTopLevelAwait` parses no statement again for an `await` in one,
+        // which stays outside the [Await] context.
+        let old_await = p.fn_or_arrow_data_parse.allow_await;
+        if opts.is_typescript_declare
+            && p.is_tolerant()
+            && p.fn_or_arrow_data_parse.is_top_level
+            && !p.lexer.await_name_seen
+        {
+            p.fn_or_arrow_data_parse.allow_await = AwaitOrYield::AllowIdent;
+        }
+
         // Even anonymous classes can have TypeScript type parameters
         if Self::IS_TYPESCRIPT_ENABLED {
             p.skip_class_type_parameters(&mut class_keyword.loc)?;
@@ -1681,6 +1708,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             .push_scope_for_parse_pass(js_ast::scope::Kind::ClassName, loc)
             .expect("unreachable");
         let class = p.parse_class(class_keyword, name, &class_opts)?;
+        p.fn_or_arrow_data_parse.allow_await = old_await;
 
         if Self::IS_TYPESCRIPT_ENABLED {
             if opts.is_typescript_declare {
@@ -1763,12 +1791,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         if raw == b"let" {
             p.lexer.next()?;
 
-            // `parseDeclarationWorker`: after modifiers "let" starts a declaration list whatever
-            // follows it. Only `parseStatement` asks `isLetDeclaration`.
-            let is_after_modifiers = p.is_tolerant() && p.statement_has_modifiers();
+            // `parseDeclarationWorker`, `parseForOrForInOrForOfStatement`: after modifiers and in
+            // the head of a "for", "let" starts a declaration list whatever follows it. Only
+            // `parseStatement` asks `isLetDeclaration`.
+            let is_declaration =
+                p.is_tolerant() && (opts.is_for_loop_init || p.statement_has_modifiers());
             match p.lexer.token {
                 token
-                    if is_after_modifiers
+                    if is_declaration
                         || matches!(token, T::TIdentifier | T::TOpenBracket | T::TOpenBrace) =>
                 {
                     if opts.lexical_decl == LexicalDecl::AllowAll
@@ -2308,12 +2338,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 is_computed = true;
                 let open_bracket = p.lexer.loc();
                 p.lexer.next()?;
-                let mut expr = p.parse_expr(Level::Comma)?;
-                if p.lexer.token == T::TComma && p.is_tolerant() {
-                    // `parseComputedPropertyName` accepts any expression:
-                    // `checkGrammarComputedPropertyName` reports the comma.
-                    p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
-                }
+                let mut expr = if p.is_tolerant() {
+                    p.parse_expression_of_computed_name()?
+                } else {
+                    p.parse_expr(Level::Comma)?
+                };
                 p.note_loc(&mut expr.loc, Mark::ComputedName, open_bracket);
                 key = expr;
                 p.lexer.expect(T::TCloseBracket)?;
@@ -2452,6 +2481,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             return Ok(G::DeclList::from_arena_slice(&decls));
         }
         let saved_contexts = p.enter_list(ListKind::VariableDeclarations);
+        // `parseVariableDeclarationList`: see `parse_expr_allow_in`.
+        let old_allow_in = p.allow_in;
+        if p.is_tolerant() {
+            p.allow_in = !opts.is_for_loop_init;
+        }
 
         loop {
             match p.classify_list_token(ListKind::VariableDeclarations)? {
@@ -2525,6 +2559,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             p.lexer.next()?;
         }
 
+        if p.is_tolerant() {
+            p.allow_in = old_allow_in;
+        }
         p.lexer.list_contexts = saved_contexts;
         Ok(G::DeclList::from_arena_slice(&decls))
     }
@@ -2797,7 +2834,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 T::TStringLiteral | T::TNoSubstitutionTemplateLiteral
             )
             .then(|| p.lexer.range().end());
-            let value = p.parse_detached(|p| p.parse_expr(Level::Comma))?;
+            let value = p.parse_expr(Level::Comma)?;
             count += 1;
             mode = match &key {
                 Some(key) if count == 1 => {
@@ -2879,8 +2916,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 let is_reparsing = eend == T::TEndOfFile && p.reparses_rest_of_file;
                 // `parseToplevelStatement`
                 if eend == T::TEndOfFile && !is_reparsing {
-                    p.lexer.await_name_seen = false;
+                    p.lexer.await_name_seen =
+                        p.statements_with_await_in_names.contains(&p.lexer.loc());
                     p.await_was_refused = false;
+                    p.await_read_as_identifier = false;
                 }
                 if !is_reparsing {
                     match p.classify_list_token(list)? {
@@ -2896,6 +2935,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             let outer_modifiers_base = p.begin_statement();
             let mut stmt = p.parse_stmt(&mut current_opts)?;
             p.end_statement(outer_modifiers_base, &mut stmt.loc);
+            if p.is_tolerant()
+                && p.await_read_as_identifier
+                && p.lexer.await_name_seen
+                && eend == T::TEndOfFile
+            {
+                p.await_read_as_identifier = false;
+                p.statements_with_await_in_names.push(stmt_start);
+            }
             if p.reparses_rest_of_file && eend == T::TEndOfFile && p.lexer.loc() == stmt_start {
                 p.lexer.next()?;
             }
@@ -3151,10 +3198,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             Some(false)
         } else if !has_type_parameters {
             p.is_parenthesized_arrow_function()
-        } else if p.is_jsx_enabled() {
-            // `nextIsParenthesizedArrowFunctionExpression`, at a "<": with JSX, whatever
-            // `is_ts_arrow_fn_jsx` accepts is an arrow function.
-            Some(true)
         } else {
             None
         };
@@ -3262,34 +3305,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
     }
 
-    /// The keywords of `parseModifiersEx` in `parseParameterEx`, at the first token of item number
-    /// `index` of the head of what is parsed as an arrow function. Adds them to `modifiers`, and
-    /// returns whether there are any.
+    /// `parseModifiersEx` in `parseParameterEx`, at the first token of item number `index` of the
+    /// head of what is parsed as an arrow function. Adds them to `modifiers`, and returns whether
+    /// there are any. `outer`: the context of the arrow function, in which decorators are parsed.
     #[cold]
     #[inline(never)]
     fn parse_arrow_parameter_modifiers(
         &mut self,
         index: usize,
+        outer: &FnOrArrowDataParse,
         modifiers: &mut Vec<(usize, crate::sema::ts_syntax::Modifier)>,
     ) -> Result<bool, Error> {
-        if self.lexer.is_log_disabled || !self.is_at_modifier(false) {
+        if self.lexer.is_log_disabled {
             return Ok(false);
         }
-        let first = bun_ast::Range {
-            loc: self.lexer.full_start(),
-            len: self.lexer.range().end().start - self.lexer.full_start().start,
+        let mut of_parameter = Vec::new();
+        let inner_is_top_level = core::mem::replace(
+            &mut self.fn_or_arrow_data_parse.is_top_level,
+            outer.is_top_level,
+        );
+        let first = self.parse_modifiers_of_parameter(outer.allow_await, &mut of_parameter);
+        self.fn_or_arrow_data_parse.is_top_level = inner_is_top_level;
+        let Some(first) = first? else {
+            return Ok(false);
         };
-        let mut has_static = false;
-        while self.is_at_modifier(has_static) {
-            has_static |= self.lexer.is_contextual_keyword(b"static");
-            let modifier = crate::sema::ts_syntax::Modifier {
-                flag: self.modifier_flag_here(),
-                loc: self.lexer.loc(),
-                decorator: None,
-            };
-            modifiers.push((index, modifier));
-            self.lexer.next_token()?;
-        }
+        modifiers.extend(of_parameter.into_iter().map(|modifier| (index, modifier)));
         if self.lexer.token == T::TThis {
             // Neither decorators nor modifiers may be applied to "this" parameters.
             self.lexer.ts_error(first, 1433);
@@ -3387,6 +3427,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             || p.check_for_arrow_after_the_current_token();
 
                         if is_arrow_fn {
+                            // `tryParseAsyncSimpleArrowFunctionExpression`: the name is parsed as
+                            // an expression.
+                            p.new_identifier();
                             let ref_ = p.store_name_in_ref(p.lexer.identifier);
                             let arg_loc = p.lexer.loc();
                             let arg_full_start = p.lexer.full_start();
@@ -3457,18 +3500,52 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     if Self::IS_TYPESCRIPT_ENABLED
                         && (!p.is_jsx_enabled() || p.is_ts_arrow_fn_jsx()?)
                     {
-                        match p
-                            .try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
-                            )? {
+                        let opts = ParenExprOpts {
+                            is_async: true,
+                            full_start: async_full_start,
+                            is_after_question_and_before_colon: p.is_tolerant()
+                                && flags == EFlags::AfterQuestionAndBeforeColon,
+                            ..Default::default()
+                        };
+                        // `isParenthesizedArrowFunctionExpression`: with JSX whatever
+                        // `is_ts_arrow_fn_jsx` accepts is an arrow function.
+                        if p.is_tolerant()
+                            && !p.lexer.is_log_disabled
+                            && p.is_jsx_enabled()
+                            && level.lte(Level::Assign)
+                        {
+                            let opts = ParenExprOpts {
+                                force_arrow_fn: true,
+                                is_after_question_and_before_colon: false,
+                                ..opts
+                            };
+                            return Self::pfx_generic_arrow_fn(p, async_range.loc, level, opts);
+                        }
+                        // `isParenthesizedArrowFunctionExpression`: without JSX the arrow function
+                        // is only tried. If none is there, "<" follows the name "async".
+                        let skipped = if p.is_tolerant()
+                            && !p.lexer.is_log_disabled
+                            && !p.is_jsx_enabled()
+                            && !Self::pfx_is_name_in_angle_brackets(p)
+                        {
+                            if level.lte(Level::Assign)
+                                && let Some(arrow) =
+                                    p.try_parse_generic_arrow_fn(async_range.loc, level, opts)?
+                            {
+                                return Ok(arrow);
+                            }
+                            SkipTypeParameterResult::DidNotSkipAnything
+                        } else {
+                            p.try_skip_type_script_type_parameters_then_open_paren_with_backtracking()?
+                        };
+                        match skipped {
                             SkipTypeParameterResult::DidNotSkipAnything => {}
                             result => {
                                 let type_parameters = p.saved_type_parameters(result);
                                 let opts = ParenExprOpts {
-                                    is_async: true,
-                                    full_start: async_full_start,
                                     force_arrow_fn: result
                                         == SkipTypeParameterResult::DefinitelyTypeParameters,
-                                    ..Default::default()
+                                    ..opts
                                 };
                                 let mut expr = if !opts.force_arrow_fn
                                     && p.is_tolerant()

@@ -61,6 +61,16 @@ if (mode === "gc") {
     "pending promise": res => ({ fetch: () => new Promise(resolve => setImmediate(resolve, res)) }),
     "error()": res => ({ fetch: fail, error: () => res }),
     "error() fulfilled promise": res => ({ fetch: fail, error: () => Promise.resolve(res) }),
+    // The handler's promise rejects. A server that waits for S3 has not
+    // responded when error() returns, and answers 204 in its place.
+    "error() after a rejected promise": res => ({
+      fetch: () => Promise.reject(new Error("handler failed")),
+      error: () => res,
+    }),
+    "error() after a pending promise rejects": res => ({
+      fetch: () => new Promise((_, reject) => setImmediate(reject, new Error("handler failed"))),
+      error: () => res,
+    }),
     "routes GET": res => ({ routes: { "/": { GET: () => res } } }),
   };
 

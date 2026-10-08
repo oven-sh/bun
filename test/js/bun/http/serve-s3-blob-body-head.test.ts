@@ -39,6 +39,8 @@ describe.concurrent("HEAD for a Response with an S3 file body", () => {
       "pending promise",
       "error()",
       "error() fulfilled promise",
+      "error() after a rejected promise",
+      "error() after a pending promise rejects",
       "routes GET",
     ];
     const head = {

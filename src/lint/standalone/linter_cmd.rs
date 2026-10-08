@@ -29,7 +29,7 @@ use bun_lint::linter::{
 };
 use bun_lint::options::Json;
 use bun_sema::atom::Interner;
-use bun_sema::bind::{BindOptions, bind_for_lint};
+use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
 use bun_sema::session::Session;
 use std::sync::OnceLock;
 
@@ -72,8 +72,9 @@ pub(crate) fn with_file<R>(
         before_es2020: false,
         before_es2017: false,
     };
-    let bound = bind_for_lint(&hir, bind_options, &atoms, arena);
-    let file = File::new(path.as_bytes(), &hir, &bound, &atoms, language, None);
+    let mut recycled = Recycled::of_this_thread();
+    let bound = bind_for_lint_in(&hir, bind_options, &atoms, &mut recycled);
+    let file = File::new(path.as_bytes(), &hir, bound, &atoms, language, None);
     then(&file)
 }
 

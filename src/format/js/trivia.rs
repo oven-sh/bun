@@ -7,12 +7,6 @@ use super::comments::{Comment, CommentKind, lines};
 use crate::prelude::*;
 use crate::write;
 
-/// Prettier's `mergeNestledJsdocComments`. JSDoc has a form in which several `/** .. */` directly
-/// follow each other, for the overloads of a function. They have to stay that way.
-fn should_nestle_adjacent_doc_comments(current: &Comment, next: &Comment) -> bool {
-    current.span.end == next.span.start && current.is_indentable_block() && next.is_indentable_block()
-}
-
 /// 0 if something is before `comment` on its line, 1 if nothing is, 2 if the line before is empty
 /// as well: Prettier's `hasNewline(.., { backwards: true })` and `isPreviousLineEmpty`.
 fn lines_before(comment: &Comment, f: &Formatter<'_>) -> usize {
@@ -63,7 +57,7 @@ fn write_leading_comments<'a>(comments: &'a [Comment], node_start: u32, f: &mut 
     // A comment that has been moved out of a node that is written as it is in the source is in that
     // text.
     let is_ignored = comments.iter().any(|comment| comment.is_moved() && f.comments().is_suppression_comment(comment));
-    for (index, comment) in comments.iter().enumerate() {
+    for comment in comments {
         f.comments_mut().increment_printed_count();
         if is_ignored && comment.is_moved() && comment.span.start >= node_start {
             continue;
@@ -73,12 +67,7 @@ fn write_leading_comments<'a>(comments: &'a [Comment], node_start: u32, f: &mut 
         let lines_after = f.source_text().lines_after(comment.span.end);
         match comment.kind {
             CommentKind::SingleLineBlock | CommentKind::MultiLineBlock => match lines_after {
-                0 => {
-                    let should_nestle = comments
-                        .get(index + 1)
-                        .is_some_and(|next| should_nestle_adjacent_doc_comments(comment, next));
-                    write!(f, maybe_space(!should_nestle));
-                }
+                0 => write!(f, space()),
                 1 if lines_before(comment, f) == 0 => write!(f, soft_line_break_or_space()),
                 1 => write!(f, hard_line_break()),
                 _ => write!(f, empty_line()),
@@ -136,8 +125,6 @@ fn write_trailing_comments<'a>(comments: &'a [Comment], f: &mut Formatter<'a>) {
         let lines_before = lines_before(comment, f);
         total_lines_before += lines_before;
 
-        let should_nestle = previous_comment
-            .is_some_and(|previous| should_nestle_adjacent_doc_comments(previous, comment));
         let is_after_line_comment = previous_comment.is_some_and(|previous| previous.is_line());
 
         // A comment on a line of its own at the end of a block or an object is a trailing comment
@@ -154,7 +141,6 @@ fn write_trailing_comments<'a>(comments: &'a [Comment], f: &mut Formatter<'a>) {
                 [
                     line_suffix(&format_with(|f| {
                         match lines_before {
-                            _ if should_nestle => {}
                             0 if is_after_line_comment => write!(f, hard_line_break()),
                             0 => write!(f, space()),
                             1 => write!(f, hard_line_break()),
@@ -168,7 +154,7 @@ fn write_trailing_comments<'a>(comments: &'a [Comment], f: &mut Formatter<'a>) {
         } else {
             // Nothing but a byte order mark is before it.
             let is_first_in_file = f.source_text().slice_range(0, comment.span.start) == b"\xEF\xBB\xBF";
-            let content = format_with(|f| write!(f, [maybe_space(!should_nestle && !is_first_in_file), comment]));
+            let content = format_with(|f| write!(f, [maybe_space(!is_first_in_file), comment]));
             if comment.is_line() {
                 write!(f, [line_suffix(&content), expand_parent()]);
             } else {
@@ -254,10 +240,7 @@ fn write_dangling_comments<'a>(
         let mut previous_comment: Option<&Comment> = None;
         for comment in comments {
             f.comments_mut().increment_printed_count();
-            let should_nestle = previous_comment
-                .is_some_and(|previous| should_nestle_adjacent_doc_comments(previous, comment));
-            let needs_break = previous_comment.is_some() && !should_nestle;
-            write!(f, [needs_break.then_some(hard_line_break()), comment]);
+            write!(f, [previous_comment.is_some().then_some(hard_line_break()), comment]);
             previous_comment = Some(comment);
         }
         if matches!(indent, DanglingIndentMode::Soft)

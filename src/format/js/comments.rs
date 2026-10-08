@@ -154,6 +154,18 @@ pub(crate) fn collect<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut Vec
         if matches!(content.trim_ascii(), b"prettier-ignore" | b"oxfmt-ignore") {
             flags |= SUPPRESSION;
         }
+        // Prettier's `mergeNestledJsdocComments`. JSDoc has a form in which several `/** .. */` directly
+        // follow each other, for the overloads of a function. They are one comment.
+        if flags & INDENTABLE != 0
+            && comments.len() > first
+            && let Some(previous) = comments.last_mut()
+            && previous.span.end == span.start
+            && previous.flags & INDENTABLE != 0
+        {
+            previous.span.end = span.end;
+            previous.flags = (previous.flags & !FOLLOWED_BY_NEWLINE) | (flags & !PRECEDED_BY_NEWLINE);
+            continue;
+        }
         comments.push(Comment {
             span,
             moved_to: NOT_MOVED,

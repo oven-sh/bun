@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ast_utils::is_configured_global;
+use rustc_hash::FxHashMap;
 
 /// Disallow non-null assertions in the left operand of a nullish coalescing operator.
 pub struct NoNonNullAssertedNullishCoalescing;
@@ -11,29 +12,40 @@ const NO_NON_NULL_ASSERTED_NULLISH_COALESCING: Message = Message::new(
 const SUGGEST_REMOVING_NON_NULL: Message =
     Message::new("suggestRemovingNonNull", "Remove the non-null assertion.");
 
+/// Where the first of what gives a variable a value ends.
+#[derive(Default)]
+pub struct State<'a> {
+    of_variables: FxHashMap<Symbol<'a>, Option<u32>>,
+    /// By the name, for the names that nothing in the file declares. `None` until it is asked for.
+    of_globals: Option<FxHashMap<Name<'a>, u32>>,
+}
+
 /// Whether `variable` is given a value by something that ends before `end`.
-fn has_assignment_before(variable: Symbol, end: u32) -> bool {
-    variable.declarations().any(|declaration| match (declaration, declaration.node()) {
-        (Declaration::Var(_), Some(Node::VarDecl(declarator))) => {
-            (declarator.is_definite() || declarator.init().is_some()) && declarator.span().end < end
-        }
-        _ => false,
-    }) || variable
-        .references()
-        .any(|reference| reference.is_write() && reference.span().end < end)
+fn has_assignment_before<'a>(variable: Symbol<'a>, end: u32, state: &mut State<'a>) -> bool {
+    let first = state.of_variables.entry(variable).or_insert_with(|| {
+        let declarators = variable.declarations().filter_map(|declaration| match (declaration, declaration.node()) {
+            (Declaration::Var(_), Some(Node::VarDecl(declarator))) => {
+                (declarator.is_definite() || declarator.init().is_some()).then(|| declarator.span().end)
+            }
+            _ => None,
+        });
+        let writes = variable.references().filter(|it| it.is_write()).map(|it| it.span().end);
+        declarators.chain(writes).min()
+    });
+    first.is_some_and(|it| it < end)
 }
 
 impl Rule for NoNonNullAssertedNullishCoalescing {
     const META: Meta = Meta::typescript("no-non-null-asserted-nullish-coalescing", Kind::Problem)
         .has_suggestions()
         .presets(Presets::STRICT);
-    type State<'a> = ();
+    type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoNonNullAssertedNullishCoalescing
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         on.exprs([ExprTag::NonNull], |_, e, cx| {
             let ExprKind::NonNull(operand) = e.kind() else {
                 return;
@@ -52,14 +64,19 @@ impl Rule for NoNonNullAssertedNullishCoalescing {
             let end = e.span().end;
             if let ExprKind::Ident(name) = operand.kind() {
                 let has_assignment = match operand.symbol() {
-                    Some(variable) => has_assignment_before(variable, end),
+                    Some(variable) => has_assignment_before(variable, end, &mut cx.state),
                     // To ESLint it is a variable without definitions.
                     None if is_configured_global(cx.file(), name.bytes()) => {
-                        cx.file().unresolved_references().any(|reference| {
-                            reference.is_write()
-                                && reference.name() == name
-                                && reference.span().end < end
-                        })
+                        let file = cx.file();
+                        let first_writes = cx.state.of_globals.get_or_insert_with(|| {
+                            let mut first_writes: FxHashMap<Name<'a>, u32> = FxHashMap::default();
+                            for reference in file.unresolved_references().filter(|it| it.is_write()) {
+                                let first = first_writes.entry(reference.name()).or_insert(u32::MAX);
+                                *first = reference.span().end.min(*first);
+                            }
+                            first_writes
+                        });
+                        first_writes.get(&name).is_some_and(|it| *it < end)
                     }
                     None => true,
                 };
@@ -70,5 +87,6 @@ impl Rule for NoNonNullAssertedNullishCoalescing {
             cx.report(e, NO_NON_NULL_ASSERTED_NULLISH_COALESCING)
                 .suggest(SUGGEST_REMOVING_NON_NULL, |fixer| fixer.remove(Span::new(end - 1, end)));
         });
+        State::default()
     }
 }

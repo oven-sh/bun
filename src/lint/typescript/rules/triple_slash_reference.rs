@@ -1,6 +1,8 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::text::trim_start;
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Policy {
@@ -39,6 +41,13 @@ pub struct Directive<'a> {
     policy: Policy,
 }
 
+#[derive(Default)]
+pub struct State<'a> {
+    directives: Vec<Directive<'a>>,
+    /// If they are many: where those are that an import is preferred to, by their modules.
+    by_module: FxHashMap<&'a [u8], SmallVec<[u32; 1]>>,
+}
+
 impl TripleSlashReference {
     /// `/^\/\s*<reference\s*(types|path|lib)\s*=\s*["|'](.*)["|']/`: what applies to the first
     /// group, and the second group.
@@ -68,17 +77,21 @@ impl TripleSlashReference {
             },
             _ => return,
         };
-        for directive in &cx.state {
-            if directive.policy == Policy::PreferImport && source == directive.module {
-                cx.report(directive.comment, TRIPLE_SLASH_REFERENCE).data("module", directive.module);
-            }
+        let report = |directive: &Directive<'a>| {
+            cx.report(directive.comment, TRIPLE_SLASH_REFERENCE).data("module", directive.module);
+        };
+        let State { directives, by_module } = &cx.state;
+        if by_module.is_empty() {
+            directives.iter().filter(|it| it.policy == Policy::PreferImport && source == it.module).for_each(report);
+        } else if let Some(positions) = by_module.get(source.bytes()) {
+            positions.iter().filter_map(|at| directives.get(*at as usize)).for_each(report);
         }
     }
 }
 
 impl Rule for TripleSlashReference {
     const META: Meta = Meta::typescript("triple-slash-reference", Kind::Suggestion).recommended();
-    type State<'a> = Vec<Directive<'a>>;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -89,11 +102,11 @@ impl Rule for TripleSlashReference {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Vec<Directive<'a>> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
         let mut directives = Vec::new();
         let program = file.program_span();
         if !strings::contains(file.slice(Span::new(0, program.start)), b"<reference") {
-            return directives;
+            return State::default();
         }
         for comment in file.comments_before(program) {
             if comment.kind() == TokenKind::Line
@@ -109,7 +122,7 @@ impl Rule for TripleSlashReference {
         }
         if directives.iter().any(|it| it.policy == Policy::Never) {
             on.finish(|_, cx| {
-                for directive in &cx.state {
+                for directive in &cx.state.directives {
                     if directive.policy == Policy::Never {
                         cx.report(directive.comment, TRIPLE_SLASH_REFERENCE)
                             .data("module", directive.module);
@@ -120,6 +133,12 @@ impl Rule for TripleSlashReference {
         if directives.iter().any(|it| it.policy == Policy::PreferImport) {
             on.stmts([StmtTag::Import, StmtTag::ImportEquals], Self::check_import);
         }
-        directives
+        let mut by_module: FxHashMap<&'a [u8], SmallVec<[u32; 1]>> = FxHashMap::default();
+        if directives.len() > 8 {
+            for (at, directive) in directives.iter().enumerate().filter(|it| it.1.policy == Policy::PreferImport) {
+                by_module.entry(directive.module).or_default().push(at as u32);
+            }
+        }
+        State { directives, by_module }
     }
 }

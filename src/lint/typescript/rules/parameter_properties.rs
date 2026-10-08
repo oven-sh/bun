@@ -1,5 +1,5 @@
 use bun_lint::prelude::*;
-use smallvec::SmallVec;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Require or disallow parameter properties in class constructors.
 pub struct ParameterProperties {
@@ -102,32 +102,33 @@ impl ParameterProperties {
             let members = class.members().iter();
             members.filter(|it| it.kind() == MemberKind::Constructor).filter_map(Member::func)
         };
-        let mut assigned: SmallVec<[Name<'a>; 8]> = SmallVec::new();
+        let mut assigned: FxHashSet<Name<'a>> = FxHashSet::default();
         for constructor in constructors() {
             let statements = constructor.body_statements().into_iter().flatten();
-            for name in statements.map_while(assigned_name) {
-                if !assigned.contains(&name) {
-                    assigned.push(name);
-                }
+            assigned.extend(statements.map_while(assigned_name));
+        }
+        if assigned.is_empty() {
+            return;
+        }
+        // Of several with the same name, the last counts.
+        let parameters: FxHashMap<Name<'a>, Param<'a>> =
+            constructors().flat_map(Func::params).filter_map(|it| Some((plain_name(it)?, it))).collect();
+        let mut properties: FxHashMap<Name<'a>, Member<'a>> = FxHashMap::default();
+        for member in class.members() {
+            if member.kind() == MemberKind::Property
+                && !member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR)
+                && member.init().is_none()
+                && !self.is_allowed(member.flags())
+                && let Some(name) = identifier_key(member)
+            {
+                properties.insert(name, member);
             }
         }
         for name in assigned {
-            // Of several with the same name, the last counts.
-            let mut parameters = constructors().flat_map(Func::params).rev();
-            let Some(parameter) = parameters.find(|it| plain_name(*it) == Some(name)) else {
-                continue;
-            };
-            let property = class.members().iter().rev().find(|it| {
-                it.kind() == MemberKind::Property
-                    && !it.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR)
-                    && it.init().is_none()
-                    && identifier_key(*it) == Some(name)
-                    && !self.is_allowed(it.flags())
-            });
-            if let Some(property) = property
-                && type_annotations_match(property, parameter)
+            if let (Some(parameter), Some(property)) = (parameters.get(&name), properties.get(&name))
+                && type_annotations_match(*property, *parameter)
             {
-                cx.report(property, PREFER_PARAMETER_PROPERTY).data("parameter", name);
+                cx.report(*property, PREFER_PARAMETER_PROPERTY).data("parameter", name);
             }
         }
     }

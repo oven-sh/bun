@@ -4,6 +4,8 @@ use bun_lint::utils::ts_utils::{
     FixOrSuggest, get_await_token_removal_range, get_fix_or_suggest,
     is_start_of_arrow_function_body_needing_parentheses,
 };
+use rustc_hash::FxHashMap;
+use smallvec::{SmallVec, smallvec};
 
 /// Enforce consistent awaiting of returned promises.
 pub struct ReturnAwait {
@@ -39,36 +41,53 @@ const REQUIRED_PROMISE_AWAIT_SUGGESTION: Message = Message::new(
     "Add `await` before the expression. Use caution as this may impact control flow.",
 );
 
-fn declares_resource_before<'a>(statement: Stmt<'a>, node: Expr<'a>) -> bool {
+/// Where the first `using` declaration of `statement` ends.
+fn end_of_first_resource(statement: Stmt) -> Option<u32> {
     let StmtKind::Var(declarations) = statement.kind() else {
-        return false;
+        return None;
     };
-    declarations.iter().any(|declarator| {
-        matches!(declarator.var_kind(), VarKind::Using | VarKind::AwaitUsing)
-            && declarator.span().end < node.span().start
-    })
+    let resources =
+        declarations.iter().filter(|declarator| matches!(declarator.var_kind(), VarKind::Using | VarKind::AwaitUsing));
+    resources.map(|declarator| declarator.span().end).min()
+}
+
+/// For each function, block, loop and `switch` statement that has `using` declarations directly in it: where the first ends.
+type Resources<'a> = FxHashMap<Node<'a>, u32>;
+
+fn resources_of<'a>(file: &'a File<'a>) -> Resources<'a> {
+    let mut resources = Resources::default();
+    for statement in file.stmts_of_kind(StmtTag::Var) {
+        let Some(end) = end_of_first_resource(statement) else {
+            continue;
+        };
+        let owner = match statement.parent() {
+            Node::Case(case) => case.parent(),
+            owner => owner,
+        };
+        resources.entry(owner).and_modify(|first| *first = end.min(*first)).or_insert(end);
+    }
+    resources
 }
 
 /// Whether a `using` declaration that comes before `node` is in scope, up to the function.
-fn affects_explicit_resource_management<'a>(node: Expr<'a>) -> bool {
-    let any = |statements: List<'a, Stmt<'a>>| {
-        statements.iter().any(|statement| declares_resource_before(statement, node))
-    };
+fn affects_explicit_resource_management<'a>(node: Expr<'a>, resources: &Resources<'a>) -> bool {
+    if resources.is_empty() {
+        return false;
+    }
     for ancestor in Node::Expr(node).ancestors() {
-        let found = match ancestor {
-            Node::Func(func) => return func.body_statements().is_some_and(any),
-            Node::Stmt(statement) => match statement.kind() {
-                StmtKind::Block(statements) => any(statements),
-                StmtKind::Switch { cases, .. } => cases.iter().any(|case| any(case.body())),
-                StmtKind::For { init: Some(head), .. }
-                | StmtKind::ForIn { left: head, .. }
-                | StmtKind::ForOf { left: head, .. } => declares_resource_before(head, node),
-                _ => false,
-            },
+        let has_scope = match ancestor {
+            Node::Func(_) => true,
+            Node::Stmt(statement) => matches!(
+                statement.tag(),
+                StmtTag::Block | StmtTag::Switch | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf
+            ),
             _ => false,
         };
-        if found {
+        if has_scope && resources.get(&ancestor).is_some_and(|&end| end < node.span().start) {
             return true;
+        }
+        if matches!(ancestor, Node::Func(_)) {
+            return false;
         }
     }
     false
@@ -130,7 +149,15 @@ fn insert_await<'a>(fixer: Fixer<'a>, node: Expr<'a>) -> Vec<Fix> {
 }
 
 impl ReturnAwait {
-    fn test<'a>(&self, node: Expr<'a>, cx: &Cx<'a, Self>) {
+    /// `returned`: what `node` is, or is a branch of. `affects_error_handling`: of `returned`, once it is known. Nothing between
+    /// the two makes a difference for it.
+    fn test<'a>(
+        &self,
+        node: Expr<'a>,
+        returned: Expr<'a>,
+        affects_error_handling: &mut Option<bool>,
+        cx: &mut Cx<'a, Self>,
+    ) {
         let (is_await, child) = match node.kind() {
             ExprKind::Await(argument) => (true, argument),
             _ => (false, node),
@@ -145,8 +172,11 @@ impl ReturnAwait {
         }
 
         // It is a thenable.
-        let affects_error_handling =
-            affects_explicit_error_handling(node) || affects_explicit_resource_management(node);
+        let affects_error_handling = *affects_error_handling.get_or_insert_with(|| {
+            let file = cx.file();
+            affects_explicit_error_handling(returned)
+                || affects_explicit_resource_management(returned, cx.state.get_or_insert_with(|| resources_of(file)))
+        });
         let (should_await_in_current_context, fix_or_suggest) = match affects_error_handling {
             true => (self.error_handling_context, FixOrSuggest::Suggest),
             false => (self.ordinary_context, FixOrSuggest::Fix),
@@ -173,13 +203,14 @@ impl ReturnAwait {
     }
 
     /// Upstream's `findPossiblyReturnedNodes`.
-    fn test_possibly_returned_nodes<'a>(&self, node: Expr<'a>, cx: &Cx<'a, Self>) {
-        match node.kind() {
-            ExprKind::Cond { yes, no, .. } => {
-                self.test_possibly_returned_nodes(no, cx);
-                self.test_possibly_returned_nodes(yes, cx);
+    fn test_possibly_returned_nodes<'a>(&self, returned: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let mut affects_error_handling = None;
+        let mut rest: SmallVec<[Expr<'a>; 8]> = smallvec![returned];
+        while let Some(node) = rest.pop() {
+            match node.kind() {
+                ExprKind::Cond { yes, no, .. } => rest.extend([yes, no]),
+                _ => self.test(node, returned, &mut affects_error_handling, cx),
             }
-            _ => self.test(node, cx),
         }
     }
 }
@@ -190,7 +221,8 @@ impl Rule for ReturnAwait {
         .has_suggestions()
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    /// Once it has been asked for.
+    type State<'a> = Option<Resources<'a>>;
 
     fn new(options: &Options) -> Self {
         use WhetherToAwait::{Await, DontCare, NoAwait};
@@ -206,7 +238,7 @@ impl Rule for ReturnAwait {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Option<Resources<'a>> {
         on.funcs(|rule, func, cx| {
             if func.is_async()
                 && let FnBody::Expr(body) = func.body()
@@ -226,5 +258,6 @@ impl Rule for ReturnAwait {
                 rule.test_possibly_returned_nodes(argument, cx);
             }
         });
+        None
     }
 }

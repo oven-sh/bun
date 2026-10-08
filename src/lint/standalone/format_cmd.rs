@@ -109,7 +109,7 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
         Some(_) => options,
         None => {
             with_format_javascript = FormatOptions {
-                format_javascript: Some(bun_format::options::FormatJavaScript(std::sync::Arc::new(format_javascript))),
+                format_javascript: Some(format_javascript),
                 ..options.clone()
             };
             &with_format_javascript

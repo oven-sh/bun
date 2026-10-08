@@ -109,8 +109,13 @@ impl<'p, 's> Checker<'p, 's> {
         then: impl FnOnce(&mut Services<'_, 'p, 's>) -> R,
     ) -> R {
         let arena = Arena::new();
+        // A reference whose control flow walk is too deep disables the analysis (2563), and from then
+        // on every reference has the error type, until the function or module block around it ends: at
+        // the top level of a file, for good. The questions of the rules are in no block, and begin
+        // with the analysis enabled. What the check has stored while it was disabled stays.
+        let flow_analysis_was_disabled = std::mem::take(&mut self.flow_analysis_disabled);
         let mut services = Services {
-            flow_analysis_was_disabled: self.flow_analysis_disabled,
+            flow_analysis_was_disabled,
             had_run_out_of_stack: self.ran_out_of_stack.get(),
             c: self,
             file,
@@ -142,6 +147,12 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     #[inline]
     pub fn checker(&mut self) -> &mut Checker<'p, 's> {
         self.c
+    }
+
+    /// Whether the control flow analysis was disabled when the file had been checked, or a question
+    /// has disabled it since: there are references in the file that have the error type.
+    pub fn was_flow_analysis_ever_disabled(&self) -> bool {
+        self.flow_analysis_was_disabled || self.c.flow_analysis_disabled
     }
 
     #[inline]

@@ -11,13 +11,13 @@ fn member_count(ty: TypeNode<'_>) -> usize {
 
 /// `| A` is a union of one type here. Prettier's parsers have it as `A`, so the parent of `A` is
 /// what the union is in.
-pub(crate) fn effective_parent(parent: AstNodes<'_>) -> AstNodes<'_> {
-    match parent {
-        AstNodes::TSUnionType(ty) | AstNodes::TSIntersectionType(ty) if member_count(ty) <= 1 => {
-            effective_parent(parent.parent())
-        }
-        other => other,
+pub(crate) fn effective_parent(mut parent: AstNodes<'_>) -> AstNodes<'_> {
+    while let AstNodes::TSUnionType(ty) | AstNodes::TSIntersectionType(ty) = parent
+        && member_count(ty) <= 1
+    {
+        parent = parent.parent();
     }
+    parent
 }
 
 pub(crate) fn needs_parentheses<'a>(ty: TypeNode<'a>, _f: &Formatter<'a>) -> bool {

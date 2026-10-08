@@ -64,7 +64,9 @@ pub(crate) fn write_ts_method_signature<'a>(member: Member<'a>, func: Func<'a>, 
     write!(f, group(&format_inner));
 }
 
-pub(crate) fn format_grouped_parameters_with_return_type<'a>(
+/// The type parameters, the parameters and the return type of a function type or of a signature
+/// without a name.
+fn format_grouped_parameters_with_return_type<'a>(
     func: Func<'a>,
     is_function_or_constructor_type: bool,
     f: &mut Formatter<'a>,

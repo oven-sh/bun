@@ -166,7 +166,9 @@ fn write_trailing_comments<'a>(comments: &'a [Comment], f: &mut Formatter<'a>) {
                 ]
             );
         } else {
-            let content = format_with(|f| write!(f, [maybe_space(!should_nestle), comment]));
+            // Nothing but a byte order mark is before it.
+            let is_first_in_file = f.source_text().slice_range(0, comment.span.start) == b"\xEF\xBB\xBF";
+            let content = format_with(|f| write!(f, [maybe_space(!should_nestle && !is_first_in_file), comment]));
             if comment.is_line() {
                 write!(f, [line_suffix(&content), expand_parent()]);
             } else {

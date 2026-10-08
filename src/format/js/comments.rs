@@ -128,7 +128,8 @@ pub(crate) fn collect<'a>(file: &'a File<'a>, comments: &mut Vec<Comment>) {
             _ => continue,
         };
         let mut flags = 0;
-        let is_first = text.get(..span.start as usize).unwrap_or_default().trim_ascii().is_empty();
+        let before = text.get(..span.start as usize).unwrap_or_default();
+        let is_first = before.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(before).trim_ascii().is_empty();
         if is_first || source.has_line_terminator_before(span.start) {
             flags |= PRECEDED_BY_NEWLINE;
         }

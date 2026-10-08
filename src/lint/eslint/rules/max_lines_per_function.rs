@@ -36,6 +36,22 @@ fn get_comment_only_lines<'a>(file: &'a File<'a>) -> Vec<bool> {
 }
 
 impl MaxLinesPerFunction {
+    /// For each line, and for 0, how many lines up to it count.
+    fn count_lines<'a>(&self, file: &'a File<'a>) -> Vec<u32> {
+        let comment_only_lines = match self.skips_comments {
+            true => get_comment_only_lines(file),
+            false => Vec::new(),
+        };
+        let mut count = 0;
+        let counts = (1..=file.line_count()).map(|line| {
+            let is_skipped = comment_only_lines.get(line as usize) == Some(&true)
+                || self.skips_blank_lines && text::is_blank(file.line_text(line));
+            count += u32::from(!is_skipped);
+            count
+        });
+        std::iter::once(0).chain(counts).collect()
+    }
+
     fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if !ast_utils::is_function_with_body(func) {
             return;
@@ -54,16 +70,9 @@ impl MaxLinesPerFunction {
         }
         let mut line_count = last - first + 1;
         if self.skips_comments || self.skips_blank_lines {
-            let comment_only_lines: &[bool] = match self.skips_comments {
-                true => cx.state.get_or_insert_with(|| get_comment_only_lines(file)).as_slice(),
-                false => &[],
-            };
-            line_count = (first..=last)
-                .filter(|&line| {
-                    comment_only_lines.get(line as usize) != Some(&true)
-                        && !(self.skips_blank_lines && text::is_blank(file.line_text(line)))
-                })
-                .count() as u32;
+            let counted = cx.state.get_or_insert_with(|| self.count_lines(file));
+            let up_to = |line: u32| counted.get(line as usize).map_or(0, |&it| it);
+            line_count = up_to(last).saturating_sub(up_to(first.saturating_sub(1)));
             if line_count <= self.max {
                 return;
             }
@@ -78,8 +87,8 @@ impl MaxLinesPerFunction {
 
 impl Rule for MaxLinesPerFunction {
     const META: Meta = Meta::eslint("max-lines-per-function", Kind::Suggestion);
-    /// What [`get_comment_only_lines`] returns, once it is needed.
-    type State<'a> = Option<Vec<bool>>;
+    /// What [`MaxLinesPerFunction::count_lines`] returns, once it is needed.
+    type State<'a> = Option<Vec<u32>>;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -91,7 +100,7 @@ impl Rule for MaxLinesPerFunction {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Option<Vec<bool>> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Option<Vec<u32>> {
         on.funcs(Self::check);
         None
     }

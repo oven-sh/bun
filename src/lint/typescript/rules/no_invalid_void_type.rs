@@ -1,4 +1,6 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ts_utils::{MemberAccessValue, get_static_member_access_value, has_overload_signatures, is_function_type};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Disallow `void` type outside of generic or return types.
 pub struct NoInvalidVoidType {
@@ -36,6 +38,89 @@ const INVALID_VOID_UNION_CONSTITUENT: Message = Message::new(
     "invalidVoidUnionConstituent",
     "void is not valid as a constituent in a union type",
 );
+
+/// typescript-eslint's `hasOverloadSignatures`, for a rule that asks it of every function of a body or every method of a class.
+#[derive(Default)]
+pub(crate) struct OverloadSignatures<'a> {
+    /// For what has many statements: how the function declarations without a body in it are exported, and their names.
+    functions: FxHashMap<Node<'a>, FxHashSet<(u32, Option<Name<'a>>)>>,
+    /// For a class with many members: the names of the methods without a body.
+    methods: FxHashMap<Class<'a>, FxHashSet<Option<MemberAccessValue<'a>>>>,
+}
+
+impl<'a> OverloadSignatures<'a> {
+    const FEW: usize = 16;
+
+    /// `node`: as for [`has_overload_signatures`].
+    pub(crate) fn has(&mut self, node: Node<'a>) -> bool {
+        let owner = match node {
+            Node::Func(func) => func.owner(),
+            _ => node,
+        };
+        match owner {
+            Node::Stmt(statement) => self.has_for_function(statement).unwrap_or_else(|| has_overload_signatures(node)),
+            Node::Member(member) => self.has_for_method(member).unwrap_or_else(|| has_overload_signatures(node)),
+            _ => false,
+        }
+    }
+
+    /// `None` where there are few statements.
+    fn has_for_function(&mut self, statement: Stmt<'a>) -> Option<bool> {
+        const EXPORT_DEFAULT: Flags = Flags::EXPORT.union(Flags::DEFAULT);
+        // A default export has an overload in any other.
+        let key = |statement: Stmt<'a>, func: Func<'a>| match statement.flags().intersection(EXPORT_DEFAULT) {
+            EXPORT_DEFAULT => (EXPORT_DEFAULT.bits(), None),
+            export => (export.bits(), func.name().map(|it| it.name())),
+        };
+        let StmtKind::Fn(func) = statement.kind() else {
+            return None;
+        };
+        let parent = statement.parent();
+        let siblings = match parent {
+            Node::File(file) => file.body(),
+            Node::Func(func) => func.body_statements()?,
+            Node::Stmt(parent) => match parent.kind() {
+                StmtKind::Block(statements) => statements,
+                StmtKind::Module(module) => module.body(),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        if siblings.len() <= Self::FEW {
+            return None;
+        }
+        let declared = self.functions.entry(parent).or_insert_with(|| {
+            let without_body = siblings.iter().filter_map(|it| match it.kind() {
+                StmtKind::Fn(func) if !func.has_body() => Some(key(it, func)),
+                _ => None,
+            });
+            without_body.collect()
+        });
+        Some(declared.contains(&key(statement, func)))
+    }
+
+    /// `None` where there are few members.
+    fn has_for_method(&mut self, member: Member<'a>) -> Option<bool> {
+        let Node::Class(class) = member.parent() else {
+            return None;
+        };
+        if class.members().len() <= Self::FEW {
+            return None;
+        }
+        let declared = self.methods.entry(class).or_insert_with(|| {
+            let without_body = |it: &Member<'a>| !it.flags().contains(Flags::ABSTRACT) && it.func().is_some_and(is_function_type);
+            class.members().iter().filter(without_body).map(get_static_member_access_value).collect()
+        });
+        Some(declared.contains(&get_static_member_access_value(member)))
+    }
+}
+
+#[derive(Default)]
+pub struct State<'a> {
+    /// For a union with many members: whether `void` is valid in it.
+    unions: FxHashMap<TypeNode<'a>, bool>,
+    overloads: OverloadSignatures<'a>,
+}
 
 fn is_void(ty: TypeNode) -> bool {
     ty.is_keyword(Keyword::Void)
@@ -146,10 +231,16 @@ impl NoInvalidVoidType {
             Node::Type(union) => {
                 if let TypeKind::Union(members) = union.kind() {
                     is_in_union = true;
-                    if members.iter().all(is_valid_union_member)
-                        || parent_function_declaration(parent)
-                            .is_some_and(ts_utils::has_overload_signatures)
-                    {
+                    let State { unions, overloads } = &mut cx.state;
+                    let mut is_valid = || {
+                        members.iter().all(is_valid_union_member)
+                            || parent_function_declaration(parent).is_some_and(|it| overloads.has(it))
+                    };
+                    let is_valid = match members.len() <= 4 {
+                        true => is_valid(),
+                        false => *unions.entry(union).or_insert_with(is_valid),
+                    };
+                    if is_valid {
                         return;
                     }
                 }
@@ -186,7 +277,7 @@ impl NoInvalidVoidType {
 impl Rule for NoInvalidVoidType {
     const META: Meta =
         Meta::typescript("no-invalid-void-type", Kind::Problem).presets(Presets::STRICT);
-    type State<'a> = ();
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -204,7 +295,8 @@ impl Rule for NoInvalidVoidType {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         on.types([TypeTag::Keyword], Self::check);
+        State::default()
     }
 }

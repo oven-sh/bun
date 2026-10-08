@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 use std::cmp::Reverse;
@@ -27,6 +28,10 @@ struct Memo<'a> {
     from_parameter: FxHashMap<Scope<'a>, FxHashMap<Name<'a>, bool>>,
     /// The names of the parameter properties of a constructor.
     parameter_properties: FxHashMap<Func<'a>, FxHashSet<Name<'a>>>,
+    /// What is around something: the property definition, the function, and the class whose body it is in.
+    property_definitions: AncestorMemo<'a, Member<'a>>,
+    functions: AncestorMemo<'a, Func<'a>>,
+    class_bodies: AncestorMemo<'a, Class<'a>>,
 }
 
 fn is_this_member_expression(e: Expr<'_>) -> bool {
@@ -49,11 +54,16 @@ fn get_property_name(e: Expr<'_>) -> Option<Cow<'_, [u8]>> {
     (!name.is_empty()).then_some(name)
 }
 
-fn find_parent_property_definition(e: Expr<'_>) -> Option<Member<'_>> {
-    Node::Expr(e).ancestors().find_map(|it| match it {
+fn find_parent_property_definition<'a>(e: Expr<'a>, memo: &mut Memo<'a>) -> Option<Member<'a>> {
+    memo.property_definitions.find(Node::Expr(e), |_, it| match it {
         Node::Member(member) if utils::estree_type_name(it) == "PropertyDefinition" => Some(member),
         _ => None,
     })
+}
+
+/// ESLint's `getUpperFunction`, of what is not a function.
+fn get_upper_function<'a>(e: Expr<'a>, memo: &mut Memo<'a>) -> Option<Func<'a>> {
+    memo.functions.find(Node::Expr(e), |_, it| ast_utils::as_function(it))
 }
 
 fn is_constructor_function_expression(func: Func<'_>) -> bool {
@@ -105,10 +115,9 @@ fn call_around_arrow(func: Func<'_>) -> Option<Expr<'_>> {
 }
 
 /// The innermost class whose body `e` is in.
-fn enclosing_class_body(e: Expr<'_>) -> Option<Class<'_>> {
-    let span = e.span();
-    Node::Expr(e).ancestors().find_map(|it| match it {
-        Node::Class(class) if class.body_span().contains(span) => Some(class),
+fn enclosing_class_body<'a>(e: Expr<'a>, memo: &mut Memo<'a>) -> Option<Class<'a>> {
+    memo.class_bodies.find(Node::Expr(e), |child, it| match it {
+        Node::Class(class) if class.body_span().contains(child.span()) => Some(class),
         _ => None,
     })
 }
@@ -146,8 +155,8 @@ fn check_in_constructor<'a>(e: Expr<'a>, constructor: Func<'a>, info: &mut Repor
 
 /// Whether the assignment `e`, whose innermost function is `function`, is made while a field is
 /// initialized.
-fn is_in_field_initializer<'a>(e: Expr<'a>, function: Option<Func<'a>>) -> bool {
-    let Some(field) = find_parent_property_definition(e) else {
+fn is_in_field_initializer<'a>(e: Expr<'a>, function: Option<Func<'a>>, memo: &mut Memo<'a>) -> bool {
+    let Some(field) = find_parent_property_definition(e, memo) else {
         return false;
     };
     match function {
@@ -185,14 +194,14 @@ impl NoUnnecessaryParameterPropertyAssignment {
         let mut infos: FxHashMap<Class<'a>, ReportInfo<'a>> = FxHashMap::default();
         let mut memo = Memo::default();
         for e in assignments {
-            let Some(class) = enclosing_class_body(e) else {
+            let Some(class) = enclosing_class_body(e, &mut memo) else {
                 continue;
             };
             let info = infos.entry(class).or_default();
 
-            let function = ast_utils::get_upper_function(e);
+            let function = get_upper_function(e, &mut memo);
             let constructor = match function.and_then(call_around_arrow) {
-                Some(call) => ast_utils::get_upper_function(call),
+                Some(call) => get_upper_function(call, &mut memo),
                 None => function,
             };
             if let Some(constructor) = constructor.filter(|it| is_constructor_function_expression(*it)) {
@@ -201,7 +210,7 @@ impl NoUnnecessaryParameterPropertyAssignment {
 
             if let ExprKind::Assign { target, .. } = e.kind()
                 && let Some(name) = get_property_name(target)
-                && is_in_field_initializer(e, function)
+                && is_in_field_initializer(e, function, &mut memo)
             {
                 info.assigned_before_constructor.insert(name);
             }

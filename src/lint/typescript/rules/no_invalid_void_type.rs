@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ts_utils::{MemberAccessValue, get_static_member_access_value, has_overload_signatures, is_function_type};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -120,6 +121,7 @@ pub struct State<'a> {
     /// For a union with many members: whether `void` is valid in it.
     unions: FxHashMap<TypeNode<'a>, bool>,
     overloads: OverloadSignatures<'a>,
+    parent_function_declarations: AncestorMemo<'a, Node<'a>>,
 }
 
 fn is_void(ty: TypeNode) -> bool {
@@ -141,15 +143,16 @@ fn is_valid_union_member(member: TypeNode) -> bool {
 
 /// typescript-eslint's `getParentFunctionDeclarationNode`: the innermost function declaration or
 /// method of a class around `node` that has a body.
-fn parent_function_declaration(node: Node<'_>) -> Option<Node<'_>> {
-    node.ancestors().find(|ancestor| match *ancestor {
+fn parent_function_declaration<'a>(node: Node<'a>, known: &mut AncestorMemo<'a, Node<'a>>) -> Option<Node<'a>> {
+    let is_one = |ancestor: Node<'a>| match ancestor {
         Node::Func(func) => func.kind() == FnKind::Decl && func.has_body(),
         Node::Member(member) => {
-            utils::estree_type_name(*ancestor) == "MethodDefinition"
+            utils::estree_type_name(ancestor) == "MethodDefinition"
                 && member.func().is_some_and(Func::has_body)
         }
         _ => false,
-    })
+    };
+    known.find(node, |_, ancestor| is_one(ancestor).then_some(ancestor))
 }
 
 impl NoInvalidVoidType {
@@ -231,10 +234,14 @@ impl NoInvalidVoidType {
             Node::Type(union) => {
                 if let TypeKind::Union(members) = union.kind() {
                     is_in_union = true;
-                    let State { unions, overloads } = &mut cx.state;
+                    let State {
+                        unions,
+                        overloads,
+                        parent_function_declarations: known,
+                    } = &mut cx.state;
                     let mut is_valid = || {
                         members.iter().all(is_valid_union_member)
-                            || parent_function_declaration(parent).is_some_and(|it| overloads.has(it))
+                            || parent_function_declaration(parent, known).is_some_and(|it| overloads.has(it))
                     };
                     let is_valid = match members.len() <= 4 {
                         true => is_valid(),

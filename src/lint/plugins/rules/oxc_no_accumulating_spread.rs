@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::FxHashMap;
 
 /// Prevents using object or array spreads on accumulators in `Array.prototype.reduce()` and in loops.
@@ -8,10 +9,17 @@ pub struct NoAccumulatingSpread;
 const REDUCE_SPREAD: Message = Message::new("reduceSpread", "Do not spread accumulators in Array.prototype.reduce()");
 const LOOP_SPREAD: Message = Message::new("loopSpread", "Do not spread accumulators in loops");
 
+#[derive(Default)]
+pub struct State<'a> {
+    /// What is first assigned to, for each variable that was asked about.
+    first_assignments: FxHashMap<Symbol<'a>, Option<Expr<'a>>>,
+    /// Whether something is in a call of `reduce` or in a loop.
+    in_reduce_or_loop: AncestorMemo<'a, ()>,
+}
+
 impl Rule for NoAccumulatingSpread {
     const META: Meta = Meta::plugin(Plugin::Oxc, "no-accumulating-spread", Kind::Suggestion);
-    /// What is first assigned to, for each variable that was asked about.
-    type State<'a> = FxHashMap<Symbol<'a>, Option<Expr<'a>>>;
+    type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoAccumulatingSpread
@@ -20,7 +28,7 @@ impl Rule for NoAccumulatingSpread {
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
         let loops = [StmtTag::For, StmtTag::ForIn, StmtTag::ForOf, StmtTag::While, StmtTag::DoWhile];
         if !file.mentions_any(&["reduce", "reduceRight"]) && !file.has_stmts(loops) {
-            return FxHashMap::default();
+            return State::default();
         }
         on.exprs([ExprTag::Spread], |_, spread, cx| {
             if let ExprKind::Spread(argument) = spread.kind()
@@ -42,7 +50,7 @@ impl Rule for NoAccumulatingSpread {
                 }
             }
         });
-        FxHashMap::default()
+        State::default()
     }
 }
 
@@ -51,7 +59,8 @@ fn check<'a>(spread: Node<'a>, argument: Expr<'a>, cx: &mut Cx<'a, NoAccumulatin
         return;
     }
     // Before anything is asked about variables.
-    if !spread.ancestors().any(|it| is_call_of_reduce(it) || matches!(it, Node::Stmt(stmt) if stmt.is_loop())) {
+    let is_reduce_or_loop = |it: Node<'a>| is_call_of_reduce(it) || matches!(it, Node::Stmt(stmt) if stmt.is_loop());
+    if cx.state.in_reduce_or_loop.find(spread, |_, parent| is_reduce_or_loop(parent).then_some(())).is_none() {
         return;
     }
     let Some(symbol) = argument.symbol() else {
@@ -120,7 +129,7 @@ fn check_loop_usage<'a>(spread: Node<'a>, pat: Pat<'a>, symbol: Symbol<'a>, cx: 
     }
     // Only the first assignment counts.
     let first_assignment = || symbol.references().find(|it| it.is_write() && !it.is_init()).and_then(Reference::expr);
-    let Some(target) = *cx.state.entry(symbol).or_insert_with(first_assignment) else {
+    let Some(target) = *cx.state.first_assignments.entry(symbol).or_insert_with(first_assignment) else {
         return;
     };
     let Node::Expr(assignment) = target.parent() else {

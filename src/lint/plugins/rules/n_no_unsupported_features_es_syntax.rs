@@ -7,6 +7,7 @@ use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex::{self, Handler, Mode as RegexMode};
 use bun_lint::rule::Plugin;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::eslint_utils::{ReferenceKind, ReferenceTracker, TraceMap, get_property_name, get_string_if_constant};
 use rustc_hash::FxHashMap;
 use std::cell::RefCell;
@@ -40,6 +41,9 @@ pub struct State<'a> {
     types: RefCell<ExpressionTypes<'a>>,
     /// The `var` declarators of the variables that have the name of a parameter of a `catch` clause, in the order of the source.
     var_declarators: FxHashMap<Symbol<'a>, Vec<VarDecl<'a>>>,
+    /// The function around something, and the one that is not an arrow function.
+    function_around: AncestorMemo<'a, ()>,
+    function_with_this_around: AncestorMemo<'a, Func<'a>>,
 }
 
 type Context<'a> = Cx<'a, EsSyntax>;
@@ -122,8 +126,8 @@ fn is_function(func: Func) -> bool {
         )
 }
 
-fn is_in_function(node: Node) -> bool {
-    node.ancestors().any(|it| matches!(it, Node::Func(func) if is_function(func)))
+fn is_in_function<'a>(node: Node<'a>, known: &mut AncestorMemo<'a, ()>) -> bool {
+    known.find(node, |_, parent| matches!(parent, Node::Func(func) if is_function(func)).then_some(())).is_some()
 }
 
 /// The `,` before the token at `close`, if there is one.
@@ -233,7 +237,7 @@ impl Rule for EsSyntax {
         }
         if active.has(TOP_LEVEL_AWAIT) {
             on.exprs([ExprTag::Await], |rule, e, cx| {
-                if !is_in_function(Node::Expr(e)) {
+                if !is_in_function(Node::Expr(e), &mut cx.state.function_around) {
                     rule.report(cx, TOP_LEVEL_AWAIT, e.span());
                 }
             });
@@ -259,7 +263,8 @@ impl Rule for EsSyntax {
         if active.has(OBJECT_SUPER_PROPERTIES) {
             on.exprs([ExprTag::Super], |rule, e, cx| {
                 // The function that it is in, not counting arrow functions.
-                let func = Node::Expr(e).ancestors().find_map(|it| it.as_func().filter(|it| is_function(*it) && !it.is_arrow()));
+                let with_this = |it: Node<'a>| it.as_func().filter(|it| is_function(*it) && !it.is_arrow());
+                let func = cx.state.function_with_this_around.find(Node::Expr(e), |_, parent| with_this(parent));
                 let is_in_object_method = func.is_some_and(|func| match func.owner() {
                     Node::Expr(owner) => matches!(owner.parent(), Node::Prop(prop) if prop.kind() == PropKind::Method),
                     _ => false,
@@ -325,6 +330,8 @@ impl Rule for EsSyntax {
             methods,
             types: RefCell::default(),
             var_declarators: FxHashMap::default(),
+            function_around: AncestorMemo::default(),
+            function_with_this_around: AncestorMemo::default(),
         }
     }
 }
@@ -659,7 +666,7 @@ impl EsSyntax {
                 self.report(cx, FOR_OF_LOOPS, stmt.span());
                 if is_await {
                     self.report(cx, ASYNC_ITERATION, stmt.span());
-                    if !is_in_function(Node::Stmt(stmt)) {
+                    if !is_in_function(Node::Stmt(stmt), &mut cx.state.function_around) {
                         self.report(cx, TOP_LEVEL_AWAIT, stmt.span());
                     }
                 }

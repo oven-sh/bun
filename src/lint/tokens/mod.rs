@@ -270,6 +270,14 @@ fn within(all: &[RawToken], span: Span) -> &[RawToken] {
     &all[first..first + count]
 }
 
+/// Scans `file` without keeping the result, to measure it. Returns the number of tokens and
+/// comments.
+#[doc(hidden)]
+pub fn scan_again(file: &File) -> usize {
+    let store = scan::scan(file);
+    store.tokens.len() + store.comments.len()
+}
+
 impl<'a> File<'a> {
     pub(crate) fn token_store(&self) -> &TokenStore {
         self.lazy.tokens.get_or_init(|| scan::scan(self))

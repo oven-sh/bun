@@ -32,6 +32,8 @@ pub struct State<'a> {
     func_infos: Vec<FuncInfo<'a>>,
     /// By `Segment::id`, for the segments of the constructors that are checked.
     seg_info_map: FxHashMap<u32, SegmentInfo<'a>>,
+    /// `winding_switches`
+    winding_switches: Option<Vec<u32>>,
 }
 
 impl<'a> State<'a> {
@@ -88,7 +90,32 @@ fn calls_super_first(constructor: Func<'_>) -> bool {
     })
 }
 
+/// Where the `switch` statements start whose `default` is not the last case, sorted. Where such a statement is not
+/// reached, ESLint has a segment that is reached and that nothing precedes, so `super()` is not called before it.
+fn winding_switches<'a>(file: &'a File<'a>) -> Vec<u32> {
+    let is_winding = |statement: &Stmt| match statement.kind() {
+        StmtKind::Switch { cases, .. } => {
+            cases.iter().position(|it| it.test().is_none()).is_some_and(|at| at + 1 < cases.len())
+        }
+        _ => false,
+    };
+    let winding = file.stmts_of_kind(StmtTag::Switch).filter(is_winding);
+    let mut starts: Vec<u32> = winding.map(|it| it.span().start).collect();
+    starts.sort_unstable();
+    starts
+}
+
 impl NoThisBeforeSuper {
+    fn has_winding_switch<'a>(constructor: Func<'a>, cx: &mut Cx<'a, Self>) -> bool {
+        let file = cx.file();
+        if !file.has_stmts([StmtTag::Switch]) {
+            return false;
+        }
+        let starts = cx.state.winding_switches.get_or_insert_with(|| winding_switches(file));
+        let span = constructor.span();
+        starts.get(starts.partition_point(|&it| it < span.start)).is_some_and(|&it| it < span.end)
+    }
+
     fn check_constructor<'a>(&self, constructor: Func<'a>, cx: &mut Cx<'a, Self>) {
         cx.state.constructor = Some(constructor);
         for step in constructor.code_path_steps([ExprTag::This, ExprTag::Super], ExprTag::Call) {
@@ -202,7 +229,7 @@ impl Rule for NoThisBeforeSuper {
             }
             let constructors = class.members().iter().filter(|it| it.is_constructor());
             for constructor in constructors.filter_map(Member::func).filter(|it| it.has_body()) {
-                if !calls_super_first(constructor) {
+                if !calls_super_first(constructor) || Self::has_winding_switch(constructor, cx) {
                     rule.check_constructor(constructor, cx);
                 }
             }

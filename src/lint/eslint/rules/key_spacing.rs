@@ -1,3 +1,4 @@
+use super::function_paren_newline::is_on_one_line;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::ast_utils::{get_static_key_name, is_colon_token};
@@ -260,8 +261,7 @@ impl KeySpacing {
         let Some(actual) = get_property_whitespace(cx.file(), key, value_start) else {
             return;
         };
-        let is_on_one_line = |span: Span| cx.line_of(span.start) == cx.line_of(span.end);
-        let is_single_line = self.single_line != self.multi_line && is_on_one_line(parent());
+        let is_single_line = self.single_line != self.multi_line && is_on_one_line(cx.file(), parent());
         let options = if is_single_line { self.single_line } else { self.multi_line };
         verify_spacing(cx, key, actual, options);
     }
@@ -294,7 +294,7 @@ impl KeySpacing {
             return;
         };
         let file = cx.file();
-        if !text::has_line_break(file.slice(first.span().to(last.span()))) {
+        if is_on_one_line(file, first.span().to(last.span())) {
             return verify_list_spacing(cx, properties.iter().copied(), self.multi_line);
         }
         let widths: SmallVec<[usize; 16]> =
@@ -333,7 +333,7 @@ impl KeySpacing {
         if properties.is_empty() || utils::is_assignment_target(e) {
             return;
         }
-        if !text::has_line_break(e.text()) {
+        if is_on_one_line(cx.file(), e.span()) {
             return verify_list_spacing(cx, properties.iter(), self.single_line);
         }
         let file = cx.file();

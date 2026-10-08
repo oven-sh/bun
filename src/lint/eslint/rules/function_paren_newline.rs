@@ -79,6 +79,18 @@ fn opening_paren_of_arrow_function(file: &File, func: Func) -> Option<Span> {
     opening_paren_at(text, first)
 }
 
+/// Whether there is no line break in `span`. The start of it is looked at, where most that have one have the first. What is
+/// left of a long one is asked of the lines of the file, which does not take time in proportion to its length.
+#[inline]
+pub(crate) fn is_on_one_line(file: &File<'_>, span: Span) -> bool {
+    const LOOKED_AT: u32 = 512;
+    if span.len() <= LOOKED_AT {
+        return !text::has_line_break(file.slice(span));
+    }
+    let middle = span.start + LOOKED_AT;
+    !text::has_line_break(file.slice(Span::new(span.start, middle))) && file.is_on_same_line(middle, span.end)
+}
+
 impl FunctionParenNewline {
     /// `count`: how many `elements` there are.
     fn validate<'a>(
@@ -94,7 +106,7 @@ impl FunctionParenNewline {
             right,
             before_right,
         } = parens;
-        let is_on_one_line = !text::has_line_break(file.slice(left.between(right)));
+        let is_on_one_line = is_on_one_line(file, left.between(right));
         if is_on_one_line && !matches!(self.mode, Mode::MinItems(min_items) if count >= min_items) {
             return;
         }

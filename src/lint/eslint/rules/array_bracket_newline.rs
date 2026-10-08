@@ -1,3 +1,4 @@
+use super::function_paren_newline::is_on_one_line;
 use bun_lint::prelude::*;
 
 /// Enforce linebreaks after opening and before closing array brackets.
@@ -25,7 +26,7 @@ impl ArrayBracketNewline {
     /// `span`: the range of ESLint's `ArrayExpression` or `ArrayPattern`.
     fn check<'a>(&self, span: Span, len: usize, cx: &Cx<'a, Self>) -> Option<()> {
         let file = cx.file();
-        if len < self.min_items && !text::has_line_break(file.slice(span)) {
+        if len < self.min_items && is_on_one_line(file, span) {
             return None;
         }
         let open_bracket = file.first_token(span)?;

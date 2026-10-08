@@ -168,9 +168,11 @@ describe.concurrent("bun lint", () => {
     });
 
     test("files, directories and patterns", async () => {
-      expect(await listed(["a.js", "src/deep"])).toEqual({ files: ["<dir>/a.js", "<dir>/src/deep/f.js"], exitCode: 0 });
-      expect(await listed(["src/*.{mjs,cjs}"])).toEqual({ files: ["<dir>/src/b.mjs", "<dir>/src/c.cjs"], exitCode: 0 });
-      expect(await listed(["**/f.js"])).toEqual({ files: ["<dir>/src/deep/f.js"], exitCode: 0 });
+      expect(await Promise.all([listed(["a.js", "src/deep"]), listed(["src/*.{mjs,cjs}"]), listed(["**/f.js"])])).toEqual([
+        { files: ["<dir>/a.js", "<dir>/src/deep/f.js"], exitCode: 0 },
+        { files: ["<dir>/src/b.mjs", "<dir>/src/c.cjs"], exitCode: 0 },
+        { files: ["<dir>/src/deep/f.js"], exitCode: 0 },
+      ]);
     });
 
     test("--ext", async () => {
@@ -441,6 +443,145 @@ describe.concurrent("bun lint", () => {
         3 problems"
       `);
       expect(exitCode).toBe(1);
+    });
+
+    describe("like oxlint, with an .oxlintrc.json", () => {
+      const rc = (more: object = {}) =>
+        JSON.stringify({ categories: { correctness: "off" }, rules: { "no-debugger": "error", eqeqeq: "warn" }, ...more });
+      const files = { ".oxlintrc.json": rc(), "a.js": "debugger;\nif (é == b) {}\n", "src/b.ts": "export const b = 1;\n" };
+
+      test("-f json is oxlint's: offsets and columns in bytes, plugin(rule)", async () => {
+        const { raw, exitCode } = await lint(files, ["-f", "json", "--threads", "2"]);
+        const { start_time, ...report } = JSON.parse(raw);
+        expect(report).toEqual({
+          diagnostics: [
+            {
+              message: "Unexpected 'debugger' statement.",
+              code: "eslint(no-debugger)",
+              severity: "error",
+              filename: "a.js",
+              labels: [{ span: { offset: 0, length: 9, line: 1, column: 1 } }],
+            },
+            {
+              message: "Expected '===' and instead saw '=='.",
+              code: "eslint(eqeqeq)",
+              severity: "warning",
+              filename: "a.js",
+              labels: [{ span: { offset: 17, length: 2, line: 2, column: 8 } }],
+            },
+          ],
+          number_of_files: 2,
+          number_of_rules: 2,
+          threads_count: 2,
+        });
+        expect(start_time).toBeNumber();
+        expect(exitCode).toBe(1);
+      });
+
+      test("--rules -f json", async () => {
+        const { raw, exitCode } = await lint(files, ["--rules", "-f", "json"]);
+        const rules = JSON.parse(raw);
+        const find = (scope: string, value: string) => rules.find((it: any) => it.scope === scope && it.value === value);
+        expect(find("eslint", "no-debugger")).toEqual({
+          scope: "eslint",
+          value: "no-debugger",
+          category: "correctness",
+          type_aware: false,
+          fix: "none",
+          default: true,
+          docs_url: "https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-debugger.html",
+        });
+        expect(find("typescript", "no-floating-promises").type_aware).toBe(true);
+        expect(exitCode).toBe(0);
+      });
+
+      test("checkstyle, junit, gitlab, sarif", async () => {
+        const [checkstyle, junit, gitlab, sarif] = await Promise.all(
+          ["checkstyle", "junit", "gitlab", "sarif"].map(format => lint(files, ["-f", format, "a.js"])),
+        );
+        expect(checkstyle.stdout).toMatchInlineSnapshot(`"<?xml version="1.0" encoding="utf-8"?><checkstyle version="4.3"><file name="a.js"><error line="1" column="1" severity="error" message="Unexpected &apos;debugger&apos; statement." source="eslint(no-debugger)" /><error line="2" column="7" severity="warning" message="Expected &apos;===&apos; and instead saw &apos;==&apos;." source="eslint(eqeqeq)" /></file></checkstyle>"`);
+        expect(junit.stdout).toMatchInlineSnapshot(`
+          "<?xml version="1.0" encoding="UTF-8"?>
+          <testsuites name="Oxlint" tests="2" failures="1" errors="1">
+              <testsuite name="a.js" tests="2" disabled="0" errors="1" failures="1">
+                  <testcase name="eslint(no-debugger)">
+                      <error message="Unexpected &apos;debugger&apos; statement.">line 1, column 1, Unexpected &apos;debugger&apos; statement.</error>
+                  </testcase>
+                  <testcase name="eslint(eqeqeq)">
+                      <failure message="Expected &apos;===&apos; and instead saw &apos;==&apos;.">line 2, column 7, Expected &apos;===&apos; and instead saw &apos;==&apos;.</failure>
+                  </testcase>
+              </testsuite>
+          </testsuites>"
+        `);
+        expect(JSON.parse(gitlab.raw).map(({ fingerprint, ...it }: any) => it)).toEqual([
+          {
+            description: "Unexpected 'debugger' statement.",
+            check_name: "eslint(no-debugger)",
+            severity: "critical",
+            location: { path: "a.js", lines: { begin: 1, end: 1 } },
+          },
+          {
+            description: "Expected '===' and instead saw '=='.",
+            check_name: "eslint(eqeqeq)",
+            severity: "major",
+            location: { path: "a.js", lines: { begin: 2, end: 2 } },
+          },
+        ]);
+        const run = JSON.parse(sarif.raw).runs[0];
+        expect(run.results.map((it: any) => [it.ruleId, it.level, it.locations[0].physicalLocation.region])).toEqual([
+          ["eslint(no-debugger)", "error", { startLine: 1, startColumn: 1, endLine: 1, endColumn: 10 }],
+          ["eslint(eqeqeq)", "warning", { startLine: 2, startColumn: 7, endLine: 2, endColumn: 9 }],
+        ]);
+      });
+
+      test("an argument that matches nothing is no error, no file at all is, with 1", async () => {
+        const [some, none, tolerated] = await Promise.all([
+          lint(files, ["-f", "unix", "nothing.js", "src/b.ts"]),
+          lint(files, ["nothing.js"]),
+          lint(files, ["--no-error-on-unmatched-pattern", "nothing.js"]),
+        ]);
+        expect({ some: some.exitCode, none: none.exitCode, tolerated: tolerated.exitCode }).toEqual({ some: 0, none: 1, tolerated: 0 });
+        expect(none.stderr).toContain("No files found to lint. Please check your paths and ignore patterns.");
+      });
+
+      test("options in the file: denyWarnings, maxWarnings", async () => {
+        const warns = { "a.js": "if (a == b) {}\n" };
+        const [plain, denied, limited] = await Promise.all([
+          lint({ ...warns, ".oxlintrc.json": rc() }, []),
+          lint({ ...warns, ".oxlintrc.json": rc({ options: { denyWarnings: true } }) }, []),
+          lint({ ...warns, ".oxlintrc.json": rc({ options: { maxWarnings: 0 } }) }, []),
+        ]);
+        expect({ plain: plain.exitCode, denied: denied.exitCode, limited: limited.exitCode }).toEqual({ plain: 0, denied: 1, limited: 1 });
+      });
+
+      test("a file that is named is left out if --ignore-path has it", async () => {
+        const { stdout, exitCode } = await lint({ ...files, "my.ignore": "a.js\n" }, [
+          "-f",
+          "unix",
+          "--ignore-path",
+          "my.ignore",
+          "a.js",
+          "src/b.ts",
+        ]);
+        expect(stdout).toBe("");
+        expect(exitCode).toBe(0);
+      });
+
+      test("-c: the patterns are from the directory of the file", async () => {
+        const { stdout } = await lint(
+          {
+            "configs/x.json": rc({ overrides: [{ files: ["src/*.js"], rules: { "no-debugger": "off" } }] }),
+            "configs/src/a.js": "debugger;\n",
+            "src/a.js": "debugger;\n",
+          },
+          ["-c", "configs/x.json", "-f", "unix"],
+        );
+        expect(stdout).toMatchInlineSnapshot(`
+          "<dir>/src/a.js:1:1: Unexpected 'debugger' statement. [Error/no-debugger]
+
+          1 problem"
+        `);
+      });
     });
 
     test(".eslintrc.json", async () => {

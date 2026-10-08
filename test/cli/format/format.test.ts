@@ -342,6 +342,59 @@ describe.concurrent("bun format", () => {
       expect(await different(files, ["--check-ignore-pragma"])).toEqual(["format.js", "in-text.js", "none.js", "prettier.js"]);
     });
 
+    describe("like oxfmt, with an .oxfmtrc.json", () => {
+      const project = {
+        ".oxfmtrc.json": "{}\n",
+        ".git/HEAD": "ref: refs/heads/main\n",
+        ".gitignore": "ignored.js\n",
+        "src/.gitignore": "nested.js\n",
+        "a.js": ugly,
+        "ignored.js": ugly,
+        "src/b.ts": ugly,
+        "src/nested.js": ugly,
+        "src/deep/c.js": ugly,
+      };
+
+      test("every .gitignore counts, ! is in the format of .gitignore, a pattern without a slash is for every directory", async () => {
+        expect(
+          await Promise.all([different(project, []), different(project, ["!deep"]), different(project, ["*.ts"])]),
+        ).toEqual([["a.js", "src/b.ts", "src/deep/c.js"], ["a.js", "src/b.ts"], ["src/b.ts"]]);
+      });
+
+      test("nested configuration files, --disable-nested-config, .prettierrc is not read", async () => {
+        const files = {
+          ".oxfmtrc.json": `{ "semi": false }\n`,
+          "src/.oxfmtrc.json": `{ "singleQuote": true }\n`,
+          "lib/.prettierrc": `{ "tabWidth": 8 }`,
+          "src/a.js": ugly,
+          "lib/b.js": ugly,
+        };
+        const reads = ["src/a.js", "lib/b.js"];
+        const [nested, disabled] = await Promise.all([format(files, [], { reads }), format(files, ["--disable-nested-config"], { reads })]);
+        expect(nested.files).toEqual({ "src/a.js": formatted.replaceAll('"', "'"), "lib/b.js": noSemi });
+        expect(disabled.files).toEqual({ "src/a.js": noSemi, "lib/b.js": noSemi });
+      });
+
+      test("insertFinalNewline, sortPackageJson", async () => {
+        const result = await format(
+          {
+            ".oxfmtrc.json": `{ "insertFinalNewline": false }`,
+            "a.js": "a()\n",
+            "package.json": `{ "version": "1.0.0", "name": "x" }`,
+          },
+          [],
+          { reads: ["a.js", "package.json"] },
+        );
+        expect(result.files).toEqual({ "a.js": "a();", "package.json": '{\n  "name": "x",\n  "version": "1.0.0"\n}' });
+      });
+
+      test("no file at all fails with 2", async () => {
+        const result = await format({ ".oxfmtrc.json": "{}\n" }, ["nothing.js"]);
+        expect(result.stderr).toContain("Expected at least one target file.");
+        expect(result.exitCode).toBe(2);
+      });
+    });
+
     test(".editorconfig", async () => {
       const files = {
         ".editorconfig": "root = true\n[*]\nindent_style = space\nindent_size = 4\n[*.ts]\nindent_style = tab\n",

@@ -1574,13 +1574,12 @@ fn registry_for(
     let configured: &[u8] = manager.scope_for_package_name(name).url.href();
     let from_yarn: Option<&[u8]> = if name.first() == Some(&b'@') {
         let scope = npm::registry::Scope::get_name(name);
-        yarnrc
-            .scope_registries
-            .get(scope)
-            .map(|u| &**u)
+        match yarnrc.scope_registries.get(scope) {
+            Some(url) => Some(&**url),
             // yarn's builtin default for the `@jsr` scope
-            .or_else(|| (scope == b"jsr").then_some(b"https://npm.jsr.io".as_slice()))
-            .or_else(|| yarnrc.registry.as_deref())
+            None if scope == b"jsr" => Some(b"https://npm.jsr.io"),
+            None => yarnrc.registry.as_deref(),
+        }
     } else {
         yarnrc.registry.as_deref()
     };

@@ -476,8 +476,9 @@ fn project(args: &[String]) {
     let results = cases.iter().map(|case| {
         // `jsPlugins: true`: the case is on the disk, with its plugins.
         let base_path = case.get(b"basePath").and_then(Json::as_str).unwrap_or(b"/");
+        let processes = crate::js_plugin_cmd::new_processes(1);
         let host = (case.get(b"jsPlugins").and_then(Json::as_bool) == Some(true))
-            .then(|| Host::new(&crate::js_plugin_cmd::spawn, base_path, 1));
+            .then(|| Host::with_engine(&processes, base_path));
         let options = LintOptions {
             js_plugins: host.as_ref(),
             ..LintOptions::default()

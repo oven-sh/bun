@@ -154,7 +154,8 @@ fn format_operand_trailing_comments<'a>(mut start: u32, end: u32, operator: u8, 
             count = Some(index);
             break;
         } else if comment.is_line() || comment.followed_by_newline() {
-            count = Some(index + 1);
+            // Prettier's `handleClosureTypeCastComments`: `a ? /** @type {T} */ ⏎ b : c`
+            count = Some(index + usize::from(!f.comments().looks_like_type_cast_comment(comment)));
             break;
         } else if source_text.bytes_contain(start, comment.span.start, operator) {
             index_before_operator = Some(index);

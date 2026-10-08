@@ -299,6 +299,12 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
                 return write!(f, soft_line_indent_or_space(&right));
             }
             write!(f, right);
+            // `a && (b && c /* comment */)`: in the tree that Prettier has rebalanced, the comment is in
+            // the expression that `c` is the right side of.
+            if !f.is_quiet() && binary_like_expression.expr != outermost.expr {
+                let comments = f.comments().comments_in_range(right.span().end, outermost.expr.span().end);
+                write!(f, FormatTrailingComments::Comments(comments));
+            }
             // See `is_last_binary_operand_comment`.
             if !f.is_quiet()
                 && let AstNodes::UnaryExpression(unary) = outermost.parent()

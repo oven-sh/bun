@@ -238,8 +238,8 @@ impl<'a> NodeFinder<'a> {
 /// of a member expression, if that is a name, leads the member expression.
 ///
 /// In a chain of calls Prettier prints the comments of a member expression before its `.b`, which is
-/// where they are.
-fn moved_out_of_member_expression<'a>(nodes: &mut NodeFinder<'a>, comment: Comment) -> Option<u32> {
+/// where they are, unless they are behind the `.`: `is_after_dot`.
+fn moved_out_of_member_expression<'a>(nodes: &mut NodeFinder<'a>, comment: Comment, is_after_dot: bool) -> Option<u32> {
     if comments_stay_in_member_expressions(nodes.flavor) {
         return None;
     }
@@ -262,7 +262,7 @@ fn moved_out_of_member_expression<'a>(nodes: &mut NodeFinder<'a>, comment: Comme
         match parent.kind() {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == top => top = parent,
             ExprKind::NonNull(inner) if inner == top => top = parent,
-            ExprKind::Call(call) if call.callee() == top => return None,
+            ExprKind::Call(call) if call.callee() == top => return is_after_dot.then(|| object.span().end),
             ExprKind::Jsx(_) => return None,
             _ => break,
         }
@@ -482,19 +482,19 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
             }
             _ if !is_own_line => None,
             [b'.', b'.', ..] => None,
-            [b'.', ..] | [b'?', b'.', ..] | [b'[', ..] => moved_out_of_member_expression(&mut nodes, comment),
+            [b'.', ..] | [b'?', b'.', ..] | [b'[', ..] => moved_out_of_member_expression(&mut nodes, comment, false),
             // `(a + b // comment ⏎ ).c`
             [b')', ..] => {
                 let after_parentheses = after.iter().position(|b| *b != b')' && !b.is_ascii_whitespace());
                 match after_parentheses.and_then(|at| after.get(at..)) {
                     Some([b'.', b'.', ..]) => None,
-                    Some([b'.', ..] | [b'?', b'.', ..]) => moved_out_of_member_expression(&mut nodes, comment),
+                    Some([b'.', ..] | [b'?', b'.', ..]) => moved_out_of_member_expression(&mut nodes, comment, false),
                     _ => None,
                 }
             }
             _ => match text.get(..run_start as usize).unwrap_or_default().trim_ascii_end() {
                 [.., b'.', b'.'] => None,
-                [.., b'.' | b'['] => moved_out_of_member_expression(&mut nodes, comment),
+                [.., last @ (b'.' | b'[')] => moved_out_of_member_expression(&mut nodes, comment, *last == b'.'),
                 _ => None,
             },
         };
@@ -754,6 +754,15 @@ impl<'a> Comments<'a> {
     /// The comments after `start` that are before the first `character` outside of a comment.
     pub(crate) fn comments_before_character(&self, mut start: u32, character: u8) -> &'a [Comment] {
         let comments = self.comments_after(start);
+        // Nor in a comment that is printed.
+        let printed = self.printed_comments();
+        let first = printed.len() - printed.iter().rev().take_while(|it| it.span.start >= start).count();
+        for comment in &printed[first..] {
+            if self.source_text.bytes_contain(start, comment.span.start, character) {
+                return &[];
+            }
+            start = comment.span.end;
+        }
         for (index, comment) in comments.iter().enumerate() {
             if self.source_text.bytes_contain(start, comment.start(), character) {
                 return &comments[..index];
@@ -902,6 +911,12 @@ impl<'a> Comments<'a> {
     #[inline]
     pub(crate) fn is_suppression_comment(&self, comment: &Comment) -> bool {
         comment.flags & SUPPRESSION != 0
+    }
+
+    /// Prettier's `isTypeCastComment`: a JSDoc comment with `@type` or `@satisfies`, whatever follows it.
+    #[inline]
+    pub(crate) fn looks_like_type_cast_comment(&self, comment: &Comment) -> bool {
+        comment.flags & LOOKS_LIKE_TYPE_CAST != 0
     }
 
     /// A JSDoc comment with `@type` or `@satisfies`, in a file where the parentheses after it stay.

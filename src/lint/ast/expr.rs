@@ -313,12 +313,17 @@ impl<'a> Expr<'a> {
         let Some(raw) = self.try_raw() else {
             return Span::default();
         };
-        let is_as_in_the_hir = match raw.kind {
-            hir::ExprKind::Ident(_) => file.has_no_unicode_escape_in(raw.pos, raw.end),
-            hir::ExprKind::Dot { name_pos, .. } => file.has_no_unicode_escape_in(name_pos, raw.end),
-            hir::ExprKind::Spread(_) | hir::ExprKind::String(_) => file.hir.jsx.is_empty(),
-            hir::ExprKind::Class(_) | hir::ExprKind::Fn(_) => false,
-            _ => true,
+        const fn kind(tag: ExprTag) -> u64 {
+            1 << tag as u8
+        }
+        let kind_of_it = kind(raw.kind.tag());
+        // This is in every caller: a few tests of bits, no table of where to go on for each kind.
+        let is_as_in_the_hir = if kind_of_it & (kind(ExprTag::Ident) | kind(ExprTag::Dot)) != 0 {
+            file.has_no_unicode_escape_in(raw.pos, raw.end)
+        } else if kind_of_it & (kind(ExprTag::Spread) | kind(ExprTag::String)) != 0 {
+            file.hir.jsx.is_empty()
+        } else {
+            kind_of_it & (kind(ExprTag::Class) | kind(ExprTag::Fn)) == 0
         };
         match is_as_in_the_hir {
             true => Span::new(raw.pos, raw.end),

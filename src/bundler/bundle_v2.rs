@@ -2915,21 +2915,25 @@ pub mod bv2_impl {
                 return;
             }
 
-            // The pretty path is made relative when it is the file's own path, and when it
-            // is another absolute one: a file reached through a symlink (a package in an
-            // isolated install's store) keeps the symlink's path, spelled the platform's way.
-            if path.pretty.as_ptr() == path.text.as_ptr() || bun_paths::is_absolute(path.pretty) {
+            if path.pretty.as_ptr() == path.text.as_ptr() {
                 // TODO: outbase
                 let rel = bun_paths::resolve_path::relative_platform::<
                     bun_paths::resolve_path::platform::Loose,
                     false,
                 >(
-                    bun_resolver::fs::FileSystem::get().top_level_dir, path.pretty
+                    bun_resolver::fs::FileSystem::get().top_level_dir, path.text
                 );
                 // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
                 // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
                 path.pretty =
                     unsafe { bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(rel)) };
+            } else if cfg!(windows) && path.pretty.contains(&b'\\') {
+                // A file reached through a symlink (a package in an isolated install's store)
+                // keeps the symlink's path as its pretty one, spelled with backslashes here.
+                let pretty: &mut [u8] = self.arena().alloc_slice_copy(path.pretty);
+                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(pretty);
+                // SAFETY: as above, the arena outlives the bundle pass.
+                path.pretty = unsafe { bun_ptr::detach_lifetime(&*pretty) };
             }
             path.assert_pretty_is_valid();
             path.assert_file_path_is_absolute();
@@ -5272,9 +5276,13 @@ pub mod bv2_impl {
                     // (which compares change events against platform paths) and the pretty
                     // path — so the file is made one path, the platform's, as the resolver's are.
                     // Not an external one: it is printed as the plugin wrote it (a URL, `/lib.js`).
+                    // Only a Windows path (a drive or a share): `/virtual/x.ts` is the plugin's own
+                    // name, which its onLoad filter expects as written.
+                    let windows_path = matches!(result.path.as_ref(), [d, b':', b'/' | b'\\', ..] if d.is_ascii_alphabetic())
+                        || matches!(result.path.as_ref(), [b'\\' | b'/', b'\\' | b'/', ..]);
                     if !result.external
                         && (result.namespace.is_empty() || result.namespace.as_ref() == b"file")
-                        && bun_paths::is_absolute(result.path.as_ref())
+                        && windows_path
                     {
                         bun_paths::resolve_path::posix_to_platform_in_place::<u8>(&mut result.path);
                     }
@@ -5312,9 +5320,11 @@ pub mod bv2_impl {
                     {
                         let target = resolve.import_record.original_target;
                         let cached = match this.dev_server_handle() {
-                            Some(dev_server) => {
-                                dev_server.is_file_cached(path.text, target.bake_graph()).is_some()
-                            }
+                            // Not a stylesheet: a plugin may load any path as CSS, which has
+                            // handling of its own below.
+                            Some(dev_server) => dev_server
+                                .is_file_cached(path.text, target.bake_graph())
+                                .is_some_and(|entry| entry.kind != bake_types::CacheKind::Css),
                             None => false,
                         };
                         let importer = resolve.import_record.importer_source_index as usize;

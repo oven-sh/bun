@@ -640,7 +640,10 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         const cb = importer.depAccepts?.[mod.id];
         if (cb) {
           toAccept.push({ cb, key: mod.id });
-          for (let m: HMRModule | undefined = mod; m && m !== existing; m = reachedFrom.get(m)) toReload.add(m);
+          // From the changed module outward, so each is loaded again after what it imports.
+          const between: HMRModule[] = [];
+          for (let m: HMRModule | undefined = mod; m && m !== existing; m = reachedFrom.get(m)) between.push(m);
+          for (let i = between.length - 1; i >= 0; i--) toReload.add(between[i]);
         } else if (hadSelfAccept) {
           if (visited.has(importer)) continue;
           visited.add(importer);

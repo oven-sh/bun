@@ -6,7 +6,7 @@ import { $ } from "bun";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { collect, extract, writeBundle } from "../bundle.ts";
-import { isInput, render, rowsOf, type Options } from "./fixtures.ts";
+import { render, rowsOf, type Options } from "./fixtures.ts";
 
 const here = import.meta.dir;
 const bundle = join(here, "bundle.zst");
@@ -18,6 +18,12 @@ if (source === "--extract" && rest.length === 2) {
   const prettier = await import(join(prettierRoot, "index.mjs"));
   const files = new Map<string, Uint8Array>();
   for (const language of ["js", "ts"]) collect(join(source, "crates/oxc_formatter/tests/fixtures"), language, files, () => false);
+  for (const language of ["css", "graphql", "json", "markdown", "yaml"]) {
+    const found = new Map<string, Uint8Array>();
+    collect(join(source, `crates/oxc_formatter_${language}/tests`), "fixtures", found, name => name.endsWith(".rs"));
+    // `embedded`: style sheets with the placeholders that stand for the `${}` of a template.
+    for (const [name, bytes] of found) if (!name.startsWith("fixtures/embedded/")) files.set(name.replace("fixtures", language), bytes);
+  }
   // `tests/jsdoc/fixtures` has pairs, `a.ts` and `a.output.ts`, with options in snake case. They are written in the form of the others.
   const pairs = new Map<string, Uint8Array>();
   collect(join(source, "crates/oxc_formatter/tests"), "jsdoc/fixtures", pairs, () => false);
@@ -40,11 +46,11 @@ if (source === "--extract" && rest.length === 2) {
     rowsOfPairs.set(name, [options]);
   }
   for (const [name, bytes] of [...files]) {
-    if (!isInput(name)) continue;
+    if (!files.has(`${name}.snap`)) continue;
     const outputs: [Options, string][] = [];
     for (const options of rowsOfPairs.get(name) ?? rowsOf(name, files)) {
       // Not options of Prettier.
-      const known = Object.fromEntries(Object.entries(options).filter(([name]) => !name.startsWith("jsdoc")));
+      const known = Object.fromEntries(Object.entries(options).flatMap(([name, value]) => (name.startsWith("jsdoc") ? [] : [[name === "variant" ? "parser" : name, value]])));
       const output = await prettier.format(Buffer.from(bytes).toString(), { ...known, filepath: name }).catch((error: Error) => `<${error.name}>`);
       outputs.push([options, output]);
     }

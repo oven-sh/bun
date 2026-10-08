@@ -48,6 +48,8 @@ fn options_of(line: &[u8], flavor: &[u8]) -> Option<FormatOptions> {
         if name.starts_with(b"jsdoc") && flavor == b"prettier" {
             continue;
         }
+        // Which JSON it is.
+        let name = if name == b"variant" { b"parser" } else { name };
         options.set(name, trim_bytes(value, b"\"")).ok()?;
     }
     Some(options)

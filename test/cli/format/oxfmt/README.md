@@ -1,6 +1,6 @@
 # oxfmt's tests
 
-`bundle.zst` holds `crates/oxc_formatter/tests/fixtures/{js,ts}` of [oxc](https://github.com/oxc-project/oxc), unchanged: the inputs, their `options.json`, and oxfmt's own snapshots (`<input>.snap`). Next to each input,
+`bundle.zst` holds `crates/oxc_formatter/tests/fixtures/{js,ts}` and `crates/oxc_formatter_{css,graphql,json,markdown,yaml}/tests/fixtures` of [oxc](https://github.com/oxc-project/oxc), unchanged: the inputs, their `options.json`, and oxfmt's own snapshots (`<input>.snap`). Next to each input,
 `<input>.prettier.snap` is what Prettier prints for it, in the same form. One file after the other, compressed with zstd: see `../bundle.ts`. `sync.ts` writes it, and `version.json` says from which commit of oxc and with
 which Prettier. oxc is under the MIT license: `LICENSE`.
 

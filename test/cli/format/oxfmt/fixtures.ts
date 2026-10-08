@@ -1,10 +1,7 @@
 // How oxc's test harness (`oxc_formatter_core/src/test_support/harness.rs`) reads and writes its fixtures.
-import { dirname, extname } from "node:path";
+import { dirname } from "node:path";
 
 export type Options = Record<string, unknown>;
-
-const extensions = new Set([".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"]);
-export const isInput = (name: string) => extensions.has(extname(name));
 
 /** The sets of options that a fixture is formatted with: those of the nearest `options.json`, each at the widths 80 and 100. */
 export function rowsOf(name: string, files: Map<string, Uint8Array>): Options[] {

@@ -2391,7 +2391,7 @@ impl<'p, 's> Checker<'p, 's> {
             && hir[class].extends.is_some()
             && !self.class_declaration_extends_null(self.class_sym(file, class))
             && flow.is_some()
-            && !self.is_post_super(file, flow, false, &mut Vec::new())
+            && !self.is_post_super(file, flow, &mut Vec::new())
         {
             self.error_at(self.place_of_token(file, hir[e].pos), code, &[]);
         }

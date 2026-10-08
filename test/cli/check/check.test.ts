@@ -16688,6 +16688,12 @@ describe.concurrent("--check", () => {
       ],
       ["nested object literals", size, n => `export const r = ${repeat("{ a: ", n)}1${repeat(" }", n)};`],
       [
+        // Whether the end of the function can be reached is asked at its end, and the way back is as long as the function.
+        "`if` statements that return",
+        isDebug || isASAN ? 10_000 : 20_000,
+        n => `declare class C {}\nexport function f() {\n${repeat("if (C) return 1;\nif (C) return;\n", n)}}`,
+      ],
+      [
         // The binder asks of each whether there is a value in it.
         "namespaces in namespaces",
         isDebug || isASAN ? 100 : 1000,

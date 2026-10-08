@@ -800,19 +800,38 @@ fn is_skipped_by_mark_node_assignments(kind: Kind) -> bool {
         )
 }
 
+/// See `Checker::begin_memoizable`.
+struct Memoizable {
+    scope: Scope,
+    /// `Checker::relation_too_complex` and `Checker::reliability` around it.
+    too_complex: bool,
+    reliability: u8,
+}
+
 impl<'p, 's> Checker<'p, 's> {
     /// The result of `work`, and the permission to store it in a memo table: it is finished, and computing it again would raise none of
     /// the flags that relations, unions and intersections raise for their callers.
     fn run_memoizable<T>(&mut self, work: impl FnOnce(&mut Self) -> T) -> (T, Option<Stored>) {
-        let scope = self.begin_scope();
-        let too_complex = std::mem::take(&mut self.relation_too_complex);
-        let reliability = std::mem::take(&mut self.reliability);
+        let begun = self.begin_memoizable();
         let result = work(self);
+        (result, self.end_memoizable(begun))
+    }
+
+    /// `run_memoizable` in two halves, for work that is not a call. They nest.
+    fn begin_memoizable(&mut self) -> Memoizable {
+        Memoizable {
+            scope: self.begin_scope(),
+            too_complex: std::mem::take(&mut self.relation_too_complex),
+            reliability: std::mem::take(&mut self.reliability),
+        }
+    }
+
+    fn end_memoizable(&mut self, begun: Memoizable) -> Option<Stored> {
         let raises_no_flag = !self.relation_too_complex && self.reliability == 0;
-        self.relation_too_complex |= too_complex;
-        self.reliability |= reliability;
-        let stored = self.end_scope_by_counters(scope).ok();
-        (result, stored.filter(|_| raises_no_flag))
+        self.relation_too_complex |= begun.too_complex;
+        self.reliability |= begun.reliability;
+        let stored = self.end_scope_by_counters(begun.scope).ok();
+        stored.filter(|_| raises_no_flag)
     }
 
     // ───────────────────────────── truthiness ─────────────────────────────
@@ -7726,7 +7745,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isReachableFlowNode`
     pub(super) fn is_reachable(&mut self, file: FileId, flow: FlowId) -> bool {
-        let reachable = self.is_reachable_worker(file, flow, false, &mut Vec::new());
+        let reachable = self.is_reachable_worker(file, flow, &mut Vec::new());
         self.last_flow_node = (file, flow, reachable);
         reachable
     }
@@ -7736,31 +7755,26 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         file: FileId,
         mut flow: FlowId,
-        mut no_cache_check: bool,
         reduced: &mut Vec<(FlowId, FlowId)>,
     ) -> bool {
         let bound = self.bound(file);
-        loop {
+        // TypeScript calls itself at a shared node and stores what it gets. A function with 30,000
+        // statements has as many in a row, so here these invocations wait in a list, the outermost
+        // first.
+        let mut shared: SmallVec<[(FlowId, Memoizable); 2]> = SmallVec::new();
+        let reachable = loop {
             if (file, flow) == (self.last_flow_node.0, self.last_flow_node.1) {
-                return self.last_flow_node.2;
+                break self.last_flow_node.2;
             }
             if bound.is_shared(flow) {
-                if !no_cache_check {
-                    if let Some(kept) = self.p.flow_node_reachable.get(&self.task, &(file, flow)) {
-                        return kept;
-                    }
-                    let (reachable, stored) =
-                        self.run_memoizable(|c| c.is_reachable_worker(file, flow, true, reduced));
-                    if stored.is_some() {
-                        (self.p.flow_node_reachable).rewrite(&self.task, (file, flow), reachable);
-                    }
-                    return reachable;
+                if let Some(kept) = self.p.flow_node_reachable.get(&self.task, &(file, flow)) {
+                    break kept;
                 }
-                no_cache_check = false;
+                shared.push((flow, self.begin_memoizable()));
             }
             match bound.flow[flow.idx()] {
-                Flow::Unreachable => return false,
-                Flow::Start { .. } | Flow::StartInvoked { .. } => return true,
+                Flow::Unreachable => break false,
+                Flow::Start { .. } | Flow::StartInvoked { .. } => break true,
                 Flow::Assign { before, .. }
                 | Flow::Cond { before, .. }
                 | Flow::ArrayMutation { before, .. } => flow = before,
@@ -7778,7 +7792,7 @@ impl<'p, 's> Checker<'p, 's> {
                         && (self.asserts_false_expression(file, call, sig)
                             || self.sig_return(sig).is_never())
                     {
-                        return false;
+                        break false;
                     }
                     flow = before;
                 }
@@ -7789,7 +7803,7 @@ impl<'p, 's> Checker<'p, 's> {
                     to,
                 } => {
                     if from == to && self.is_exhaustive_switch(file, stmt) {
-                        return false;
+                        break false;
                     }
                     flow = before;
                 }
@@ -7798,28 +7812,37 @@ impl<'p, 's> Checker<'p, 's> {
                     label,
                     instead,
                 } => {
+                    if self.is_stack_low() {
+                        break true;
+                    }
                     // "Cache is unreliable once we start adjusting labels"
                     self.last_flow_node.1 = FlowId::NONE;
                     reduced.push((label, instead));
-                    let reachable = self.is_reachable_worker(file, before, false, reduced);
+                    let reachable = self.is_reachable_worker(file, before, reduced);
                     reduced.pop();
-                    return reachable;
+                    break reachable;
                 }
                 Flow::Label { .. } => {
                     // One native frame per label. With `allowUnreachableCode: true` no earlier statement has filled the cache.
                     if self.is_stack_low() {
-                        return true;
+                        break true;
                     }
-                    return branch_label_antecedents(bound, flow, reduced)
+                    break branch_label_antecedents(bound, flow, reduced)
                         .iter()
-                        .any(|&edge| self.is_reachable_worker(file, edge, false, reduced));
+                        .any(|&edge| self.is_reachable_worker(file, edge, reduced));
                 }
                 Flow::Loop { start, len } => match bound.edges(start, len).first() {
                     Some(&entry) => flow = entry,
-                    None => return false,
+                    None => break false,
                 },
             }
+        };
+        while let Some((flow, begun)) = shared.pop() {
+            if self.end_memoizable(begun).is_some() {
+                (self.p.flow_node_reachable).rewrite(&self.task, (file, flow), reachable);
+            }
         }
+        reachable
     }
 
     /// `isPostSuperFlowNode`
@@ -7827,27 +7850,22 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         file: FileId,
         mut flow: FlowId,
-        mut no_cache_check: bool,
         reduced: &mut Vec<(FlowId, FlowId)>,
     ) -> bool {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        loop {
+        // The shared nodes on the way, for which the answer is stored: see `is_reachable_worker`.
+        let mut shared: SmallVec<[FlowId; 8]> = SmallVec::new();
+        let is_post_super = loop {
             if bound.is_shared(flow) {
-                if !no_cache_check {
-                    if let Some(&kept) = self.flow_memo.flow_node_post_super.get(&(file, flow)) {
-                        return kept;
-                    }
-                    let is_post_super = self.is_post_super(file, flow, true, reduced);
-                    let kept = &mut self.flow_memo.flow_node_post_super;
-                    kept.insert((file, flow), is_post_super);
-                    return is_post_super;
+                if let Some(&kept) = self.flow_memo.flow_node_post_super.get(&(file, flow)) {
+                    break kept;
                 }
-                no_cache_check = false;
+                shared.push(flow);
             }
             match bound.flow[flow.idx()] {
                 // Unreachable nodes are skipped.
-                Flow::Unreachable => return true,
-                Flow::Start { .. } | Flow::StartInvoked { .. } => return false,
+                Flow::Unreachable => break true,
+                Flow::Start { .. } | Flow::StartInvoked { .. } => break false,
                 Flow::Assign { before, .. }
                 | Flow::Cond { before, .. }
                 | Flow::ArrayMutation { before, .. }
@@ -7857,31 +7875,38 @@ impl<'p, 's> Checker<'p, 's> {
                 Flow::Call { before, call } => {
                     if matches!(hir[call].kind, ExprKind::Call(c) if matches!(hir[hir[c].callee].kind, ExprKind::Super))
                     {
-                        return true;
+                        break true;
                     }
                     flow = before;
                 }
+                // One native frame per label from here on.
+                Flow::Reduce { .. } | Flow::Label { .. } if self.is_stack_low() => break true,
                 Flow::Reduce {
                     before,
                     label,
                     instead,
                 } => {
                     reduced.push((label, instead));
-                    let is_post_super = self.is_post_super(file, before, false, reduced);
+                    let is_post_super = self.is_post_super(file, before, reduced);
                     reduced.pop();
-                    return is_post_super;
+                    break is_post_super;
                 }
                 Flow::Label { .. } => {
-                    return branch_label_antecedents(bound, flow, reduced)
+                    break branch_label_antecedents(bound, flow, reduced)
                         .iter()
-                        .all(|&edge| self.is_post_super(file, edge, false, reduced));
+                        .all(|&edge| self.is_post_super(file, edge, reduced));
                 }
                 Flow::Loop { start, len } => match bound.edges(start, len).first() {
                     Some(&entry) => flow = entry,
-                    None => return true,
+                    None => break true,
                 },
             }
+        };
+        for flow in shared {
+            let kept = &mut self.flow_memo.flow_node_post_super;
+            kept.insert((file, flow), is_post_super);
         }
+        is_post_super
     }
 
     /// `checkExpressionCached`: the type of `e`, computed with an empty `flowLoopStack` and an empty `flowTypeCache`. Only its callers

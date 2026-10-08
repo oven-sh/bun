@@ -1252,9 +1252,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     }
 
     // This is not 100% correct.
-    // We don't pass along headers, we ignore method, we ignore status code...
+    // We don't pass along headers, file: ignores the method, we ignore status code...
     // But it's better than status quo.
     if url_type != URLType::Remote {
+        // https://fetch.spec.whatwg.org/#scheme-fetch: a blob: URL answers GET only.
+        if url_type == URLType::Blob && method != Method::GET {
+            let err = global_this.to_type_error(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!("fetch() only supports the GET method for blob: URLs"),
+            );
+            return Ok(JSPromise::rejected_promise(global_this, err).to_js());
+        }
         // https://url.spec.whatwg.org/#file-host: a file: URL names a local file
         // only when its host is empty or "localhost".
         if url_type == URLType::File

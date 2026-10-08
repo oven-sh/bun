@@ -135,6 +135,41 @@ test("blob: URL has Content-Type", async () => {
   }).toThrow();
 });
 
+// https://fetch.spec.whatwg.org/#scheme-fetch: a blob: URL answers GET, and
+// every other method is a network error. These are the method rows of WPT
+// fetch/api/basic/scheme-blob.sub.any.js, through both ways to name a method.
+// Its INVALID row is not here: a method outside the method table is read as GET (#42497).
+describe("blob: URL and the request method", () => {
+  function blobURL() {
+    const url = URL.createObjectURL(new Blob(["Blob's data"], { type: "text/plain" }));
+    return { url, [Symbol.dispose]: () => URL.revokeObjectURL(url) };
+  }
+  const outcome = (promise: Promise<Response>) =>
+    promise.then(
+      async response => ({ status: response.status, text: await response.text() }),
+      error => ({ name: error.name, code: error.code, message: error.message }),
+    );
+
+  test.each(["GET", "get"])("%s is answered", async method => {
+    using blob = blobURL();
+    const answered = { status: 200, text: "Blob's data" };
+    expect(await outcome(fetch(blob.url, { method }))).toEqual(answered);
+    expect(await outcome(fetch(new Request(blob.url, { method })))).toEqual(answered);
+  });
+
+  test.each(["POST", "OPTIONS", "HEAD", "PUT", "DELETE", "PATCH"])("%s is rejected", async method => {
+    using blob = blobURL();
+    const body = method === "HEAD" ? undefined : "request body";
+    const rejected = {
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_VALUE",
+      message: "fetch() only supports the GET method for blob: URLs",
+    };
+    expect(await outcome(fetch(blob.url, { method, body }))).toEqual(rejected);
+    expect(await outcome(fetch(new Request(blob.url, { method, body })))).toEqual(rejected);
+  });
+});
+
 test("blob: can be imported", async () => {
   const blob = new Blob(
     [

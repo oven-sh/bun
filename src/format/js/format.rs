@@ -322,6 +322,9 @@ impl<'a> FormatExpr<'a> {
         if !is_suppressed && can_be_type_cast && format_type_cast_comment_node(&self, is_object_or_array, f) {
             return;
         }
+        if print::function::write_called_function_with_comments(expr, self.options, f) {
+            return;
+        }
         format_leading_comments(span).fmt(f);
         if is_suppressed {
             let needs_parentheses = match is_chain_expression {

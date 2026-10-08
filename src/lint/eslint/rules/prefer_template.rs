@@ -1,4 +1,6 @@
 use bun_lint::prelude::*;
+use smallvec::SmallVec;
+use std::borrow::Cow;
 
 /// Require template literals instead of string concatenation.
 pub struct PreferTemplate;
@@ -21,15 +23,22 @@ fn as_concatenation(e: Expr<'_>) -> Option<(Expr<'_>, Expr<'_>)> {
 }
 
 /// Whether `test` holds for one of the things that `e` concatenates.
-fn any_operand<'a>(mut e: Expr<'a>, test: fn(Expr<'a>) -> bool) -> bool {
-    // `left` is deeper than `right` normally.
-    while let Some((left, right)) = as_concatenation(e) {
-        if any_operand(right, test) {
+fn any_operand<'a>(e: Expr<'a>, test: fn(Expr<'a>) -> bool) -> bool {
+    // The left operands of the concatenations that are a right operand.
+    let mut pending: SmallVec<[Expr<'a>; 8]> = SmallVec::new();
+    let mut at = e;
+    loop {
+        if let Some((left, right)) = as_concatenation(at) {
+            pending.push(left);
+            at = right;
+        } else if test(at) {
             return true;
+        } else if let Some(next) = pending.pop() {
+            at = next;
+        } else {
+            return false;
         }
-        e = left;
     }
-    test(e)
 }
 
 fn has_string_literal(e: Expr<'_>) -> bool {
@@ -100,15 +109,19 @@ fn starts_with_checked_concatenation(top: Expr<'_>) -> bool {
 }
 
 /// The text between `a` and `b` that is not in a token: whitespace and comments.
-fn get_text_between<'a>(file: &'a File<'a>, a: Span, b: Span) -> Vec<u8> {
-    let mut text = Vec::new();
-    let mut at = a.end;
-    for token in file.tokens_between(a, b) {
+fn get_text_between<'a>(file: &'a File<'a>, a: Span, b: Span) -> Cow<'a, [u8]> {
+    let mut tokens = file.tokens_between(a, b);
+    let Some(first) = tokens.next() else {
+        return Cow::Borrowed(file.slice(a.between(b)));
+    };
+    let mut text = file.slice(Span::new(a.end, first.start())).to_vec();
+    let mut at = first.end();
+    for token in tokens {
         text.extend_from_slice(file.slice(Span::new(at, token.start())));
         at = token.end();
     }
     text.extend_from_slice(file.slice(Span::new(at, b.start)));
-    text
+    Cow::Owned(text)
 }
 
 /// The string literal `raw` as a template.
@@ -143,55 +156,151 @@ fn string_literal_to_template(raw: &[u8]) -> Vec<u8> {
     template
 }
 
-/// `e` as a template, or as a sum of templates. `text_before` and `text_after` go into the braces
-/// with it.
-fn get_template_literal<'a>(
+/// How the operands of a concatenation become one text.
+enum Join {
+    /// `foo${bar}` /* comment */ + 'baz' --> `foo${bar /* comment */  }${baz}`
+    AfterLeft,
+    /// 'foo' /* comment */ + `${bar}baz` --> `foo${ /* comment */  bar}baz`
+    BeforeRight,
+    /// There is nowhere to put the text between them.
+    Sum,
+}
+
+/// A concatenation that has a string literal.
+struct Concatenation<'a> {
+    right: Expr<'a>,
+    join: Join,
+    text_before_plus: Cow<'a, [u8]>,
+    text_after_plus: Cow<'a, [u8]>,
+}
+
+impl Concatenation<'_> {
+    fn text_around_plus(&self) -> Vec<u8> {
+        [&self.text_before_plus[..], &self.text_after_plus[..]].concat()
+    }
+
+    /// What goes into the braces at the end of the left operand.
+    fn text_after_left(&self) -> Vec<u8> {
+        match self.join {
+            Join::AfterLeft => self.text_around_plus(),
+            Join::BeforeRight | Join::Sum => Vec::new(),
+        }
+    }
+}
+
+/// ESLint's `getTemplateLiteral`, in time proportional to the text.
+struct TemplateWriter<'a> {
     file: &'a File<'a>,
-    e: Expr<'a>,
-    text_before: &[u8],
-    text_after: &[u8],
-) -> Vec<u8> {
-    match e.kind() {
-        ExprKind::String(_) => return string_literal_to_template(e.text()),
-        ExprKind::Template(_) => return e.text().to_vec(),
-        _ => {}
+    /// Where the string literals start that the reported expression concatenates, in ascending order.
+    string_literals: Vec<u32>,
+    stack: bun_core::StackCheck,
+    text: Vec<u8>,
+}
+
+impl<'a> TemplateWriter<'a> {
+    fn new(file: &'a File<'a>, top: Expr<'a>) -> Self {
+        let mut string_literals = Vec::new();
+        let mut pending = vec![top];
+        while let Some(e) = pending.pop() {
+            if let Some((left, right)) = as_concatenation(e) {
+                pending.extend([left, right]);
+            } else if ast_utils::is_string_literal(e) {
+                string_literals.push(e.span().start);
+            }
+        }
+        string_literals.sort_unstable();
+        TemplateWriter {
+            file,
+            string_literals,
+            stack: bun_core::StackCheck::init(),
+            text: Vec::new(),
+        }
     }
-    if let Some((left, right)) = as_concatenation(e)
-        && has_string_literal(e)
-        && let Some(plus) = e.operator_span()
-    {
-        let text_before_plus = get_text_between(file, left.span(), plus);
-        let text_after_plus = get_text_between(file, plus, right.span());
-        let (left_text, right_text) = if ends_with_template_curly(left) {
-            // `foo${bar}` /* comment */ + 'baz' --> `foo${bar /* comment */  }${baz}`
-            let around_plus = [&text_before_plus[..], &text_after_plus[..]].concat();
-            (
-                get_template_literal(file, left, text_before, &around_plus),
-                get_template_literal(file, right, b"", text_after),
-            )
+
+    /// `has_string_literal(e)` for a part of the reported expression.
+    fn has_string_literal(&self, e: Expr<'a>) -> bool {
+        let span = e.span();
+        let first = self.string_literals.partition_point(|&start| start < span.start);
+        self.string_literals.get(first).is_some_and(|&start| start < span.end)
+    }
+
+    fn as_concatenation(&self, e: Expr<'a>) -> Option<(Expr<'a>, Concatenation<'a>)> {
+        let (left, right) = as_concatenation(e)?;
+        if !self.has_string_literal(e) {
+            return None;
+        }
+        let plus = e.operator_span()?;
+        let join = if ends_with_template_curly(left) {
+            Join::AfterLeft
         } else if starts_with_template_curly(right) {
-            // 'foo' /* comment */ + `${bar}baz` --> `foo${ /* comment */  bar}baz`
-            let around_plus = [&text_before_plus[..], &text_after_plus[..]].concat();
-            (
-                get_template_literal(file, left, text_before, b""),
-                get_template_literal(file, right, &around_plus, text_after),
-            )
+            Join::BeforeRight
         } else {
-            // There is nowhere to put the text between them.
-            return [
-                &get_template_literal(file, left, text_before, b"")[..],
-                &text_before_plus[..],
-                &b"+"[..],
-                &text_after_plus[..],
-                &get_template_literal(file, right, text_after, b"")[..],
-            ]
-            .concat();
+            Join::Sum
         };
-        let left_text = left_text.strip_suffix(b"`").unwrap_or(&left_text);
-        let right_text = right_text.strip_prefix(b"`").unwrap_or(&right_text);
-        return [left_text, right_text].concat();
+        let concatenation = Concatenation {
+            right,
+            join,
+            text_before_plus: get_text_between(self.file, left.span(), plus),
+            text_after_plus: get_text_between(self.file, plus, right.span()),
+        };
+        Some((left, concatenation))
     }
-    [&b"`${"[..], text_before, e.text(), text_after, b"}`"].concat()
+
+    /// Appends `e` as a template, or as a sum of templates. `text_before` and `text_after` go into
+    /// the braces with it. The template is left without its first backtick if it `continues` one.
+    /// `None`: the parentheses nest too deep.
+    fn write(&mut self, e: Expr<'a>, text_before: &[u8], text_after: &[u8], continues: bool) -> Option<()> {
+        if !self.stack.is_safe_to_recurse() {
+            return None;
+        }
+        // From `e` along the left operands.
+        let mut concatenations = Vec::new();
+        let mut first = e;
+        while let Some((left, concatenation)) = self.as_concatenation(first) {
+            concatenations.push(concatenation);
+            first = left;
+        }
+
+        let start = self.text.len();
+        match first.kind() {
+            ExprKind::String(_) => self.text.extend(string_literal_to_template(first.text())),
+            ExprKind::Template(_) => self.text.extend_from_slice(first.text()),
+            _ => {
+                let text_after_left = concatenations.last().map(Concatenation::text_after_left);
+                self.text.extend_from_slice(b"`${");
+                self.text.extend_from_slice(text_before);
+                self.text.extend_from_slice(first.text());
+                self.text.extend_from_slice(text_after_left.as_deref().unwrap_or(text_after));
+                self.text.extend_from_slice(b"}`");
+            }
+        }
+        if continues && self.text.get(start) == Some(&b'`') {
+            self.text.remove(start);
+        }
+
+        while let Some(concatenation) = concatenations.pop() {
+            let text_after_left = concatenations.last().map(Concatenation::text_after_left);
+            let text_after = text_after_left.as_deref().unwrap_or(text_after);
+            let right = concatenation.right;
+            match concatenation.join {
+                Join::AfterLeft => {
+                    self.text.pop_if(|last| *last == b'`');
+                    self.write(right, b"", text_after, true)?;
+                }
+                Join::BeforeRight => {
+                    self.text.pop_if(|last| *last == b'`');
+                    self.write(right, &concatenation.text_around_plus(), text_after, true)?;
+                }
+                Join::Sum => {
+                    self.text.extend_from_slice(&concatenation.text_before_plus);
+                    self.text.push(b'+');
+                    self.text.extend_from_slice(&concatenation.text_after_plus);
+                    self.write(right, text_after, b"", false)?;
+                }
+            }
+        }
+        Some(())
+    }
 }
 
 impl PreferTemplate {
@@ -210,11 +319,12 @@ impl PreferTemplate {
             }
             let needs_semicolon =
                 ast_utils::is_start_of_expression_statement(e) && ast_utils::needs_preceding_semicolon(e);
-            let template = get_template_literal(fixer.file(), e, b"", b"");
-            Some(match needs_semicolon {
-                true => fixer.replace(e, [&b";"[..], &template[..]].concat()),
-                false => fixer.replace(e, template),
-            })
+            let mut writer = TemplateWriter::new(fixer.file(), e);
+            if needs_semicolon {
+                writer.text.push(b';');
+            }
+            writer.write(e, b"", b"", false)?;
+            Some(fixer.replace(e, writer.text))
         });
     }
 }

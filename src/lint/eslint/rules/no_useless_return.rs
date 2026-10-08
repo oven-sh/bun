@@ -1,8 +1,8 @@
 use bun_lint::code_path::{Event, Step, steps_of_code_path};
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::fix_tracker::FixTracker;
 use rustc_hash::{FxHashMap, FxHashSet};
-use smallvec::SmallVec;
 
 /// Disallow redundant return statements.
 pub struct NoUselessReturn;
@@ -10,20 +10,114 @@ pub struct NoUselessReturn;
 const UNNECESSARY_RETURN: Message =
     Message::new("unnecessaryReturn", "Unnecessary return statement.");
 
-type Returns<'a> = SmallVec<[Stmt<'a>; 2]>;
 /// By `Segment::id`. Only reachable segments have an entry.
-type SegmentInfoMap<'a> = FxHashMap<u32, SegmentInfo<'a>>;
+type SegmentInfoMap = FxHashMap<u32, SegmentInfo>;
 
-struct SegmentInfo<'a> {
-    useless_returns: Returns<'a>,
+#[derive(Copy, Clone)]
+struct SegmentInfo {
+    /// ESLint's `uselessReturns`: a set of [`ReturnSets`].
+    useless_returns: u32,
     is_returned: bool,
+}
+
+#[derive(Copy, Clone)]
+enum ReturnSet {
+    /// The `return` statement with this number.
+    One(u32),
+    /// What is in either of two sets.
+    Union(u32, u32),
+}
+
+/// What is known about a set.
+#[derive(Copy, Clone)]
+enum Filtered {
+    No,
+    /// All that is in it has been marked as used.
+    Used,
+    /// What was left of it when the rest was marked as used, and the `age` at that time.
+    Left(u32, u32),
+}
+
+const EMPTY: u32 = 0;
+
+/// Sets of `return` statements. A segment starts with what the segments before it end with, so a
+/// set is made of other sets, which takes no copy. Each is gone through once to mark what is in it
+/// as used, however many sets it is part of.
+#[derive(Default)]
+struct ReturnSets {
+    /// The first is not used: it stands for the empty set.
+    sets: Vec<(ReturnSet, Filtered)>,
+    /// It grows whenever less is left in a set than before when it is marked as used.
+    age: u32,
+}
+
+impl ReturnSets {
+    fn add(&mut self, set: ReturnSet) -> u32 {
+        if self.sets.is_empty() {
+            self.sets.push((ReturnSet::Union(EMPTY, EMPTY), Filtered::Used));
+        }
+        self.sets.push((set, Filtered::No));
+        self.sets.len() as u32 - 1
+    }
+
+    fn union(&mut self, a: u32, b: u32) -> u32 {
+        match (a, b) {
+            (EMPTY, other) | (other, EMPTY) => other,
+            _ if a == b => a,
+            _ => self.add(ReturnSet::Union(a, b)),
+        }
+    }
+
+    /// What is left of `set`, if that has been found out at this age.
+    fn left_of(&self, set: u32) -> Option<u32> {
+        match self.sets.get(set as usize)?.1 {
+            Filtered::Used => Some(EMPTY),
+            Filtered::Left(left, age) if age == self.age => Some(left),
+            _ => None,
+        }
+    }
+
+    /// Calls `uses` with the number of each `return` statement in `set` that it has not been called
+    /// with yet. What it answers `false` for is left: the result.
+    fn mark_as_used(&mut self, set: u32, mut uses: impl FnMut(u32) -> bool) -> u32 {
+        let mut pending = vec![set];
+        while let Some(&at) = pending.last() {
+            let Some(&(kind, _)) = self.sets.get(at as usize).filter(|_| self.left_of(at).is_none()) else {
+                pending.pop();
+                continue;
+            };
+            let left = match kind {
+                ReturnSet::One(number) if uses(number) => EMPTY,
+                ReturnSet::One(_) => at,
+                ReturnSet::Union(a, b) => match (self.left_of(a), self.left_of(b)) {
+                    (Some(left_of_a), Some(left_of_b)) if (left_of_a, left_of_b) == (a, b) => at,
+                    (Some(left_of_a), Some(left_of_b)) => self.union(left_of_a, left_of_b),
+                    (left_of_a, left_of_b) => {
+                        pending.extend(left_of_a.is_none().then_some(a));
+                        pending.extend(left_of_b.is_none().then_some(b));
+                        continue;
+                    }
+                },
+            };
+            let filtered = match left {
+                EMPTY => Filtered::Used,
+                _ => Filtered::Left(left, self.age),
+            };
+            for it in [at, left] {
+                if let Some(entry) = self.sets.get_mut(it as usize) {
+                    entry.1 = filtered;
+                }
+            }
+            pending.pop();
+        }
+        self.left_of(set).unwrap_or(EMPTY)
+    }
 }
 
 struct ScopeInfo<'a> {
     code_path: CodePath<'a>,
     /// Whether it is the one that is checked. If not, nothing is kept about it.
     is_active: bool,
-    useless_returns: Vec<Stmt<'a>>,
     /// The `block` of each `try` statement around the current node that has been left.
     traversed_try_blocks: Vec<Span>,
 }
@@ -32,53 +126,59 @@ struct ScopeInfo<'a> {
 pub struct State<'a> {
     /// What the code paths to analyze start with.
     roots: FxHashSet<Node<'a>>,
+    /// Whether a `return` statement is known to be useful, by what is around it.
+    useful: AncestorMemo<'a, bool>,
+    /// The function around a `return` statement.
+    functions: AncestorMemo<'a, Func<'a>>,
+    /// Whether a `return` statement is in a loop or in a `finally` block.
+    in_loop_or_finally: AncestorMemo<'a, bool>,
     /// For each of the code paths around the current node, the innermost last.
     scopes: Vec<ScopeInfo<'a>>,
-    segments: SegmentInfoMap<'a>,
+    segments: SegmentInfoMap,
+    /// ESLint's `scopeInfo.uselessReturns` of the code path that is checked, with those that have
+    /// been taken out of it again: whether each is still in it.
+    returns: Vec<(Stmt<'a>, bool)>,
+    /// How many are.
+    useless_count: usize,
+    sets: ReturnSets,
+    /// The unreachable segments from where everything before has been marked as used, each with the
+    /// age of the sets at that time.
+    used_unreachable: FxHashMap<u32, u32>,
 }
 
 /// ESLint's `isReturned`: `segment` ends with a `return`, or it is unreachable.
-fn is_returned<'a>(segments: &SegmentInfoMap<'a>, segment: Segment<'a>) -> bool {
+fn is_returned(segments: &SegmentInfoMap, segment: Segment<'_>) -> bool {
     segments.get(&segment.id()).is_none_or(|info| info.is_returned)
 }
 
-/// ESLint's `isInFinally`.
-fn is_in_finally(statement: Stmt<'_>) -> bool {
-    let mut current = Node::Stmt(statement);
-    for parent in current.ancestors() {
-        if let Node::Stmt(parent) = parent
-            && matches!(
-                parent.kind(),
-                StmtKind::Try { finalizer: Some(finalizer), .. } if Node::Stmt(finalizer) == current
-            )
-        {
-            return true;
-        }
-        if ast_utils::is_function(parent) {
-            return false;
-        }
-        current = parent;
+/// ESLint's `isInLoop` or `isInFinally`, as far as `parent`, which `child` is directly in, tells.
+fn is_in_loop_or_finally<'a>(child: Node<'a>, parent: Node<'a>) -> Option<bool> {
+    if let Node::Stmt(parent) = parent
+        && matches!(
+            parent.kind(),
+            StmtKind::Try { finalizer: Some(finalizer), .. } if Node::Stmt(finalizer) == child
+        )
+    {
+        return Some(true);
     }
-    false
+    if ast_utils::is_function(parent) {
+        return Some(false);
+    }
+    ast_utils::is_loop(parent).then_some(true)
 }
 
 impl<'a> State<'a> {
     /// ESLint's `getUselessReturns`, for the segments before `segment`. An unreachable one that
     /// comes after a `return` stands for those before it, as if the `return` was not there.
-    fn get_useless_returns(&self, segment: Segment<'a>) -> Returns<'a> {
-        let mut useless_returns = Returns::new();
-        let mut traversed: SmallVec<[u32; 8]> = SmallVec::new();
+    fn get_useless_returns(&mut self, segment: Segment<'a>) -> u32 {
+        let mut useless_returns = EMPTY;
+        let mut traversed = FxHashSet::default();
         let mut pending = segment.all_prev_segments();
         while let Some(prev) = pending.pop() {
             if prev.is_reachable() {
-                // Each once: or else their number doubles wherever two ways join.
-                for statement in self.segments.get(&prev.id()).map_or(&[][..], |info| &info.useless_returns) {
-                    if !useless_returns.contains(statement) {
-                        useless_returns.push(*statement);
-                    }
-                }
-            } else if !traversed.contains(&prev.id()) {
-                traversed.push(prev.id());
+                let of_prev = self.segments.get(&prev.id()).map_or(EMPTY, |info| info.useless_returns);
+                useless_returns = self.sets.union(useless_returns, of_prev);
+            } else if traversed.insert(prev.id()) {
                 let before = prev.all_prev_segments();
                 pending.extend(before.into_iter().filter(|it| is_returned(&self.segments, *it)));
             }
@@ -89,18 +189,17 @@ impl<'a> State<'a> {
     /// ESLint's `markReturnStatementsOnCurrentSegmentsAsUsed`, for the code path at `index` of
     /// `scopes`.
     fn mark_return_statements_on_current_segments_as_used(&mut self, index: usize) {
-        let Some(scope) = self.scopes.get_mut(index) else {
+        let Some(scope) = self.scopes.get(index) else {
             return;
         };
-        if scope.useless_returns.is_empty() {
+        if !scope.is_active || self.useless_count == 0 {
             return;
         }
-        let mut used_unreachable: SmallVec<[u32; 8]> = SmallVec::new();
         let mut pending = scope.code_path.current_segments();
         while let Some(segment) = pending.pop() {
             if !segment.is_reachable() {
-                if !used_unreachable.contains(&segment.id()) {
-                    used_unreachable.push(segment.id());
+                // Nothing is added to what has ended before it.
+                if self.used_unreachable.insert(segment.id(), self.sets.age) != Some(self.sets.age) {
                     let before = segment.all_prev_segments();
                     pending.extend(before.into_iter().filter(|it| is_returned(&self.segments, *it)));
                 }
@@ -109,38 +208,40 @@ impl<'a> State<'a> {
             let Some(info) = self.segments.get_mut(&segment.id()) else {
                 continue;
             };
-            info.useless_returns.retain(|statement| {
+            info.useless_returns = self.sets.mark_as_used(info.useless_returns, |number| {
+                let Some((statement, is_useless)) = self.returns.get_mut(number as usize) else {
+                    return true;
+                };
                 let span = statement.span();
                 if scope.traversed_try_blocks.iter().any(|block| block.contains(span)) {
-                    return true;
+                    return false;
                 }
-                if let Some(at) = scope.useless_returns.iter().position(|it| *it == *statement) {
-                    scope.useless_returns.remove(at);
-                }
-                false
+                self.useless_count -= usize::from(std::mem::take(is_useless));
+                true
             });
         }
     }
 
     /// A `return` without a value.
     fn add_return(&mut self, statement: Stmt<'a>) {
-        let Some(scope) = self.scopes.last_mut() else {
+        let Some(scope) = self.scopes.last() else {
             return;
         };
         if !scope.is_active
             || !scope.code_path.is_current_reachable()
-            || ast_utils::is_in_loop(statement)
-            || is_in_finally(statement)
+            || self.in_loop_or_finally.find(statement.into(), is_in_loop_or_finally) == Some(true)
         {
             return;
         }
+        let set = self.sets.add(ReturnSet::One(self.returns.len() as u32));
         for segment in scope.code_path.current_segments() {
             if let Some(info) = self.segments.get_mut(&segment.id()) {
-                info.useless_returns.push(statement);
+                info.useless_returns = self.sets.union(info.useless_returns, set);
                 info.is_returned = true;
             }
         }
-        scope.useless_returns.push(statement);
+        self.returns.push((statement, true));
+        self.useless_count += 1;
     }
 }
 
@@ -180,56 +281,39 @@ const STATEMENTS: [StmtTag; 28] = [
 
 /// Whether the statements alone tell that a `return` without a value is not reported: it is in a
 /// loop, or something is executed if it is left out. That is the statement after it, or after the
-/// `if` statements and the blocks that it is the end of.
-fn is_known_to_be_useful(statement: Stmt<'_>) -> bool {
-    let mut current = statement;
-    loop {
-        let parent = current.parent();
-        let list = match parent {
-            Node::Func(func) => func.body_statements(),
-            Node::Stmt(parent) => parent.as_block(),
-            _ => None,
-        };
-        if let Some(list) = list {
-            // The first one that ends after it.
-            let (mut next, mut end) = (0, list.len());
-            while next < end {
-                let middle = next + (end - next) / 2;
-                if list.get(middle).is_some_and(|it| it.span().end <= current.span().end) {
-                    next = middle + 1;
-                } else {
-                    end = middle;
-                }
-            }
-            let is_executed = |it: Stmt<'_>| {
-                matches!(
-                    it.tag(),
-                    StmtTag::Expr
-                        | StmtTag::Var
-                        | StmtTag::If
-                        | StmtTag::Throw
-                        | StmtTag::Switch
-                        | StmtTag::Try
-                        | StmtTag::For
-                        | StmtTag::ForIn
-                        | StmtTag::ForOf
-                        | StmtTag::While
-                        | StmtTag::DoWhile
-                ) || matches!(it.kind(), StmtKind::Return(Some(_)))
-            };
-            if let Some(next) = list.get(next) {
-                return is_executed(next);
-            }
-        }
-        match parent {
-            Node::Stmt(parent) => match parent.tag() {
-                StmtTag::While | StmtTag::DoWhile | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf => return true,
-                StmtTag::If => current = parent,
-                StmtTag::Block if parent.as_block().is_some() => current = parent,
-                _ => return false,
-            },
-            _ => return false,
-        }
+/// `if` statements and the blocks that it is the end of. This is what `parent` tells, which `current`,
+/// the `return` statement or one of these, is directly in.
+fn is_known_to_be_useful<'a>(current: Node<'a>, parent: Node<'a>) -> Option<bool> {
+    let list = match parent {
+        Node::Func(func) => func.body_statements(),
+        Node::Stmt(parent) => parent.as_block(),
+        _ => None,
+    };
+    if let Some(next) = list.and_then(|list| list.after(current.span().start)) {
+        let is_executed = matches!(
+            next.tag(),
+            StmtTag::Expr
+                | StmtTag::Var
+                | StmtTag::If
+                | StmtTag::Throw
+                | StmtTag::Switch
+                | StmtTag::Try
+                | StmtTag::For
+                | StmtTag::ForIn
+                | StmtTag::ForOf
+                | StmtTag::While
+                | StmtTag::DoWhile
+        ) || matches!(next.kind(), StmtKind::Return(Some(_)));
+        return Some(is_executed);
+    }
+    match parent {
+        Node::Stmt(parent) => match parent.tag() {
+            StmtTag::While | StmtTag::DoWhile | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf => Some(true),
+            StmtTag::If => None,
+            StmtTag::Block if parent.as_block().is_some() => None,
+            _ => Some(false),
+        },
+        _ => Some(false),
     }
 }
 
@@ -246,23 +330,30 @@ impl NoUselessReturn {
                 Step::Exit(node) => self.exit_statement(node, cx),
             }
         }
-        cx.state.segments.clear();
+        let state = &mut cx.state;
+        state.segments.clear();
+        state.returns.clear();
+        state.sets = ReturnSets::default();
+        state.used_unreachable.clear();
     }
 
     fn on_code_path_start<'a>(&self, code_path: CodePath<'a>, is_active: bool, cx: &mut Cx<'a, Self>) {
         cx.state.scopes.push(ScopeInfo {
             code_path,
             is_active,
-            useless_returns: Vec::new(),
             traversed_try_blocks: Vec::new(),
         });
     }
 
     fn on_code_path_end<'a>(&self, cx: &mut Cx<'a, Self>) {
-        let Some(scope) = cx.state.scopes.pop() else {
+        if !cx.state.scopes.pop().is_some_and(|scope| scope.is_active) {
             return;
-        };
-        for statement in scope.useless_returns {
+        }
+        cx.state.useless_count = 0;
+        for (statement, is_useless) in std::mem::take(&mut cx.state.returns) {
+            if !is_useless {
+                continue;
+            }
             cx.report(statement, UNNECESSARY_RETURN).fix(|fixer| {
                 let is_removable = ast_utils::is_statement_list_parent(statement.parent())
                     && fixer.file().comments_in(statement).next().is_none();
@@ -324,6 +415,7 @@ impl NoUselessReturn {
         match statement.kind() {
             StmtKind::Try { .. } => {
                 scope.traversed_try_blocks.pop();
+                cx.state.sets.age += 1;
             }
             StmtKind::Block(_) => {
                 if let Node::Stmt(parent) = statement.parent()
@@ -347,10 +439,12 @@ impl Rule for NoUselessReturn {
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         on.stmts([StmtTag::Return], |_, statement, cx| {
-            if !matches!(statement.kind(), StmtKind::Return(None)) || is_known_to_be_useful(statement) {
+            if !matches!(statement.kind(), StmtKind::Return(None))
+                || cx.state.useful.find(statement.into(), is_known_to_be_useful) == Some(true)
+            {
                 return;
             }
-            let function = Node::Stmt(statement).enclosing_function();
+            let function = cx.state.functions.find(statement.into(), |_, parent| parent.as_func());
             let root = function.map_or_else(|| Node::File(cx.file()), Node::Func);
             cx.state.roots.insert(root);
         });

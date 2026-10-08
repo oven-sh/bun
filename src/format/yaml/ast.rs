@@ -225,6 +225,8 @@ struct Context<'a> {
     comments: Vec<Id>,
     /// The nodes whose parents are not made yet.
     pending: Vec<Id>,
+    /// There is a tag or an anchor.
+    has_properties: bool,
 }
 
 /// `tokens(..)`: without spaces and line breaks.
@@ -350,6 +352,7 @@ impl<'a> Context<'a> {
     /// `transformContentProperties`, for the node `id` that is made of `node`.
     fn transform_content_properties(&mut self, id: Id, node: &Composed<'_, 'a>, props: &[SourceToken]) -> Result<()> {
         let mut first_tag_or_anchor_start = None;
+        self.has_properties |= !props.is_empty();
         for &token in props {
             match token.kind {
                 TokenType::Tag => {
@@ -1094,8 +1097,9 @@ fn attach_comment(nodes: &mut [Node<'_>], table: &[Line], next_leading: &[u32], 
     Ok(())
 }
 
-/// `updatePositions`
-fn update_positions(nodes: &mut [Node<'_>], id: Id) {
+/// `updatePositions`. `has_properties`: there are comments, tags or anchors. Without them, everything in the body of
+/// a document is where it is said to be from the start.
+fn update_positions(nodes: &mut [Node<'_>], id: Id, has_properties: bool) {
     let children = nodes[id as usize].children;
     let has_children_field = !matches!(
         nodes[id as usize].kind,
@@ -1113,9 +1117,9 @@ fn update_positions(nodes: &mut [Node<'_>], id: Id) {
     if !has_children_field {
         return;
     }
-    let mut child = children.first();
+    let mut child = children.first().filter(|_| has_properties || nodes[id as usize].kind != Kind::DocumentBody);
     while let Some(id) = child {
-        update_positions(nodes, id);
+        update_positions(nodes, id, has_properties);
         child = nodes[id as usize].next;
     }
     if let (Kind::Document, Some(head), Some(body), 2) = (nodes[id as usize].kind, children.first(), children.last(), children.len()) {
@@ -1194,6 +1198,7 @@ pub(crate) fn build<'a>(text: &'a [u8], documents: &[Document<'_, 'a>], cst_toke
         nodes: Vec::with_capacity(text.len() / 4 + 8),
         comments: Vec::new(),
         pending: Vec::new(),
+        has_properties: false,
     };
     let children = context.transform_documents(documents, cst_tokens)?;
     let root = context.new_node(Kind::Root, context.position(0, text.len() as u32));
@@ -1201,13 +1206,16 @@ pub(crate) fn build<'a>(text: &'a [u8], documents: &[Document<'_, 'a>], cst_toke
         context.add_child(root, child);
     }
     let Context {
-        mut nodes, mut comments, ..
+        mut nodes,
+        mut comments,
+        has_properties,
+        ..
     } = context;
     comments.sort_by_key(|&comment| nodes[comment as usize].position.start.offset);
 
     // `attachComments`, if there are comments to attach.
     if comments.iter().all(|&comment| nodes[comment as usize].parent.is_some()) {
-        update_positions(&mut nodes, root);
+        update_positions(&mut nodes, root, has_properties || !comments.is_empty());
         return Ok(Tree { nodes, root });
     }
     let mut table = vec![Line::default(); nodes[root as usize].position.end.line as usize];
@@ -1236,6 +1244,6 @@ pub(crate) fn build<'a>(text: &'a [u8], documents: &[Document<'_, 'a>], cst_toke
         }
         attach_comment(&mut nodes, &table, &next_leading, comment, *rest_documents.first().ok_or(Unexpected)?)?;
     }
-    update_positions(&mut nodes, root);
+    update_positions(&mut nodes, root, true);
     Ok(Tree { nodes, root })
 }

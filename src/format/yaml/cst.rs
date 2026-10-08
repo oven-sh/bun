@@ -368,21 +368,22 @@ impl Parser<'_> {
                 self.stack.push(Token::DocEnd { token, end: None });
                 return Ok(());
             }
-            // While it is looked at, the top of the stack is not on the stack.
-            let Some(mut top) = self.stack.pop() else {
+            // While its top is looked at, the stack is not there.
+            let mut stack = std::mem::take(&mut self.stack);
+            let Some((top, below)) = stack.split_last_mut() else {
                 return self.stream();
             };
-            let next = match &mut top {
-                Token::Document { .. } => self.document(&mut top),
-                Token::FlowScalar { .. } => self.scalar(&mut top),
-                Token::BlockScalar { .. } => self.block_scalar(&mut top),
-                Token::BlockMap { .. } => self.block_map(&mut top),
-                Token::BlockSeq { .. } => self.block_sequence(&mut top),
-                Token::FlowCollection { .. } => self.flow_collection(&mut top),
-                Token::DocEnd { .. } => self.document_end(&mut top),
+            let next = match top {
+                Token::Document { .. } => self.document(top),
+                Token::FlowScalar { .. } => self.scalar(top, below.last_mut()),
+                Token::BlockScalar { .. } => self.block_scalar(top),
+                Token::BlockMap { .. } => self.block_map(top),
+                Token::BlockSeq { .. } => self.block_sequence(top),
+                Token::FlowCollection { .. } => self.flow_collection(top, below.last_mut()),
+                Token::DocEnd { .. } => self.document_end(top),
                 Token::Source(_) | Token::Directive(_) => Ok(Next::PopAndStep),
             };
-            self.stack.push(top);
+            self.stack = stack;
             match next? {
                 Next::Done => return Ok(()),
                 Next::Push(token) => {
@@ -549,11 +550,12 @@ impl Parser<'_> {
         self.start_block_value(doc).map(Next::Push).ok_or(ParseError::Syntax)
     }
 
-    fn scalar(&mut self, scalar: &mut Token) -> Result<Next> {
+    /// `parent`: what is below it on the stack.
+    fn scalar(&mut self, scalar: &mut Token, parent: Option<&mut Token>) -> Result<Next> {
         if self.kind != TokenType::MapValueInd {
             return self.line_end(scalar);
         }
-        let start = first_key_start_props(self.stack.last_mut().and_then(prev_props));
+        let start = first_key_start_props(parent.and_then(prev_props));
         let mut sep = match scalar {
             Token::FlowScalar { end, .. } => end.take().unwrap_or_default(),
             _ => Vec::new(),
@@ -855,7 +857,8 @@ impl Parser<'_> {
         Ok(Next::PopAndStep)
     }
 
-    fn flow_collection(&mut self, collection: &mut Token) -> Result<Next> {
+    /// `parent`: what is below it on the stack.
+    fn flow_collection(&mut self, collection: &mut Token, parent: Option<&mut Token>) -> Result<Next> {
         let token = self.source_token();
         let Token::FlowCollection {
             offset,
@@ -907,7 +910,7 @@ impl Parser<'_> {
             }
             return Ok(Next::Done);
         }
-        let parent = self.stack.last_mut().ok_or(ParseError::Syntax)?;
+        let parent = parent.ok_or(ParseError::Syntax)?;
         if let Token::BlockMap {
             indent: parent_indent,
             items: parent_items,

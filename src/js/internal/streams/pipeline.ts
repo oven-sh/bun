@@ -271,9 +271,17 @@ async function pumpToWeb(readable, writable, finish, { end }, destroys?) {
   if (isTransformStream(writable)) {
     writable = writable.writable;
   }
-  // https://streams.spec.whatwg.org/#example-manual-write-with-backpressure
-  const writer = writable.getWriter();
   const source = hold(readable, destroys);
+  // https://streams.spec.whatwg.org/#example-manual-write-with-backpressure
+  let writer;
+  try {
+    writer = writable.getWriter();
+  } catch (err) {
+    // Not before pipelineImpl has registered every member: finishImpl then tears them all down.
+    await source?.cancel();
+    finish(err);
+    return;
+  }
   let torn;
   if (source !== null) {
     readable = source;

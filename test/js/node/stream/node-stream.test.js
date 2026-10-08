@@ -2217,6 +2217,42 @@ describe("pipeline() wakes a pump that waits on a web source", () => {
       expect(composed.destroyed).toBe(true);
     });
 
+    describe("a web sink that is locked already", () => {
+      it("Readable > WritableStream: the callback gets the error", async () => {
+        const source = nodeSource();
+        const locked = new WritableStream();
+        locked.getWriter();
+        const { promise, resolve } = Promise.withResolvers();
+        pipeline(source.stream, locked, resolve);
+        const err = await promise;
+        expect(err).toMatchObject({ name: "TypeError", code: "ERR_INVALID_STATE" });
+        expect(await source.destroyed).toBe(err);
+      });
+
+      it("ReadableStream > WritableStream: the callback gets the error", async () => {
+        const source = webSource();
+        const locked = new WritableStream();
+        locked.getWriter();
+        const { promise, resolve } = Promise.withResolvers();
+        pipeline(source.stream, locked, resolve);
+        expect(await promise).toMatchObject({ name: "TypeError", code: "ERR_INVALID_STATE" });
+        expect(await source.cancelled).toBeUndefined();
+      });
+
+      it("Readable > TransformStream > Writable: every member is torn down", async () => {
+        const source = nodeSource();
+        const transform = new TransformStream();
+        transform.writable.getWriter();
+        const sink = nodeSink();
+        const { promise, resolve } = Promise.withResolvers();
+        pipeline(source.stream, transform, sink.stream, resolve);
+        const err = await promise;
+        expect(err).toMatchObject({ name: "TypeError", code: "ERR_INVALID_STATE" });
+        expect(await source.destroyed).toBe(err);
+        expect(sink.stream.destroyed).toBe(true);
+      });
+    });
+
     describe("what node settles stays as node settles it", () => {
       // "a chunk after it": node settles these. The new cells settle the same way.
       const arrivals = [

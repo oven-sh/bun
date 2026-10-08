@@ -3,6 +3,14 @@
   "name": "tests/Angular/imports-with-decorators.js",
   "filename": "imports-with-decorators.js",
   "options": {
+   "overrides": [
+    {
+     "files": "*.js",
+     "options": {
+      "parser": "typescript"
+     }
+    }
+   ],
    "tabWidth": 4,
    "importOrder": [
     "^@core/(.*)$",
@@ -23,6 +31,14 @@
   "name": "tests/Angular/imports-with-side-effect-imports.js",
   "filename": "imports-with-side-effect-imports.js",
   "options": {
+   "overrides": [
+    {
+     "files": "*.js",
+     "options": {
+      "parser": "typescript"
+     }
+    }
+   ],
    "tabWidth": 4,
    "importOrder": [
     "^@core/(.*)$",
@@ -1584,6 +1600,14 @@
   "name": "tests/Typescript/imports-with-type-and-value-imports.js",
   "filename": "imports-with-type-and-value-imports.js",
   "options": {
+   "overrides": [
+    {
+     "files": "*.js",
+     "options": {
+      "parser": "typescript"
+     }
+    }
+   ],
    "tabWidth": 4,
    "importOrder": [
     "^@core/(.*)$",
@@ -1672,6 +1696,14 @@
   "name": "tests/TypescriptModern/imports-with-type-and-value-imports.js",
   "filename": "imports-with-type-and-value-imports.js",
   "options": {
+   "overrides": [
+    {
+     "files": "*.js",
+     "options": {
+      "parser": "typescript"
+     }
+    }
+   ],
    "tabWidth": 4,
    "importOrder": [
     "^@core/(.*)$",

@@ -436,6 +436,8 @@ struct Printer<'o> {
     use_tabs: bool,
     tab_width: usize,
     new_line: &'static [u8],
+    /// What a line break in a text and a literal line are written as. See `FormatOptions::is_in_markdown`.
+    literal_new_line: &'static [u8],
     out: &'o mut Vec<u8>,
     /// Where `out` started.
     start: usize,
@@ -619,12 +621,12 @@ impl Printer<'_> {
     }
 
     fn write_text(&mut self, text: &[u8]) {
-        if self.new_line == b"\n" || !bun_core::strings::contains_char(text, b'\n') {
+        if self.literal_new_line == b"\n" || !bun_core::strings::contains_char(text, b'\n') {
             return self.out.extend_from_slice(text);
         }
         for (index, line) in bun_core::strings::split(text, b"\n").enumerate() {
             if index > 0 {
-                self.out.extend_from_slice(self.new_line);
+                self.out.extend_from_slice(self.literal_new_line);
             }
             self.out.extend_from_slice(line);
         }
@@ -747,7 +749,7 @@ impl Printer<'_> {
                                 commands.push(command);
                                 commands.extend(line_suffix.drain(..).rev());
                             } else if *line == Line::Literal {
-                                self.out.extend_from_slice(self.new_line);
+                                self.out.extend_from_slice(self.literal_new_line);
                                 position = self.write_indent(self.indents[indent as usize].root);
                             } else {
                                 self.trim();
@@ -818,6 +820,12 @@ pub(crate) fn print(mut doc: Doc<'_>, options: &FormatOptions, text: &[u8], out:
         use_tabs: matches!(options.indent_style, IndentStyle::Tab),
         tab_width: options.indent_width.value() as usize,
         new_line: match options.line_ending.resolve(text) {
+            LineEnding::Crlf => b"\r\n",
+            LineEnding::Cr => b"\r",
+            _ => b"\n",
+        },
+        literal_new_line: match options.line_ending.resolve(text) {
+            _ if options.is_in_markdown => b"\r\n",
             LineEnding::Crlf => b"\r\n",
             LineEnding::Cr => b"\r",
             _ => b"\n",

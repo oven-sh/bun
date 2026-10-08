@@ -230,7 +230,7 @@ impl<'a> Format<'a> for FormatTSSignature<'a> {
                 return write!(f, signature);
             }
             if f.comments().has_trailing_suppression_comment(span.end) {
-                write!(f, FormatSuppressedNode(span));
+                write!(f, [format_leading_comments(span), FormatSuppressedNode(span)]);
                 return write_trailing_comments_of(signature.as_ast_nodes(), f);
             }
             // Prettier's `handleTSFunctionTrailingComments`: `a() /* comment */;`

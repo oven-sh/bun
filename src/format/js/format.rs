@@ -329,9 +329,14 @@ impl<'a> FormatExpr<'a> {
         };
 
         // ESTree's `Expression`, as opposed to the `ChainElement` in a `ChainExpression`.
-        if !self.is_in_chain_expression && f.comments().has_trailing_suppression_comment(span.end) {
+        if !self.is_in_chain_expression
+            && f.comments().has_trailing_suppression_comment(span.end)
+            // The comment trails `a && b` of `a && b // prettier-ignore ⏎ && c`, which Prettier writes
+            // without looking at its comments.
+            && !matches!(node.parent(), AstNodes::LogicalExpression(it) | AstNodes::BinaryExpression(it) if it.span().end == span.end)
+        {
             format_leading_comments(span).fmt(f);
-            f.around_cursor(span, |f| FormatSuppressedNode(span).fmt(f));
+            write_suppressed_expression(expr, is_chain_expression, f);
             return write_trailing_comments_of(node, f);
         }
 
@@ -366,25 +371,31 @@ impl<'a> FormatExpr<'a> {
         }
         format_leading_comments(span).fmt(f);
         if is_suppressed {
-            let needs_parentheses = match is_chain_expression {
-                true => parentheses::expression::chain_expression_needs_parentheses(expr, f),
-                false => parentheses::expression::needs_parentheses(expr, f),
-            };
-            // Prettier's `printIgnored`: a class expression with decorators is on lines of its own.
-            let is_decorated_class = matches!(expr.kind(), ExprKind::Class(class) if class.decorators().next().is_some());
-            f.around_cursor(span, |f| {
-                write!(f, needs_parentheses.then_some("("));
-                match is_decorated_class {
-                    true => write!(f, soft_block_indent(&FormatSuppressedNode(span))),
-                    false => write!(f, FormatSuppressedNode(span)),
-                }
-                write!(f, needs_parentheses.then_some(")"));
-            });
+            write_suppressed_expression(expr, is_chain_expression, f);
         } else {
             f.in_scope(span, |f| self.write_in_parentheses(is_chain_expression, f));
         }
         write_trailing_comments_of(node, f);
     }
+}
+
+/// Prettier's `printIgnored` for an expression, in the parentheses that it needs.
+fn write_suppressed_expression<'a>(expr: Expr<'a>, is_chain_expression: bool, f: &mut Formatter<'a>) {
+    let span = expr.span();
+    let needs_parentheses = match is_chain_expression {
+        true => parentheses::expression::chain_expression_needs_parentheses(expr, f),
+        false => parentheses::expression::needs_parentheses(expr, f),
+    };
+    // A class expression with decorators is on lines of its own.
+    let is_decorated_class = matches!(expr.kind(), ExprKind::Class(class) if class.decorators().next().is_some());
+    f.around_cursor(span, |f| {
+        write!(f, needs_parentheses.then_some("("));
+        match is_decorated_class {
+            true => write!(f, soft_block_indent(&FormatSuppressedNode(span))),
+            false => write!(f, FormatSuppressedNode(span)),
+        }
+        write!(f, needs_parentheses.then_some(")"));
+    });
 }
 
 impl<'a> Format<'a> for FormatExpr<'a> {

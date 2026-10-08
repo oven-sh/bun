@@ -578,7 +578,8 @@ impl<'a> Format<'a> for FormatClassElementWithSemicolon<'a> {
                 Semicolons::Always => true,
                 Semicolons::AsNeeded => self.needs_semicolon(),
             }
-            && !f.comments().is_suppressed(self.element.span().start);
+            && !f.comments().is_suppressed(self.element.span().start)
+            && !f.comments().has_trailing_suppression_comment(self.element.span().end);
 
         if needs_semi {
             // The comments before the `;` are written behind it.

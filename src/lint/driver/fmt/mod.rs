@@ -186,11 +186,7 @@ fn format(path: &[u8], text: &[u8], resolved: &Resolved, atoms: &dyn Intern, scr
             return finish(done, out, "YAML");
         }
         Some(Kind::Markdown) => {
-            let options = FormatOptions {
-                format_javascript: Some(format_javascript),
-                ..options.clone()
-            };
-            let done = bun_format::markdown::format(text, &options, &mut scratch.markdown, &mut out);
+            let done = bun_format::markdown::format(text, options, &mut scratch.markdown, &mut out);
             return finish(done, out, "Markdown");
         }
         Some(Kind::GraphQl) => {
@@ -245,7 +241,8 @@ fn print<'a>(file: &'a File<'a>, first_error: Option<&Diagnostic>, how: &How, sc
         true => bun_format::verify::compare_with_sorted_imports,
         false => bun_format::verify::compare,
     };
-    if how.verifies && out != file.text() {
+    // With `jsdoc`, comments are written anew, which nothing here can compare yet.
+    if how.verifies && options.jsdoc.is_none() && out != file.text() {
         let is_same = with_file(how, &out, |after, _| !after.has_parse_errors() && compare(file, after).is_ok());
         if !is_same {
             return Err(Failure::Bug("formatting would change what the code means"));
@@ -269,7 +266,10 @@ fn format_as(how: &How, text: &[u8], scratch: &mut Scratch) -> Result<Formatted,
 /// the cursor ends up. For the tests of the formatter. `Err(true)`: a syntax error.
 pub fn format_for_tests(path: &[u8], text: &[u8], options: &FormatOptions) -> Result<(Vec<u8>, Option<u32>), bool> {
     let resolved = Resolved {
-        options: options.clone(),
+        options: FormatOptions {
+            format_javascript: Some(format_javascript),
+            ..options.clone()
+        },
         omits_final_newline: false,
     };
     let names = Session::new();

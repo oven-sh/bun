@@ -41,7 +41,14 @@ function run(command, args) {
   return { stdout: result.stdout ?? "", status: result.status, ms: performance.now() - started };
 }
 
-const rules = new Set(JSON.parse(spawnSync(bin[0], ["linter", "rules"], { encoding: "utf8" }).stdout));
+// The rules that `bun lint` has: the harness lists them, Bun itself does with `--rules`.
+const rules = new Set(
+  bin[1] === "cli"
+    ? JSON.parse(spawnSync(bin[0], ["linter", "rules"], { encoding: "utf8" }).stdout)
+    : JSON.parse(spawnSync(bin[0], [...bin.slice(1), "--rules", "-f", "json"], { encoding: "utf8", cwd: project }).stdout).map(it =>
+        it.scope === "eslint" ? it.value : it.scope === "typescript" ? `@typescript-eslint/${it.value}` : `${it.scope}/${it.value}`,
+      ),
+);
 
 /** `eslint(no-debugger)`, `typescript-eslint(no-explicit-any)` as ESLint calls them. */
 function ruleOfOxlint(code) {

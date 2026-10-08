@@ -200,6 +200,19 @@ fn settings(json: &Json) -> Settings {
                 settings.push((b"sortPackageJson.sortScripts".to_vec(), if sorts_scripts { b"true".to_vec() } else { b"false".to_vec() }));
                 continue;
             }
+            // On, and each of its properties by itself.
+            Json::Object(properties) if name == b"jsdoc" => {
+                settings.push((name.clone(), b"{}".to_vec()));
+                for (property, value) in properties {
+                    let value = match value {
+                        Json::String(text) => text.clone(),
+                        Json::Bool(value) => if *value { &b"true"[..] } else { b"false" }.to_vec(),
+                        _ => continue,
+                    };
+                    settings.push(([b"jsdoc.", &property[..]].concat(), value));
+                }
+                continue;
+            }
             // A feature of oxfmt that is configured, and so is on.
             Json::Object(_) => b"true".to_vec(),
             _ => continue,
@@ -573,6 +586,7 @@ impl<'c> Configs<'c> {
         let mut resolved = Resolved::default();
         let mut sort = SortSettings::default();
         let _ = resolved.options.set(b"filepath", path);
+        resolved.options.format_javascript = Some(super::format_javascript);
         if self.flavor == Flavor::Oxfmt {
             let _ = resolved.options.set(b"flavor", b"oxfmt");
             // It sorts the keys of a `package.json` unless it is told not to.
@@ -601,7 +615,12 @@ impl<'c> Configs<'c> {
                 b"printWidth" if self.flavor == Flavor::Oxfmt && check_print_width(value).is_err() => {
                     check_print_width(value)?;
                 }
-                b"sortTailwindcss" | b"experimentalTailwindcss" | b"jsdoc" if value != b"false" => {
+                name if name == b"jsdoc" || name.starts_with(b"jsdoc.") => {
+                    if resolved.options.set(name, value).is_err() {
+                        return Err(Fatal([b"Invalid ", name, b" value: ", value, b"."].concat()));
+                    }
+                }
+                b"sortTailwindcss" | b"experimentalTailwindcss" if value != b"false" => {
                     self.warn(&[name, b" is not supported yet, and has no effect."]);
                 }
                 name if OPTIONS.contains(&name) && resolved.options.set(name, value).is_err() => {

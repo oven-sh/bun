@@ -178,19 +178,17 @@ impl<'a> Children<'a> {
             }
         }
 
-        let mut last_word: &[u8] = &[];
         while !rest.is_empty() {
             let (word, after_word) = split_first_word(rest);
             let (whitespace, after_whitespace) = split_leading_whitespace(after_word);
             self.push(Item::Word(word));
-            last_word = word;
             rest = after_whitespace;
             if !rest.is_empty() {
                 self.push_line(Separator::Line);
             } else if whitespace.is_empty() {
-                self.push_separator_no_whitespace(last_word, is_before_self_closing_element);
+                self.push_separator_no_whitespace(word, is_before_self_closing_element);
             } else if has_line_break(whitespace) {
-                self.push_separator_with_whitespace(last_word, is_before_self_closing_element);
+                self.push_separator_with_whitespace(word, is_before_self_closing_element);
             } else {
                 self.push_line(Separator::JsxWhitespace);
             }

@@ -7,8 +7,6 @@ use std::borrow::Cow;
 pub(crate) enum StringLiteralParentKind {
     /// An expression, or the value of a JSX attribute.
     Expression,
-    /// The name of a property or a member. The quotes are removed if they can be.
-    Member,
     /// The name of an import attribute.
     ImportAttribute,
     /// `"use strict"`. Nothing but the quotes is changed, and they are only if there are no
@@ -123,18 +121,7 @@ impl<'a> FormatLiteralStringToken<'a> {
             StringLiteralParentKind::ImportAttribute if !is_quote_needed && is_es5_identifier_name(content) => {
                 Cow::Borrowed(content)
             }
-            StringLiteralParentKind::Member
-                if !is_quote_needed
-                    && (is_es5_identifier_name(content)
-                        || (f.file().is_javascript()
-                            && is_simple_number(content)
-                            && is_canonical_simple_number(content))) =>
-            {
-                Cow::Borrowed(content)
-            }
-            StringLiteralParentKind::ImportAttribute | StringLiteralParentKind::Member => {
-                self.normalize_string_literal(&information)
-            }
+            StringLiteralParentKind::ImportAttribute => self.normalize_string_literal(&information),
         };
         CleanedStringLiteralText { text }
     }

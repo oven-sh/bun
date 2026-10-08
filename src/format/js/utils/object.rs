@@ -144,31 +144,12 @@ fn requires_quotes<'a>(key: Key<'a>, parent: Option<AstNodes<'a>>, f: &Formatter
 fn siblings_require_quotes<'a>(parent: AstNodes<'a>, f: &Formatter<'a>) -> bool {
     match parent {
         AstNodes::ObjectProperty(_)
+        | AstNodes::TSPropertySignature(_)
+        | AstNodes::TSMethodSignature(_)
         | AstNodes::MethodDefinition(_)
         | AstNodes::PropertyDefinition(_)
         | AstNodes::AccessorProperty(_)
         | AstNodes::TSEnumMember(_) => f.context().is_quote_needed(),
-        AstNodes::TSPropertySignature(member) | AstNodes::TSMethodSignature(member) => {
-            f.context().is_quote_needed() || {
-                let members = match member.parent() {
-                    Node::Type(ty) => match ty.kind() {
-                        TypeKind::Object(members) => Some(members),
-                        _ => None,
-                    },
-                    Node::Stmt(statement) => match statement.kind() {
-                        StmtKind::Interface(declaration) => Some(declaration.members()),
-                        _ => None,
-                    },
-                    _ => None,
-                };
-                members.is_some_and(|members| {
-                    members.iter().any(|it| {
-                        matches!(it.as_ast_nodes(), AstNodes::TSMethodSignature(_))
-                            && it.key().is_some_and(|key| matches!(key.kind(), KeyKind::String(name) if name.is("new")))
-                    })
-                })
-            }
-        }
         AstNodes::BindingProperty(property) => match property.parent() {
             Node::Pat(pattern) => matches!(pattern.kind(), PatKind::Object(properties) if properties.iter().any(|it| {
                 it.key().is_some_and(|key| key_requires_quotes(key, AstNodes::BindingProperty(it), f))
@@ -205,11 +186,6 @@ pub(crate) fn format_computed_or_property_key<'a>(key: Key<'a>, parent: AstNodes
         true => write!(f, ["[", FormatKey::new(key, parent), "]"]),
         false => write!(f, FormatKey::new(key, parent)),
     }
-}
-
-/// Prettier's `printKey` for a key that is not computed.
-pub(crate) fn format_property_key<'a>(key: Key<'a>, parent: AstNodes<'a>, f: &mut Formatter<'a>) {
-    write!(f, FormatKey::new(key, parent));
 }
 
 /// Writes a key that is not computed. Returns the number of columns that it takes.

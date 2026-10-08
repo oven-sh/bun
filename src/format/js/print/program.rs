@@ -19,6 +19,13 @@ pub(crate) fn write_program<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
         f.write_text(&source[..3], Some(TextWidth::single(0)));
     }
     write_hashbang(f);
+    // Nothing that a comment could belong to: they are all Prettier's dangling comments of the
+    // program, which have no empty lines between them.
+    if !file.body().is_empty() && file.body().iter().all(|it| matches!(it.kind(), StmtKind::Empty)) {
+        let comments = f.comments().unprinted_comments();
+        let indent = DanglingIndentMode::None;
+        return write!(f, [FormatDanglingComments::Comments { comments, indent }, hard_line_break()]);
+    }
     write!(f, FormatStatements(file.body()));
     let rest = f.comments().unprinted_comments();
     write!(f, [FormatTrailingComments::Comments(rest), hard_line_break()]);

@@ -22,7 +22,7 @@ use bun_format::{FormatError, FormatOptions, Scratch};
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser, SourceType};
 use bun_sema::atom::Interner;
-use bun_sema::bind::{BindOptions, bind_for_format};
+use bun_sema::bind::{BindOptions, bind, bind_for_format};
 use bun_sema::resolve::Dialect;
 use bun_sema::session::Session;
 use std::collections::BTreeMap;
@@ -32,6 +32,11 @@ use std::path::{Path, PathBuf};
 /// Parses `code` the way Prettier's parsers do, as a module or as a script, and calls `then` with
 /// the file.
 fn with_file_as<R>(is_script: bool, path: &str, code: &[u8], then: impl for<'a> FnOnce(&'a File<'a>) -> R) -> R {
+    with_bound_file_as(false, is_script, path, code, then)
+}
+
+/// `needs_symbols`: with the symbols and scopes of the file, which formatting does not take.
+fn with_bound_file_as<R>(needs_symbols: bool, is_script: bool, path: &str, code: &[u8], then: impl for<'a> FnOnce(&'a File<'a>) -> R) -> R {
     // What typescript-estree refuses while it converts the tree, Prettier refuses too.
     let is_typescript = [".ts", ".tsx", ".mts", ".cts"].iter().any(|it| path.ends_with(it));
     let language = LanguageOptions {
@@ -60,7 +65,10 @@ fn with_file_as<R>(is_script: bool, path: &str, code: &[u8], then: impl for<'a> 
         before_es2020: false,
         before_es2017: false,
     };
-    let bound = bind_for_format(&hir, bind_options, &atoms, arena);
+    let bound = match needs_symbols {
+        true => bind(&hir, bind_options, &atoms, arena),
+        false => bind_for_format(&hir, bind_options, &atoms, arena),
+    };
     then(&File::new(path.as_bytes(), &hir, &bound, &atoms, &language, None))
 }
 
@@ -136,9 +144,9 @@ fn format_text_with_cursor(path: &str, code: &[u8], options: &FormatOptions) -> 
         bun_format::pragma::BeforeParsing::Format(code) => code,
     };
     let format_as = |is_script: bool| {
-        with_file_as(is_script, path, &code, |file| {
+        let how = options.sort_imports.as_deref();
+        with_bound_file_as(how.is_some_and(|it| it.needs_symbols()), is_script, path, &code, |file| {
             // A file whose imports move is parsed again.
-            let how = options.sort_imports.as_deref();
             match how.and_then(|how| bun_format::sort_imports::sorted_text(file, how)) {
                 Some(sorted) => with_file_as(is_script, path, &sorted, |file| format(file, is_script, options)),
                 None => format(file, is_script, options),

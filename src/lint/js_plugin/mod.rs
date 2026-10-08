@@ -22,6 +22,8 @@ mod host;
 mod offsets;
 mod rules;
 mod schema;
+mod scopes;
+mod tokens;
 mod wire;
 
 pub use host::{Channel, Failure, Host, Report, Spawn, Suggested};

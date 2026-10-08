@@ -3,7 +3,7 @@
 use super::offsets::Offsets;
 use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
 use super::wire::{self, ToWorker, from_worker};
-use super::{ast, schema};
+use super::{ast, schema, scopes, tokens};
 use crate::ast::File;
 use crate::fix::Fix;
 use crate::linter::write_json_string;
@@ -394,6 +394,7 @@ fn converse<'a>(
         out.extend_from_slice(if has_mark { &text[3..] } else { text });
     });
     worker.send()?;
+    let mut ids = None;
     loop {
         let (kind, content) = worker.receive()?;
         match kind {
@@ -417,13 +418,26 @@ fn converse<'a>(
                 let selectors = worker.selectors(&content, &mut buffer);
                 match kind {
                     from_worker::NEEDS_AST => {
-                        wire::message(&mut buffer, ToWorker::Ast, |out| ast::write(file, &offsets, &selectors, out));
+                        wire::message(&mut buffer, ToWorker::Ast, |out| ids = Some(ast::write(file, &offsets, &selectors, out)));
                     }
                     _ => wire::message(&mut buffer, ToWorker::Matches, |out| {
                         ast::write_only_matches(file, &offsets, &selectors, out);
                     }),
                 }
                 worker.buffer = buffer;
+                worker.send()?;
+            }
+            from_worker::NEEDS_TOKENS => {
+                wire::message(&mut worker.buffer, ToWorker::Tokens, |out| tokens::write(file, &offsets, out));
+                worker.send()?;
+            }
+            from_worker::NEEDS_COMMENTS => {
+                wire::message(&mut worker.buffer, ToWorker::Comments, |out| tokens::write_comments(file, &offsets, out));
+                worker.send()?;
+            }
+            from_worker::NEEDS_SCOPES => {
+                let ids = ids.as_ref().ok_or(b"It is out of step.".as_slice())?;
+                wire::message(&mut worker.buffer, ToWorker::Scopes, |out| scopes::write(file, &offsets, ids, out));
                 worker.send()?;
             }
             _ => return Err(b"It is out of step.".to_vec()),

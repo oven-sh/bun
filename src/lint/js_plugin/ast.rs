@@ -18,6 +18,7 @@ use crate::ast::File;
 use crate::estree::{Dialect, FieldEntry, Nodes, Object, VNode, Value};
 use crate::selector::{EsNode, Selector};
 use crate::span::Span;
+use rustc_hash::FxHashMap;
 
 /// What the number in a word is.
 #[derive(Copy, Clone)]
@@ -71,6 +72,9 @@ pub(super) const STRINGS: &[&str] = &[
     "|", "|=", "||", "||=", "~",
 ];
 
+/// The numbers of the nodes of a file.
+pub(super) type NodeIds<'a> = FxHashMap<VNode<'a>, u32>;
+
 const HEADER: usize = 10;
 /// In the start of a pair of `strings`: it is in `extra`.
 const IN_EXTRA: u32 = 1 << 31;
@@ -117,6 +121,7 @@ struct Writer<'a, 's> {
     selectors: &'s [Option<&'s Selector>],
     /// The nodes that match each of `selectors`.
     matches: Vec<Vec<u32>>,
+    ids: NodeIds<'a>,
     tree: Tree,
     /// The length of [`Tree::extra`] in UTF-16 code units.
     extra_units: u32,
@@ -128,6 +133,7 @@ impl<'a> Writer<'a, '_> {
     fn start_node(&mut self, node: VNode<'a>, parent: u32) -> u32 {
         let id = self.tree.types.len() as u32;
         let node_type = node.node_type();
+        self.ids.insert(node, id);
         if !self.selectors.is_empty() {
             let es_node = EsNode::of(node, node_type);
             for (selector, matches) in self.selectors.iter().zip(&mut self.matches) {
@@ -340,11 +346,13 @@ fn walk<'a, 's>(file: &'a File<'a>, offsets: &'s Offsets, selectors: &'s [Option
         offsets,
         selectors,
         matches: vec![Vec::new(); selectors.len()],
+        ids: NodeIds::default(),
         tree: Tree::default(),
         extra_units: 0,
         open: Vec::new(),
     };
     let nodes = file.text().len() / 8;
+    writer.ids.reserve(nodes);
     writer.tree.types.reserve(nodes);
     writer.tree.starts.reserve(nodes);
     writer.tree.ends.reserve(nodes);
@@ -356,7 +364,12 @@ fn walk<'a, 's>(file: &'a File<'a>, offsets: &'s Offsets, selectors: &'s [Option
 }
 
 /// Appends the tree of `file`, and what matches `selectors`.
-pub(super) fn write<'a>(file: &'a File<'a>, offsets: &Offsets, selectors: &[Option<&Selector>], out: &mut Vec<u8>) {
+pub(super) fn write<'a>(
+    file: &'a File<'a>,
+    offsets: &Offsets,
+    selectors: &[Option<&Selector>],
+    out: &mut Vec<u8>,
+) -> NodeIds<'a> {
     let writer = walk(file, offsets, selectors);
     let tree = &writer.tree;
     let matches: usize = writer.matches.iter().map(|it| it.len() + 1).sum();
@@ -382,6 +395,7 @@ pub(super) fn write<'a>(file: &'a File<'a>, offsets: &Offsets, selectors: &[Opti
     write_matches(&writer.matches, out);
     out.extend_from_slice(&tree.types);
     out.extend_from_slice(&tree.extra);
+    writer.ids
 }
 
 /// Appends only what matches `selectors`.

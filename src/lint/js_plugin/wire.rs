@@ -22,6 +22,9 @@ pub(super) enum ToWorker {
     Matches = 8,
     /// JSON: what the selectors that the worker has just sent are like. It precedes the answer.
     Selectors = 9,
+    Tokens = 10,
+    Comments = 11,
+    Scopes = 12,
 }
 
 /// What a message from a worker is.
@@ -35,6 +38,11 @@ pub(super) mod from_worker {
     /// JSON: `[new selectors, the indices of the selectors to match]`.
     pub(crate) const NEEDS_AST: u32 = 4;
     pub(crate) const NEEDS_MATCHES: u32 = 5;
+    /// The tokens and the comments.
+    pub(crate) const NEEDS_TOKENS: u32 = 6;
+    pub(crate) const NEEDS_COMMENTS: u32 = 7;
+    /// It has the tree.
+    pub(crate) const NEEDS_SCOPES: u32 = 8;
 }
 
 /// Appends a message, whose content `write` appends.

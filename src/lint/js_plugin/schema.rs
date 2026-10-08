@@ -11,6 +11,7 @@ pub const PROGRAM: &[(&str, &str)] = &[
     ("scope.js", include_str!("worker/scope.js")),
     ("source_code.js", include_str!("worker/source_code.js")),
     ("report.js", include_str!("worker/report.js")),
+    ("code_path.js", include_str!("worker/code_path.js")),
     ("main.js", include_str!("worker/main.js")),
 ];
 

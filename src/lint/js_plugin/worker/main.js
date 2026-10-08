@@ -22,12 +22,18 @@ const LINT = 6;
 const AST = 7;
 const MATCHES = 8;
 const SELECTORS = 9;
+const TOKENS = 10;
+const COMMENTS = 11;
+const SCOPES = 12;
 
 const LOADED = 1;
 const FAILED = 2;
 const DONE = 3;
 const NEEDS_AST = 4;
 const NEEDS_MATCHES = 5;
+const NEEDS_TOKENS = 6;
+const NEEDS_COMMENTS = 7;
+const NEEDS_SCOPES = 8;
 
 const header = new Uint32Array(2);
 const headerBytes = new Uint8Array(header.buffer);
@@ -264,6 +270,8 @@ let enterByType = [];
 let exitByType = [];
 // By `index`: `{ selector, listeners }`, for the selectors that are listened for.
 let bySelector = new Map();
+// By the name of an event of the code path analysis. `null`: nothing listens for any.
+let codePathCalls = null;
 let hasListeners = false;
 let hasExitListeners = false;
 
@@ -286,7 +294,8 @@ function addListeners(entry, listeners) {
       continue;
     }
     if (codePathEvents.has(key)) {
-      throw new Error(`Code path analysis is not supported yet (${key}).`);
+      (codePathCalls ??= new Map()).set(key, [...(codePathCalls.get(key) ?? []), call]);
+      continue;
     }
     let selector = selectors.get(key);
     if (selector === undefined) {
@@ -353,6 +362,16 @@ function lastDescendants() {
 
 let isTraversing = false;
 
+// Tells the listeners for the event `name` of the code path analysis.
+function emitCodePathEvent(name, ...args) {
+  const calls = codePathCalls.get(name);
+  if (calls === undefined) return;
+  for (const call of calls) {
+    currentRule = call.entry;
+    call.listener(...args);
+  }
+}
+
 function callAll(calls, node) {
   for (let i = 0; i < calls.length; i++) {
     const call = calls[i];
@@ -408,31 +427,31 @@ function traverse() {
     if (calls !== undefined) callAll(calls, (currentNode = nodes[id]));
   };
   const exitCalls = id => exitByNode?.get(id) ?? exitByType[types[id]];
+  const leave = id => {
+    const calls = exitCalls(id);
+    if (calls !== undefined) callAll(calls, (currentNode = nodes[id]));
+  };
   const visitedTwice = twice.length > 0 ? new Set(twice) : null;
-  if (!hasExitListeners && visitedTwice === null) {
+  if (codePathCalls === null && !hasExitListeners && visitedTwice === null) {
     for (let id = 0; id < count; id++) enter(id);
     return;
   }
+  const analyzer = codePathCalls === null ? null : new CodePathAnalyzer(enter, leave);
+  const enterNode = analyzer === null ? enter : id => analyzer.enterNode(nodes[id], id);
+  const leaveNode = analyzer === null ? leave : id => analyzer.leaveNode(nodes[id], id);
   const last = lastDescendants();
-  // The nodes that are entered and have listeners for leaving them.
+  // The nodes that are entered and have to be left.
   const open = [];
   for (let id = 0; id < count; id++) {
-    while (open.length > 0 && last[open.at(-1)] < id) {
-      const left = open.pop();
-      callAll(exitCalls(left), (currentNode = nodes[left]));
-    }
-    enter(id);
-    const calls = exitCalls(id);
+    while (open.length > 0 && last[open.at(-1)] < id) leaveNode(open.pop());
+    enterNode(id);
     if (visitedTwice?.has(id)) {
-      if (calls !== undefined) callAll(calls, nodes[id]);
-      enter(id);
+      leaveNode(id);
+      enterNode(id);
     }
-    if (calls !== undefined) open.push(id);
+    if (analyzer !== null || exitCalls(id) !== undefined) open.push(id);
   }
-  while (open.length > 0) {
-    const left = open.pop();
-    callAll(exitCalls(left), (currentNode = nodes[left]));
-  }
+  while (open.length > 0) leaveNode(open.pop());
 }
 
 // ───────────── a file ─────────────
@@ -446,6 +465,7 @@ function reset() {
   enterByType = [];
   exitByType = [];
   bySelector = new Map();
+  codePathCalls = null;
   hasListeners = hasExitListeners = isTraversing = false;
   currentRule = currentNode = null;
   reports = [];
@@ -483,7 +503,6 @@ for (;;) {
       const start = JSON.parse(contentAsText(kind));
       cwd = start.cwd;
       defineTypes(start.types, start.strings);
-      defineTokens(start.tokens);
       break;
     }
     case LOAD:

@@ -1236,12 +1236,18 @@ fn set_state_recommendation<'a>(
                 };
                 if matches!(state_variable, StateVariable::Ident(name) if name.bytes() == &missing_dep[..]) {
                     // `setCount(count + 1)`
-                    let first = String::from_utf8_lossy(missing_dep).chars().next().map(String::from).unwrap_or_default();
+                    let length = match missing_dep.first() {
+                        Some(0xF0..) => 4,
+                        Some(0xE0..) => 3,
+                        Some(0xC0..) => 2,
+                        _ => 1,
+                    };
+                    let first = missing_dep.get(..length).unwrap_or(missing_dep);
                     return Some(text(&[
                         b" You can also do a functional update '",
                         setter,
                         b"(",
-                        first.as_bytes(),
+                        first,
                         b" => ...)' if you only need '",
                         missing_dep,
                         b"' in the '",

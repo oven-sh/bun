@@ -74,6 +74,9 @@ struct Complete {
     components: Vec<u32>,
 }
 
+/// The extensions that oxlint tries, in its order.
+const EXTENSIONS: [&[u8]; 8] = [b".js", b".mjs", b".cjs", b".jsx", b".ts", b".mts", b".cts", b".tsx"];
+
 struct ProjectResolver<'h> {
     resolver: Resolver<'h>,
     /// `baseUrl`, which TypeScript 7 no longer has, and which the resolvers of ESLint and oxlint know.
@@ -87,6 +90,10 @@ pub struct Graph<'h> {
     loading: Guarded<()>,
     /// The path of the `tsconfig.json` for the files of a directory.
     configs: ShardedMap<Vec<u8>, Vec<u8>>,
+    /// What a specifier that is not relative means: by the directory, how it is imported, and the specifier.
+    not_relative: ShardedMap<Vec<u8>, Option<(Vec<u8>, bool)>>,
+    /// Paths with symbolic links followed.
+    real_paths: ShardedMap<Vec<u8>, Vec<u8>>,
     /// The closest `package.json`, by directory.
     packages: ShardedMap<Vec<u8>, Option<Json>>,
     recorded: Guarded<Vec<Recorded<'h>>>,
@@ -158,6 +165,8 @@ impl<'h> Graph<'h> {
             resolvers: ShardedMap::default(),
             loading: Guarded::new(()),
             configs: ShardedMap::default(),
+            not_relative: ShardedMap::default(),
+            real_paths: ShardedMap::default(),
             packages: ShardedMap::default(),
             recorded: Guarded::new(Vec::new()),
             follows_oxlint: AtomicBool::new(false),
@@ -214,6 +223,58 @@ impl<'h> Graph<'h> {
 
     /// The path, and whether it was found in a `node_modules`.
     fn resolve_path(&self, from: &[u8], specifier: &[u8], is_require: bool) -> Option<(Cow<'h, [u8]>, bool)> {
+        let is_relative = specifier.starts_with(b"./") || specifier.starts_with(b"../") || matches!(specifier, b"." | b"..");
+        if is_relative {
+            if self.flavor().resolves_as_node()
+                && let Some(found) = self.resolve_relative_as_node(from, specifier)
+            {
+                return found.map(|it| (Cow::Owned(it), false));
+            }
+            return self.resolve_with_project(from, specifier, is_require);
+        }
+        // What is not relative means the same in all the files of a directory, and takes long to find.
+        let key = [directory_of(from), if is_require { b"\0r\0" } else { b"\0i\0" }, specifier].concat();
+        let found = match self.not_relative.get_ref(&key[..]) {
+            Some(found) => found,
+            None => {
+                let found = self.resolve_with_project(from, specifier, is_require).map(|it| (it.0.into_owned(), it.1));
+                self.not_relative.insert_ref(key, found)
+            }
+        };
+        found.as_ref().map(|it| (Cow::Owned(it.0.clone()), it.1))
+    }
+
+    /// A relative specifier as oxlint resolves it, without the detour over what TypeScript finds. The outer `None`: it is not
+    /// decided here.
+    fn resolve_relative_as_node(&self, from: &[u8], specifier: &[u8]) -> Option<Option<Vec<u8>>> {
+        let disk = self.store.disk();
+        let base = join(directory_of(from), specifier);
+        let file = |path: Vec<u8>| disk.is_file(&path).then_some(path);
+        let aliases: [(&[u8], [&[u8]; 2]); 3] = [(b".js", [b".js", b".ts"]), (b".mjs", [b".mjs", b".mts"]), (b".cjs", [b".cjs", b".cts"])];
+        let found = match aliases.iter().find(|it| base.ends_with(it.0)) {
+            Some((written, tried)) => tried.iter().find_map(|it| file([&base[..base.len() - written.len()], it].concat())),
+            None => {
+                let as_file = || file(base.clone()).or_else(|| EXTENSIONS.iter().find_map(|it| file([&base[..], it].concat())));
+                let mut found = if specifier.ends_with(b"/") { None } else { as_file() };
+                if found.is_none() && disk.is_dir(&base) {
+                    if disk.is_file(&join(&base, b"package.json")) {
+                        return None;
+                    }
+                    found = EXTENSIONS.iter().find_map(|it| file([&base[..], b"/index", it].concat()));
+                }
+                found
+            }
+        };
+        Some(found.map(|path| match self.real_paths.get_ref(&path[..]) {
+            Some(real) => real.clone(),
+            None => {
+                let real = disk.realpath(&path);
+                self.real_paths.insert_ref(path, real).clone()
+            }
+        }))
+    }
+
+    fn resolve_with_project(&self, from: &[u8], specifier: &[u8], is_require: bool) -> Option<(Cow<'h, [u8]>, bool)> {
         let mode = if is_require { ResolutionMode::Require } else { ResolutionMode::Import };
         let ProjectResolver { resolver, base_url } = self.resolver(directory_of(from));
         let from_base_url = || {
@@ -230,7 +291,6 @@ impl<'h> Graph<'h> {
 
     /// `found`: what TypeScript finds for `specifier`. Which of the files with that name and another extension does oxlint find?
     fn as_node_finds(&self, specifier: &[u8], found: &'h [u8]) -> Option<Cow<'h, [u8]>> {
-        const EXTENSIONS: [&[u8]; 8] = [b".js", b".mjs", b".cjs", b".jsx", b".ts", b".mts", b".cts", b".tsx"];
         let Some(extension) = EXTENSIONS.iter().find(|it| found.ends_with(it)) else {
             return Some(Cow::Borrowed(found));
         };

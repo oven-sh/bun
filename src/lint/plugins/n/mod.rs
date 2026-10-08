@@ -50,7 +50,7 @@ pub(crate) fn configured_node_version(file: &File) -> Range {
         let engines = || Range::parse(package.get(b"engines")?.get(b"node")?.as_str()?);
         let dev_engines = || {
             let runtime = package.get(b"devEngines")?.get(b"runtime")?;
-            let entries = runtime.as_array().unwrap_or(std::slice::from_ref(runtime));
+            let entries = runtime.as_array().unwrap_or_else(|| std::slice::from_ref(runtime));
             let node = entries.iter().find(|it| {
                 it.get(b"name").and_then(Json::as_str) == Some(b"node") && it.get(b"version").and_then(Json::as_str).is_some()
             })?;

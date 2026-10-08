@@ -1,13 +1,12 @@
 use crate::js::format::{identifier, write_trailing_comments_of};
 use crate::js::print::call_like_expression::arguments::FormatArguments;
 use crate::js::print::type_parameters::type_arguments;
+use crate::js::utils::call_expression::callee_trailing_comments;
 use crate::prelude::*;
 use crate::{format_args, write};
 
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum CallExpressionPosition {
-    /// The `a()` of `a().b`
-    Start,
     /// The `b()` of `a.b().c()`
     Middle,
     /// The `c()` of `a.b.c()`: the root
@@ -18,7 +17,7 @@ pub(crate) enum CallExpressionPosition {
 /// callee is written for it.
 #[derive(Copy, Clone, Debug)]
 pub(crate) enum ChainMember<'a> {
-    /// `.b`
+    /// `.b`, `.#b`
     StaticMember(Expr<'a>),
     /// `(..)`
     CallExpression {
@@ -34,10 +33,6 @@ pub(crate) enum ChainMember<'a> {
 }
 
 impl<'a> ChainMember<'a> {
-    pub(crate) const fn is_call_expression(&self) -> bool {
-        matches!(self, Self::CallExpression { .. })
-    }
-
     pub(crate) const fn is_computed_expression(&self) -> bool {
         matches!(self, Self::ComputedMember(_))
     }
@@ -54,6 +49,17 @@ impl<'a> ChainMember<'a> {
 
     pub(crate) fn span(&self) -> Span {
         self.expr().span()
+    }
+}
+
+/// The call that `callee` is the callee of, if it has no type arguments.
+pub(super) fn plain_call_of_callee(callee: Expr<'_>) -> Option<Call<'_>> {
+    match callee.parent() {
+        Node::Expr(parent) => match parent.kind() {
+            ExprKind::Call(call) if call.callee() == callee && call.type_args().is_empty() => Some(call),
+            _ => None,
+        },
+        _ => None,
     }
 }
 
@@ -85,21 +91,18 @@ impl<'a> Format<'a> for ChainMember<'a> {
                         FormatLeadingComments::Comments(f.comments().comments_before(name.start())),
                         member.is_optional().then_some("?"),
                         ".",
-                        identifier(name, AstNodes::StaticMemberExpression(member))
+                        identifier(name, member.as_chain_element())
                     ]
                 );
                 if f.is_quiet() {
                     return;
                 }
-                // `a.b /* comment */ (c)` is `a.b(/* comment */ c)`
-                let node = member.as_chain_element();
-                let is_plain_callee = matches!(
-                    node.parent(),
-                    AstNodes::CallExpression(parent)
-                        if parent.call().is_some_and(|call| call.type_args().is_empty() && !call.is_optional())
-                );
-                if !is_plain_callee {
-                    write_trailing_comments_of(node, f);
+                match plain_call_of_callee(member) {
+                    Some(call) => {
+                        let comments = callee_trailing_comments(call, member.span().end, f);
+                        write!(f, FormatTrailingComments::Comments(comments));
+                    }
+                    None => write_trailing_comments_of(member.as_chain_element(), f),
                 }
             }
             Self::TSNonNullExpression(e) => {
@@ -110,7 +113,6 @@ impl<'a> Format<'a> for ChainMember<'a> {
                 expression,
                 position,
             } => match position {
-                CallExpressionPosition::Start => write!(f, expression),
                 CallExpressionPosition::Middle => {
                     format_leading_comments(expression.span()).fmt(f);
                     write_call_without_callee(expression, f);

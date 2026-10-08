@@ -106,15 +106,25 @@ impl<'a> MemberChainGroup<'a> {
 
     /// Formats the group, to be asked about and written later. The groups have to be inspected
     /// in order, for the sake of the comments.
-    pub(super) fn inspect(&self, tail: bool, f: &mut Formatter<'a>) {
+    ///
+    /// `index_in_tail`: `None` for the head.
+    pub(super) fn inspect(&self, index_in_tail: Option<usize>, f: &mut Formatter<'a>) {
         if self.formatted.get().is_some() {
             return;
         }
         let interned = f.intern(&FormatMemberChainGroup { group: self });
-        if tail {
-            self.needs_empty_line.set(self.needs_empty_line_before(f));
+        if let Some(index) = index_in_tail {
+            self.needs_empty_line.set((index == 0 || self.follows_call()) && self.needs_empty_line_before(f));
         }
         self.formatted.set(Some(interned));
+    }
+
+    /// Whether the group starts with a member of what a call returns: `.b` of `a().b`.
+    pub(super) fn follows_call(&self) -> bool {
+        matches!(
+            self.members.first().map(|member| member.expr().kind()),
+            Some(ExprKind::Dot { obj, .. }) if matches!(obj.kind(), ExprKind::Call(_))
+        )
     }
 
     /// [`MemberChainGroup::inspect`] has to be called first.

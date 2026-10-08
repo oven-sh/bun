@@ -4,11 +4,10 @@ use crate::js::format::{ExprOptions, FormatExpr};
 use crate::js::print::array_element_list::can_concisely_print_array_list;
 use crate::js::print::arrow_function_expression::{
     FormatJsArrowFunctionExpressionOptions, FunctionCacheMode, GroupedCallArgumentLayout,
-    is_multiline_template_starting_on_same_line,
 };
 use crate::js::print::function::FormatFunctionOptions;
 use crate::js::print::parameters::{FormatFormalParameters, has_only_simple_parameters};
-use crate::js::utils::call_expression::is_test_call_expression;
+use crate::js::utils::call_expression::{is_call_expression, strip_chain_element_wrappers};
 use crate::js::utils::is_long_curried_call;
 use crate::js::utils::member_chain::simple_argument::SimpleArgument;
 use crate::prelude::*;
@@ -61,27 +60,7 @@ impl<'a> Format<'a> for FormatArguments<'a> {
             return write!(f, ["(", format_dangling_comments(self.parent.span()).with_soft_block_indent(), ")"]);
         }
 
-        let is_simple_module_import = is_simple_module_import(self, f.comments());
-        let call_expression = match self.parent {
-            AstNodes::CallExpression(call) if !is_simple_module_import => Some(call),
-            _ => None,
-        };
-
-        if is_simple_module_import
-            || call_expression.is_some_and(|call| {
-                is_commonjs_or_amd_call(self, call, f)
-                    || ((self.len() != 2
-                        || self.args.first().is_some_and(|first| {
-                            matches!(
-                                first.kind(),
-                                ExprKind::String(_) | ExprKind::Template(_) | ExprKind::TaggedTemplate(_)
-                            )
-                        }))
-                        && is_test_call_expression(call))
-            })
-            || is_multiline_template_only_args(self, f.source_text())
-            || is_react_hook_with_deps_array(self, f.comments())
-        {
+        if is_react_hook_with_deps_array(self, f.comments()) {
             return write!(
                 f,
                 [
@@ -107,7 +86,7 @@ impl<'a> Format<'a> for FormatArguments<'a> {
 
         if let Some(group_layout) = arguments_grouped_layout(self.args, f) {
             write_grouped_arguments(self, group_layout, f);
-        } else if call_expression.is_some_and(is_long_curried_call) {
+        } else if matches!(self.parent, AstNodes::CallExpression(call) if is_long_curried_call(call)) {
             let trailing_separator = FormatTrailingCommas::All.trailing_separator(f.options());
             write!(
                 f,
@@ -143,27 +122,23 @@ impl<'a> Format<'a> for FormatArguments<'a> {
     }
 }
 
-/// `compose(sortBy(x => x), flatten, map(x => [x, x * 2]))`: several functions among the arguments,
-/// or in the arguments of an argument.
-pub(crate) fn is_function_composition_args<'a>(args: List<'a, Expr<'a>>) -> bool {
+/// Prettier's `isFunctionCompositionArguments`: `compose(sortBy(x => x), flatten, map(x => [x, x * 2]))`
+/// has several functions among the arguments, or in the arguments of an argument.
+fn is_function_composition_args<'a>(args: List<'a, Expr<'a>>) -> bool {
     if args.len() <= 1 {
         return false;
     }
     let mut has_seen_function_like = false;
-    let has_function_like_argument =
-        |e: Expr<'_>| matches!(e.kind(), ExprKind::Call(call) if call.args().iter().any(is_function_like));
-
     for arg in args {
-        match arg.as_ast_nodes() {
-            AstNodes::Function(_) | AstNodes::ArrowFunctionExpression(_) => {
-                if has_seen_function_like {
-                    return true;
-                }
-                has_seen_function_like = true;
+        if is_function_like(arg) {
+            if has_seen_function_like {
+                return true;
             }
-            AstNodes::ChainExpression(_) => return has_function_like_argument(arg),
-            AstNodes::CallExpression(_) if has_function_like_argument(arg) => return true,
-            _ => {}
+            has_seen_function_like = true;
+        } else if let ExprKind::Call(call) = strip_chain_element_wrappers(arg).kind()
+            && call.args().iter().any(is_function_like)
+        {
+            return true;
         }
     }
     false
@@ -233,7 +208,7 @@ fn as_expression(argument: Expr<'_>) -> Option<Expr<'_>> {
 }
 
 /// Prettier's `shouldGroupFirst` and `shouldGroupLast`.
-pub(crate) fn arguments_grouped_layout<'a>(
+fn arguments_grouped_layout<'a>(
     args: List<'a, Expr<'a>>,
     f: &Formatter<'a>,
 ) -> Option<GroupedCallArgumentLayout> {
@@ -264,15 +239,19 @@ fn should_group_first_argument<'a>(first: Expr<'a>, second: Expr<'a>, f: &Format
         return false;
     }
 
-    // Not if there are comments around the first argument.
-    let first_span = first.span();
-    if f.comments().has_comment_before(first_span.start)
-        || !f.source_text().next_non_whitespace_byte_is(first_span.end, b',')
-        || f.comments().comments_in_range(first_span.end, second.span().start).iter().any(|c| c.followed_by_newline())
-    {
-        return false;
+    // Not if there are comments around the first argument: before it, between it and the comma, or
+    // behind the comma at the end of the line.
+    if !f.is_quiet() {
+        let first_end = first.span().end;
+        if f.comments().has_comment_before(first.span().start)
+            || f.comments().comments_in_range(first_end, second.span().start).iter().any(|comment| {
+                comment.followed_by_newline() || !f.source_text().bytes_contain(first_end, comment.span.start, b',')
+            })
+        {
+            return false;
+        }
     }
-    is_relatively_short_argument(second)
+    is_hopefully_short_call_argument(second, f)
 }
 
 fn should_group_last_argument_impl<'a>(
@@ -289,6 +268,7 @@ fn should_group_last_argument_impl<'a>(
                 | (AstNodes::ArrayExpression(_), AstNodes::ArrayExpression(_))
                 | (AstNodes::TSAsExpression(_), AstNodes::TSAsExpression(_))
                 | (AstNodes::TSSatisfiesExpression(_), AstNodes::TSSatisfiesExpression(_))
+                | (AstNodes::TSTypeAssertion(_), AstNodes::TSTypeAssertion(_))
                 | (AstNodes::ArrowFunctionExpression(_), AstNodes::ArrowFunctionExpression(_))
                 | (AstNodes::Function(_), AstNodes::Function(_))
         )
@@ -319,7 +299,7 @@ fn should_group_last_argument_impl<'a>(
     }
 
     match last.kind() {
-        ExprKind::Array(elements) if penultimate.is_some() => {
+        ExprKind::Array(elements) if args_len > 1 => {
             // Not for `useEffect(() => {}, [a, b])`.
             if args_len == 2 && penultimate.is_some_and(|it| it.arrow_function().is_some()) {
                 return false;
@@ -345,8 +325,8 @@ fn is_simple_ts_type(ty: TypeNode<'_>) -> bool {
         _ => extracted_array_type,
     };
     match extracted_generic_type.kind() {
-        TypeKind::Keyword(keyword) => keyword != Keyword::Intrinsic,
-        TypeKind::StringLit(_)
+        TypeKind::Keyword(_)
+        | TypeKind::StringLit(_)
         | TypeKind::NumberLit(_)
         | TypeKind::BigIntLit { .. }
         | TypeKind::BoolLit(_)
@@ -357,21 +337,19 @@ fn is_simple_ts_type(ty: TypeNode<'_>) -> bool {
 }
 
 /// Prettier's `isHopefullyShortCallArgument`.
-fn is_relatively_short_argument(argument: Expr<'_>) -> bool {
+fn is_hopefully_short_call_argument<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> bool {
     let is_simple = |e: Expr<'_>| SimpleArgument::new(e).is_simple_with_depth(1);
-    match argument.as_ast_nodes() {
-        AstNodes::BinaryExpression(_) | AstNodes::LogicalExpression(_) => {
-            argument.left().is_some_and(is_simple) && argument.right().is_some_and(is_simple)
+    match argument.kind() {
+        ExprKind::As { expr, .. } | ExprKind::AsConst(expr) | ExprKind::Satisfies { expr, .. }
+            if !argument.is_angle_bracket_assertion() =>
+        {
+            argument.type_annotation().is_none_or(is_simple_ts_type) && is_simple(expr)
         }
-        AstNodes::TSAsExpression(_) | AstNodes::TSSatisfiesExpression(_) => {
-            argument.type_annotation().is_none_or(is_simple_ts_type) && argument.expression().is_some_and(is_simple)
-        }
-        AstNodes::RegExpLiteral(_) => true,
-        AstNodes::CallExpression(call) => match call.call().map_or(0, |call| call.args().len()) {
-            0 => true,
-            1 => SimpleArgument::new(argument).is_simple(),
-            _ => false,
-        },
+        ExprKind::Call(call) if call.args().len() > 1 && is_call_expression(argument, f) => false,
+        ExprKind::New(call) if call.args().len() > 1 => false,
+        ExprKind::ImportCall { args } if args.len() > 1 => false,
+        ExprKind::Binary { op, left, right } if op != BinOp::Comma => is_simple(left) && is_simple(right),
+        ExprKind::Regex(_) => true,
         _ => SimpleArgument::new(argument).is_simple(),
     }
 }
@@ -401,16 +379,15 @@ fn can_group_arrow_function_expression_argument<'a>(
     // The parentheses of a type cast are a node for Prettier, which is not one of these.
     let has_type_cast =
         || f.comments().has_type_cast_comment_in_range(arrow_function.span().start, expression.span().start);
-    match expression.as_ast_nodes() {
-        AstNodes::ObjectExpression(_) | AstNodes::ArrayExpression(_) | AstNodes::JSXElement(_) | AstNodes::JSXFragment(_) => {
-            true
+    match expression.kind() {
+        ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Jsx(_) => true,
+        ExprKind::Fn(inner) if inner.is_arrow() => can_group_arrow_function_expression_argument(inner, true, f),
+        ExprKind::Cond { .. } => !is_arrow_recursion && !has_type_cast(),
+        _ => {
+            !is_arrow_recursion
+                && matches!(strip_chain_element_wrappers(expression).kind(), ExprKind::Call(_))
+                && !has_type_cast()
         }
-        AstNodes::ArrowFunctionExpression(inner) => can_group_arrow_function_expression_argument(inner, true, f),
-        AstNodes::ChainExpression(chain) => {
-            matches!(chain.kind(), ExprKind::Call(_)) && !is_arrow_recursion && !has_type_cast()
-        }
-        AstNodes::CallExpression(_) | AstNodes::ConditionalExpression(_) => !is_arrow_recursion && !has_type_cast(),
-        _ => false,
     }
 }
 
@@ -493,27 +470,24 @@ fn write_grouped_arguments<'a>(
             return;
         };
 
-        if let Some(function) = argument.as_fn() {
+        if let Some(function) = argument.as_fn()
+            && has_signature_without_soft_lines(function)
+        {
             let params = FormatFormalParameters(function);
             let Some(cached_element) = f.context().get_cached_element(&params) else {
                 debug_assert!(false, "the parameters have been formatted and cached");
                 return format_all_elements_broken_out(node, &grouped, true, f);
             };
 
-            // `decorator("name")((props: {..}) => {..})` stays hugged even if its signature breaks.
-            let is_decorated = is_decorated_function(argument);
-
             // If the signature breaks even without soft line breaks, grouping is not a good fit.
             let interned = f.intern(&format_with(|f| {
                 f.write_without_soft_lines(&format_with(|f| f.write_element(cached_element)));
             }));
             if let Some(interned) = interned {
-                if interned.will_break(f) && !is_decorated {
+                if interned.will_break(f) {
                     return format_all_elements_broken_out(node, &grouped, true, f);
                 }
-                if !is_decorated {
-                    f.context_mut().cache_element(&params, interned);
-                }
+                f.context_mut().cache_element(&params, interned);
             }
         }
 
@@ -578,6 +552,21 @@ fn write_grouped_arguments<'a>(
     f.write_element(element);
 }
 
+/// Whether the signature of a function that is a grouped argument is kept on one line. Prettier's
+/// `printFunctionParameters` with `shouldExpandParameters`.
+fn has_signature_without_soft_lines(function: Func<'_>) -> bool {
+    // `decorator("name")((props: {..}) => {..})` stays hugged even if its signature breaks.
+    if matches!(function.owner(), Node::Expr(argument) if is_decorated_function(argument)) {
+        return false;
+    }
+    if !function.params().is_empty() || function.this_param().is_some() {
+        return true;
+    }
+    // Without parameters, the type parameters and the comments in `()` break as they do anywhere
+    // else. Only the return type of an arrow function does not.
+    function.is_arrow() && function.return_type().is_some() && function.type_params().is_empty()
+}
+
 /// A function or an arrow function with options, without the comments and the parentheses around
 /// it, which an argument has none of.
 struct FormatBareFunction<'a>(Expr<'a>, ExprOptions);
@@ -639,77 +628,6 @@ impl<'a> Format<'a> for FormatGroupedLastArgument<'a> {
             _ => FormatExpr::with_options(self.argument, ExprOptions::None).fmt(f),
         }
     }
-}
-
-fn is_identifier(e: Expr<'_>, name: &[u8]) -> bool {
-    matches!(e.kind(), ExprKind::Ident(_)) && e.text() == name
-}
-
-/// `import("a")`, `require.resolve("a")`, `import.meta.resolve("a")`, `require.resolve.paths("a")`
-pub(crate) fn is_simple_module_import<'a>(arguments: &FormatArguments<'a>, comments: &Comments<'a>) -> bool {
-    if arguments.len() != 1 {
-        return false;
-    }
-    match arguments.parent {
-        AstNodes::ImportExpression(_) => {}
-        AstNodes::CallExpression(call) => {
-            let Some(callee) = call.callee().filter(|it| matches!(it.as_ast_nodes(), AstNodes::StaticMemberExpression(_)))
-            else {
-                return false;
-            };
-            let ExprKind::Dot { obj, name, .. } = callee.kind() else {
-                return false;
-            };
-            let is_module_function = match name.bytes() {
-                b"resolve" => is_identifier(obj, b"require") || matches!(obj.kind(), ExprKind::ImportMeta),
-                b"paths" => matches!(
-                    obj.kind(),
-                    ExprKind::Dot { obj, name, .. } if is_identifier(obj, b"require") && name.bytes() == b"resolve"
-                ),
-                _ => false,
-            };
-            if !is_module_function {
-                return false;
-            }
-        }
-        _ => return false,
-    }
-    arguments.args.first().is_some_and(|first| matches!(first.kind(), ExprKind::String(_)))
-        && !comments.has_comment_before(arguments.parent.span().end)
-}
-
-/// `require("a")`, and `define` of AMD.
-fn is_commonjs_or_amd_call<'a>(arguments: &FormatArguments<'a>, call: Expr<'a>, f: &Formatter<'a>) -> bool {
-    let Some(callee) = call.callee().filter(|it| matches!(it.kind(), ExprKind::Ident(_))) else {
-        return false;
-    };
-    let is_string = |e: Option<Expr<'a>>| e.is_some_and(|e| matches!(e.kind(), ExprKind::String(_)));
-    let is_array = |e: Option<Expr<'a>>| e.is_some_and(|e| matches!(e.kind(), ExprKind::Array(_)));
-    let (first, second) = (arguments.args.first(), arguments.args.get(1));
-    match callee.text() {
-        b"require" => {
-            if first.is_some_and(|first| f.comments().has_comment_before(first.span().start)) {
-                return false;
-            }
-            // `require(path.join(__dirname, "a"))` can break.
-            arguments.len() != 1 || is_string(first)
-        }
-        b"define" => {
-            matches!(call.as_chain_element().parent(), AstNodes::ExpressionStatement(_))
-                && match arguments.len() {
-                    1 => true,
-                    2 => is_array(first),
-                    3 => is_string(first) && is_array(second),
-                    _ => false,
-                }
-        }
-        _ => false,
-    }
-}
-
-fn is_multiline_template_only_args(arguments: &FormatArguments<'_>, source_text: SourceText<'_>) -> bool {
-    arguments.len() == 1
-        && arguments.args.first().is_some_and(|first| is_multiline_template_starting_on_same_line(first, source_text))
 }
 
 /// `useMemo(() => {}, [a, b])`, `useImperativeHandle(ref, () => {}, [a, b])`
@@ -791,7 +709,11 @@ fn is_decorated_function(argument: Expr<'_>) -> bool {
         AstNodes::ExportDefaultDeclaration(_) | AstNodes::TSExportAssignment(_) => true,
         // `module.exports = ..`
         AstNodes::AssignmentExpression(assignment) => assignment.left().is_some_and(|left| {
-            matches!(left.kind(), ExprKind::Dot { obj, name, .. } if is_identifier(obj, b"module") && name.bytes() == b"exports")
+            matches!(
+                left.kind(),
+                ExprKind::Dot { obj, name, .. }
+                    if matches!(obj.kind(), ExprKind::Ident(_)) && obj.text() == b"module" && name.bytes() == b"exports"
+            )
         }),
         _ => false,
     }

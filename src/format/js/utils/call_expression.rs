@@ -2,6 +2,54 @@
 
 use crate::prelude::*;
 
+/// Prettier's `isCallExpression`.
+///
+/// Prettier reads JavaScript with Babel and TypeScript with typescript-estree. For `(a?.b())`,
+/// the whole of an optional chain, the one has an `OptionalCallExpression` and the other a
+/// `ChainExpression` with the call in it, so what Prettier asks about the type of a node has
+/// different answers.
+pub(crate) fn is_call_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    matches!(e.kind(), ExprKind::Call(_)) && (f.file().is_javascript() || !is_chain_root(e))
+}
+
+/// Prettier's `isMemberExpression`. See [`is_call_expression`].
+pub(crate) fn is_member_expression<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
+    matches!(e.kind(), ExprKind::Dot { .. } | ExprKind::Index { .. }) && (f.file().is_javascript() || !is_chain_root(e))
+}
+
+/// Prettier's `stripChainElementWrappers`: `e` without the `!`s after it. The `ChainExpression` is
+/// not a node here.
+pub(crate) fn strip_chain_element_wrappers(mut e: Expr<'_>) -> Expr<'_> {
+    while let ExprKind::NonNull(expression) = e.kind() {
+        e = expression;
+    }
+    e
+}
+
+/// Of the comments between the callee of `call`, which ends at `callee_end`, and the `(`, those that
+/// trail the callee. `call` has a `(` and no type arguments.
+///
+/// Without arguments there is nothing else that they could belong to. Otherwise they lead the first
+/// argument, unless something is between them and the `(`: the end of the line, if they are on the
+/// line of the callee, the `?.`, or the `)` of a callee in parentheses.
+pub(crate) fn callee_trailing_comments<'a>(call: Call<'a>, callee_end: u32, f: &Formatter<'a>) -> &'a [Comment] {
+    let comments = f.comments().comments_before_character(callee_end, b'(');
+    if call.args().is_empty() {
+        return comments;
+    }
+    let source_text = f.source_text();
+    let count = comments
+        .iter()
+        .rposition(|comment| {
+            !comment.preceded_by_newline()
+                && (comment.followed_by_newline()
+                    || source_text.next_non_whitespace_byte_is(comment.span.end, b'?')
+                    || source_text.next_non_whitespace_byte_is(comment.span.end, b')'))
+        })
+        .map_or(0, |index| index + 1);
+    comments.get(..count).unwrap_or_default()
+}
+
 /// Prettier's `isTestCall`. `e` is a call.
 ///
 /// - `it("name", () => {})`, `test.only("name", async function () {}, 1000)`: the callee is one of

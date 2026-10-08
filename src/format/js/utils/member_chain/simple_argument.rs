@@ -35,8 +35,9 @@ fn is_simple(e: Expr<'_>, depth: u8) -> bool {
         | ExprKind::BigInt(_)
         | ExprKind::This
         | ExprKind::Ident(_)
+        | ExprKind::PrivateIdentifier(_)
         | ExprKind::Super => true,
-        ExprKind::Regex(regex) => regex.pattern().len() <= 5,
+        ExprKind::Regex(regex) => crate::ir::width::string_width(regex.pattern()) <= 5,
         ExprKind::Template(template) => is_simple_template_literal(template, depth + 1),
         ExprKind::Object(props) => props.iter().all(|prop| match prop.kind() {
             PropKind::Shorthand => true,
@@ -54,18 +55,19 @@ fn is_simple(e: Expr<'_>, depth: u8) -> bool {
             op: UnOp::Not | UnOp::Minus | UnOp::Plus | UnOp::BitNot,
             operand,
         } => is_simple(operand, depth),
-        ExprKind::Unary { op, operand } if op.is_update() => matches!(operand.kind(), ExprKind::Ident(_)),
+        ExprKind::Unary { op, operand } if op.is_update() => is_simple(operand, depth),
         ExprKind::NonNull(expression) => is_simple(expression, depth),
         ExprKind::Dot { obj, .. } => is_simple(obj, depth),
         ExprKind::Index { obj, index, .. } => is_simple(index, depth) && is_simple(obj, depth),
-        ExprKind::New(call) | ExprKind::Call(call) => {
-            is_simple(call.callee(), depth)
-                && call.args().len() + usize::from(depth) <= 2
-                && call.args().iter().all(|argument| is_simple(argument, depth + 1))
-        }
-        ExprKind::ImportCall { args } => args.len() <= 1,
+        ExprKind::New(call) | ExprKind::Call(call) => is_simple(call.callee(), depth) && are_simple(call.args(), depth),
+        ExprKind::ImportCall { args } => are_simple(args, depth),
         _ => false,
     }
+}
+
+/// The arguments of a call: the deeper it is, the fewer it may have.
+fn are_simple<'a>(arguments: List<'a, Expr<'a>>, depth: u8) -> bool {
+    arguments.len() + usize::from(depth) <= 2 && arguments.iter().all(|argument| is_simple(argument, depth + 1))
 }
 
 /// No text of the template has a line break, and all substitutions are simple.

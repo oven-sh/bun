@@ -4,7 +4,9 @@ use bun_lint::code_path::{Event, Step, steps};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::source::ByName;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
+use std::cell::OnceCell;
 
 /// Enforces the Rules of Hooks.
 pub struct RulesOfHooks;
@@ -161,20 +163,102 @@ fn get_function_name(func: Func) -> Option<FunctionName> {
     }
 }
 
-fn is_inside_component_or_hook(node: Node) -> bool {
-    std::iter::once(node).chain(node.ancestors()).any(|it| match it {
-        Node::Func(func) => get_function_name(func).is_some_and(FunctionName::is_component_or_hook),
-        Node::Expr(e) => is_forward_ref_or_memo_callback(e),
-        _ => false,
-    })
+/// What is around a function is walked once: the answer is kept in `known` for each function on the way.
+fn is_inside_component_or_hook<'a>(node: Node<'a>, known: &mut FxHashMap<Func<'a>, bool>) -> bool {
+    let mut passed: SmallVec<[Func<'a>; 4]> = SmallVec::new();
+    let mut answer = false;
+    for it in std::iter::once(node).chain(node.ancestors()) {
+        let is_one = match it {
+            Node::Func(func) => {
+                if let Some(&known) = known.get(&func) {
+                    answer = known;
+                    break;
+                }
+                passed.push(func);
+                get_function_name(func).is_some_and(FunctionName::is_component_or_hook)
+            }
+            Node::Expr(e) => is_forward_ref_or_memo_callback(e),
+            _ => false,
+        };
+        if is_one {
+            answer = true;
+            break;
+        }
+    }
+    known.extend(passed.into_iter().map(|it| (it, answer)));
+    answer
 }
 
-fn is_inside_do_while_loop(e: Expr) -> bool {
-    Node::Expr(e).ancestors().any(|it| matches!(it, Node::Stmt(stmt) if stmt.tag() == StmtTag::DoWhile))
+/// Ranges of the text, to ask in how many of them a position is.
+pub(crate) struct Ranges {
+    /// Sorted.
+    starts: Vec<u32>,
+    /// Sorted.
+    ends: Vec<u32>,
 }
 
-fn is_inside_try_catch(e: Expr) -> bool {
-    Node::Expr(e).ancestors().any(|it| matches!(it, Node::Stmt(stmt) if stmt.tag() == StmtTag::Try))
+impl Ranges {
+    pub(crate) fn new(ranges: impl Iterator<Item = Span>) -> Ranges {
+        let (mut starts, mut ends): (Vec<u32>, Vec<u32>) = ranges.map(|it| (it.start, it.end)).unzip();
+        starts.sort_unstable();
+        ends.sort_unstable();
+        Ranges { starts, ends }
+    }
+
+    pub(crate) fn count_around(&self, at: u32) -> usize {
+        self.starts.partition_point(|it| *it <= at).saturating_sub(self.ends.partition_point(|it| *it <= at))
+    }
+
+    pub(crate) fn contains(&self, at: u32) -> bool {
+        self.count_around(at) != 0
+    }
+}
+
+/// What is asked about every hook, and computed once for the file.
+#[derive(Default)]
+pub(crate) struct Memo<'a> {
+    do_while_loops: OnceCell<Ranges>,
+    try_statements: OnceCell<Ranges>,
+    /// For oxlint: the calls in which a function that `useEffectEvent` returns can be referred to.
+    pub(crate) effects: OnceCell<Ranges>,
+    /// The lines after those on which a comment `$FlowFixMe[react-rule-hook]` ends, sorted.
+    suppressed_lines: OnceCell<Vec<u32>>,
+    /// Whether a function is a component or a hook, or in one.
+    pub(crate) inside_component_or_hook: FxHashMap<Func<'a>, bool>,
+}
+
+impl<'a> Memo<'a> {
+    pub(crate) fn do_while_loops(&self, file: &'a File<'a>) -> &Ranges {
+        self.do_while_loops.get_or_init(|| Ranges::new(file.stmts_of_kind(StmtTag::DoWhile).map(Stmt::span)))
+    }
+
+    pub(crate) fn try_statements(&self, file: &'a File<'a>) -> &Ranges {
+        self.try_statements.get_or_init(|| Ranges::new(file.stmts_of_kind(StmtTag::Try).map(Stmt::span)))
+    }
+
+    fn is_inside_do_while_loop(&self, e: Expr<'a>) -> bool {
+        self.do_while_loops(e.file()).contains(e.span().start)
+    }
+
+    fn is_inside_try_catch(&self, e: Expr<'a>) -> bool {
+        self.try_statements(e.file()).contains(e.span().start)
+    }
+
+    /// A comment `$FlowFixMe[react-rule-hook]` ends on the line before.
+    fn has_flow_suppression(&self, hook: Expr<'a>) -> bool {
+        const SUPPRESSION: &[u8] = b"$FlowFixMe[react-rule-hook]";
+        let file = hook.file();
+        let lines = self.suppressed_lines.get_or_init(|| {
+            if !strings::contains(file.text(), SUPPRESSION) {
+                return Vec::new();
+            }
+            let comments = file.comments().filter(|it| strings::contains(it.value(), SUPPRESSION));
+            let mut lines: Vec<u32> = comments.map(|it| file.line_of(it.end()) + 1).collect();
+            lines.sort_unstable();
+            lines
+        });
+        !lines.is_empty() && lines.binary_search(&file.line_of(hook.span().start)).is_ok()
+    }
 }
 
 /// The `useEffect` of `React.useEffect`.
@@ -228,9 +312,10 @@ enum Direction {
 
 /// What is computed about the segments of one code path that has calls of hooks.
 struct Paths<'a> {
-    thrown: Segments<'a>,
+    /// The ids of the segments that end with a `throw`.
+    thrown: FxHashSet<u32>,
     /// The ids of the segments that are in a cycle.
-    cyclic: Vec<u32>,
+    cyclic: FxHashSet<u32>,
     from_start: FxHashMap<u32, Count>,
     to_end: FxHashMap<u32, Count>,
     /// `None` while it is computed.
@@ -267,8 +352,12 @@ impl<'a> Paths<'a> {
             neighbors: Segments<'a>,
             next: usize,
             sum: Count,
+            /// The frames from this position in the stack up to this one are in a cycle.
+            cyclic_from: usize,
         }
         let mut stack: Vec<Frame<'a>> = Vec::new();
+        // Where each segment of the stack is in it.
+        let mut positions: FxHashMap<u32, usize> = FxHashMap::default();
         let mut entering = Some(start);
         let mut returned = Count::ZERO;
         loop {
@@ -277,19 +366,23 @@ impl<'a> Paths<'a> {
                     Direction::FromStart => &self.from_start,
                     Direction::ToEnd => &self.to_end,
                 };
-                if let Some(at) = stack.iter().position(|it| it.segment == segment) {
-                    self.cyclic.extend(stack[at + 1..].iter().map(|it| it.segment.id()));
+                if let Some(&at) = positions.get(&segment.id()) {
+                    if let Some(top) = stack.last_mut() {
+                        top.cyclic_from = top.cyclic_from.min(at + 1);
+                    }
                     returned = Count::ZERO;
                 } else if let Some(&cached) = cache.get(&segment.id()) {
                     returned = cached;
                 } else {
-                    let is_thrown = self.thrown.contains(&segment);
+                    let is_thrown = self.thrown.contains(&segment.id());
                     let neighbors = if is_thrown { Segments::new() } else { self.neighbors(segment, direction) };
+                    positions.insert(segment.id(), stack.len());
                     stack.push(Frame {
                         segment,
                         sum: if is_thrown || !neighbors.is_empty() { Count::ZERO } else { Count::ONE },
                         neighbors,
                         next: 0,
+                        cyclic_from: usize::MAX,
                     });
                     returned = Count::ZERO;
                 }
@@ -304,8 +397,15 @@ impl<'a> Paths<'a> {
                 entering = Some(neighbor);
                 continue;
             }
-            let (segment, sum) = (top.segment, top.sum);
+            let (segment, sum, cyclic_from) = (top.segment, top.sum, top.cyclic_from);
             stack.pop();
+            positions.remove(&segment.id());
+            if cyclic_from <= stack.len() {
+                self.cyclic.insert(segment.id());
+                if let Some(below) = stack.last_mut() {
+                    below.cyclic_from = below.cyclic_from.min(cyclic_from);
+                }
+            }
             match direction {
                 // There is a route from the start to a segment that can be reached: it was asked from inside a cycle.
                 Direction::FromStart if segment.is_reachable() && sum.is_zero => {
@@ -420,21 +520,19 @@ impl Rule for RulesOfHooks {
     }
 }
 
-/// A comment `$FlowFixMe[react-rule-hook]` ends on the line before.
-fn has_flow_suppression<'a>(file: &'a File<'a>, hook: Expr<'a>) -> bool {
-    const SUPPRESSION: &[u8] = b"$FlowFixMe[react-rule-hook]";
-    strings::contains(file.text(), SUPPRESSION) && {
-        let line = file.line_of(hook.span().start);
-        file.comments().any(|comment| strings::contains(comment.value(), SUPPRESSION) && file.line_of(comment.end()) + 1 == line)
-    }
+/// A call in a statement at the top of a code path, in a part of it that is always evaluated.
+struct AtTheTop<'a> {
+    /// What the code path starts with.
+    root: Node<'a>,
+    /// From where the code path starts to the statement. Empty in the body of an arrow function that is an expression.
+    before: Span,
 }
 
-/// What the code path that `call` is in starts with, if the syntax tells that every way through it leads through the call once: it
-/// is in a statement at the top of the code path, in a part of it that is always evaluated, and nothing before can end the code
-/// path or go on forever. That holds for nearly every call of a hook, and saves the analysis of the file.
-fn root_if_always_called<'a>(call: Expr<'a>) -> Option<Node<'a>> {
+/// `steps`: how many more levels can be looked at.
+fn at_the_top_of_its_code_path<'a>(call: Expr<'a>, steps: &mut usize) -> Option<AtTheTop<'a>> {
     let mut child = call;
     let statement = loop {
+        *steps = steps.checked_sub(1)?;
         if child.is_in_optional_chain() {
             return None;
         }
@@ -469,45 +567,85 @@ fn root_if_always_called<'a>(call: Expr<'a>) -> Option<Node<'a>> {
             },
             Node::Stmt(statement) if matches!(statement.tag(), StmtTag::Expr | StmtTag::Return) && !statement.is_wrapper() => break statement,
             // The body of an arrow function.
-            Node::Func(func) => return Some(Node::Func(func)),
+            Node::Func(func) => {
+                return Some(AtTheTop {
+                    root: Node::Func(func),
+                    before: Span::empty(0),
+                });
+            }
             _ => return None,
         }
     };
     let root = statement.parent();
-    let (file, before) = (call.file(), statement.span().start);
     let start = match root {
-        Node::Func(func) if func.kind() != FnKind::StaticBlock => {
-            if func.returns().any(|it| it.span().start < before) {
-                return None;
-            }
-            func.body_span()?.start
-        }
+        Node::Func(func) if func.kind() != FnKind::StaticBlock => func.body_span()?.start,
         Node::File(_) => 0,
         _ => return None,
     };
+    Some(AtTheTop {
+        root,
+        before: Span::new(start, statement.span().start),
+    })
+}
+
+/// What the code path that each of `calls` is in starts with, if the syntax tells that every way through it leads through the call
+/// once: the call is at the top of the code path, and nothing before can end the code path or go on forever. That holds for nearly
+/// every call of a hook, and saves the analysis of the file. It gives up where the code is nested so deeply that the analysis costs
+/// less: it takes time in proportion to the number of calls and of statements.
+fn roots_if_always_called<'a>(file: &'a File<'a>, calls: &[Expr<'a>]) -> Option<Vec<Node<'a>>> {
+    const STEPS_FOR_EACH: usize = 32;
+    let mut steps = STEPS_FOR_EACH * (calls.len() + 8);
+    let calls: Vec<AtTheTop<'a>> = calls.iter().map(|it| at_the_top_of_its_code_path(*it, &mut steps)).collect::<Option<_>>()?;
+    // For each code path, where the last of the statements starts.
+    let mut last: FxHashMap<Node<'a>, u32> = FxHashMap::default();
+    for call in &calls {
+        let last = last.entry(call.root).or_insert(0);
+        *last = call.before.end.max(*last);
+    }
+    for (root, before) in &last {
+        if let Node::Func(func) = root
+            && func.returns().any(|it| it.span().start < *before)
+        {
+            return None;
+        }
+    }
+    let before = Ranges::new(calls.iter().map(|it| it.before));
     let ends_or_repeats = [StmtTag::Throw, StmtTag::For, StmtTag::While, StmtTag::DoWhile];
-    let is_before = |it: &Stmt| it.span().start >= start && it.span().start < before;
-    let mut earlier = ends_or_repeats.into_iter().flat_map(|tag| file.stmts_of_kind(tag)).filter(is_before);
-    let is_in_root = |it: Stmt<'a>| Node::Stmt(it).ancestors().find(|it| bun_lint::code_path::starts_code_path(*it)) == Some(root);
-    (!earlier.any(is_in_root)).then_some(root)
+    let earlier = ends_or_repeats.into_iter().flat_map(|tag| file.stmts_of_kind(tag)).filter(|it| before.contains(it.span().start));
+    for statement in earlier {
+        steps += STEPS_FOR_EACH;
+        let mut around = Node::Stmt(statement).ancestors();
+        let root = loop {
+            steps = steps.checked_sub(1)?;
+            match around.next() {
+                Some(it) if !bun_lint::code_path::starts_code_path(it) => {}
+                root => break root,
+            }
+        };
+        if root.and_then(|root| last.get(&root)).is_some_and(|before| statement.span().start < *before) {
+            return None;
+        }
+    }
+    Some(calls.iter().map(|it| it.root).collect())
 }
 
 impl RulesOfHooks {
     fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
         let calls = std::mem::take(&mut cx.state.calls);
-        let roots: Option<Vec<Node<'a>>> = calls.iter().map(|it| root_if_always_called(*it)).collect();
-        let Some(roots) = roots else {
+        let Some(roots) = roots_if_always_called(cx.file(), &calls) else {
             return self.analyze(cx);
         };
+        let mut memo = Memo::default();
         for (call, root) in calls.iter().zip(roots) {
             if let Some(call) = call.as_call() {
-                self.check_hooks(root, &[(None, call.callee())], None, cx);
+                self.check_hooks(root, &[(None, call.callee())], None, &mut memo, cx);
             }
         }
     }
 
     /// Analyzes the file, and does what upstream does in its listeners.
     fn analyze<'a>(&self, cx: &mut Cx<'a, Self>) {
+        let mut memo = Memo::default();
         for step in steps(cx.file(), ExprTag::Call.into(), NodeTags::EMPTY) {
             match step {
                 Step::Event(Event::SegmentStart(segment, _)) => cx.state.segments.push(segment),
@@ -517,7 +655,7 @@ impl RulesOfHooks {
                     let start = cx.state.starts.pop().unwrap_or(0);
                     if cx.state.hooks.len() > start {
                         let hooks = cx.state.hooks.split_off(start);
-                        self.check_hooks(node, &hooks, Some(code_path), cx);
+                        self.check_hooks(node, &hooks, Some(code_path), &mut memo, cx);
                     }
                 }
                 Step::Enter(Node::Expr(e)) => {
@@ -534,12 +672,19 @@ impl RulesOfHooks {
     }
 
     /// `node`: what the code path starts with. `code_path`: `None` if every way through it leads through each of `hooks` once.
-    fn check_hooks<'a>(&self, node: Node<'a>, hooks: &[(Option<Segment<'a>>, Expr<'a>)], code_path: Option<CodePath<'a>>, cx: &Cx<'a, Self>) {
+    fn check_hooks<'a>(
+        &self,
+        node: Node<'a>,
+        hooks: &[(Option<Segment<'a>>, Expr<'a>)],
+        code_path: Option<CodePath<'a>>,
+        memo: &mut Memo<'a>,
+        cx: &Cx<'a, Self>,
+    ) {
         // The routes, how many lead from the start to the end, and the length of the shortest.
         let mut analyzed = code_path.map(|code_path| {
             let mut paths = Paths {
-                thrown: code_path.thrown_segments(),
-                cyclic: Vec::new(),
+                thrown: code_path.thrown_segments().iter().map(|it| it.id()).collect(),
+                cyclic: FxHashSet::default(),
                 from_start: FxHashMap::default(),
                 to_end: FxHashMap::default(),
                 shortest: FxHashMap::default(),
@@ -557,7 +702,8 @@ impl RulesOfHooks {
 
         let func = node.as_func();
         let function_name = func.and_then(get_function_name);
-        let is_somewhere_inside_component_or_hook = is_inside_component_or_hook(node);
+        let follows_oxlint = oxlint::is_followed(cx.file());
+        let is_somewhere_inside_component_or_hook = !follows_oxlint && is_inside_component_or_hook(node, &mut memo.inside_component_or_hook);
         let function_expr = match (node, func.map(Func::owner)) {
             (Node::Expr(e), _) | (_, Some(Node::Expr(e))) => Some(e),
             _ => None,
@@ -573,7 +719,6 @@ impl RulesOfHooks {
             _ => false,
         };
 
-        let follows_oxlint = oxlint::is_followed(cx.file());
         for &(segment, hook) in hooks {
             let mut possibly_has_early_return = false;
             let mut flow = Flow {
@@ -600,7 +745,7 @@ impl RulesOfHooks {
             }
             if follows_oxlint {
                 if let Node::Expr(call) = hook.parent() {
-                    oxlint::rules_of_hooks::check(cx, call, flow);
+                    oxlint::rules_of_hooks::check(cx, call, node, flow, memo);
                 }
                 continue;
             }
@@ -612,10 +757,10 @@ impl RulesOfHooks {
             let report = |message: Message| cx.report(hook, message).data("hook", hook.text());
             let mut reports: smallvec::SmallVec<[Message; 2]> = smallvec::SmallVec::new();
 
-            if is_use && is_inside_try_catch(hook) {
+            if is_use && memo.is_inside_try_catch(hook) {
                 reports.push(TRY_CATCH);
             }
-            if !is_use && (is_cycled || is_inside_do_while_loop(hook)) {
+            if !is_use && (is_cycled || memo.is_inside_do_while_loop(hook)) {
                 reports.push(LOOP);
             }
             if is_directly_inside_component_or_hook {
@@ -625,7 +770,7 @@ impl RulesOfHooks {
                 if !is_cycled
                     && flow.is_conditional
                     && !is_use
-                    && !is_inside_do_while_loop(hook)
+                    && !memo.is_inside_do_while_loop(hook)
                 {
                     reports.push(CONDITIONAL);
                 }
@@ -638,7 +783,7 @@ impl RulesOfHooks {
             } else if is_somewhere_inside_component_or_hook && !is_use {
                 reports.push(CALLBACK);
             }
-            if reports.is_empty() || has_flow_suppression(cx.file(), hook) {
+            if reports.is_empty() || memo.has_flow_suppression(hook) {
                 continue;
             }
             for message in reports {
@@ -662,6 +807,7 @@ impl RulesOfHooks {
         // The calls in which such a function can be referred to, in the order in which the walk enters them.
         let mut effects: Vec<Span> = Vec::new();
         let mut functions: Vec<Reference<'a>> = Vec::new();
+        let mut inside_component_or_hook = FxHashMap::default();
         for e in file.exprs_of_kind(ExprTag::Call) {
             let ExprKind::Call(call) = e.kind() else {
                 continue;
@@ -692,7 +838,7 @@ impl RulesOfHooks {
                 && let Some(declaring) = symbol.references().find(|it| it.span() == declarator.pat().span())
                 && let Node::Func(func) = declaring.scope().node()
                 && matches!(func.kind(), FnKind::Decl | FnKind::Arrow)
-                && is_inside_component_or_hook(Node::Func(func))
+                && is_inside_component_or_hook(Node::Func(func), &mut inside_component_or_hook)
             {
                 functions.extend(symbol.references().filter(|it| *it != declaring));
             }

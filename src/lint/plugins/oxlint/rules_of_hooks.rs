@@ -1,7 +1,10 @@
 //! `react/rules-of-hooks` of oxlint 1.80. It reports a call once, for the first of its reasons, and decides from what is around the
 //! function whether it looks at the flow of control at all.
 
+use crate::rules::react_hooks_rules_of_hooks::{Memo, Ranges};
 use bun_lint::prelude::*;
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 const FUNCTION: Message = Message::new(
     "",
@@ -115,11 +118,15 @@ fn get_declaration_identifier(func: Func) -> Option<Name> {
     }
 }
 
-fn is_memo_or_forward_ref_callback(func: Func) -> bool {
-    Node::Func(func).ancestors().any(|it| match it.as_expr().map(Expr::kind) {
+fn is_memo_or_forward_ref_call(node: Node) -> bool {
+    match node.as_expr().map(Expr::kind) {
         Some(ExprKind::Call(call)) => callee_name(call).is_some_and(|it| it.is_any(&["forwardRef", "memo"])),
         _ => false,
-    })
+    }
+}
+
+fn is_memo_or_forward_ref_callback(func: Func) -> bool {
+    Node::Func(func).ancestors().any(is_memo_or_forward_ref_call)
 }
 
 fn has_name_of_component_or_hook(func: Func) -> bool {
@@ -127,8 +134,29 @@ fn has_name_of_component_or_hook(func: Func) -> bool {
     name.is_some_and(|it| is_component_or_hook_name(it.bytes()))
 }
 
-fn is_somewhere_inside_component_or_hook(node: Node) -> bool {
-    functions_around(node).any(|it| has_name_of_component_or_hook(it) || is_memo_or_forward_ref_callback(it))
+/// A function around `node` has the name of a component or of a hook, or is in a call of `memo` or `forwardRef`. What is around a
+/// function is walked once: `known` keeps, for each function on the way, the answer for what is in it.
+fn is_somewhere_inside_component_or_hook<'a>(node: Node<'a>, known: &mut FxHashMap<Func<'a>, bool>) -> bool {
+    let mut passed: SmallVec<[Func<'a>; 4]> = SmallVec::new();
+    let mut answer = false;
+    for it in node.ancestors() {
+        if let Some(func) = it.as_func().filter(is_function_like) {
+            if let Some(&known) = known.get(&func) {
+                answer = known;
+                break;
+            }
+            passed.push(func);
+            if has_name_of_component_or_hook(func) {
+                answer = true;
+                break;
+            }
+        } else if !passed.is_empty() && is_memo_or_forward_ref_call(it) {
+            answer = true;
+            break;
+        }
+    }
+    known.extend(passed.into_iter().map(|it| (it, answer)));
+    answer
 }
 
 /// It is passed to a call, other than of `memo` and `forwardRef`, to a constructor, or to an element.
@@ -153,36 +181,36 @@ fn is_effect_or_effect_event_call(call: Call, additional_effect_hooks: Option<&R
         })
 }
 
-fn check_use_effect_event_usage<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>) {
+fn check_use_effect_event_usage<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, memo: &mut Memo<'a>) {
     let declarator = match node.parent() {
         Node::VarDecl(declarator) if !node.is_parenthesized() => declarator,
         Node::Stmt(stmt) if stmt.tag() == StmtTag::Expr && !stmt.is_wrapper() && !node.is_parenthesized() => return,
         _ => return drop(cx.report(node, EFFECT_EVENT_INLINE)),
     };
-    if !is_somewhere_inside_component_or_hook(Node::Expr(node)) {
+    if !is_somewhere_inside_component_or_hook(Node::Expr(node), &mut memo.inside_component_or_hook) {
         return;
     }
     let Some(symbol) = declarator.pat().symbol().filter(|_| declarator.pat().tag() == PatTag::Ident) else {
         return;
     };
-    let settings = cx.settings().get(b"react-hooks").and_then(|it| it.get(b"additionalEffectHooks")?.as_str());
-    let additional_effect_hooks = settings.and_then(|it| Regex::from_bytes(it, b"").ok());
+    let effects = memo.effects.get_or_init(|| {
+        let settings = cx.settings().get(b"react-hooks").and_then(|it| it.get(b"additionalEffectHooks")?.as_str());
+        let additional_effect_hooks = settings.and_then(|it| Regex::from_bytes(it, b"").ok());
+        let is_effect = |it: &Expr| it.as_call().is_some_and(|it| is_effect_or_effect_event_call(it, additional_effect_hooks.as_ref()));
+        Ranges::new(cx.file().exprs_of_kind(ExprTag::Call).filter(is_effect).map(Expr::span))
+    });
     for e in symbol.references().filter_map(Reference::expr) {
-        let mut calls = Node::Expr(e).ancestors().filter_map(|it| match it.as_expr().map(Expr::kind) {
-            Some(ExprKind::Call(call)) => Some(call),
-            _ => None,
-        });
-        if calls.clone().any(|it| is_effect_or_effect_event_call(it, additional_effect_hooks.as_ref())) {
+        if effects.contains(e.span().start) {
             continue;
         }
-        let is_called = calls.any(|it| it.callee().outer_span() == e.span());
+        let is_called = matches!(e.parent().as_expr().map(Expr::kind), Some(ExprKind::Call(call)) if call.callee().outer_span() == e.span());
         let hint = if is_called { "" } else { " It cannot be assigned to a variable or passed down." };
         cx.report(e, EFFECT_EVENT_REFERENCE).data("function", e.text()).data("hint", hint);
     }
 }
 
-/// `node`: a call of what has the name of a hook.
-pub(crate) fn check<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, flow: Flow) {
+/// `node`: a call of what has the name of a hook. `root`: what the code path that it is in starts with.
+pub(crate) fn check<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, root: Node<'a>, flow: Flow, memo: &mut Memo<'a>) {
     let ExprKind::Call(call) = node.kind() else {
         return;
     };
@@ -191,11 +219,11 @@ pub(crate) fn check<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, flow: Flow) {
     };
     let report = |at: Span, message: Message| drop(cx.report(at, message).data("hook", hook));
     let is_use = is_react_function_call(call, "use");
-    let Some(func) = functions_around(Node::Expr(node)).next() else {
+    let Some(func) = root.as_func().filter(is_function_like).or_else(|| functions_around(root).next()) else {
         return report(node.span(), TOP_LEVEL);
     };
     if is_react_function_call(call, "useEffectEvent") {
-        check_use_effect_event_usage(cx, node);
+        check_use_effect_event_usage(cx, node, memo);
     }
     let is_in_class = match func.owner() {
         Node::Member(_) => true,
@@ -211,7 +239,7 @@ pub(crate) fn check<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, flow: Flow) {
         Some(name) if !is_component_or_hook_name(name.bytes()) => return function_error(name.bytes()),
         // oxlint does not look for loops and conditions in a callback. The plugin reports a hook in a loop wherever it is.
         None if is_non_react_func_arg(func) => {
-            if !is_use && is_somewhere_inside_component_or_hook(Node::Func(func)) {
+            if !is_use && is_somewhere_inside_component_or_hook(Node::Func(func), &mut memo.inside_component_or_hook) {
                 report(node.span(), CALLBACK);
             }
             return;
@@ -231,15 +259,16 @@ pub(crate) fn check<'a, R: Rule>(cx: &Cx<'a, R>, node: Expr<'a>, flow: Flow) {
         }
         _ => {}
     }
-    let within = || Node::Expr(node).ancestors().take_while(|it| *it != Node::Func(func));
-    let is_inside_try_catch = within().any(|it| matches!(it, Node::Stmt(stmt) if stmt.tag() == StmtTag::Try));
+    // More of them are around the call than around the function.
+    let is_within = |statements: &Ranges| statements.count_around(node.span().start) > statements.count_around(func.span().start);
+    let is_inside_try_catch = is_within(memo.try_statements(cx.file()));
     if is_use {
         if is_inside_try_catch {
             report(node.span(), TRY_CATCH);
         }
         return;
     }
-    let is_cyclic = flow.is_cyclic || within().any(|it| matches!(it, Node::Stmt(stmt) if stmt.tag() == StmtTag::DoWhile));
+    let is_cyclic = flow.is_cyclic || is_within(memo.do_while_loops(cx.file()));
     if is_inside_try_catch {
         return report(node.span(), if is_cyclic { LOOP } else { CONDITIONAL });
     }

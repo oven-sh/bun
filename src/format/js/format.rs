@@ -391,6 +391,18 @@ impl<'a> FormatExpr<'a> {
         if print::function::write_called_function_with_comments(expr, self.options, f) {
             return;
         }
+        // Prettier's `canAttachComment`: typescript-estree's `ChainExpression` has no comments. They are
+        // those of what is in it, which is in its parentheses.
+        if is_chain_expression
+            && !is_suppressed
+            && !f.file().is_javascript()
+            && parentheses::expression::chain_expression_needs_parentheses(expr, f)
+        {
+            write!(f, ["(", format_leading_comments(span)]);
+            f.in_scope(span, |f| print::expressions::write_chain_expression(expr, f));
+            write_trailing_comments_of(node, f);
+            return write!(f, ")");
+        }
         format_leading_comments(span).fmt(f);
         if is_suppressed {
             write_suppressed_expression(expr, is_chain_expression, f);

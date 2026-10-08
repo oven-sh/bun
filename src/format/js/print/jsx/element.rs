@@ -117,7 +117,14 @@ impl<'a> Format<'a> for AnyJsxTagWithChildren<'a> {
                     let opening_breaks = format_opening.inspect(f).will_break();
                     let multiple_attributes = self.jsx.attrs().len() > 1;
 
-                    match format_children(self.jsx, multiple_attributes || opening_breaks, f) {
+                    // Prettier's `isMdxBlock`
+                    let is_mdx_block = f.options().is_mdx_jsx && self.span().start == 0;
+                    match format_children(self.jsx, multiple_attributes || opening_breaks, is_mdx_block, f) {
+                        FormatChildrenResult::ForceMultiline(children)
+                        | FormatChildrenResult::BestFitting {
+                            expanded_children: children,
+                            ..
+                        } if is_mdx_block => children.fmt_content(f),
                         FormatChildrenResult::SingleChild(child) => {
                             write!(f, group(&format_args!(format_opening, child, format_closing)));
                         }

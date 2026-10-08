@@ -24,8 +24,15 @@ fn format_intersection_types<'a>(types: List<'a, TypeNode<'a>>, f: &mut Formatte
         let is_object_like = is_object_like_type(item);
         let content = format_with(|f| {
             // The comments before a union are outside of its parentheses.
+            // Not if the union is not formatted: then they are written with it.
             if matches!(item.kind(), TypeKind::Union(members) if members.len() > 1) {
-                write!(f, FormatLeadingComments::Comments(union_leading_comments(item, f).0));
+                let comments = union_leading_comments(item, f).0;
+                let is_suppressed = comments
+                    .iter()
+                    .any(|comment| f.comments().is_suppression_comment(comment) && !comment.preceded_by_newline());
+                if !is_suppressed {
+                    write!(f, FormatLeadingComments::Comments(comments));
+                }
             }
             write!(f, item);
         });

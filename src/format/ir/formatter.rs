@@ -221,7 +221,9 @@ impl Storage {
                 FormatElement::Line(mode)
                 | FormatElement::Tag(Tag::StartIndentWithLine(mode) | Tag::EndIndentWithLine(mode)) => mode.will_break(),
                 FormatElement::ExpandParent => true,
-                FormatElement::SourceText(text) | FormatElement::OwnedText(text) => text.width.is_multiline(),
+                FormatElement::SourceText(text) | FormatElement::OwnedText(text) => {
+                    text.width.is_multiline() && !text.width.is_one_string()
+                }
                 FormatElement::Tag(Tag::StartGroup(group)) => !group.mode().is_flat(),
                 FormatElement::Interned(interned) => match (interned.start as usize).checked_sub(1).and_then(|at| self.pool.get(at)) {
                     Some(FormatElement::Skip(it)) if it.len == interned.len => it.flat.flags.has(FlatFlags::EXPANDS),
@@ -243,7 +245,7 @@ impl Storage {
             FormatElement::Tag(Tag::StartGroup(group)) => group.mode() == GroupMode::Expand,
             FormatElement::Line(mode) => mode.will_break(),
             FormatElement::SourceText(text) | FormatElement::OwnedText(text) => {
-                text.width.is_multiline()
+                text.width.is_multiline() && !text.width.is_one_string()
             }
             FormatElement::Interned(interned) => self.summary_of(*interned).1,
             // If even the flattest variant has something that forces a break, it breaks.

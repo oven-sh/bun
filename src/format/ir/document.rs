@@ -128,7 +128,7 @@ impl Tracker {
         match element {
             FormatElement::Token(token) => self.text(token.len() as u32, index),
             FormatElement::SourceText(text) | FormatElement::OwnedText(text) => {
-                if text.width.is_multiline() {
+                if text.width.is_multiline() && !text.width.is_one_string() {
                     self.forced_break(index);
                 }
                 self.text(text.width.value(), index);

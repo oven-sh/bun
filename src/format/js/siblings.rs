@@ -247,7 +247,7 @@ fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Opti
                 f.one(span_of(test)).one(span_of(yes)).one(span_of(no));
             }
         }
-        N::TSAsExpression(e) | N::TSSatisfiesExpression(e) => match e.kind() {
+        N::TSAsExpression(e) | N::TSSatisfiesExpression(e) | N::TypeCastExpression(e) => match e.kind() {
             ExprKind::As { expr, ty } | ExprKind::Satisfies { expr, ty } => {
                 f.one(span_of(expr)).one(Some(ty.span()));
             }

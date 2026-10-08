@@ -35,7 +35,7 @@ fn format_export_keyword_with_class_decorators<'a>(
         if first_decorator.span().end < span.start {
             enter_node(span, f);
             write!(f, [decorators, hard_line_break(), format_leading_comments, keyword_and_space]);
-        } else if f.comments().is_suppressed(first_decorator.span().start) {
+        } else if ignored_class_stays_behind_export(f) && f.comments().is_suppressed(first_decorator.span().start) {
             // The class is written as it is, with its decorators.
             write!(f, format_leading_comments);
             enter_node(span, f);
@@ -50,6 +50,12 @@ fn format_export_keyword_with_class_decorators<'a>(
         enter_node(span, f);
         write!(f, keyword_and_space);
     }
+}
+
+/// Prettier writes a class that is not formatted behind `export `, with the comment in between. For
+/// oxfmt the decorators start a line as they always do after `export`.
+fn ignored_class_stays_behind_export(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
 }
 
 /// `export` or `export default` and the declaration `statement`.

@@ -760,6 +760,9 @@ fn format_declaration_with_comments<'a>(statement: Stmt<'a>, is_before_another: 
 /// Prettier's `printIgnored` for a statement. `span`: of the statement, without its `;`, which is
 /// written as the options say.
 fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatter<'a>) {
+    if terminator_of_what_is_ignored_follows_semi(f) {
+        return write_ignored_statement_without_terminator(statement, span, f);
+    }
     let has_semicolon = match statement.kind() {
         // `export var a` is an `ExportNamedDeclaration`.
         StmtKind::Var(_) if statement.is_exported() && span.start < statement.span_without_export().start => {
@@ -775,16 +778,64 @@ fn write_ignored_statement<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatte
         statement.kind(),
         StmtKind::Expr(expression) if print::statements::expression_statement_needs_semicolon(statement, expression, f)
     );
-    let span = match ignored_statement_keeps_semicolon(f) {
-        true => Span::new(span.start, statement.span().end),
-        false => span,
-    };
     f.around_cursor(span, |f| write!(f, [needs_leading_semicolon.then_some(";"), FormatSuppressedNode(span)]));
 }
 
-/// Without semicolons, oxfmt leaves the `;` of a statement that it does not format.
-fn ignored_statement_keeps_semicolon(f: &Formatter<'_>) -> bool {
+/// For oxfmt the `;` at the end of a statement or a member of a class is not part of what a
+/// `prettier-ignore` comment protects: it is written, or not, as for any other. Prettier only adds
+/// one to a statement that has one, and writes members, type aliases and functions without a body
+/// as they are.
+pub(crate) fn terminator_of_what_is_ignored_follows_semi(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
+}
+
+/// See [`terminator_of_what_is_ignored_follows_semi`]. `span`: as for [`write_ignored_statement`].
+fn write_ignored_statement_without_terminator<'a>(statement: Stmt<'a>, span: Span, f: &mut Formatter<'a>) {
+    let content = match ends_with_terminator(statement) {
+        true => f.comments().without_semicolon(Span::new(span.start, statement.span().end)),
+        false => span,
+    };
+    if f.options().semicolons.is_always() {
+        let terminator = ends_with_terminator(statement).then_some(";");
+        return f.around_cursor(content, |f| write!(f, [FormatSuppressedNode(content), terminator]));
+    }
+    // The text can start with a parenthesis that would not be written.
+    let needs_leading_semicolon = matches!(
+        statement.kind(),
+        StmtKind::Expr(expression) if f.source_text().byte_at(content.start) == Some(b'(')
+            || print::statements::expression_statement_needs_semicolon(statement, expression, f)
+    );
+    f.around_cursor(content, |f| write!(f, [needs_leading_semicolon.then_some(";"), FormatSuppressedNode(content)]));
+}
+
+/// Whether `statement` is written with a `;` at its end, if semicolons are.
+fn ends_with_terminator(statement: Stmt<'_>) -> bool {
+    // The `;` after the declaration in the head of a loop separates.
+    let is_in_head = |body: Stmt<'_>| statement.span().end <= body.span().start;
+    if let Node::Stmt(parent) = statement.parent()
+        && let StmtKind::For { body, .. } | StmtKind::ForIn { body, .. } | StmtKind::ForOf { body, .. } = parent.kind()
+        && is_in_head(body)
+    {
+        return false;
+    }
+    let mut last = statement;
+    loop {
+        last = match last.kind() {
+            StmtKind::If { yes, no, .. } => no.unwrap_or(yes),
+            StmtKind::For { body, .. }
+            | StmtKind::ForIn { body, .. }
+            | StmtKind::ForOf { body, .. }
+            | StmtKind::While { body, .. }
+            | StmtKind::With { body, .. }
+            | StmtKind::Labeled { body, .. } => body,
+            StmtKind::TypeAlias(_)
+            | StmtKind::ImportEquals(_)
+            | StmtKind::ExportAssign(_)
+            | StmtKind::ExportAsNamespace(_) => return true,
+            StmtKind::Fn(func) => return !func.has_body(),
+            _ => return ends_before_semicolon(last),
+        };
+    }
 }
 
 /// `ExportNamedDeclaration.declaration`, `ExportDefaultDeclaration.declaration`: the statement
@@ -928,12 +979,21 @@ fn format_type_with_comments<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>) {
     let span = ty.span();
     // A union writes the comments before it with its first `|`, and deals with `prettier-ignore`.
     let is_union = matches!(ty.kind(), TypeKind::Union(_));
-    let is_suppressed = !is_union && f.comments().is_suppressed(span.start);
-    if !is_union {
+    let is_suppressed = match is_union {
+        // On a line of its own it is about the first type only.
+        true => f.comments().comments_before_iter(span.start).any(|comment| {
+            f.comments().is_suppression_comment(comment) && !comment.preceded_by_newline()
+        }),
+        false => f.comments().is_suppressed(span.start),
+    };
+    if !is_union || is_suppressed {
         format_leading_comments(span).fmt(f);
     }
     if is_suppressed {
-        f.around_cursor(span, |f| FormatSuppressedNode(span).fmt(f));
+        let needs_parentheses = parentheses::ts_type::needs_parentheses(ty, f);
+        f.around_cursor(span, |f| {
+            write!(f, [needs_parentheses.then_some("("), FormatSuppressedNode(span), needs_parentheses.then_some(")")]);
+        });
     } else {
         f.in_scope(span, |f| write_type_in_parentheses(ty, f));
     }

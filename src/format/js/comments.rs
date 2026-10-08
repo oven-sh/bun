@@ -360,6 +360,22 @@ fn attach_between_sides_of_assignment<'a>(
     gap.iter().any(|it| it.is_moved()).then_some(index + count)
 }
 
+/// Prettier's `handleAssignmentPatternComments`: a comment on a line of its own between the two sides
+/// of the `a = 1` of a pattern leads it.
+fn moved_out_of_assignment_pattern(nodes: &mut NodeFinder<'_>, comment: Comment) -> Option<u32> {
+    let (left, default) = match nodes.innermost_node_at(comment.span.start) {
+        Node::PatProp(it) => (it.value().span(), it.default()?),
+        Node::PatElem(it) => (it.pat()?.span(), it.default()?),
+        Node::Param(it) => (it.pat().span(), it.default()?),
+        Node::Expr(e) => match e.kind() {
+            ExprKind::Assign { target, value, .. } if e.is_assignment_target() => (target.span(), value),
+            _ => return None,
+        },
+        _ => return None,
+    };
+    (left.end <= comment.span.start && comment.span.end <= default.span().start).then_some(left.start)
+}
+
 /// oxfmt has no `handleMemberExpressionComments`: `a ⏎ // comment ⏎ .b` stays as it is.
 fn comments_stay_in_member_expressions(flavor: Flavor) -> bool {
     flavor.is_oxfmt()
@@ -477,26 +493,36 @@ fn move_comments<'a>(file: &'a File<'a>, flavor: Flavor, comments: &mut [Comment
         // The first of its run, after `=`, `= (` or before an assignment operator, or with nothing but
         // an operator between it and the comment before.
         let is_operator = |b: &u8| matches!(b, b'+' | b'-' | b'*' | b'/' | b'%' | b'<' | b'>' | b'&' | b'|' | b'^' | b'?' | b'=' | b'!');
+        let mut before = trim_end(text.get(..run_start as usize).unwrap_or_default());
+        while let [rest @ .., b'('] = before {
+            before = trim_end(rest);
+        }
+        let is_at_assignment_operator = starts_with_assignment_operator(after) || before.ends_with(b"=");
         if run_start == comment.span.start
-            && (starts_with_assignment_operator(after) || {
-                let mut before = trim_end(text.get(..run_start as usize).unwrap_or_default());
-                while let [rest @ .., b'('] = before {
-                    before = trim_end(rest);
-                }
-                before.ends_with(b"=")
-                    || (!is_own_line
-                        && previous.is_some_and(|previous| {
-                            let operator = before.get(previous.span.end as usize..).unwrap_or_default();
-                            trim_start(operator).iter().all(is_operator)
-                        }))
-            })
+            && (is_at_assignment_operator
+                || (!is_own_line
+                    && previous.is_some_and(|previous| {
+                        let operator = before.get(previous.span.end as usize..).unwrap_or_default();
+                        trim_start(operator).iter().all(is_operator)
+                    })))
             && let Some(end) = attach_between_sides_of_assignment(&mut nodes, comments, index)
         {
             has_moved = has_moved || comments[..end].iter().rev().take_while(|it| it.span.start >= run_start).any(|it| it.is_moved());
             attached_until = end;
             continue;
         }
-        if (!is_own_line && !is_typescript && !comment.followed_by_newline()) || comment.flags & TYPE_CAST != 0 {
+        // A comment before the parentheses of a type cast stays there.
+        let is_type_cast = comment.flags & TYPE_CAST != 0
+            && trim_start(text.get(comment.span.end as usize..).unwrap_or_default()).starts_with(b"(");
+        if (!is_own_line && !is_typescript && !comment.followed_by_newline()) || is_type_cast {
+            continue;
+        }
+        if is_own_line
+            && is_at_assignment_operator
+            && let Some(moved_to) = moved_out_of_assignment_pattern(&mut nodes, comment)
+        {
+            comments[index].moved_to = moved_to;
+            has_moved = true;
             continue;
         }
 
@@ -924,6 +950,12 @@ impl<'a> Comments<'a> {
             gap_end = comment.start();
         }
         &comments[..trailing_count]
+    }
+
+    /// Whether any comment of the file is `prettier-ignore`.
+    #[inline]
+    pub(crate) fn has_suppression_comments(&self) -> bool {
+        self.has_suppression_comments
     }
 
     /// Whether a `prettier-ignore` comment leads the node that starts at `start`.

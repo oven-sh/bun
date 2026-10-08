@@ -15,7 +15,7 @@ use crate::js::utils::conditional::ConditionalLike;
 use crate::js::utils::number::format_number_token;
 use crate::js::utils::object::{format_computed_or_property_key, key_requires_quotes};
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
-use crate::js::utils::suppressed::FormatSuppressedNode;
+use crate::js::utils::suppressed::{FormatSuppressedNode, FormatTemplateText};
 use crate::js::utils::typescript::{end_of_line_comments, without_lone_operator};
 use crate::prelude::*;
 use crate::{best_fitting, format_args, write};
@@ -135,7 +135,7 @@ pub(crate) fn write_ts_literal_type<'a>(ty: TypeNode<'a>, f: &mut Formatter<'a>)
     match ty.kind() {
         // A template without substitutions.
         TypeKind::StringLit(_) if text.starts_with(b"`") => {
-            write!(f, [line_suffix_boundary(), FormatSuppressedNode(ty.span())]);
+            write!(f, [line_suffix_boundary(), FormatTemplateText(ty.span())]);
         }
         TypeKind::StringLit(_) => {
             write!(f, FormatLiteralStringToken::new(text, false, StringLiteralParentKind::Expression));

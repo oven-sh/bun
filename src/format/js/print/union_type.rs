@@ -62,7 +62,7 @@ pub(crate) fn write_ts_union_type_in<'a>(
         ty,
         types,
         parent,
-        is_first_type_suppressed: suppression.is_some(),
+        is_first_type_suppressed: suppression.is_some() || follows_printed_suppression_comment(ty, f),
     };
     if union_breaks_one_per_line(f) {
         return write_union_one_per_line(&members, is_one_of_several_tuple_elements, f);
@@ -107,6 +107,29 @@ pub(crate) fn write_ts_union_type_in<'a>(
         && matches!(parent, AstNodes::TSConditionalType(it) if matches!(it.kind(), TypeKind::Cond { extends, .. } if extends.span().contains(ty.span())));
     let line = if is_after_line_break { soft_empty_line() } else { soft_line_break() };
     write!(f, group(&indent(&format_args!(line, printed))));
+}
+
+/// Whether what the union `ty` is in has written a `prettier-ignore` comment that leads it, outside
+/// of its parentheses.
+fn follows_printed_suppression_comment<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) -> bool {
+    if !f.comments().has_suppression_comments() {
+        return false;
+    }
+    let mut end = ty.span().start;
+    for comment in f.comments().printed_comments().iter().rev() {
+        let is_adjacent = !comment.is_moved()
+            && comment.span.end <= end
+            && f.source_text().all_bytes_match(comment.span.end, end, |b| b.is_ascii_whitespace() || b == b'(');
+        if !is_adjacent {
+            return false;
+        }
+        if f.comments().is_suppression_comment(comment) {
+            // At the end of a line it trails what is before it.
+            return comment.preceded_by_newline();
+        }
+        end = comment.span.start;
+    }
+    false
 }
 
 /// oxfmt follows Prettier 3.8: a union that does not fit where it is has each type on a line of its
@@ -218,7 +241,7 @@ struct UnionMembers<'a> {
 
 impl<'a> Format<'a> for UnionMembers<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        if f.is_quiet() {
+        if f.is_quiet() && !self.is_first_type_suppressed {
             for (index, member) in self.types.iter().enumerate() {
                 if index > 0 {
                     write!(f, [soft_line_break_or_space(), "| "]);
@@ -233,14 +256,26 @@ impl<'a> Format<'a> for UnionMembers<'a> {
         while let Some(member) = iter.next() {
             let next = iter.peek().copied();
             let (leading_comments, _) = comments_before_member(member, f);
+            let is_suppression = |comment: &Comment| f.comments().is_suppression_comment(comment);
+            // A `prettier-ignore` comment leads it, or trails it with the `|` behind it.
+            let is_member_suppressed = is_suppressed.get()
+                || leading_comments.iter().any(is_suppression)
+                || next.is_some_and(|next| {
+                    let comments = f.comments().comments_in_range(member.span().end, next.span().start);
+                    let trailing = comments.len() - count_leading_comments(comments, next.span().start, f);
+                    comments[..trailing].iter().any(|comment| is_suppression(comment) && !comment.preceded_by_newline())
+                });
 
-            let format_member = format_with(|f| write_member(member, is_suppressed.get(), f));
+            let format_member = format_with(|f| write_member(member, is_member_suppressed, f));
             // The comments between it and the next type that do not lead that one.
             let format_trailing_comments = format_with(|f| {
                 let comments = match next {
                     Some(next) => {
                         let (comments, start) = comments_before_member(next, f);
-                        is_suppressed.set(comments.iter().any(|comment| f.comments().is_suppression_comment(comment)));
+                        // Prettier's `handleUnionTypeComments`: on a line of its own it is about the next type.
+                        is_suppressed.set(comments.iter().any(|comment| {
+                            f.comments().is_suppression_comment(comment) && comment.preceded_by_newline()
+                        }));
                         &comments[..comments.len() - count_leading_comments(comments, start, f)]
                     }
                     None => {

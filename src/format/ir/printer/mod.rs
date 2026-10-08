@@ -868,7 +868,13 @@ impl<'d> Printer<'d> {
         self.print_pending();
         self.has_empty_line = false;
         if width.is_multiline() {
-            return self.print_lines(text.get(range).unwrap_or_default());
+            let line_width = self.line_width + width.value() as usize;
+            self.print_lines(text.get(range).unwrap_or_default());
+            // Prettier adds the width of the string, in which a line break is a character like another.
+            if width.is_one_string() {
+                self.line_width = line_width;
+            }
+            return;
         }
         self.out.part(text, range);
         self.line_width += width.value() as usize;

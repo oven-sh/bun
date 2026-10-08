@@ -6,13 +6,14 @@ use super::semicolon::OptionalSemicolon;
 use super::type_parameters::{FormatTSTypeParametersOptions, type_arguments, type_parameters};
 use crate::js::format::{
     FormatMemberBeforeAnother, FormatTypeAnnotation, format_node, format_node_without_comments, identifier,
-    no_comment_trails_what_is_before_another, write_trailing_comments_of,
+    no_comment_trails_what_is_before_another, terminator_of_what_is_ignored_follows_semi, write_trailing_comments_of,
 };
 use crate::js::parentheses::expression::needs_parentheses;
 use crate::js::utils::assignment_like::AssignmentLike;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::object::{format_computed_or_property_key, key_requires_quotes};
 use crate::js::utils::string::{FormatLiteralStringToken, StringLiteralParentKind};
+use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -617,9 +618,41 @@ impl FormatClassElementWithSemicolon<'_> {
     }
 }
 
+impl<'a> FormatClassElementWithSemicolon<'a> {
+    /// See [`terminator_of_what_is_ignored_follows_semi`]. Returns whether the member is not formatted.
+    fn write_ignored_without_terminator(&self, f: &mut Formatter<'a>) -> bool {
+        let span = self.element.span();
+        let has_terminator = match self.element.kind() {
+            MemberKind::Property | MemberKind::IndexSignature => true,
+            _ => self.element.func().is_some_and(|func| !func.has_body()),
+        };
+        let content = match has_terminator {
+            true => f.comments().without_semicolon(span),
+            false => span,
+        };
+        let is_suppressed = f.comments().is_suppressed(span.start)
+            || f.comments().has_trailing_suppression_comment(span.end)
+            || (content.end < span.end && f.comments().has_trailing_suppression_comment(content.end));
+        if !is_suppressed {
+            return false;
+        }
+        let terminator = has_terminator
+            && match f.options().semicolons {
+                Semicolons::Always => true,
+                Semicolons::AsNeeded => self.element.kind() == MemberKind::Property && self.needs_semicolon(),
+            };
+        write!(f, [format_leading_comments(span), FormatSuppressedNode(content), terminator.then_some(";")]);
+        write_trailing_comments_of(self.element.as_ast_nodes(), f);
+        true
+    }
+}
+
 impl<'a> Format<'a> for FormatClassElementWithSemicolon<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let span = self.element.span();
+        if !f.is_quiet() && terminator_of_what_is_ignored_follows_semi(f) && self.write_ignored_without_terminator(f) {
+            return;
+        }
         let is_suppressed =
             f.comments().is_suppressed(span.start) || f.comments().has_trailing_suppression_comment(span.end);
         let needs_semi = self.element.kind() == MemberKind::Property

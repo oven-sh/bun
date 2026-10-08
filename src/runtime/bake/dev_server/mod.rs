@@ -970,6 +970,23 @@ impl WatcherAtomics {
                         (*this).pending_event,
                     );
                     // The old pending event hadn't been run yet, so we can replace it with `ev`.
+                    // Its changes go with it: `ev` is another slot, and the swap above means the
+                    // dev server no longer takes the old one. Left in it, they ran only when that
+                    // slot was handed out again, on some later change (a save seen a save late).
+                    let old: *mut HotReloadEvent = &raw mut (*this).events[old_index as usize];
+                    if (*old).timer < (*ev).timer {
+                        (*ev).timer = (*old).timer;
+                    }
+                    for file in (*old).files.keys() {
+                        (*ev).append_file(file);
+                    }
+                    for dir in (*old).dirs.keys() {
+                        (*ev).append_dir(dir, None);
+                    }
+                    (*ev).extra_files.extend_from_slice(&(*old).extra_files);
+                    (*old).files.clear_retaining_capacity();
+                    (*old).dirs.clear_retaining_capacity();
+                    (*old).extra_files.clear();
                     (*this).pending_event = Some(ev_index);
                 }
             }

@@ -2915,13 +2915,16 @@ pub mod bv2_impl {
                 return;
             }
 
-            if path.pretty.as_ptr() == path.text.as_ptr() {
+            // The pretty path is made relative when it is the file's own path, and when it
+            // is another absolute one: a file reached through a symlink (a package in an
+            // isolated install's store) keeps the symlink's path, spelled the platform's way.
+            if path.pretty.as_ptr() == path.text.as_ptr() || bun_paths::is_absolute(path.pretty) {
                 // TODO: outbase
                 let rel = bun_paths::resolve_path::relative_platform::<
                     bun_paths::resolve_path::platform::Loose,
                     false,
                 >(
-                    bun_resolver::fs::FileSystem::get().top_level_dir, path.text
+                    bun_resolver::fs::FileSystem::get().top_level_dir, path.pretty
                 );
                 // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
                 // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
@@ -5262,7 +5265,17 @@ pub mod bv2_impl {
                         );
                     }
                 }
-                jsc_api::JSBundler::ResolveValue::Success(result) => {
+                jsc_api::JSBundler::ResolveValue::Success(mut result) => {
+                    // A plugin may answer with a file's path spelled with either separator
+                    // (`C:/app/x.tsx` from a template, `C:\app\x.tsx` from `Bun.resolveSync`).
+                    // Everything below keys on these bytes — the module map, the watcher
+                    // (which compares change events against platform paths) and the pretty
+                    // path — so the file is made one path, the platform's, as the resolver's are.
+                    if (result.namespace.is_empty() || result.namespace.as_ref() == b"file")
+                        && bun_paths::is_absolute(result.path.as_ref())
+                    {
+                        bun_paths::resolve_path::posix_to_platform_in_place::<u8>(&mut result.path);
+                    }
                     let mut out_source_index: Option<Index> = None;
                     // SAFETY: `result.{path,namespace}` are `Box<[u8]>`. Each arm below
                     // either moves both boxes into `this.free_list` before it stores
@@ -5281,6 +5294,39 @@ pub mod bv2_impl {
                         path.namespace = b"file";
                     } else {
                         path.namespace = result_ns_static;
+                    }
+                    // A file the dev server already holds, unchanged, is used as it is, as
+                    // for an import the resolver found (see the `is_file_cached` check in
+                    // the import-record loop): parsed again, it went to the browser as
+                    // changed, and every module importing it through a plugin ran anew
+                    // (its state lost) on each edit to any file importing it.
+                    if !result.external
+                        && resolve.import_record.kind != ImportKind::EntryPointBuild
+                        && path.namespace == b"file"
+                        && !matches!(
+                            path.loader(&this.transpiler.options.loaders),
+                            Some(Loader::Css | Loader::Html)
+                        )
+                    {
+                        let target = resolve.import_record.original_target;
+                        let cached = match this.dev_server_handle() {
+                            Some(dev_server) => {
+                                dev_server.is_file_cached(path.text, target.bake_graph()).is_some()
+                            }
+                            None => false,
+                        };
+                        let importer = resolve.import_record.importer_source_index as usize;
+                        let index = resolve.import_record.import_record_index as usize;
+                        if cached && index < this.graph.ast.items_import_records()[importer].len() {
+                            this.free_list.push(result.namespace);
+                            this.free_list.push(result.path);
+                            let pretty = this.path_with_pretty_initialized(&path, target).expect("oom");
+                            let import_record: &mut ImportRecord =
+                                &mut this.graph.ast.items_import_records_mut()[importer].as_mut_slice()[index];
+                            import_record.source_index = Index::INVALID;
+                            import_record.path = path_as_static(&pretty);
+                            return;
+                        }
                     }
                     if !result.external {
                         // SAFETY: `GetOrPutResult` borrows `&mut this` for its whole
@@ -7599,7 +7645,7 @@ pub mod bv2_impl {
 
             // To minimize contention, watchers are appended on the bundle thread.
             if this.bun_watcher.is_some() {
-                if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
+                if parse_result.watcher_data.watch {
                     let source_index = parse_result.value.source_index();
                     // borrowck — read the source path before
                     // `should_add_watcher(&self)` so the column borrow is released.

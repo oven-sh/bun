@@ -1,8 +1,9 @@
 use bun_lint::linter::GlobalVariable;
 use bun_lint::prelude::*;
+use bun_lint::source::ByName;
 use bun_lint::utils::ast_utils::is_import_attribute_key;
 use bun_lint::utils::{estree_span, estree_type_name, is_assignment_target, is_chain_root};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 
 /// Require identifiers to match a specified regular expression.
 pub struct IdMatch {
@@ -27,7 +28,7 @@ const NOT_MATCH_PRIVATE: Message = Message::new(
 #[derive(Default)]
 pub struct State<'a> {
     /// Whether each name that has been seen fails to match.
-    is_invalid: FxHashMap<Name<'a>, bool>,
+    is_invalid: ByName<bool>,
     /// The key and the value of `{ a }` are two identifiers at the same place.
     reported: FxHashSet<Span>,
     /// `File::unresolved_references`, once a name in a type may be one of them.
@@ -123,7 +124,7 @@ impl IdMatch {
 
     /// ESLint's `isInvalid`. A private name is tested without its `#`.
     fn is_invalid<'a>(&self, name: Name<'a>, cx: &mut Cx<'a, Self>) -> bool {
-        *cx.state.is_invalid.entry(name).or_insert_with(|| {
+        cx.state.is_invalid.get_or_insert_with(name, || {
             let text = name.bytes();
             self.fails(text.strip_prefix(b"#").unwrap_or(text))
         })

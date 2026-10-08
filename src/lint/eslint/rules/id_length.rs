@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::source::ByName;
 use bun_lint::utils::ast_utils::{is_function_with_body, is_import_attribute_key};
 use bun_lint::utils::estree_compat::is_assignment_target;
 use bun_lint::utils::string_utils::get_grapheme_count;
@@ -111,12 +112,15 @@ impl IdLength {
 
     /// Reports an identifier named `name` if its length is wrong. `at` is only asked then: where
     /// to report it, or `None` if it is not in a place that the rule looks at.
-    fn check<'a>(&self, cx: &Cx<'a, Self>, name: &'a [u8], at: impl FnOnce() -> Option<Span>) {
-        let (name, is_private) = match name {
-            [b'#', rest @ ..] => (rest, true),
-            _ => (name, false),
+    fn check<'a>(&self, cx: &mut Cx<'a, Self>, name: Name<'a>, at: impl FnOnce() -> Option<Span>) {
+        let problem = || match name.bytes() {
+            [b'#', rest @ ..] => (rest, self.problem(rest, true)),
+            name => (name, self.problem(name, false)),
         };
-        if let Some(message) = self.problem(name, is_private)
+        if !cx.state.get_or_insert_with(name, || problem().1.is_some()) {
+            return;
+        }
+        if let (name, Some(message)) = problem()
             && let Some(at) = at()
         {
             cx.report(at, message)
@@ -138,7 +142,8 @@ impl IdLength {
         let Some(name) = pat.as_ident() else {
             return;
         };
-        self.check(cx, name.bytes(), || match pat.parent() {
+        let file = cx.file();
+        self.check(cx, name, || match pat.parent() {
             Node::VarDecl(declaration) => Some(declaration.binding_span()),
             Node::Param(param) if param.is_rest() => Some(pat.span()),
             Node::Param(param) => {
@@ -148,7 +153,7 @@ impl IdLength {
             }
             Node::PatElem(_) => Some(pat.span()),
             Node::PatProp(prop) if prop.is_rest() || prop.default().is_some() => Some(pat.span()),
-            Node::PatProp(prop) => self.property_of_pattern(cx.file(), prop.key()?, name, pat.span()),
+            Node::PatProp(prop) => self.property_of_pattern(file, prop.key()?, name, pat.span()),
             _ => None,
         });
     }
@@ -157,7 +162,8 @@ impl IdLength {
         let Some(name) = e.as_ident() else {
             return;
         };
-        self.check(cx, name.bytes(), || {
+        let file = cx.file();
+        self.check(cx, name, || {
             let is_supported = match e.parent() {
                 Node::Expr(parent) => match parent.kind() {
                     ExprKind::Dot { .. } => self.properties && is_assigned_member(parent),
@@ -186,7 +192,7 @@ impl IdLength {
                         (PropKind::Spread, true) => true,
                         (PropKind::Shorthand, true) => self.properties,
                         (PropKind::Init, true) => {
-                            return self.property_of_pattern(cx.file(), prop.key()?, name, e.span());
+                            return self.property_of_pattern(file, prop.key()?, name, e.span());
                         }
                         // `check_property` reports the key, which for a shorthand is the value.
                         (PropKind::Init, false) => {
@@ -210,30 +216,33 @@ impl IdLength {
         let KeyKind::Ident(name) = key.kind() else {
             return;
         };
-        self.check(cx, name.bytes(), || {
+        let file = cx.file();
+        self.check(cx, name, || {
             let is_supported = !prop.is_jsx_attribute()
                 && !is_import_attribute_key(prop)
                 && matches!(prop.parent(), Node::Expr(object) if !is_assignment_target(object));
-            is_supported.then(|| key.span(cx.file()))
+            is_supported.then(|| key.span(file))
         });
     }
 
     fn check_member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(key) = member.key() {
             if let KeyKind::Ident(name) | KeyKind::Private(name) = key.kind() {
-                self.check(cx, name.bytes(), || is_definition(member).then(|| key.span(cx.file())));
+                let file = cx.file();
+                self.check(cx, name, || is_definition(member).then(|| key.span(file)));
             }
         } else if let Some(keyword) = member.constructor_keyword()
             && !keyword.is_string()
         {
-            self.check(cx, keyword.bytes(), || is_definition(member).then(|| keyword.span()));
+            self.check(cx, keyword.name(), || is_definition(member).then(|| keyword.span()));
         }
     }
 }
 
 impl Rule for IdLength {
     const META: Meta = Meta::eslint("id-length", Kind::Suggestion);
-    type State<'a> = ();
+    /// Whether the length of each name that has been seen is wrong.
+    type State<'a> = ByName<bool>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -249,18 +258,18 @@ impl Rule for IdLength {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> ByName<bool> {
         on.pats([PatTag::Ident], Self::check_binding);
         on.exprs([ExprTag::Ident], Self::check_reference);
         on.members(Self::check_member);
         on.funcs(|rule, func, cx| {
             if let Some(name) = func.name() {
-                rule.check(cx, name.bytes(), || func.has_body().then(|| name.span()));
+                rule.check(cx, name.name(), || func.has_body().then(|| name.span()));
             }
         });
         on.classes(|rule, class, cx| {
             if let Some(name) = class.name() {
-                rule.check(cx, name.bytes(), || {
+                rule.check(cx, name.name(), || {
                     matches!(class.owner(), Node::Stmt(_)).then(|| name.span())
                 });
             }
@@ -270,22 +279,23 @@ impl Rule for IdLength {
                 return;
             };
             for name in [import.default(), import.namespace()].into_iter().flatten() {
-                rule.check(cx, name.bytes(), || Some(name.span()));
+                rule.check(cx, name.name(), || Some(name.span()));
             }
         });
         on.import_specs(|rule, specifier, cx| {
             let local = specifier.local();
             if specifier.imported().name() != local.name() {
-                rule.check(cx, local.bytes(), || Some(local.span()));
+                rule.check(cx, local.name(), || Some(local.span()));
             }
         });
         if self.properties {
             on.props(Self::check_property);
             on.exprs([ExprTag::Dot], |rule, e, cx| {
                 if let ExprKind::Dot { name, .. } = e.kind() {
-                    rule.check(cx, name.bytes(), || is_assigned_member(e).then(|| name.span()));
+                    rule.check(cx, name.name(), || is_assigned_member(e).then(|| name.span()));
                 }
             });
         }
+        ByName::default()
     }
 }

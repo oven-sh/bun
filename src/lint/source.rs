@@ -3,7 +3,52 @@
 use crate::ast::{File, Name};
 use crate::span::{Position, Span};
 pub use bun_sema::hir::mention_bit;
+use rustc_hash::FxHashMap;
 use std::cell::{Cell, OnceCell};
+
+/// What a rule has found out about each name of a file, for a rule that asks the same of every identifier: a file has many times
+/// as many identifiers as names. Looking a name up is a load.
+pub struct ByName<T> {
+    /// By the number of the name. The names of a file that is linted on its own have small numbers.
+    small: Vec<Option<T>>,
+    others: FxHashMap<u32, T>,
+}
+
+impl<T> Default for ByName<T> {
+    fn default() -> Self {
+        ByName {
+            small: Vec::new(),
+            others: FxHashMap::default(),
+        }
+    }
+}
+
+impl<T: Copy> ByName<T> {
+    /// What is known about `name`. `find_out` is called the first time.
+    #[inline]
+    pub fn get_or_insert_with(&mut self, name: Name<'_>, find_out: impl FnOnce() -> T) -> T {
+        match self.small.get(name.atom().0 as usize) {
+            Some(Some(known)) => *known,
+            _ => self.insert(name.atom().0, find_out()),
+        }
+    }
+
+    #[inline(never)]
+    fn insert(&mut self, number: u32, found: T) -> T {
+        const SMALL: usize = 1 << 14;
+        let at = number as usize;
+        if at >= SMALL {
+            return *self.others.entry(number).or_insert(found);
+        }
+        if at >= self.small.len() {
+            self.small.resize((at + 1).next_power_of_two().max(1024), None);
+        }
+        if let Some(place) = self.small.get_mut(at) {
+            *place = Some(found);
+        }
+        found
+    }
+}
 
 /// Where the lines of a file start.
 pub(crate) struct Lines {

@@ -274,6 +274,33 @@ declare module "bun:test" {
      */
     todoIf(condition: boolean): Describe<T>;
     /**
+     * Returns a function that runs for each row of a table written as a tagged template literal.
+     *
+     * The first line of the template has the column names, separated by `|`.
+     * Each line after it has one `${value}` for each column.
+     * The describe fn gets each row as one object, with the column names as its keys.
+     * To type that object, annotate the parameter or pass the type argument:
+     * `describe.each<{ a: number }>`.
+     *
+     * The returned function throws when the table has no `${value}`, when the
+     * number of values is not a multiple of the number of columns, or when the
+     * column names are not one line of names separated by `|`.
+     *
+     * @example
+     * ```ts
+     * describe.each`
+     *   a    | b    | expected
+     *   ${1} | ${2} | ${3}
+     *   ${4} | ${5} | ${9}
+     * `("add($a, $b)", ({ a, b, expected }) => {
+     *   test(`returns ${expected}`, () => {
+     *     expect(a + b).toBe(expected);
+     *   });
+     * });
+     * ```
+     */
+    each<Row = any>(strings: TemplateStringsArray, value: unknown, ...values: unknown[]): Describe<[Row]>;
+    /**
      * Returns a function that runs for each item in `table`.
      *
      * @param table Array of Arrays with the arguments that are passed into the test fn for each row.
@@ -569,6 +596,31 @@ declare module "bun:test" {
      * @param condition if the test should run serially
      */
     serialIf(condition: boolean): Test<T>;
+    /**
+     * Returns a function that runs for each row of a table written as a tagged template literal.
+     *
+     * The first line of the template has the column names, separated by `|`.
+     * Each line after it has one `${value}` for each column.
+     * The test fn gets each row as one object, with the column names as its keys.
+     * To type that object, annotate the parameter or pass the type argument:
+     * `test.each<{ a: number }>`.
+     *
+     * The returned function throws when the table has no `${value}`, when the
+     * number of values is not a multiple of the number of columns, or when the
+     * column names are not one line of names separated by `|`.
+     *
+     * @example
+     * ```ts
+     * test.each`
+     *   a    | b    | expected
+     *   ${1} | ${2} | ${3}
+     *   ${4} | ${5} | ${9}
+     * `("add($a, $b) = $expected", ({ a, b, expected }) => {
+     *   expect(a + b).toBe(expected);
+     * });
+     * ```
+     */
+    each<Row = any>(strings: TemplateStringsArray, value: unknown, ...values: unknown[]): Test<[Row]>;
     /**
      * Returns a function that runs for each item in `table`.
      *

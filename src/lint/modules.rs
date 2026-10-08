@@ -15,6 +15,7 @@ use crate::options::Json;
 use crate::span::Span;
 use crate::utils::text::find_line_break;
 use bun_core::strings;
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 /// Whose notion of what a module imports. All files of a run have the same.
@@ -249,10 +250,24 @@ fn add_static_requests_of_oxlint<'a>(file: &'a File<'a>, requests: &mut Vec<Requ
             });
         }
     }
-    for (request, &(specifier, ..)) in requests[first..].iter_mut().zip(&names) {
-        let mut same = names.iter().filter(|it| it.0 == specifier);
-        request.is_only_importing_types = same.clone().any(|it| it.1) && !same.clone().any(|it| it.2);
-        request.may_be_itself = same.any(|it| it.3);
+    if !names.spilled() {
+        for (request, &(specifier, ..)) in requests[first..].iter_mut().zip(&names) {
+            let mut same = names.iter().filter(|it| it.0 == specifier);
+            request.is_only_importing_types = same.clone().any(|it| it.1) && !same.clone().any(|it| it.2);
+            request.may_be_itself = same.any(|it| it.3);
+        }
+        return;
+    }
+    // The same for all the statements with a specifier.
+    let mut by_specifier: FxHashMap<Name<'a>, (bool, bool, bool)> = FxHashMap::default();
+    for &(specifier, has_names, has_values, exports_names) in &names {
+        let all = by_specifier.entry(specifier).or_default();
+        *all = (all.0 | has_names, all.1 | has_values, all.2 | exports_names);
+    }
+    for (request, (specifier, ..)) in requests[first..].iter_mut().zip(&names) {
+        let (has_names, has_values, exports_names) = by_specifier.get(specifier).copied().unwrap_or_default();
+        request.is_only_importing_types = has_names && !has_values;
+        request.may_be_itself = exports_names;
     }
 }
 

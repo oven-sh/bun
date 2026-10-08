@@ -3,6 +3,8 @@
  * ws-proxy.test.ts and websocket-syscall-fault.test.ts.
  */
 
+import { createHash } from "crypto";
+import { once } from "events";
 import { tls as tlsCerts } from "harness";
 import net from "net";
 import tls from "tls";
@@ -211,6 +213,113 @@ export function startEchoServer(options: { tls?: boolean } = {}) {
       },
     },
   });
+}
+
+/** A frame as a server sends it: unmasked, with a payload that fits the 7-bit length. */
+export function serverFrame(opcode: number, payload: string | Uint8Array = ""): Buffer {
+  const body = Buffer.from(payload);
+  return Buffer.concat([Buffer.from([0x80 | opcode, body.length]), body]);
+}
+
+export type ClientFrame = "text" | "binary" | "close" | "ping" | "pong";
+const clientFrameNames: Record<number, ClientFrame> = { 1: "text", 2: "binary", 8: "close", 9: "ping", 10: "pong" };
+
+/**
+ * A wss:// origin that completes the upgrade by hand and records the type of
+ * every frame the client sends, in arrival order, up to the client's Close
+ * frame. That frame ends the connection, after a Close of the origin's own
+ * unless `greeting` was one.
+ *
+ * `greeting` is what the origin writes in the same TLS record as the 101, so
+ * the client reads it once its open handlers have run, before any other I/O:
+ * a Close frame (4001 "bye"), or a Ping frame with the text "after ping"
+ * behind it.
+ */
+export async function startFrameLogOrigin(options: { greeting?: "ping" | "close" } = {}) {
+  const frames: ClientFrame[] = [];
+  const ended = Promise.withResolvers<void>();
+  const sockets = new Set<net.Socket>();
+  const greeting =
+    options.greeting === "ping"
+      ? Buffer.concat([serverFrame(0x9), serverFrame(0x1, "after ping")])
+      : options.greeting === "close"
+        ? serverFrame(0x8, Buffer.concat([Buffer.from([4001 >> 8, 4001 & 0xff]), Buffer.from("bye")]))
+        : Buffer.alloc(0);
+
+  const server = tls.createServer({ key: tlsCerts.key, cert: tlsCerts.cert }, socket => {
+    sockets.add(socket);
+    socket.on("close", () => {
+      sockets.delete(socket);
+      ended.resolve();
+    });
+    socket.on("error", () => {});
+    let pending = Buffer.alloc(0);
+    let upgraded = false;
+    socket.on("data", chunk => {
+      pending = Buffer.concat([pending, chunk]);
+      if (!upgraded) {
+        const end = pending.indexOf("\r\n\r\n");
+        if (end === -1) return;
+        const key = /^sec-websocket-key: (.*)\r$/im.exec(pending.subarray(0, end + 2).toString("latin1"))![1];
+        const accept = createHash("sha1")
+          .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+          .digest("base64");
+        socket.write(
+          Buffer.concat([
+            Buffer.from(
+              "HTTP/1.1 101 Switching Protocols\r\n" +
+                "Upgrade: websocket\r\n" +
+                "Connection: Upgrade\r\n" +
+                `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+            ),
+            greeting,
+          ]),
+        );
+        upgraded = true;
+        pending = pending.subarray(end + 4);
+      }
+      // A client frame: two header bytes, the extended length, a 4-byte mask, the payload.
+      while (pending.length >= 2 && !socket.writableEnded) {
+        let length = pending[1] & 0x7f;
+        let header = 2;
+        if (length === 126) {
+          if (pending.length < 4) return;
+          length = pending.readUInt16BE(2);
+          header = 4;
+        } else if (length === 127) {
+          if (pending.length < 10) return;
+          length = Number(pending.readBigUInt64BE(2));
+          header = 10;
+        }
+        const size = header + 4 + length;
+        if (pending.length < size) return;
+        const frame = clientFrameNames[pending[0] & 0x0f];
+        frames.push(frame);
+        if (frame === "close") {
+          const mask = pending.subarray(header, header + 4);
+          const payload = Buffer.from(pending.subarray(header + 4, size)).map((byte, i) => byte ^ mask[i & 3]);
+          if (options.greeting === "close") socket.end();
+          else socket.end(serverFrame(0x8, payload));
+          ended.resolve();
+          return;
+        }
+        pending = pending.subarray(size);
+      }
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+
+  return {
+    port: (server.address() as net.AddressInfo).port,
+    frames,
+    /** Resolves once the client's Close frame has arrived, or its connection has ended without one. */
+    ended: ended.promise,
+    [Symbol.dispose]() {
+      for (const socket of sockets) socket.destroy();
+      server.close();
+    },
+  };
 }
 
 export type ClientEvent = string | { error: string } | { code: number; reason: string; wasClean: boolean };

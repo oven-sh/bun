@@ -263,6 +263,8 @@ fn estree_of_expr(e: Expr) -> Estree {
         }
         ExprKind::Assign { .. } => "AssignmentExpression",
         ExprKind::Cond { .. } => "ConditionalExpression",
+        // `JSXSpreadChild`
+        ExprKind::Spread(_) if e.jsx_container_span().is_some() => return None,
         ExprKind::Spread(_) => pattern_or("RestElement", "SpreadElement"),
         ExprKind::Await(_) => "AwaitExpression",
         ExprKind::Yield { .. } => "YieldExpression",

@@ -6,6 +6,7 @@ type Scope = {
   /** How much deeper the syntax may nest. */
   depth: number;
   typescript: boolean;
+  jsx: boolean;
   inFunction: boolean;
   inGenerator: boolean;
   inAsync: boolean;
@@ -17,7 +18,7 @@ type Scope = {
   labels: { name: string; isLoop: boolean }[];
 };
 
-export function generate(seed: number, typescript: boolean): string {
+export function generate(seed: number, typescript: boolean, jsx = false): string {
   // mulberry32
   const random = () => {
     seed = (seed + 0x6d2b79f5) | 0;
@@ -245,7 +246,25 @@ export function generate(seed: number, typescript: boolean): string {
           () => (s.inDerivedConstructor ? `super(${args(s)})` : name()),
           () => (s.inClass && s.inFunction ? `super.${name()}` : name()),
           () => (s.inClass ? `(#p in ${name()})` : name()),
+          () => (s.jsx ? element(s) : name()),
+          () => (s.jsx ? element(s) : name()),
         );
+  const element = (s: Scope): string => {
+    const tag = pick("a", "A", "a.b", "a.b.c", "this.a", "a-b", "a:b", "");
+    const attribute = () =>
+      choose(
+        () => name(),
+        () => `${name()}="s"`,
+        () => `${name()}={${expression(deeper(s))}}`,
+        () => `{...${expression(deeper(s))}}`,
+        () => `a-b={${expression(deeper(s))}}`,
+        () => `${name()}=${element(deeper(s))}`,
+      );
+    const child = () =>
+      s.depth <= 0 ? "t" : choose(() => " text ", () => `{${expression(deeper(s))}}`, () => element(deeper(s)), () => "{}", () => `{...${expression(deeper(s))}}`, () => "{/* c */}"); // prettier-ignore
+    const attributes = tag ? many(0, 3, () => ` ${attribute()}`, "") : "";
+    return tag && chance(0.3) ? `<${tag}${attributes} />` : `<${tag}${attributes}>${many(0, 3, child, "")}</${tag}>`;
+  };
   /** Something that can be an operand of any operator. */
   const operand = (s: Scope): string => (s.depth <= 0 ? primary(s) : choose(() => primary(s), () => chain(s), () => chain(s), () => `(${expression(s)})`)); // prettier-ignore
   const expression = (s: Scope): string =>
@@ -280,7 +299,7 @@ export function generate(seed: number, typescript: boolean): string {
               ? choose(
                   () => `${operand(deeper(s))} as ${type(deeper(s))}`,
                   () => `${operand(deeper(s))} as const`,
-                  () => `<${pick("const", "T", "A.B")}>${operand(deeper(s))}`,
+                  () => (s.jsx ? `${operand(deeper(s))} as T` : `<${pick("const", "T", "A.B")}>${operand(deeper(s))}`),
                   () => `${operand(deeper(s))} satisfies ${type(deeper(s))}`,
                   () => `${operand(deeper(s))}!`,
                   () => `${name()}<${type(deeper(s))}>`,
@@ -402,23 +421,23 @@ export function generate(seed: number, typescript: boolean): string {
     return `try ${block(s)}${handler}${kind === 0 ? "" : ` finally ${block(s)}`}`;
   };
 
-  const top: Scope = { depth: 3 + below(3), typescript, inFunction: false, inGenerator: false, inAsync: false, inLoop: false, inSwitch: false, inClass: false, inDerivedConstructor: false, labels: [] }; // prettier-ignore
+  const top: Scope = { depth: 3 + below(3), typescript, jsx, inFunction: false, inGenerator: false, inAsync: false, inLoop: false, inSwitch: false, inClass: false, inDerivedConstructor: false, labels: [] }; // prettier-ignore
   return many(1, 4, () => statement(top), "\n");
 }
 
 export function generatedCases(count: number, firstSeed = 1): Case[] {
   return Array.from({ length: count }, (_, i) => {
-    const typescript = i % 2 === 1;
+    const [typescript, jsx] = [i % 2 === 1, i % 4 >= 2];
     return {
       id: `generated#${firstSeed + i}`,
-      path: typescript ? "file.ts" : "file.js",
-      code: generate(firstSeed + i, typescript),
+      path: `file.${typescript ? "ts" : "js"}${jsx ? "x" : ""}`,
+      code: generate(firstSeed + i, typescript, jsx),
       parser: typescript ? "typescript" : "espree",
       ecmaVersion: 2026,
       sourceType: "module",
-      jsx: false,
+      jsx,
     };
   });
 }
 
-if (import.meta.main) console.log(generate(Number(process.argv[2] ?? 1), process.argv[3] === "ts"));
+if (import.meta.main) console.log(generate(Number(process.argv[2] ?? 1), /^ts/.test(process.argv[3]), /x$/.test(process.argv[3])));

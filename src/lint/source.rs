@@ -55,6 +55,18 @@ pub(crate) struct Lines {
     starts: Vec<u32>,
     /// No column needs converting: a byte is a UTF-16 code unit.
     is_ascii: bool,
+    /// For columns far into a line: how many UTF-16 code units the characters have that start before each multiple of
+    /// `BLOCK`, and at last all of them. `None` if the text is not valid UTF-8. Made when the first such column is asked for.
+    units: OnceCell<Option<Vec<u32>>>,
+}
+
+/// A column is counted from the start of its line if that is no further away.
+const FAR: u32 = 512;
+const BLOCK: usize = 1024;
+
+/// How many UTF-16 code units the characters of valid UTF-8 have that start in `bytes`.
+fn units_of_characters_starting_in(bytes: &[u8]) -> u32 {
+    bytes.iter().map(|&byte| u32::from(byte & 0xC0 != 0x80) + u32::from(byte >= 0xF0)).sum()
 }
 
 /// For the line of an offset in a file of which few are asked for: then the lines in between are counted, and the starts of
@@ -98,6 +110,8 @@ impl<'a> File<'a> {
         let lines_before = if offset >= known { lines_before + breaks } else { lines_before - breaks };
         nearby.known.set((offset, lines_before));
         let start = bun_core::strings::last_index_of_char(&text[..offset as usize], b'\n').map_or(0, |at| at as u32 + 1);
+        // The line has been looked at up to here, and is once more for the column. The 256 above stand for a line of ordinary length.
+        nearby.looked_at.set(looked_at + (2 * (offset - start) as usize).saturating_sub(256));
         Some((lines_before + 1, start))
     }
 
@@ -105,7 +119,37 @@ impl<'a> File<'a> {
         self.lazy.lines.get_or_init(|| Lines {
             starts: line_starts(self.text()),
             is_ascii: bun_core::strings::first_non_ascii(self.text()).is_none(),
+            units: OnceCell::new(),
         })
+    }
+
+    /// How many UTF-16 code units are before `offset`, which is where a character starts. `None` if that is not kept.
+    fn units_before(&self, offset: u32) -> Option<u32> {
+        let text = self.text();
+        let units = self.lines_index().units.get_or_init(|| {
+            bun_core::strings::is_valid_utf8(text).then(|| {
+                let mut units = Vec::with_capacity(text.len() / BLOCK + 2);
+                units.push(0);
+                for block in text.chunks(BLOCK) {
+                    units.push(units.last().copied().unwrap_or(0) + units_of_characters_starting_in(block));
+                }
+                units
+            })
+        });
+        let block = offset as usize / BLOCK;
+        Some(units.as_ref()?.get(block)? + units_of_characters_starting_in(text.get(block * BLOCK..offset as usize)?))
+    }
+
+    /// `text.length` in JavaScript of what is from `start` to `end`, both of which are where a character starts.
+    fn units_between(&self, start: u32, end: u32) -> u32 {
+        // While the lines are counted, so is what is looked at for a column.
+        if end - start > FAR
+            && self.lazy.lines.get().is_some()
+            && let (Some(before_start), Some(before_end)) = (self.units_before(start), self.units_before(end))
+        {
+            return before_end - before_start;
+        }
+        utf16_len(self.slice(Span::new(start, end)))
     }
 
     /// Where ESLint's text starts: it has no byte order mark. So a line and a column do not count it either.
@@ -174,7 +218,7 @@ impl<'a> File<'a> {
             character -= 1;
         }
         let is_between_surrogates = character < offset && text.get(character as usize).is_some_and(|&byte| byte >= 0xF0);
-        let column = utf16_len(self.slice(Span::new(start, character))) + u32::from(is_between_surrogates);
+        let column = self.units_between(start, character) + u32::from(is_between_surrogates);
         Position { line, column }
     }
 
@@ -186,6 +230,20 @@ impl<'a> File<'a> {
         }
         let (mut at, mut units) = (line.start, 0);
         let text = self.text();
+        // Far into a line, it starts at the last block that begins before the column.
+        if position.column > FAR
+            && let Some(before_line) = self.units_before(line.start)
+            && let Some(Some([blocks @ .., _])) = self.lines_index().units.get().map(Option::as_deref)
+        {
+            let block = blocks.partition_point(|&before| before <= before_line + position.column).saturating_sub(1);
+            let mut first = (block * BLOCK) as u32;
+            while text.get(first as usize).is_some_and(|byte| byte & 0xC0 == 0x80) {
+                first += 1;
+            }
+            if first > line.start && let Some(&before) = blocks.get(block) {
+                (at, units) = (first, before - before_line);
+            }
+        }
         while units < position.column && (at as usize) < text.len() {
             let (c, size) = bun_core::lexer::char_and_size(text, at as usize);
             if c > 0xFFFF && units + 1 == position.column {

@@ -5,6 +5,8 @@
 //! - warm: on a file on which it has run already. That is what it adds to rules that ask for the same.
 //!
 //! Each is the least of `--repeat` runs per file, so that what else the machine does hardly shows.
+//!
+//! `bun-lint perf positions <files..>`: see [`positions`].
 
 use bun_lint::ast::File;
 use bun_lint::context::Severity;
@@ -138,9 +140,59 @@ fn rules(args: &[String]) {
     );
 }
 
+/// `File::position` and `File::offset` of where every character of each file starts, in three orders, against counting from the
+/// start of the text. Prints how long they take: it has to grow with the length of the text, however long its lines are.
+fn positions(args: &[String]) {
+    let language = LanguageOptions::default();
+    let mut wrong = 0;
+    for path in args {
+        let code = std::fs::read(path).expect("the file");
+        let text = String::from_utf8(code.clone()).expect("UTF-8");
+        // (offset, line, column)
+        let (mut expected, mut line, mut column) = (Vec::new(), 1u32, 0u32);
+        let mut characters = text.char_indices().peekable();
+        while let Some((at, c)) = characters.next() {
+            if !(at == 0 && c == '\u{FEFF}') {
+                expected.push((at as u32, line, column));
+                column += c.len_utf16() as u32;
+            }
+            let is_break = matches!(c, '\n' | '\u{2028}' | '\u{2029}') || c == '\r' && characters.peek().is_none_or(|it| it.1 != '\n');
+            if is_break {
+                (line, column) = (line + 1, 0);
+            }
+        }
+        expected.push((text.len() as u32, line, column));
+        let orders: [(&str, Box<dyn Fn(usize) -> usize>); 3] = [
+            ("forward", Box::new(|i| i)),
+            ("backward", Box::new(|i| expected.len() - 1 - i)),
+            ("scattered", Box::new(|i| i.wrapping_mul(2_654_435_761) % expected.len())),
+        ];
+        for (name, order) in &orders {
+            crate::linter_cmd::with_file(path, &code, &language, |file| {
+                let started = Instant::now();
+                for i in 0..expected.len() {
+                    let (offset, line, column) = expected[order(i)];
+                    let position = file.position(offset);
+                    if (position.line, position.column) != (line, column) || file.offset(position) != offset {
+                        wrong += 1;
+                        if wrong <= 10 {
+                            println!("{path}: {offset}: {line}:{column} expected, {position:?}, which is at {}", file.offset(position));
+                        }
+                    }
+                }
+                println!("{path}: {} positions {name}: {:.1} ms", expected.len(), started.elapsed().as_secs_f64() * 1e3);
+            });
+        }
+    }
+    println!("{wrong} wrong");
+}
+
 pub(crate) fn run_command(args: &[String]) {
     match args.first().map(String::as_str) {
         Some("rules") => rules(&args[1..]),
-        _ => println!("usage: bun-lint perf rules <paths..> [--threads=n] [--rules=a,b | --config=file] [--repeat=n] [--top=n]"),
+        Some("positions") => positions(&args[1..]),
+        _ => println!(
+            "usage: bun-lint perf rules <paths..> [--threads=n] [--rules=a,b | --config=file] [--repeat=n] [--top=n]\n       bun-lint perf positions <files..>"
+        ),
     }
 }

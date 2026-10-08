@@ -72,9 +72,11 @@
 //!
 //! # Where the checker gave up
 //!
-//! A type can be [`Type::is_unresolved`]: a circular query, or a limit. It has
-//! [`TypeFlags::ANY`], as the error type has. `is_type_any_type` and `discriminate_any_type` do
-//! not count either as `any`.
+//! A type can be [`Type::is_unresolved`]: a circular query, or a limit. TypeScript has no such
+//! type. It has [`TypeFlags::ANY`], as the error type has, but nothing should be reported for it:
+//! `is_type_any_type`, `discriminate_any_type` and `is_unsafe_assignment` do not count it as `any`.
+//! The error type they do, as upstream. A rule that reports what is *not* of some type
+//! (`only-throw-error`) has to ask [`Type::is_unresolved`] itself.
 
 mod flags;
 mod locate;
@@ -211,6 +213,7 @@ queries! {
     /// The file that `specifier`, which is written in an import or an export of the file at hand,
     /// resolves to.
     fn resolve_module_name(specifier: &[u8]) -> Option<FileId>;
+    fn ambient_module(name: &[u8]) -> Option<SymbolRef>;
 
     // ── nodes ──
     fn node(location: Location) -> RawNode;
@@ -411,6 +414,13 @@ impl<'a> Types<'a> {
     pub fn resolve_module_name(self, specifier: &[u8]) -> Option<SourceFile<'a>> {
         let id = self.file.query(|q| q.resolve_module_name(specifier))?;
         Some(SourceFile::new(self.file, id))
+    }
+
+    /// `checker.getAmbientModules().find(it => it.name === '"name"')`: what `declare module "name"`
+    /// declares. `name` is without the quotes.
+    pub fn get_ambient_module(self, name: &[u8]) -> Option<TsSymbol<'a>> {
+        let id = self.file.query(|q| q.ambient_module(name))?;
+        Some(TsSymbol::new(self.file, id))
     }
 
     // ───────────────────────────── from a node ─────────────────────────────

@@ -1,11 +1,14 @@
 // What TypeScript says the type at every node of every type-aware test case is, to compare with
 // `bun-lint types dump-fixtures`.
 //
-//   TYPESCRIPT_ESLINT_DIR=<checkout> BUN_LINT_TYPE_ROOTS=<a,b> bun dump-types.ts <fixtures> [--rule=r] [--jobs=n] --out=<file>
+//   TYPESCRIPT_ESLINT_DIR=<checkout> BUN_LINT_TYPE_ROOTS=<a,b> bun dump-types.ts <fixtures> [--rule=r] [--jobs=n] [--ts-nodes] --out=<file>
 //
 // For each case: `# <rule> <index>`, then one line `[start, end, "<ESTree type>", "<type>"]` for each
 // ESTree node, with offsets in UTF-8 bytes. The type is
 // `checker.typeToString(services.getTypeAtLocation(node))`.
+//
+// With `--ts-nodes`, a line `[start, end, "<SyntaxKind>", "<type>", symbol]` for each node of
+// TypeScript's own tree, where the symbol is `null` or `[name, flags, [[file, start], ..]]`.
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -133,8 +136,35 @@ for (const name of readdirSync(join(fixtures, "typescript-eslint")).sort()) {
       });
       const checker = program.getTypeChecker();
       const offsets = byteOffsets(testCase.code);
-      const lines: [number, number, string, string][] = [];
-      simpleTraverse(ast, {
+      const lines: any[] = [];
+      const at = (offset: number) => (offsets ? offsets[offset] : offset);
+      if (process.argv.includes("--ts-nodes")) {
+        const sourceFile = program.getSourceFile(filePath)!;
+        const describe = (symbol: import("typescript").Symbol) => [
+          symbol.name,
+          symbol.flags,
+          (symbol.declarations ?? []).map(declaration => {
+            const file = declaration.getSourceFile();
+            const isSame = file === sourceFile;
+            const start = program.isSourceFileDefaultLibrary(file) ? -1 : declaration.getStart(file, false);
+            return [file.fileName.slice(file.fileName.lastIndexOf("/") + 1), isSame ? at(start) : start];
+          }),
+        ];
+        const visit = (node: import("typescript").Node) => {
+          let type: string;
+          let symbol: unknown = null;
+          try {
+            type = checker.typeToString(checker.getTypeAtLocation(node));
+            const found = checker.getSymbolAtLocation(node);
+            symbol = found ? describe(found) : null;
+          } catch (error) {
+            type = `!${error}`;
+          }
+          lines.push([at(node.getStart(sourceFile, false)), at(node.end), ts.SyntaxKind[node.kind], type, symbol]);
+          ts.forEachChild(node, visit);
+        };
+        ts.forEachChild(sourceFile, visit);
+      } else simpleTraverse(ast, {
         enter(node: any) {
           if (node.type === "Program") return;
           let type: string;

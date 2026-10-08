@@ -140,10 +140,11 @@ impl<'a> TsSymbol<'a> {
 
     /// `symbol.name`, `symbol.getName()`, `symbol.escapedName`, `symbol.getEscapedName()`
     ///
-    /// They differ in TypeScript only for a name that begins with `__`. A name that the compiler
-    /// makes up, which there begins with `__` (`__type`, `__@iterator@12`, `__#1@#x`), begins with
-    /// the byte 0xFE here, so that it is never mistaken for a name in the source:
-    /// [`TsSymbol::is_internal_name`].
+    /// They differ in TypeScript only for a name in the source that begins with `__`, which
+    /// `escapedName` gives one more `_`. This is `name`. A name that the compiler makes up is
+    /// spelled as there: `__type`, `__object`, `__function`, `__call`, `__index`, `default`,
+    /// `export=`. That of a property whose key is a well-known symbol is `__@iterator`, without
+    /// the number that follows in TypeScript.
     pub fn name(self) -> &'a [u8] {
         self.file.query(|q| q.symbol_info(self.id)).name
     }
@@ -152,11 +153,6 @@ impl<'a> TsSymbol<'a> {
     #[inline]
     pub fn escaped_name(self) -> &'a [u8] {
         self.name()
-    }
-
-    /// The name is made up by the compiler: `__type`, `__object`, `__function`, `default` is not.
-    pub fn is_internal_name(self) -> bool {
-        self.name().first() == Some(&0xFE)
     }
 
     /// `symbol.flags`, `symbol.getFlags()`

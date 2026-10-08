@@ -47,16 +47,22 @@ for (const [header, lines] of ours) {
     continue;
   }
   const byRange = new Map<string, [string, string][]>();
+  // The range of a pattern in ESTree includes its `?` and its type annotation.
+  const patternsByStart = new Map<number, [string, string][]>();
   for (const [start, end, type, text] of expected) {
     const key = `${start},${end}`;
     byRange.set(key, [...(byRange.get(key) ?? []), [type, text]]);
+    if (["Identifier", "ObjectPattern", "ArrayPattern"].includes(type)) {
+      patternsByStart.set(start, [...(patternsByStart.get(start) ?? []), [type, text]]);
+    }
   }
   const tally = perRule.get(rule) ?? [0, 0];
   perRule.set(rule, tally);
   for (const [start, end, sort, text] of lines) {
-    const candidates = (byRange.get(`${start},${end}`) ?? []).filter(([type]) =>
+    let candidates = (byRange.get(`${start},${end}`) ?? []).filter(([type]) =>
       sort === "pat" ? isPattern(type) : sort === "type" ? isType(type) : !isType(type) && !isStatementLike(type),
     );
+    if (candidates.length === 0 && sort === "pat") candidates = patternsByStart.get(start) ?? [];
     if (candidates.length === 0) {
       unmatched++;
       continue;

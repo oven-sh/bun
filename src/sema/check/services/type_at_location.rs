@@ -7,14 +7,12 @@ use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, SymbolId, flags_of_mem
 use crate::node::{Kind, Node, NodeData, Part};
 
 impl Checker<'_, '_> {
-    /// `getTypeOfNode`, preceded by the special case of `writeTypeOrSymbol` for the node after the
-    /// `extends` of a class.
+    /// `getTypeOfNode`
     ///
-    /// `kind`: what `visited_kind` says that `node` is. `start`: where it starts.
+    /// `kind`: what `visited_kind` says that the node is. `start`: where it starts.
     pub(in crate::check) fn get_type_of_visited_node(
         &mut self,
         file: FileId,
-        node: Node,
         kind: VisitedKind,
         start: u32,
     ) -> TypeId {
@@ -26,22 +24,7 @@ impl Checker<'_, '_> {
         match kind {
             VisitedKind::Expression(e)
             | VisitedKind::Parenthesized(e, _)
-            | VisitedKind::AccessName(e) => {
-                // `IsExpressionWithTypeArgumentsInClassExtendsClause(node.Parent)`: the base type, unless it is `any` or there is none.
-                let parent = hir.parent(node);
-                // The base expressions of a class after the first are not wrapped in an
-                // `ExpressionWithTypeArguments`.
-                if matches!(parent.part(), Some(Part::Base | Part::Extends)) {
-                    let class = self.class_sym(file, hir.class_of(parent.row()));
-                    if let Some(&base) = self.base_types(class).first()
-                        && !base.is_any()
-                    {
-                        let this = self.intern(TypeData::ThisParam(class));
-                        return self.type_with_this_argument(base, this);
-                    }
-                }
-                self.type_of_visited_expression(file, e)
-            }
+            | VisitedKind::AccessName(e) => self.type_of_visited_expression(file, e),
             VisitedKind::BindingName(pat) => self.type_of_binding_name(file, pat),
             // `IsJsxTagName`: the identifier is an expression (`checkIdentifier`). The name `a-b`
             // never resolves.
@@ -501,7 +484,7 @@ impl Services<'_, '_, '_> {
         }
         let is_visited = hir.is_expression_node(at) || kind == Kind::Identifier || hir.is_declaration_name(at);
         if is_visited && let Some(visited) = self.visited_kind(node) {
-            return self.c.get_type_of_visited_node(file, at, visited, start);
+            return self.c.get_type_of_visited_node(file, visited, start);
         }
         // The `ExpressionWithTypeArguments` after the `extends` of a class: the base type.
         if at.part() == Some(Part::Base) {
@@ -595,6 +578,15 @@ impl Services<'_, '_, '_> {
         let file = node.file;
         match hir.data(at) {
             NodeData::Type(t) => {
+                // `isReadonlyTypeOperator(node.parent)`: the `T[]` of `readonly T[]` is that type.
+                let t = match (hir[t].kind, hir.data(hir.parent(at))) {
+                    (TypeNodeKind::Array(_) | TypeNodeKind::Tuple(_), NodeData::Type(operator))
+                        if matches!(hir[operator].kind, TypeNodeKind::Readonly(_)) =>
+                    {
+                        operator
+                    }
+                    _ => t,
+                };
                 let ty = self.c.type_from_node(file, t);
                 // `tryGetClassImplementingOrExtendingExpressionWithTypeArguments`
                 let clause = hir.parent(at);

@@ -194,7 +194,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     pub fn structure(&mut self, ty: TypeId) -> Structure<'c> {
         match *self.c.data(ty) {
             TypeData::Cond { file, node, .. } => {
-                let TypeNodeKind::Cond { check, .. } = self.c.hir(file)[node].kind else {
+                let TypeNodeKind::Cond { check, yes, no, .. } = self.c.hir(file)[node].kind else {
                     return Structure::Other;
                 };
                 // `root.isDistributive`: the check type is written as a naked type parameter.
@@ -203,6 +203,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                     is_distributive: self.c.flags(declared) & tf::TYPE_PARAMETER != 0,
                     check: self.c.cond_check(ty),
                     extends: self.c.cond_extends(ty),
+                    root_true_type: self.c.type_from_node(file, yes),
+                    root_false_type: self.c.type_from_node(file, no),
                 }
             }
             TypeData::IndexedAccess { obj, index, .. } => Structure::IndexedAccess { object: obj, index },
@@ -329,6 +331,13 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             Relation::Subtype => self.c.is_subtype(source, target),
             Relation::StrictSubtype => self.c.is_strict_subtype(source, target),
             Relation::Comparable => self.c.is_comparable(source, target),
+            Relation::SameTupleTarget => match (self.c.data(source), self.c.data(target)) {
+                (
+                    TypeData::Tuple { flags: a, readonly: a_is_readonly, .. },
+                    TypeData::Tuple { flags: b, readonly: b_is_readonly, .. },
+                ) => a_is_readonly == b_is_readonly && a[..] == b[..],
+                _ => false,
+            },
         }
     }
 

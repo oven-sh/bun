@@ -1,9 +1,10 @@
 //! `bun-lint types ..`: the linter with types.
 //!
-//! - `bun-lint types dump <file> [--project=tsconfig.json] [--symbols]`: the type (and the symbol)
-//!   at every expression, pattern and type of a file, as JSON lines, to compare with TypeScript's.
-//! - `bun-lint types dump-fixtures <fixtures> [--rule=r] [--out=file]`: the same for the code of
-//!   every type-aware test case.
+//! - `bun-lint types dump <file> [--project=tsconfig.json] [--symbols] [--ts-nodes]`: the type (and
+//!   the symbol) at every expression, pattern and type of a file, or at every node of TypeScript's
+//!   tree, as JSON lines, to compare with TypeScript's.
+//! - `bun-lint types dump-fixtures <fixtures> [--rule=r] [--out=file] [--ts-nodes]`: the same for
+//!   the code of every type-aware test case.
 //! - `bun-lint types run <rule> <file> [options as JSON] [--project=tsconfig.json]`: what one rule
 //!   reports for one file of a project.
 //! - `bun-lint types conformance <fixtures> [--rule=r] [--report=dir] [--verbose] [--jobs=n]`: runs
@@ -24,6 +25,7 @@ use bun_lint::linter::{LintOptions, Linter, Registry, ResolvedConfig, RuleId};
 use bun_lint::options::Json;
 use bun_lint::rule::Plugin;
 use bun_lint::runner::RuleEntry;
+use bun_lint::types::{TsNode, TsSymbol};
 use bun_sema::program::FileId;
 use std::fmt::Write as _;
 use std::sync::Mutex;
@@ -221,12 +223,53 @@ fn dump<'a>(file: &'a File<'a>, with_symbols: bool) -> String {
     out
 }
 
+/// A symbol as `[name, flags, [[file, start], ..]]`, with the base name of the file of each
+/// declaration. The start is -1 in the default library.
+fn describe_symbol(symbol: TsSymbol) -> String {
+    let declarations = symbol.declarations().map(|it| {
+        let source_file = it.get_source_file();
+        let name = source_file.file_name();
+        let base = name.rsplit(|&c| c == b'/').next().unwrap_or(name);
+        match source_file.is_default_library() {
+            true => format!("[{}, -1]", json_string(base)),
+            false => format!("[{}, {}]", json_string(base), it.span().start),
+        }
+    });
+    let declarations: Vec<String> = declarations.collect();
+    format!("[{}, {}, [{}]]", json_string(symbol.name()), symbol.flags().bits(), declarations.join(", "))
+}
+
+/// One line for each node of TypeScript's tree of `file`: `[start, end, kind, type, symbol]`.
+fn dump_ts_nodes<'a>(file: &'a File<'a>) -> String {
+    let mut lines: Vec<(u32, u32, String)> = Vec::new();
+    let mut work: Vec<TsNode<'a>> = file.type_checker().source_file().node().children().collect();
+    while let Some(node) = work.pop() {
+        work.extend(node.children());
+        let span = node.span();
+        let symbol = node.get_symbol_at_location().map(describe_symbol);
+        let line = format!(
+            "\"{:?}\", {}, {}",
+            node.kind(),
+            json_string(&node.get_type_at_location().to_text()),
+            symbol.as_deref().unwrap_or("null")
+        );
+        lines.push((span.start, span.end, line));
+    }
+    lines.sort();
+    let mut out = String::new();
+    for (start, end, line) in lines {
+        let _ = writeln!(out, "[{start}, {end}, {line}]");
+    }
+    out
+}
+
 fn dump_file(args: &[String]) {
     let flag = |name: &str| args.iter().find_map(|a| a.strip_prefix(name));
     let Some(path) = args.iter().find(|a| !a.starts_with("--")) else {
         return println!("usage: bun-lint types dump <file> [--project=tsconfig.json] [--symbols]");
     };
     let with_symbols = args.iter().any(|a| a == "--symbols");
+    let as_ts_nodes = args.iter().any(|a| a == "--ts-nodes");
     let files = [absolute(path)];
     let config = flag("--project=").map(absolute);
     let cwd = absolute(".");
@@ -237,7 +280,11 @@ fn dump_file(args: &[String]) {
         overlay: Vec::new(),
         threads: 1,
     };
-    for (_, lines) in lint_project(project, &LanguageOptions::default(), &|file| dump(file, with_symbols)) {
+    let dumped = lint_project(project, &LanguageOptions::default(), &|file| match as_ts_nodes {
+        true => dump_ts_nodes(file),
+        false => dump(file, with_symbols),
+    });
+    for (_, lines) in dumped {
         print!("{lines}");
     }
 }
@@ -322,9 +369,15 @@ fn dump_fixtures(args: &[String]) {
     let fixtures = read_fixtures(&root, flag("--rule="));
     let cases = type_aware_cases(&fixtures);
     let dumps: Vec<Mutex<String>> = cases.iter().map(|_| Mutex::new(String::new())).collect();
+    let as_ts_nodes = args.iter().any(|a| a == "--ts-nodes");
     std::panic::set_hook(Box::new(|_| {}));
     bun_sema_standalone::for_each_parallel(jobs(args), cases.len(), |i| {
-        let dumped = std::panic::catch_unwind(|| with_case(&project_root, cases[i].json, &LanguageOptions::default(), &|file| dump(file, false)));
+        let dumped = std::panic::catch_unwind(|| {
+            with_case(&project_root, cases[i].json, &LanguageOptions::default(), &|file| match as_ts_nodes {
+                true => dump_ts_nodes(file),
+                false => dump(file, false),
+            })
+        });
         let dumped = match dumped {
             Ok(dumped) => dumped.unwrap_or_else(|| "\"not checked\"\n".to_owned()),
             Err(_) => "\"panicked\"\n".to_owned(),

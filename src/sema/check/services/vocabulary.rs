@@ -496,6 +496,10 @@ pub enum Child {
     Type,
     /// `node.body`
     Body,
+    /// `node.constraint` of a type parameter
+    Constraint,
+    /// `node.default` of a type parameter
+    Default,
 }
 
 /// A function from a type to a type.
@@ -589,6 +593,9 @@ pub enum Relation {
     Subtype,
     StrictSubtype,
     Comparable,
+    /// `a.target === b.target`, for two tuple types: TypeScript has one target for all the tuple
+    /// types with the same kinds of elements and the same labels.
+    SameTupleTarget,
 }
 
 /// A function from a symbol to a symbol.
@@ -635,6 +642,10 @@ pub enum Structure<'a> {
         extends: TypeId,
         /// `root.isDistributive`
         is_distributive: bool,
+        /// `getTypeFromTypeNode(root.node.trueType)`, which is not instantiated.
+        root_true_type: TypeId,
+        /// `getTypeFromTypeNode(root.node.falseType)`
+        root_false_type: TypeId,
     },
     /// `object[index]`
     IndexedAccess { object: TypeId, index: TypeId },
@@ -694,8 +705,7 @@ pub struct TypePredicateData<'a> {
 /// What a `ts.Symbol` has as fields.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct SymbolInfo<'a> {
-    /// `symbol.escapedName`. Where TypeScript begins an internal name with `__`, this begins with
-    /// the byte 0xFE.
+    /// `symbol.name`, spelled as TypeScript spells it: `__type`, `__@iterator`, `__#1@#x`.
     pub name: &'a [u8],
     pub flags: SymbolFlags,
     pub check_flags: CheckFlags,
@@ -763,6 +773,8 @@ pub struct CompilerOptions {
     pub check_js: bool,
     pub resolve_json_module: bool,
     pub preserve_const_enums: bool,
+    /// `ts.sys.useCaseSensitiveFileNames`
+    pub use_case_sensitive_file_names: bool,
     pub target: crate::resolve::ScriptTarget,
     pub module: crate::resolve::ModuleKind,
 }

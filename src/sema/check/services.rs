@@ -160,6 +160,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             check_js: options.check_js == Some(true),
             resolve_json_module: options.resolve_json_module,
             preserve_const_enums: options.preserve_const_enums,
+            use_case_sensitive_file_names: options.use_case_sensitive_file_names,
             target: options.target,
             module: options.module,
         }
@@ -200,6 +201,13 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 
     pub fn source_file(&mut self, file_name: &[u8]) -> Option<FileId> {
         self.c.files().by_path.get(file_name)
+    }
+
+    /// `checker.getAmbientModules().find(it => it.name === '"name"')`
+    pub fn ambient_module(&mut self, name: &[u8]) -> Option<SymbolRef> {
+        let name = self.c.atoms().lookup(name)?;
+        let module = self.c.files().try_find_ambient_module(name)?;
+        Some(self.symbol(module))
     }
 
     pub fn resolve_module_name(&mut self, specifier: &[u8]) -> Option<FileId> {
@@ -298,6 +306,11 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             Child::Initializer => hir.initializer(node),
             Child::Type => hir.type_node(node),
             Child::Body => hir.body(node),
+            Child::Constraint | Child::Default => match hir.data(node) {
+                NodeData::TypeParam(parameter) if child == Child::Constraint => hir.node(hir[parameter].constraint),
+                NodeData::TypeParam(parameter) => hir.node(hir[parameter].default),
+                _ => Node::NONE,
+            },
         }
     }
 
@@ -502,6 +515,20 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     }
 
     pub fn contextual_type(&mut self, node: NodeRef) -> Option<TypeId> {
+        // A `JsxExpression` that is the value of an attribute has the contextual type of what is
+        // in it. One that is a child has none.
+        let node = match self.valid(node) {
+            Some((hir, at)) if at.part() == Some(crate::node::Part::JsxExpression) => {
+                if hir.kind(hir.parent(at)) != Kind::JsxAttribute {
+                    return None;
+                }
+                NodeRef {
+                    node: at.row(),
+                    ..node
+                }
+            }
+            _ => node,
+        };
         let e = self.expr_of(node)?;
         let outer = self.c.begin_recheck();
         let ty = self.c.contextual_type(node.file, e, ContextFlags::empty());

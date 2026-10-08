@@ -57,7 +57,7 @@ impl Checker<'_, '_> {
             if self.is_omitted_from_types(file, node.kind) {
                 continue;
             }
-            let ty = self.get_type_of_visited_node(file, node.node, node.kind, node.start);
+            let ty = self.get_type_of_written_node(file, node);
             if self.is_error_type(ty) && !self.is_error_type_printed_as_any(file, node.node) {
                 found.push((node.start, format!("{:?}", node.kind)));
             }
@@ -78,7 +78,7 @@ impl Checker<'_, '_> {
         if self.is_omitted_from_types(file, node.kind) {
             return;
         }
-        let ty = self.get_type_of_visited_node(file, node.node, node.kind, node.start);
+        let ty = self.get_type_of_written_node(file, node);
         let type_text = if ty == TypeId::ERROR && self.is_error_type_printed_as_any(file, node.node)
         {
             "any".to_owned()
@@ -142,6 +142,32 @@ impl Checker<'_, '_> {
             walk.text_of_expr[index] = Some((ty, text.clone()));
         }
         text
+    }
+
+    /// `getTypeOfNode`, preceded by the special case of `writeTypeOrSymbol` for the node after the
+    /// `extends` of a class.
+    fn get_type_of_written_node(&mut self, file: FileId, node: VisitedNode) -> TypeId {
+        let hir = self.hir(file);
+        if let VisitedKind::Expression(_)
+        | VisitedKind::Parenthesized(..)
+        | VisitedKind::AccessName(_) = node.kind
+            && !hir.is_in_with(node.start)
+        {
+            // `IsExpressionWithTypeArgumentsInClassExtendsClause(node.Parent)`: the base type, unless it is `any` or there is none.
+            let parent = hir.parent(node.node);
+            // The base expressions of a class after the first are not wrapped in an
+            // `ExpressionWithTypeArguments`.
+            if matches!(parent.part(), Some(Part::Base | Part::Extends)) {
+                let class = self.class_sym(file, hir.class_of(parent.row()));
+                if let Some(&base) = self.base_types(class).first()
+                    && !base.is_any()
+                {
+                    let this = self.intern(TypeData::ThisParam(class));
+                    return self.type_with_this_argument(base, this);
+                }
+            }
+        }
+        self.get_type_of_visited_node(file, node.kind, node.start)
     }
 
     /// Whether `writeTypeOrSymbol` omits the node from the type walk.

@@ -208,6 +208,10 @@ pub enum TypeStructure<'a> {
         extends_type: Type<'a>,
         /// `root.isDistributive`
         is_distributive: bool,
+        /// `checker.getTypeFromTypeNode(root.node.trueType)`, which is not instantiated.
+        root_true_type: Type<'a>,
+        /// `checker.getTypeFromTypeNode(root.node.falseType)`
+        root_false_type: Type<'a>,
     },
     /// `ts.IndexedAccessType`: `objectType[indexType]`
     IndexedAccess {
@@ -389,6 +393,15 @@ impl<'a> Type<'a> {
         self.op(TypeOp::Target)
     }
 
+    /// `type.target === other.target`
+    pub fn has_same_target_as(self, other: Type<'a>) -> bool {
+        match (self.is_tuple_type(), other.is_tuple_type()) {
+            (true, true) => self.file.query(|q| q.is_related(Relation::SameTupleTarget, self.id, other.id)),
+            (false, false) => self.target().is_some() && self.target() == other.target(),
+            _ => false,
+        }
+    }
+
     /// `reference.target` of a tuple type.
     pub fn tuple_target(self) -> Option<TupleTarget<'a>> {
         let info = self.file.query(|q| q.tuple_info(self.id))?;
@@ -403,10 +416,14 @@ impl<'a> Type<'a> {
                 check,
                 extends,
                 is_distributive,
+                root_true_type,
+                root_false_type,
             } => TypeStructure::Conditional {
                 check_type: ty(check),
                 extends_type: ty(extends),
                 is_distributive,
+                root_true_type: ty(root_true_type),
+                root_false_type: ty(root_false_type),
             },
             Structure::IndexedAccess { object, index } => TypeStructure::IndexedAccess {
                 object_type: ty(object),
@@ -584,8 +601,10 @@ impl<'a> Type<'a> {
         /// `checker.getBaseConstraintOfType(type)`. `None`: it is not a type variable, or it has
         /// no constraint.
         get_base_constraint_of_type BaseConstraint;
-        /// `type.getConstraint()`, `getConstraintOfTypeParameter(type)`
-        get_constraint ConstraintOfTypeParameter;
+        /// `type.getConstraint()`, which is `checker.getBaseConstraintOfType(type)`.
+        get_constraint BaseConstraint;
+        /// `getConstraintOfTypeParameter(type)`: the constraint as it is declared.
+        get_constraint_of_type_parameter ConstraintOfTypeParameter;
         /// `type.getDefault()`
         get_default DefaultOfTypeParameter;
         /// `checker.getAwaitedType(type)`

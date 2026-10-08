@@ -126,6 +126,16 @@ impl<'a> TsNode<'a> {
         self.child(Child::Body)
     }
 
+    /// `node.constraint` of a type parameter.
+    pub fn constraint(self) -> Option<TsNode<'a>> {
+        self.child(Child::Constraint)
+    }
+
+    /// `node.default` of a type parameter.
+    pub fn default_type(self) -> Option<TsNode<'a>> {
+        self.child(Child::Default)
+    }
+
     /// `ts.forEachChild(node, ..)`
     pub fn children(self) -> impl ExactSizeIterator<Item = TsNode<'a>> + 'a {
         let children = self.file.query(|q| q.node_children(self.raw));

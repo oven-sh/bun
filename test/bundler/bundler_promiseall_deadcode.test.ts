@@ -397,4 +397,32 @@ describe("bundler", () => {
       expect(bundled).not.toMatch(/await\s+__promiseAll\s*\(/);
     },
   });
+
+  // entry.js has no wrapper of its own, and awaits the wrappers of a.js and b.js at once.
+  itBundled("bundler/__promiseAll is included when an unwrapped file imports two async wrapped files", {
+    files: {
+      "/entry.js": `import "./a.js"; import "./b.js"; import("./a.js"); import("./b.js"); console.log("entry");`,
+      "/a.js": `await 0; console.log("a");`,
+      "/b.js": `await 0; console.log("b");`,
+    },
+    outfile: "/out.js",
+    run: { stdout: "a\nb\nentry" },
+  });
+
+  // m3.js imports its way to m0.js, which is async only because of m4.js. The search for async files comes to m3.js
+  // from m0.js, through m5.js, m6.js, m7.js and m1.js, before it comes to m4.js.
+  itBundled("bundler/a wrapper that awaits a file of its own import cycle is async", {
+    files: {
+      "/entry.js": `import("./m0.js").then(() => console.log("done"));`,
+      "/m0.js": `import "./m5.js"; import "./m4.js";`,
+      "/m1.js": `import "./m7.js"; import "./m3.js";`,
+      "/m3.js": `import "./m6.js";`,
+      "/m4.js": `await 0;`,
+      "/m5.js": `import "./m6.js";`,
+      "/m6.js": `import "./m7.js";`,
+      "/m7.js": `import "./m0.js"; import "./m1.js";`,
+    },
+    outfile: "/out.js",
+    run: { stdout: "done" },
+  });
 });

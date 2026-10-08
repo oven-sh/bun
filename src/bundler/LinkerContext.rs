@@ -61,6 +61,7 @@ pub(crate) use crate::linker_context::scan_imports_and_exports::scan_imports_and
 
 pub(crate) use crate::linker_context::compute_chunks::compute_chunks;
 pub use crate::linker_context::metafile_builder as MetafileBuilder;
+use crate::linker_context::wrap_contested_files::wrap_contested_files;
 // do_step5 / create_exports_for_file are inherent methods on LinkerContext (see
 // `linker_context/doStep5.rs`), not free functions — no item re-export.
 pub(crate) use crate::linker_context::compute_cross_chunk_dependencies::compute_cross_chunk_dependencies;
@@ -951,6 +952,9 @@ impl<'a> LinkerContext<'a> {
         }
 
         self.tree_shaking_and_code_splitting()?;
+        if self.graph.code_splitting && wrap_contested_files(self)? {
+            self.tree_shaking_and_code_splitting()?;
+        }
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
             self.check_for_memory_corruption();
@@ -1001,6 +1005,7 @@ impl<'a> LinkerContext<'a> {
                 parts_live.push(bits);
             }
             self.graph.parts_live = parts_live;
+            self.graph.files_live.set_all(false);
         }
 
         // Note: these slices alias into self.graph.
@@ -1078,14 +1083,8 @@ impl<'a> LinkerContext<'a> {
         {
             let _trace2 = bun::perf::trace("Bundler.markFileReachableForCodeSplitting");
 
-            // AutoBitSet needs to be initialized if it is dynamic
-            if AutoBitSet::needs_dynamic(entry_points_len) {
-                for bits in file_entry_bits.iter_mut() {
-                    *bits = AutoBitSet::init_empty(entry_points_len)?;
-                }
-            } else if !file_entry_bits.is_empty() {
-                // assert that the tag is correct
-                debug_assert!(matches!(&file_entry_bits[0], AutoBitSet::Static(_)));
+            for bits in file_entry_bits.iter_mut() {
+                *bits = AutoBitSet::init_empty(entry_points_len)?;
             }
 
             let mut ctx = CodeSplitCtx {
@@ -2958,6 +2957,9 @@ impl<'a> LinkerContext<'a> {
             preload_entries.set(id);
             let part_index = self.entry_point_part_indices[id];
             // Through `ctx.parts` (the tree shaker's view of the parts column), not a second `&mut` via `self.graph`.
+            if !ctx.parts[id].as_slice()[part_index as usize]
+                .symbol_uses
+                .contains(&self.chunks_runtime_ref)
             {
                 let ast = self.graph.ast.split_raw();
                 let meta = self.graph.meta.split_raw();
@@ -3289,7 +3291,7 @@ impl<'a> LinkerContext<'a> {
 // Local imports. `AstFlags` / `DeclaredSymbolList`
 // already imported at the top of the file.
 use bun_ast::symbol::Use as SymbolUse;
-use bun_ast::{DependencyList, ImportItemStatus, PartSymbolUseMap};
+use bun_ast::{DependencyList, ImportItemStatus, ImportRecordFlags, PartSymbolUseMap};
 
 // `ImportTracker::{Status,Iterator}`'s canonical definition lives
 // in `bundle_v2.rs`. Re-exported here so the 30+
@@ -3303,6 +3305,13 @@ fn import_tracker_eq(a: &ImportTracker, b: &ImportTracker) -> bool {
     a.source_index.get() == b.source_index.get()
         && a.import_ref == b.import_ref
         && a.name_loc.start == b.name_loc.start
+}
+
+/// How often an import of a wrapped file calls `__toESM` and `__toCommonJS`.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct WrappedImportUses {
+    pub(crate) to_esm: u32,
+    pub(crate) to_common_js: u32,
 }
 
 impl<'a> LinkerContext<'a> {
@@ -3635,6 +3644,135 @@ impl<'a> LinkerContext<'a> {
             }
             WrapKind::None => {}
         }
+    }
+
+    /// An import record of part `part_index` of `source_index` names a wrapped file: the part
+    /// depends on what the printed import names. Returns the runtime helpers that it calls.
+    pub(crate) fn bind_import_of_wrapped_file(
+        &mut self,
+        source_index: crate::IndexInt,
+        part_index: u32,
+        import_record_index: u32,
+    ) -> Result<WrappedImportUses, AllocError> {
+        let (kind, other_source_index, rec_flags) = {
+            let record = &self.graph.ast.items_import_records()[source_index as usize].as_slice()
+                [import_record_index as usize];
+            (record.kind, record.source_index.get(), record.flags)
+        };
+        let other_id = other_source_index as usize;
+        let other_flags = self.graph.meta.items_flags()[other_id];
+        let other_export_kind = self.graph.ast.items_exports_kind()[other_id];
+        let output_format = self.options.output_format;
+        let mut uses = WrappedImportUses::default();
+
+        // Depend on the automatically-generated require wrapper symbol
+        let wrapper_ref = self.graph.ast.items_wrapper_ref()[other_id];
+        if wrapper_ref.is_valid() {
+            self.graph.generate_symbol_import_and_use(
+                source_index,
+                part_index,
+                wrapper_ref,
+                1,
+                Index::source(other_source_index),
+            )?;
+        }
+
+        // This is an ES6 import of a CommonJS module, so it needs the
+        // "__toESM" wrapper as long as it's not a bare "require()".
+        // A same-chunk `import()` of a lifted CommonJS module needs it
+        // too, so that `default` is `module.exports` (the namespace).
+        if kind != ImportKind::Require
+            && (other_export_kind == ExportsKind::Cjs
+                || (kind == ImportKind::Dynamic
+                    && other_flags.wrap == WrapKind::Esm
+                    && self.graph.ast.items_flags()[other_id]
+                        .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)))
+            && output_format != Format::InternalBakeDev
+        {
+            self.graph.ast.items_import_records_mut()[source_index as usize].as_mut_slice()
+                [import_record_index as usize]
+                .flags
+                .insert(ImportRecordFlags::WRAP_WITH_TO_ESM);
+            uses.to_esm += 1;
+        }
+
+        // If this is an ESM wrapper, also depend on the exports object
+        // since the final code will contain an inline reference to it.
+        // This must be done for "require()" and "import()" expressions
+        // but does not need to be done for "import" statements since
+        // those just cause us to reference the exports directly.
+        if other_flags.wrap == WrapKind::Esm
+            && kind != ImportKind::Stmt
+            && !rec_flags.contains(ImportRecordFlags::NAMESPACE_UNUSED)
+        {
+            let exports_ref = self.graph.ast.items_exports_ref()[other_id];
+            self.graph.generate_symbol_import_and_use(
+                source_index,
+                part_index,
+                exports_ref,
+                1,
+                Index::source(other_source_index),
+            )?;
+
+            // If this is a "require()" call, then we should add the
+            // "__esModule" marker to behave as if the module was converted
+            // from ESM to CommonJS. This is done via a wrapper instead of
+            // by modifying the exports object itself because the same ES
+            // module may be simultaneously imported and required, and the
+            // importing code should not see "__esModule" while the requiring
+            // code should see "__esModule". This is an extremely complex
+            // and subtle set of transpiler interop issues. See for example
+            // https://github.com/evanw/esbuild/issues/1591.
+            if kind == ImportKind::Require {
+                self.graph.ast.items_import_records_mut()[source_index as usize].as_mut_slice()
+                    [import_record_index as usize]
+                    .flags
+                    .insert(ImportRecordFlags::WRAP_WITH_TO_COMMONJS);
+                uses.to_common_js += 1;
+            }
+        }
+        Ok(uses)
+    }
+
+    /// An unwrapped file that imports two or more async wrapped files awaits them with one `__promiseAll` call.
+    /// `create_wrapper_for_file` does this for a wrapped file.
+    pub(crate) fn bind_promise_all_of_unwrapped_file(
+        &mut self,
+        source_index: crate::IndexInt,
+    ) -> Result<(), AllocError> {
+        let id = source_index as usize;
+        let flags = self.graph.meta.items_flags();
+        if flags[id].wrap != WrapKind::None || !flags[id].is_async_or_has_async_dependency {
+            return Ok(());
+        }
+        let mut async_imports: u32 = 0;
+        for part_index in 0..self.graph.ast.items_parts()[id].len() {
+            let flags = self.graph.meta.items_flags();
+            let records = self.graph.ast.items_import_records()[id].as_slice();
+            let part = &self.graph.ast.items_parts()[id].as_slice()[part_index];
+            let before = async_imports;
+            for &record_index in part.import_record_indices.iter() {
+                let record = &records[record_index as usize];
+                if record.kind == ImportKind::Stmt && record.source_index.is_valid() {
+                    let other = flags[record.source_index.get() as usize];
+                    if other.wrap == WrapKind::Esm && other.is_async_or_has_async_dependency {
+                        async_imports += 1;
+                    }
+                }
+            }
+            if async_imports > before.max(1)
+                && !part.symbol_uses.contains(&self.promise_all_runtime_ref)
+            {
+                self.graph.generate_symbol_import_and_use(
+                    source_index,
+                    part_index as u32,
+                    self.promise_all_runtime_ref,
+                    1,
+                    Index::RUNTIME,
+                )?;
+            }
+        }
+        Ok(())
     }
 
     /// Follows one step of an import chain: resolves what `tracker`'s import

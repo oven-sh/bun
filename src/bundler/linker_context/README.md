@@ -42,6 +42,7 @@ The LinkerContext operates in several main phases:
 2. Computes source map data if needed
 3. **Phase 1**: `scanImportsAndExports()` - Analyzes all imports/exports across modules
 4. **Phase 2**: `treeShakingAndCodeSplitting()` - Eliminates dead code and determines chunk boundaries
+   - With code splitting, `wrapContestedFiles()` can then wrap more files, and this phase runs once more
 5. **Phase 3**: `computeChunks()` - Creates the final chunk structure
 6. **Phase 4**: `computeCrossChunkDependencies()` - Resolves dependencies between chunks
 7. Follows symbol references to ensure consistency
@@ -744,6 +745,17 @@ The renamed symbols are then used during final code generation to produce output
 - Leaves an entry point's own chunk alone when the entry point has exports, with `--compile`, and for an entry point without `[hash]` in its name (its host can load it as `entry.js?v=1`, so no chunk may import it)
 - Keeps a chunk out of the fold when it can be in the middle of being evaluated while an entry of its class loads (it, or a file that statically imports its way to it, `require()`s a split ES module): the entry's chunk reads the other members then
 - With `--min-chunk-size`, additionally folds small chunks with no top-level side effects into a chunk loaded by a superset of their entries when every dependency is already loaded wherever the target is, no static import cycle between chunks results, and every CommonJS/ESM wrapper the moved code initializes at the top level is already initialized by a chunk the target imports
+
+#### `wrapContestedFiles.rs`
+
+**Purpose**: With code splitting, gives an `__esm` wrapper to the files that no single order in their chunk can serve. Runs after tree shaking, because it reads the live parts and `File.entry_bits`, and before `computeChunks()`.
+
+**Key functions**:
+
+- A chunk prints its files in the order of one entry point (`findAllImportedPartsInJSOrder.rs`). Files on an import cycle run in an order that depends on where the load enters the cycle, so another entry point that can load the chunk first (`LoadClasses::class_of`) can need another order
+- A file is contested when the code that it runs at load can read a binding of a file of the same chunk (along `part.dependencies`, through functions and values too), and that file has run by then under one such entry point and not under another. Off a cycle this cannot happen, so a build without import cycles pays for one strongly-connected-components pass
+- A wrapped file runs when a chunk's code calls `init_x()`, which is after every `import` of that chunk. So the files that import a wrapped file, and the files that some load runs after one, are wrapped too. The files in the chunk of their one entry point are not: that chunk follows the order of its entry point, calls included
+- Wrapping does what `scanImportsAndExports()` does for a file that it wraps (wrapper part, `init_` name, a use of the wrapper in each part that imports the file). `link()` then marks live parts and entry bits again
 
 #### `computeCrossChunkDependencies.rs`
 

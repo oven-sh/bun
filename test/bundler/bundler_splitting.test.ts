@@ -1492,6 +1492,156 @@ describe("bundler", () => {
     ],
   });
 
+  // m2.js, m5.js and m6.js import each other, in a chunk that worker.js and the import() in index.js share.
+  // index.js enters the cycle at m5.js, which then runs last and reads v6. worker.js enters it at m6.js, so
+  // m5.js runs first, which flag.js makes safe. No one order of the three files serves both.
+  const cycleEnteredAtTwoFiles = {
+    "/index.js": `import("./m5.js").then(m => console.log("ok", m.w5));`,
+    "/worker.js": `import "./flag.js"; import "./m6.js"; console.log("worker", globalThis.w5);`,
+    "/flag.js": `globalThis.IS_WORKER = true;`,
+    "/m2.js": `export { v5 as x } from "./m5.js"; export function v2() { return 2 }`,
+    "/m5.js": /* js */ `
+      import { v2 } from "./m2.js"; import { v6 } from "./m6.js";
+      export function v5() { return v2 }
+      export const w5 = globalThis.w5 = globalThis.IS_WORKER ? null : v6.toUpperCase();
+    `,
+    "/m6.js": `import { v2 } from "./m2.js"; export const w6 = typeof v2; export let v6 = "six";`,
+  };
+  for (const [name, options] of Object.entries<Partial<Parameters<typeof itBundled>[1]>>({
+    "": {},
+    "EntriesSwapped": { entryPoints: ["/worker.js", "/index.js"] },
+    "Browser": { target: "browser" },
+    "Minified": { minifyIdentifiers: true, minifySyntax: true, minifyWhitespace: true },
+    "HashedEntry": {
+      entryNaming: "[name].entry-[hash].[ext]",
+      onAfterBundle(api) {
+        launchHashedEntry(api, "index");
+        launchHashedEntry(api, "worker");
+      },
+    },
+  })) {
+    itBundled("splitting/CycleEnteredAtTwoFiles" + name, {
+      files: cycleEnteredAtTwoFiles,
+      entryPoints: ["/index.js", "/worker.js"],
+      splitting: true,
+      target: "bun",
+      outdir: "/out",
+      format: "esm",
+      ...options,
+      run: [
+        { file: "/out/index.js", stdout: "ok SIX" },
+        { file: "/out/worker.js", stdout: "worker null" },
+      ],
+    });
+  }
+
+  // Without flag.js, worker.js throws unbundled too. index.js still loads.
+  itBundled("splitting/CycleEnteredAtTwoFilesOneOfWhichThrows", {
+    files: {
+      ...cycleEnteredAtTwoFiles,
+      "/worker.js": `import "./m6.js"; console.log("worker");`,
+    },
+    entryPoints: ["/index.js", "/worker.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "ok SIX" },
+  });
+
+  // Every file of the cycle awaits, so worker.js awaits two wrapped files at once.
+  itBundled("splitting/CycleEnteredAtTwoFilesTopLevelAwait", {
+    files: {
+      ...cycleEnteredAtTwoFiles,
+      "/worker.js": `import "./flag.js"; import "./m6.js"; import "./m2.js"; console.log("worker", globalThis.w5);`,
+      "/m6.js": `import { v2 } from "./m2.js"; await 0; export let v6 = "six";`,
+    },
+    entryPoints: ["/index.js", "/worker.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/index.js", stdout: "ok SIX" },
+      { file: "/out/worker.js", stdout: "worker null" },
+    ],
+  });
+
+  // s1.js and s2.js import each other, and the one that runs last reads the other. e1.js and e2.js come to them
+  // through u1.js and u2.js, which they share and import in opposite orders. tail.js runs after the cycle under
+  // both, and so does after.js, which is in a chunk of its own because of the import().
+  itBundled("splitting/CycleEnteredThroughSharedFilesInOppositeOrders", {
+    files: {
+      "/e1.js": /* js */ `
+        import "./set1.js"; import "./u1.js"; import "./u2.js"; import "./after.js"; import "./tail.js";
+        console.log("e1");
+        import("./after.js");
+      `,
+      "/e2.js": `import "./set2.js"; import "./u2.js"; import "./u1.js"; import "./tail.js"; console.log("e2");`,
+      "/set1.js": `globalThis.ENTRY = "e1";`,
+      "/set2.js": `globalThis.ENTRY = "e2";`,
+      "/u1.js": `import { a } from "./s1.js"; console.log("u1", a);`,
+      "/u2.js": `import { b } from "./s2.js"; console.log("u2", b);`,
+      "/s1.js": `import { b } from "./s2.js"; export const a = globalThis.ENTRY === "e1" ? "a+" + b : "a";`,
+      "/s2.js": `import { a } from "./s1.js"; export const b = globalThis.ENTRY === "e2" ? "b+" + a : "b";`,
+      "/after.js": `console.log("after");`,
+      "/tail.js": `console.log("tail");`,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/e1.js", stdout: "u1 a+b\nu2 b\nafter\ntail\ne1" },
+      { file: "/out/e2.js", stdout: "u2 b+a\nu1 a\ntail\ne2" },
+    ],
+  });
+
+  // The cycle goes through e1.js, which e2.js loads as well.
+  itBundled("splitting/CycleThroughEntryPointEnteredAtTwoFiles", {
+    files: {
+      "/e1.js": /* js */ `
+        import { a } from "./a.js";
+        export const one = "one";
+        console.log("e1", globalThis.E2 ? "-" : a);
+      `,
+      "/e2.js": `import "./flag.js"; import { a } from "./a.js"; console.log("e2", a);`,
+      "/flag.js": `globalThis.E2 = true;`,
+      "/a.js": `import { one } from "./e1.js"; export const a = globalThis.E2 ? "a+" + one : "a";`,
+    },
+    entryPoints: ["/e1.js", "/e2.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/e1.js", stdout: "e1 a" },
+      { file: "/out/e2.js", stdout: "e1 -\ne2 a+one" },
+    ],
+  });
+
+  // store.js reads api.js only through a function that it calls at load.
+  itBundled("splitting/CycleEnteredAtTwoFilesReadThroughFunction", {
+    files: {
+      "/main.js": `import { store } from "./store.js"; console.log("main", store);`,
+      "/worker.js": `import "./flag.js"; import { api } from "./api.js"; console.log("worker", api.name, api.store());`,
+      "/flag.js": `globalThis.IS_WORKER = true;`,
+      "/store.js": /* js */ `
+        import { describe } from "./describe.js";
+        export const store = globalThis.IS_WORKER ? "no store" : "store of " + describe();
+      `,
+      "/describe.js": `import { api } from "./api.js"; export function describe() { return api.name; }`,
+      "/api.js": `import { store } from "./store.js"; export const api = { name: "api", store: () => store };`,
+    },
+    entryPoints: ["/worker.js", "/main.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/main.js", stdout: "main store of api" },
+      { file: "/out/worker.js", stdout: "worker api no store" },
+    ],
+  });
+
   // Ported from Rolldown's code_splitting/issue_5276_2.
   itBundled("splitting/NamespaceImportAndDynamicImportOfSameModule", {
     files: {
@@ -2335,8 +2485,8 @@ describe("bundler", () => {
       "/first.js": `globalThis.late2 = import("./late2.js");`,
       "/entry.js": /* js */ `
         import "./first.js";
-        const late1 = import("./late1.js");
-        const [m2, m1] = await Promise.all([globalThis.late2, late1]);
+        const m2 = await globalThis.late2;
+        const m1 = await import("./late1.js");
         console.log("late2", m2.go(), "late1", m1.go());
       `,
     },

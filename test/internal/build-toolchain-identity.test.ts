@@ -102,7 +102,7 @@ test("an edge takes the identity of the tools it runs, and of no other", () => {
   n.rule("cc", { command: "clang $cflags -c $in -o $out" });
   n.rule("cxx", { command: "clang++ $cxxflags -c $in -o $out" });
   n.rule("nasm", { command: "nasm $nasmflags -o $out $in" });
-  n.rule("link", { command: "clang++ $in $ldflags -o $out" });
+  n.rule("link", { command: "clang++ $in $lazy $ldflags -o $out" });
   n.rule("mkdir_stamp", { command: "mkdir -p $dir && touch $out" });
   cc(n, cfg, "a.c", { flags: [] });
   cxx(n, cfg, "b.cpp", { flags: [] });

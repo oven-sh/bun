@@ -20,6 +20,10 @@ members = [
   "src/paths",
   "src/resolver",
   "src/safety",
+  "src/sema",
+  "src/sema/baselines",
+  "src/sema/driver",
+  "src/sema/standalone",
   "src/semver",
   "src/sourcemap",
   "src/sql",
@@ -185,7 +189,7 @@ warnings = { level = "deny", priority = -1 }
 # (`--cfg=...` + `--check-cfg=cfg(...)`) by scripts/build/rust.ts; register
 # them here so a plain `cargo build` / `cargo check` (without those flags)
 # doesn't warn.
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(bun_asan)', 'cfg(bun_debug)', 'cfg(socket_fault_injection)', 'cfg(bun_sema_mimalloc)'] }
 # link.exe unconditionally prints "Creating library X.dll.lib and object
 # X.dll.exp" to stdout when linking each proc-macro DLL on Windows hosts;
 # there is no linker flag to suppress it. The lint already exempts itself
@@ -365,6 +369,9 @@ bun_md = { path = "src/md" }
 bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
+bun_sema = { path = "src/sema" }
+bun_sema_baselines = { path = "src/sema/baselines" }
+bun_sema_driver = { path = "src/sema/driver" }
 bun_semver = { path = "src/semver" }
 bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }

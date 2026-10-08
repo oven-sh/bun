@@ -290,19 +290,19 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     // Empty string ≠ null. WTF::String() utf8's to an empty CString (not
     // isNull), which the spawner passes as "" into --user-data-dir= and
     // Chrome falls back to the default profile → ProcessSingleton abort.
-    WTF::CString dir = userDataDir.utf8();
-    WTF::CString pathC = path.utf8();
+    WTF::UTF8CString dir = userDataDir.utf8();
+    WTF::UTF8CString pathC = path.utf8();
     // Two-level pack: CString owns the bytes, ptrVec holds data() pointers.
     // Both live until Bun__Chrome__ensure returns (spawn copies argv).
-    WTF::Vector<WTF::CString, 8> argvC;
+    WTF::Vector<WTF::UTF8CString, 8> argvC;
     WTF::Vector<const char*, 8> argvPtrs;
     for (auto& s : extraArgv) {
         argvC.append(s.utf8());
-        argvPtrs.append(argvC.last().data());
+        argvPtrs.append(argvC.last().legacyCStringPointer());
     }
     int32_t rc = Bun__Chrome__ensure(zig,
-        dir.length() ? dir.data() : nullptr,
-        pathC.length() ? pathC.data() : nullptr,
+        dir.length() ? dir.legacyCStringPointer() : nullptr,
+        pathC.length() ? pathC.legacyCStringPointer() : nullptr,
         argvPtrs.isEmpty() ? nullptr : argvPtrs.span().data(),
         static_cast<uint32_t>(argvPtrs.size()),
         stdoutInherit, stderrInherit);
@@ -713,7 +713,7 @@ static void rejectViewSlotsAsHandled(JSGlobalObject* g, JSWebView* view, JSValue
 static JSValue errorFromExceptionDetails(JSGlobalObject* g, std::span<const char> excDetails)
 {
     auto root = JSON::Value::parseJSON(
-        StringView::fromLatin1(std::span<const Latin1Character>(
+        StringView(std::span<const Latin1Character>(
             reinterpret_cast<const Latin1Character*>(excDetails.data()), excDetails.size())));
     auto d = root ? root->asObject() : nullptr;
     if (!d) return createError(g, "JavaScript exception"_s);
@@ -802,7 +802,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // Page.enable lets us receive frameNavigated / loadEventFired.
         // sessionId now available — the remaining chain goes to the page.
         auto ss = view->m_sessionId.utf8();
-        std::span<const char> sidSpan(ss.data(), ss.length());
+        std::span<const char> sidSpan = byteCast<char>(ss.span());
         uint32_t cid = nextId();
         m_pending.add(cid, Pending { Method::PageEnable, entry.slot, entry.viewId });
         send(cid, Command(cid, "Page.enable"_s, sidSpan));
@@ -812,7 +812,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // Chain into Runtime.enable (for consoleAPICalled later) then
         // Page.navigate to the stashed url.
         auto ss = view->m_sessionId.utf8();
-        std::span<const char> sidSpan(ss.data(), ss.length());
+        std::span<const char> sidSpan = byteCast<char>(ss.span());
 
         // Runtime.enable — fire-and-forget, untracked. We don't need to
         // wait for its reply before navigating.
@@ -829,14 +829,6 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         view->m_pendingChromeNavigateUrl = WTF::String();
         return;
     }
-    case Method::RuntimeEnable:
-    case Method::TargetCloseTarget:
-        // Untracked fire-and-forget — close() sends TargetCloseTarget
-        // without adding to m_pending (the view is going away). Chrome's
-        // reply finds no entry, handleResponse's find()==end() drops it.
-        // This case arm is unreachable; present for switch completeness.
-        return;
-
     case Method::PageNavigate: {
         // {"frameId":"...","loaderId":"..."} or {"frameId":"...","errorText":"..."}
         // errorText present → navigation failed synchronously (bad URL,
@@ -871,7 +863,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         // navigateToHistoryEntry. WTF::JSON parses to a C++ tree — no
         // JSValue allocation for a structure we only read once.
         auto root = JSON::Value::parseJSON(
-            StringView::fromLatin1(std::span<const Latin1Character>(
+            StringView(std::span<const Latin1Character>(
                 reinterpret_cast<const Latin1Character*>(result.data()), result.size())));
         auto o = root ? root->asObject() : nullptr;
         if (!o) {
@@ -1026,7 +1018,6 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
     case Method::InputDispatchMouseEvent:
     case Method::InputDispatchKeyEvent:
-    case Method::InputDispatchScrollEvent:
     case Method::InputInsertText:
     case Method::EmulationSetDeviceMetricsOverride:
         // Input.* / Emulation.* reply with empty result on success. Sync-
@@ -1072,7 +1063,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
         // Chain into dispatchMouseEvent. Same down+up pair as Ops::click.
         auto ss = view->m_sessionId.utf8();
-        std::span<const char> sid(ss.data(), ss.length());
+        std::span<const char> sid = byteCast<char>(ss.span());
 
         auto btn = cdpButton(view->m_selButton);
         int32_t mods = cdpModifiers(view->m_selModifiers);

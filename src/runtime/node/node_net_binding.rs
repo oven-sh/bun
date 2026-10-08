@@ -155,6 +155,7 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
+            latest_session: core::cell::Cell::new(None),
         });
         // Weak while idle: `_handle` owns it, and `this_value_for_connect` pins each attempt.
         let value = socket.to_js(global);

@@ -1,5 +1,6 @@
 //! String literals: which quotes they get, and what has to be escaped then.
 
+use crate::ir::element::TextWidth;
 use crate::prelude::*;
 use std::borrow::Cow;
 
@@ -250,9 +251,41 @@ pub(crate) fn push_with_normalized_newlines(out: &mut Vec<u8>, text: &[u8]) {
     out.extend_from_slice(rest);
 }
 
+/// Whether `text` is printable ASCII without `quote`.
+#[inline]
+fn is_printable_ascii_without(text: &[u8], quote: u8) -> bool {
+    #[inline]
+    fn all<const N: usize>(block: &[u8; N], quote: u8) -> bool {
+        block.iter().fold(true, |all, &byte| all & matches!(byte, 0x20..=0x7E) & (byte != quote))
+    }
+    if let Some(last) = text.last_chunk::<16>() {
+        return text.as_chunks::<16>().0.iter().all(|block| all(block, quote)) && all(last, quote);
+    }
+    match (text.first_chunk::<8>(), text.last_chunk::<8>()) {
+        (Some(first), Some(last)) => all(first, quote) & all(last, quote),
+        _ => text.iter().all(|&byte| matches!(byte, 0x20..=0x7E) && byte != quote),
+    }
+}
+
+impl FormatLiteralStringToken<'_> {
+    /// Enough for [`FormatLiteralStringToken::clean_text`] to be the literal as it is written, and
+    /// for that to be as wide as it is long. Most literals are like that.
+    #[inline]
+    fn is_clean_ascii(&self, f: &Formatter<'_>) -> bool {
+        let quote = f.options().quote_style.as_byte();
+        !self.jsx
+            && self.parent_kind != StringLiteralParentKind::ImportAttribute
+            && matches!(self.string, [first, content @ .., last]
+                if *first == quote && *last == quote && is_printable_ascii_without(content, quote))
+    }
+}
+
 impl<'a> Format<'a> for FormatLiteralStringToken<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        self.clean_text(f).fmt(f);
+        match self.is_clean_ascii(f) {
+            true => f.write_text(self.string, Some(TextWidth::single(self.string.len() as u32))),
+            false => self.clean_text(f).fmt(f),
+        }
     }
 }
 

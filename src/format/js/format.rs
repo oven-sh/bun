@@ -399,8 +399,19 @@ impl Spanned for FormatExpr<'_> {
 impl<'a> Format<'a> for Expr<'a> {
     #[inline]
     fn fmt(&self, f: &mut Formatter<'a>) {
-        FormatExpr::with_options(*self, ExprOptions::None).fmt(f);
+        format_expression(*self, f);
     }
+}
+
+fn format_expression<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
+    // Nearly half of all expressions are names. The names that can need parentheses have 3 to 9 letters.
+    if f.is_quiet() && e.tag() == ExprTag::Ident {
+        let span = e.span();
+        if !(3..=9).contains(&span.len()) || !parentheses::expression::needs_parentheses(e, f) {
+            return write!(f, source_text(span));
+        }
+    }
+    FormatExpr::with_options(e, ExprOptions::None).fmt(f);
 }
 
 /// Every `!` of `x!!`, which is one expression, with the comments between them.
@@ -419,6 +430,21 @@ impl<'a> Format<'a> for FormatNonNullMarks<'a> {
 
 /// Step 5 for an expression.
 pub(crate) fn write_expression<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Formatter<'a>) {
+    match e.tag() {
+        ExprTag::Missing => {}
+        ExprTag::Ident | ExprTag::PrivateIdentifier => write!(f, source_text(e.span())),
+        ExprTag::This => write!(f, "this"),
+        ExprTag::Super => write!(f, "super"),
+        ExprTag::Null => write!(f, "null"),
+        ExprTag::True => write!(f, "true"),
+        ExprTag::False => write!(f, "false"),
+        _ => write_expression_with_parts(e, options, f),
+    }
+}
+
+/// The frame of this function is large. What has no parts does not get here.
+#[inline(never)]
+fn write_expression_with_parts<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Formatter<'a>) {
     use print::{expressions, literals};
     match e.kind() {
         ExprKind::Missing => {}

@@ -8,7 +8,8 @@ pub(crate) fn write_numeric_literal<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
 }
 
 pub(crate) fn write_string_literal<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
-    let is_jsx = matches!(e.ast_parent(), AstNodes::JSXAttribute(_));
+    let is_jsx = matches!(e.parent(), Node::Prop(property) if property.is_jsx_attribute())
+        && matches!(e.ast_parent(), AstNodes::JSXAttribute(_));
     write!(f, FormatLiteralStringToken::new(e.text(), is_jsx, StringLiteralParentKind::Expression));
 }
 

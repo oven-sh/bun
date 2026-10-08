@@ -484,33 +484,49 @@ impl<'c, 'a> Contest<'c, 'a> {
     }
 
     /// A wrapped file runs when the code of a chunk calls it, which is after every chunk that the caller imports has
-    /// run. So a file that imports a wrapped file, or that some load runs after one, is wrapped too, unless it is in
-    /// the chunk of its one entry point: that chunk follows the order of the entry point, calls included.
+    /// run. So a file that imports a wrapped file, or that has side effects and that some load runs after one, is wrapped
+    /// too, unless it is in the chunk of its one entry point: that chunk follows the order of the entry point, calls included.
     fn files_to_wrap(&mut self, contested: Vec<IndexInt>) -> crate::Result<AutoBitSet> {
         let c = self.c;
         let files_len = c.graph.files.len();
+        // An `import` of a file without side effects does not load it, and can still read a wrapped file through its
+        // `export *`. Such a file is wrapped with what it imports, whatever its chunk, so that the `import` runs both.
+        // Tree shaking may have dropped it: the wrapper brings it back.
+        let is_dropped =
+            |file: IndexInt| !c.graph.files_live.is_set(file as usize) && is_unwrapped_js(c, file);
+        let follows_its_imports = |file: IndexInt| {
+            self.class_of_file[file as usize] != NONE
+                || is_dropped(file)
+                || (is_unwrapped_js(c, file) && c.file_has_no_side_effects(file))
+        };
         let mut importers: Vec<Vec<IndexInt>> = vec![Vec::new(); files_len];
-        for (file, &class) in self.class_of_file.iter().enumerate() {
-            if class == NONE {
+        for source_index in c.graph.reachable_files.iter() {
+            let file = source_index.get();
+            if !follows_its_imports(file) {
                 continue;
             }
-            let records = c.graph.ast.items_import_records()[file].as_slice();
-            let parts_live = &c.graph.parts_live[file];
-            for (part_index, part) in c.graph.ast.items_parts()[file]
+            let dropped = is_dropped(file);
+            let records = c.graph.ast.items_import_records()[file as usize].as_slice();
+            let parts_live = &c.graph.parts_live[file as usize];
+            for (part_index, part) in c.graph.ast.items_parts()[file as usize]
                 .as_slice()
                 .iter()
                 .enumerate()
             {
-                if !parts_live.is_set(part_index) {
+                if !dropped && !parts_live.is_set(part_index) {
                     continue;
                 }
                 for &record_index in part.import_record_indices.iter() {
                     let record = &records[record_index as usize];
-                    if record.source_index.is_valid()
-                        && !c.is_external_dynamic_import(record, file as u32)
-                        && self.class_of_file[record.source_index.get() as usize] != NONE
+                    if !record.source_index.is_valid()
+                        || (dropped && record.kind != ImportKind::Stmt)
+                        || c.is_external_dynamic_import(record, file)
                     {
-                        importers[record.source_index.get() as usize].push(file as u32);
+                        continue;
+                    }
+                    let other = record.source_index.get();
+                    if follows_its_imports(other) {
+                        importers[other as usize].push(file);
                     }
                 }
             }
@@ -524,8 +540,24 @@ impl<'c, 'a> Contest<'c, 'a> {
         let mut loaders = AutoBitSet::init_empty(self.orders.len())?;
         while !added.is_empty() {
             while let Some(source_index) = added.pop() {
-                loaders
-                    .set_union(&self.classes[self.class_of_file[source_index as usize] as usize]);
+                let class = self.class_of_file[source_index as usize];
+                if class != NONE {
+                    loaders.set_union(&self.classes[class as usize]);
+                }
+                // A file with side effects that only a dropped file imports comes back with it.
+                if is_dropped(source_index) {
+                    for record in c.graph.ast.items_import_records()[source_index as usize].iter() {
+                        if record.kind == ImportKind::Stmt
+                            && record.source_index.is_valid()
+                            && is_dropped(record.source_index.get())
+                            && !c.file_has_no_side_effects(record.source_index.get())
+                            && !wrapped.is_set(record.source_index.get() as usize)
+                        {
+                            wrapped.set(record.source_index.get() as usize);
+                            added.push(record.source_index.get());
+                        }
+                    }
+                }
                 for &importer in &importers[source_index as usize] {
                     if !wrapped.is_set(importer as usize) {
                         wrapped.set(importer as usize);
@@ -540,7 +572,7 @@ impl<'c, 'a> Contest<'c, 'a> {
                 for &source_index in self.orders[entry_id].iter().flatten() {
                     if wrapped.is_set(source_index as usize) {
                         after_wrapped = true;
-                    } else if after_wrapped {
+                    } else if after_wrapped && !c.file_has_no_side_effects(source_index) {
                         wrapped.set(source_index as usize);
                         added.push(source_index);
                     }
@@ -767,7 +799,7 @@ fn wrap(this: &mut LinkerContext, wrapped: &AutoBitSet) -> crate::Result<()> {
             name.extend_from_slice(&source.identifier_name);
         }
         let name = bun_ast::StoreStr::new(this.graph.arena().alloc_slice_copy(&name));
-        // SAFETY: with code splitting the parser gives every file a wrapper symbol; nothing else borrows the symbols here.
+        // SAFETY: with code splitting the parser and `AstBuilder` give every file a wrapper symbol; nothing else borrows the symbols here.
         unsafe { this.graph.symbol_mut(wrapper_ref) }.original_name = name;
 
         let entry_point_part_index = this.entry_point_part_indices[id];

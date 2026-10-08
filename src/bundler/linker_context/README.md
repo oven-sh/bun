@@ -754,7 +754,8 @@ The renamed symbols are then used during final code generation to produce output
 
 - A chunk prints its files in the order of one entry point (`findAllImportedPartsInJSOrder.rs`). Files on an import cycle run in an order that depends on where the load enters the cycle, so another entry point that can load the chunk first (`LoadClasses::class_of`) can need another order
 - A file is contested when the code that it runs at load can read a binding of a file of the same chunk (along `part.dependencies`, through functions and values too), and that file has run by then under one such entry point and not under another. Off a cycle this cannot happen, so a build without import cycles pays for one strongly-connected-components pass
-- A wrapped file runs when a chunk's code calls `init_x()`, which is after every `import` of that chunk. So the files that import a wrapped file, and the files that some load runs after one, are wrapped too. The files in the chunk of their one entry point are not: that chunk follows the order of its entry point, calls included
+- A wrapped file runs when a chunk's code calls `init_x()`, which is after every `import` of that chunk. So the files that import a wrapped file, and the files with side effects that some load runs after one, are wrapped too. The files in the chunk of their one entry point are not: that chunk follows the order of its entry point, calls included
+- An `import` of a file without side effects does not load it, and can still read a wrapped file through its `export *`. Such a file is wrapped with what it imports, so that the `import` prints `init_barrel()`, which calls `init_x()`. When tree shaking had dropped the file, this brings it back
 - Wrapping does what `scanImportsAndExports()` does for a file that it wraps (wrapper part, `init_` name, a use of the wrapper in each part that imports the file). `link()` then marks live parts and entry bits again
 
 #### `computeCrossChunkDependencies.rs`

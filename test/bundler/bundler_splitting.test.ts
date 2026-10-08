@@ -1569,15 +1569,23 @@ describe("bundler", () => {
 
   // s1.js and s2.js import each other, and the one that runs last reads the other. e1.js and e2.js come to them
   // through u1.js and u2.js, which they share and import in opposite orders. tail.js runs after the cycle under
-  // both, and so does after.js, which is in a chunk of its own because of the import().
+  // both, and so does after.js, which is in a chunk of its own because of the import(). pure.js comes after the cycle
+  // too, and has no side effects, so it needs no wrapper.
   itBundled("splitting/CycleEnteredThroughSharedFilesInOppositeOrders", {
     files: {
       "/e1.js": /* js */ `
         import "./set1.js"; import "./u1.js"; import "./u2.js"; import "./after.js"; import "./tail.js";
-        console.log("e1");
+        import { pure } from "pure";
+        console.log("e1", pure);
         import("./after.js");
       `,
-      "/e2.js": `import "./set2.js"; import "./u2.js"; import "./u1.js"; import "./tail.js"; console.log("e2");`,
+      "/e2.js": /* js */ `
+        import "./set2.js"; import "./u2.js"; import "./u1.js"; import "./tail.js";
+        import { pure } from "pure";
+        console.log("e2", pure);
+      `,
+      "/node_modules/pure/package.json": JSON.stringify({ name: "pure", main: "pure.js", sideEffects: false }),
+      "/node_modules/pure/pure.js": `export const pure = String("pure");`,
       "/set1.js": `globalThis.ENTRY = "e1";`,
       "/set2.js": `globalThis.ENTRY = "e2";`,
       "/u1.js": `import { a } from "./s1.js"; console.log("u1", a);`,
@@ -1591,9 +1599,12 @@ describe("bundler", () => {
     splitting: true,
     outdir: "/out",
     format: "esm",
+    onAfterBundle(api) {
+      for (const file of jsFilesIn(api)) api.expectFile("/out/" + file).not.toContain("init_pure");
+    },
     run: [
-      { file: "/out/e1.js", stdout: "u1 a+b\nu2 b\nafter\ntail\ne1" },
-      { file: "/out/e2.js", stdout: "u2 b+a\nu1 a\ntail\ne2" },
+      { file: "/out/e1.js", stdout: "u1 a+b\nu2 b\nafter\ntail\ne1 pure" },
+      { file: "/out/e2.js", stdout: "u2 b+a\nu1 a\ntail\ne2 pure" },
     ],
   });
 
@@ -1618,6 +1629,48 @@ describe("bundler", () => {
       { file: "/out/e2.js", stdout: "e1 -\ne2 a+one" },
     ],
   });
+
+  // e1.js reads a from a.js through index.js, which it does not load: no import statement that prints names a.js.
+  // Tree shaking drops index.js, except in the case where e2.js holds an import() of it.
+  for (const [name, [barrel, read, lazy = ""]] of Object.entries({
+    ExportStar: [`export * from "./a.js";`, `import { a } from "pkg";`],
+    ExportStarOfLiveBarrel: [
+      `export * from "./a.js";`,
+      `import { a } from "pkg";`,
+      `globalThis.lazy = () => import("pkg");`,
+    ],
+    NestedExportStar: [`export * from "./inner.js";`, `import { a } from "pkg";`],
+    NamespaceMember: [`export * from "./a.js";`, `import * as ns from "pkg"; const a = ns.a;`],
+    ExportFrom: [`export { a } from "./a.js";`, `import { a } from "pkg";`],
+    ImportThenExport: [`import { a } from "./a.js"; export { a };`, `import { a } from "pkg";`],
+  })) {
+    itBundled("splitting/CycleEnteredThroughDroppedBarrel" + name, {
+      files: {
+        "/node_modules/pkg/package.json": JSON.stringify({ name: "pkg", main: "index.js", sideEffects: false }),
+        "/node_modules/pkg/index.js": barrel,
+        "/node_modules/pkg/inner.js": `export * from "./other.js"; export * from "./a.js";`,
+        "/node_modules/pkg/other.js": `export const other = 1;`,
+        "/node_modules/pkg/a.js": `import { b } from "./b.js"; export const a = globalThis.ENTRY === "e1" ? "a+" + b : "a";`,
+        "/node_modules/pkg/b.js": `import { a } from "./a.js"; export const b = globalThis.ENTRY === "e2" ? "b+" + a : "b";`,
+        "/e1.js": `import "./set1.js"; ${read} console.log("e1", a);`,
+        "/e2.js": `import "./set2.js"; import { b } from "pkg/b.js"; console.log("e2", b); ${lazy}`,
+        "/set1.js": `globalThis.ENTRY = "e1";`,
+        "/set2.js": `globalThis.ENTRY = "e2";`,
+      },
+      entryPoints: ["/e1.js", "/e2.js"],
+      splitting: true,
+      outdir: "/out",
+      format: "esm",
+      onAfterBundle(api) {
+        // The barrel comes back, and what else it re-exports does not.
+        for (const file of jsFilesIn(api)) api.expectFile("/out/" + file).not.toContain("other");
+      },
+      run: [
+        { file: "/out/e1.js", stdout: "e1 a+b" },
+        { file: "/out/e2.js", stdout: "e2 b+a" },
+      ],
+    });
+  }
 
   // store.js reads api.js only through a function that it calls at load.
   itBundled("splitting/CycleEnteredAtTwoFilesReadThroughFunction", {

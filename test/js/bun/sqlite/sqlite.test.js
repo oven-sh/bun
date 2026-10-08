@@ -2667,6 +2667,11 @@ it("decodes non-UTF-8 column names leniently instead of dropping the column", ()
   expect(q.columnNames).toEqual(["X\uFFFDa", "Y\uFFFDb"]);
   expect(row).toEqual({ "X\uFFFDa": 1, "Y\uFFFDb": 2 });
 
+  // SQLite re-prepares this statement on each bind, and each time its names are compared with the cached names.
+  const limited = db.prepare("SELECT * FROM t LIMIT ?");
+  expect([limited.get(1), limited.get(1), limited.all(1)]).toEqual([row, row, [row]]);
+  limited.finalize();
+
   db.close();
 });
 

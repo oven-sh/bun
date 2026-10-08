@@ -15,7 +15,7 @@ use bun_lint::linter::{Again, LintMessage, LintOptions, LintResult, Linter, Reso
 use bun_lint_graph::Graph;
 use bun_lint::rule::Kind;
 use bun_sema::atom::Intern;
-use bun_sema::bind::{BindOptions, bind_for_lint};
+use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
 use bun_sema::session::Session;
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -175,7 +175,8 @@ impl Context<'_, '_> {
                     before_es2020: false,
                     before_es2017: false,
                 };
-                let bound = bind_for_lint(&hir, bind_options, atoms, arena);
+                let mut recycled = Recycled::of_this_thread();
+                let bound = bind_for_lint_in(&hir, bind_options, atoms, &mut recycled);
                 let parsed = self.timing.add(&self.timing.parse, started);
                 if hir.mentioned.is_empty() {
                     self.timing.count(&self.timing.without_filter);
@@ -186,7 +187,7 @@ impl Context<'_, '_> {
                         ..LintResult::default()
                     };
                 }
-                let file = File::new(path, &hir, &bound, atoms, &config.language, None);
+                let file = File::new(path, &hir, bound, atoms, &config.language, None);
                 file.set_modules(self.modules);
                 let options = LintOptions {
                     again,

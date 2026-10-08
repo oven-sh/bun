@@ -24,6 +24,7 @@ impl<'a> Format<'a> for FormatJsxName<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let name = self.name;
         format_node(name.span(), || self.parent, f, |f| match name.kind() {
+            ExprKind::Dot { .. } if !f.context_mut().has_stack_left() => {}
             ExprKind::Dot { obj, name: property, .. } => write!(
                 f,
                 [

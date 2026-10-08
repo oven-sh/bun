@@ -194,7 +194,7 @@ impl<'d> Printer<'d> {
     pub(super) fn is_measure_at_start_entry(&self, measure: &Measure<'d>) -> bool {
         let queue = &self.buffers.queue;
         let own = std::iter::once(measure.elements.run()).chain(self.buffers.measure_queue.iter().rev().copied());
-        let of_printer = (0..measure.queue_len).rev().map(|at| queue.get(at).copied().unwrap_or(self.elements.run()));
+        let of_printer = (0..measure.queue_len).rev().map(|at| queue.get(at).copied().unwrap_or_else(|| self.elements.run()));
         let first = own.chain(of_printer).find_map(|run| first_of(run, self.pool));
         matches!(first, Some(FormatElement::Tag(Tag::StartEntry)))
     }
@@ -209,7 +209,7 @@ impl<'d> Printer<'d> {
                 Some(run) => run,
                 None => {
                     measure.queue_len = measure.queue_len.checked_sub(1)?;
-                    self.buffers.queue.get(measure.queue_len).copied().unwrap_or(self.elements.run())
+                    self.buffers.queue.get(measure.queue_len).copied().unwrap_or_else(|| self.elements.run())
                 }
             };
             measure.elements = Elements::new(run, self.pool);

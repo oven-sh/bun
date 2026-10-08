@@ -6,6 +6,7 @@ use super::rules::{Configured, FileSettings, Plugin, Rule, Schema};
 use super::wire::{self, ask, call, result};
 use super::{ast, schema, scopes, tokens};
 use crate::ast::File;
+use crate::estree::Dialect;
 use crate::fix::Fix;
 use crate::linter::{write_json, write_json_string};
 use crate::options::Json;
@@ -301,7 +302,8 @@ impl<'e> Host<'e> {
         let has_mark = text.starts_with(b"\xEF\xBB\xBF");
         let (path, plugins) = (file.path(), self.state.lock().plugins.len());
         let mut message = Vec::with_capacity(24 + enabled.len() * 4 + path.len() + text.len());
-        let flags = u32::from(wants_fixes) | u32::from(has_mark) << 1;
+        let is_espree = Dialect::of(file) == Dialect::Espree;
+        let flags = u32::from(wants_fixes) | (u32::from(has_mark) << 1) | (u32::from(is_espree) << 2);
         wire::words(&mut message, &[flags, plugins as u32, settings.id, enabled.len() as u32, path.len() as u32]);
         for configured in enabled {
             wire::words(&mut message, &[configured.id]);

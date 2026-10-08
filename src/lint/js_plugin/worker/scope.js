@@ -450,7 +450,13 @@ function addGlobalVariables(scope, variables) {
       variable.identifiers = [];
       Object.defineProperty(variable, "references", {
         get() {
-          const found = scopeData.referencesToGlobals().get(name) ?? [];
+          let found = scopeData.referencesToGlobals().get(name) ?? [];
+          // typescript-eslint resolves what the libraries say the name can be: `Promise` is only a type in the first of them
+          // that has it. ESLint resolves the rest afterwards.
+          if (tree.dialect === 0 && found.length > 1) {
+            const isFirst = it => (it.isTypeReference && this.isTypeVariable) || (it.isValueReference && this.isValueVariable);
+            found = [...found.filter(isFirst), ...found.filter(it => !isFirst(it))];
+          }
           Object.defineProperty(this, "references", { value: found, writable: true, enumerable: true });
           return found;
         },
@@ -584,6 +590,181 @@ lazy(ScopeManager.prototype, "declaredVariables", function () {
   return byNode;
 });
 
+// The types of the nodes whose children typescript-eslint's scope manager does not visit in the order of the source, by number.
+let outOfOrder = null;
+
+// `count` things in the order of the source, each at the node `nodeOf` says, that can be put in another order.
+class Order {
+  constructor(count, nodeOf) {
+    this.count = count;
+    this.nodeOf = nodeOf;
+    // The things by their nodes, where each is in the order, and which is at each place of it.
+    this.sorted = Uint32Array.from({ length: count }, (_, index) => index).sort((a, b) => nodeOf(a) - nodeOf(b));
+    this.place = Uint32Array.from({ length: count }, (_, index) => index);
+    this.order = this.place.slice();
+    this.hasMoved = false;
+  }
+  // The first of `sorted` that is not before the node `id`.
+  lowerBound(id) {
+    let [low, high] = [0, this.count];
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (this.nodeOf(this.sorted[middle]) < id) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  }
+  // The places of what is in `ranges` of nodes, each `[first, last]`, if they are next to each other.
+  places(ranges) {
+    let [low, high, found] = [this.count, 0, 0];
+    for (const [from, to] of ranges) {
+      if (from > to) continue;
+      const stop = this.lowerBound(to + 1);
+      for (let i = this.lowerBound(from); i < stop; i++) {
+        const at = this.place[this.sorted[i]];
+        if (at < low) low = at;
+        if (at > high) high = at;
+        found++;
+      }
+    }
+    return found > 0 && high - low === found - 1 ? [low, high] : null;
+  }
+  // What is at the places `before` comes after what is at the places `after`, which follow.
+  exchange(before, after) {
+    if (!before || !after || before[1] + 1 !== after[0]) return;
+    const { order, place } = this;
+    const moved = order.slice(before[0], before[1] + 1);
+    order.copyWithin(before[0], after[0], after[1] + 1);
+    order.set(moved, before[0] + after[1] - after[0] + 1);
+    for (let at = before[0]; at <= after[1]; at++) place[order[at]] = at;
+    this.hasMoved = true;
+  }
+}
+
+// Puts what comes in the order of the source in the order in which typescript-eslint's scope manager comes to it: to a type
+// annotation after the value, to type arguments after the arguments, to the type parameters of a function after its
+// parameters, and to decorators last.
+function orderAsTypeScriptEslint(orders) {
+  if (outOfOrder === null) {
+    outOfOrder = new Uint8Array(256);
+    const kinds = {
+      VariableDeclarator: 1,
+      FunctionDeclaration: 2,
+      FunctionExpression: 2,
+      ArrowFunctionExpression: 2,
+      TSDeclareFunction: 2,
+      TSEmptyBodyFunctionExpression: 2,
+      ClassDeclaration: 3,
+      ClassExpression: 3,
+      PropertyDefinition: 4,
+      AccessorProperty: 4,
+      TSAbstractPropertyDefinition: 4,
+      TSAbstractAccessorProperty: 4,
+      MethodDefinition: 4,
+      TSAbstractMethodDefinition: 4,
+      CallExpression: 5,
+      NewExpression: 5,
+      TaggedTemplateExpression: 5,
+      TSTypeAssertion: 6,
+    };
+    for (const [name, kind] of Object.entries(kinds)) outOfOrder[typeIds.get(name)] = kind;
+  }
+  const { types, count: nodeCount } = tree;
+  const last = lastDescendants();
+  const [DECORATOR, ANNOTATION, PARAMETERS, ARGUMENTS, ASSIGNMENT, PROPERTY] = [
+    "Decorator",
+    "TSTypeAnnotation",
+    "TSTypeParameterDeclaration",
+    "TSTypeParameterInstantiation",
+    "AssignmentPattern",
+    "TSParameterProperty",
+  ].map(it => typeIds.get(it));
+
+  // What is in the ranges of nodes `before` comes after what is in the ranges `after`.
+  const exchange = (before, after) => {
+    for (const it of orders) it.exchange(it.places(before), it.places(after));
+  };
+  const swap = (first, middle, end) => exchange([[first, middle]], [[middle + 1, end]]);
+  // The last of the decorators that `id` starts with, or the node before its first child.
+  const decoratorsOf = id => {
+    let end = id;
+    while (end < last[id] && types[end + 1] === DECORATOR) end = last[end + 1];
+    return end;
+  };
+  // The annotation of the pattern `id`, which is its last child.
+  const annotationOf = id => {
+    let child = id + 1;
+    if (child > last[id]) return 0;
+    while (last[child] < last[id]) child = last[child] + 1;
+    return types[child] === ANNOTATION ? child : 0;
+  };
+  // `isOfMethod`: the decorators of the parameters of a method come before all of them.
+  const parameter = (id, isOfMethod) => {
+    const decorators = decoratorsOf(id);
+    if (types[id] === PROPERTY) parameter(decorators + 1, isOfMethod);
+    else if (types[id] === ASSIGNMENT) {
+      const left = decorators + 1;
+      const annotation = annotationOf(left);
+      if (annotation !== 0) swap(annotation, last[left], last[id]);
+    }
+    if (!isOfMethod) swap(id + 1, decorators, last[id]);
+  };
+
+  for (let id = 0; id < nodeCount; id++) {
+    const kind = outOfOrder[types[id]];
+    if (kind === 0 || last[id] === id) continue;
+    if (kind === 1) {
+      const annotation = annotationOf(id + 1);
+      if (annotation !== 0) swap(annotation, last[id + 1], last[id]);
+    } else if (kind === 2) {
+      const node = nodes[id];
+      let child = node.id ? last[id + 1] + 1 : id + 1;
+      const typeParameters = types[child] === PARAMETERS ? child : 0;
+      if (typeParameters !== 0) child = last[child] + 1;
+      let end = child - 1;
+      const isOfMethod = node.parent.type === "MethodDefinition" || node.parent.type === "TSAbstractMethodDefinition";
+      // The parameters so far, without their decorators.
+      const undecorated = [];
+      for (let i = 0; i < node.params.length; i++) {
+        parameter(child, isOfMethod);
+        if (isOfMethod) {
+          const decorators = decoratorsOf(child);
+          exchange(undecorated, [[child + 1, decorators]]);
+          undecorated.push([decorators + 1, last[child]]);
+        }
+        end = last[child];
+        child = end + 1;
+      }
+      if (node.returnType) end = last[child];
+      if (typeParameters !== 0) swap(typeParameters, last[typeParameters], end);
+    } else if (kind === 3) {
+      const node = nodes[id];
+      if (!node.typeParameters || !node.superClass) continue;
+      let child = decoratorsOf(id) + 1;
+      if (node.id) child = last[child] + 1;
+      swap(child, last[child], last[last[child] + 1]);
+    } else if (kind === 4) {
+      const decorators = decoratorsOf(id);
+      const key = decorators + 1;
+      const annotation = last[key] < last[id] && types[last[key] + 1] === ANNOTATION ? last[key] + 1 : 0;
+      if (annotation === 0) swap(id + 1, decorators, last[id]);
+      else {
+        swap(annotation, last[annotation], last[id]);
+        exchange(
+          [[id + 1, decorators]],
+          [
+            [key, last[key]],
+            [last[annotation] + 1, last[id]],
+          ],
+        );
+      }
+    } else if (kind === 5) {
+      const typeArguments = last[id + 1] + 1;
+      if (typeArguments <= last[id] && types[typeArguments] === ARGUMENTS) swap(typeArguments, last[typeArguments], last[id]);
+    } else swap(id + 1, last[id + 1], last[id]);
+  }
+}
+
 function scopeManager() {
   if (scopeData !== null) return scopeData.manager;
   program();
@@ -601,6 +782,19 @@ function scopeManager() {
   const definitions = words(2 * definitionCount);
   const references = words(5 * referenceCount);
   const globals = words(2 * globalCount);
+  // The scopes keep their numbers. Only the lists of them are in the other order.
+  let scopeOrder = null;
+  if (tree.dialect === 0) {
+    const ofReferences = new Order(referenceCount, index => references[5 * index]);
+    scopeOrder = new Order(scopeCount, index => scopeWords[5 * index + 1]);
+    orderAsTypeScriptEslint([ofReferences, scopeOrder]);
+    if (ofReferences.hasMoved) {
+      const { order, place } = ofReferences;
+      const copy = references.slice();
+      for (let at = 0; at < referenceCount; at++) references.set(copy.subarray(5 * order[at], 5 * order[at] + 5), 5 * at);
+      for (let at = 0; at < globals.length; at += 2) globals[at] = place[globals[at]];
+    }
+  }
 
   const scopes = [];
   for (let index = 0; index < scopeCount; index++) {
@@ -614,9 +808,10 @@ function scopeManager() {
       (kind & 256) !== 0,
     );
     scope.variableScope = scopes[scopeWords[5 * index + 3]] ?? scope;
-    scope.upper?.childScopes.push(scope);
     scopes.push(scope);
   }
+  const listed = scopeOrder?.hasMoved ? Array.from(scopeOrder.order, index => scopes[index]) : scopes;
+  for (const scope of listed) scope.upper?.childScopes.push(scope);
   for (let index = scopeCount - 1; index > 0; index--) {
     const scope = scopes[index];
     if (scope.upper.last < scope.last) scope.upper.last = scope.last;
@@ -667,7 +862,7 @@ function scopeManager() {
   }
 
   scopeData = {
-    manager: new ScopeManager(scopes),
+    manager: new ScopeManager(listed),
     scopes,
     scopeWords,
     variables,

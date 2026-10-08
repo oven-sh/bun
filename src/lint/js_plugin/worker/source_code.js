@@ -11,6 +11,7 @@ let lineStarts = null;
 let lines = null;
 let inlineConfigNodes = null;
 let disableDirectives = null;
+let parserServices = null;
 
 const lineBreak = /\r\n|[\r\n\u2028\u2029]/gu;
 
@@ -78,8 +79,20 @@ class SourceCode extends TokenStore {
   get visitorKeys() {
     return visitorKeys[dialect()];
   }
+  // What typescript-eslint's parser gives without type information. Rules take the maps for a sign of TypeScript. There are no
+  // nodes of TypeScript's own tree to have in them.
   get parserServices() {
-    return parserServices;
+    if (parserServices !== null) return parserServices;
+    if (dialect() === 1) return (parserServices = {});
+    const { parserOptions } = fileSettings.languageOptions;
+    return (parserServices = {
+      emitDecoratorMetadata: parserOptions.emitDecoratorMetadata === true,
+      experimentalDecorators: parserOptions.experimentalDecorators === true,
+      isolatedDeclarations: parserOptions.isolatedDeclarations === true,
+      program: null,
+      esTreeNodeToTSNodeMap: new WeakMap(),
+      tsNodeToESTreeNodeMap: new WeakMap(),
+    });
   }
   get scopeManager() {
     return scopeManager();
@@ -250,4 +263,3 @@ class SourceCode extends TokenStore {
 
 // Of the file that is being linted.
 let sourceCode = new SourceCode();
-const parserServices = Object.freeze({});

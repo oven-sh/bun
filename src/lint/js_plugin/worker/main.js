@@ -218,7 +218,7 @@ const fileContext = Object.freeze({
     return undefined;
   },
   get parserServices() {
-    return parserServices;
+    return sourceCode.parserServices;
   },
   getCwd() {
     return cwd;
@@ -366,9 +366,11 @@ function program() {
   return nodes[0];
 }
 
+// 0: the tree of typescript-estree, 1: that of espree.
+let fileDialect = 0;
+
 function dialect() {
-  program();
-  return tree.dialect;
+  return fileDialect;
 }
 
 let descendants = null;
@@ -507,7 +509,7 @@ function traverse() {
 
 function reset() {
   text = "";
-  lineStarts = lines = inlineConfigNodes = disableDirectives = null;
+  lineStarts = lines = inlineConfigNodes = disableDirectives = parserServices = null;
   sourceCode = new SourceCode();
   tree = null;
   nodes = [];
@@ -535,6 +537,7 @@ function lint() {
   const pathStart = 20 + 4 * count;
   wantsFixes = (flags & 1) !== 0;
   hasBOM = (flags & 2) !== 0;
+  fileDialect = (flags >> 2) & 1;
   filename = decoder.decode(new Uint8Array(buffer, pathStart, pathLength));
   text = decoder.decode(new Uint8Array(buffer, pathStart + pathLength, length - pathStart - pathLength));
   fileSettings = allSettings.get(settingsId);

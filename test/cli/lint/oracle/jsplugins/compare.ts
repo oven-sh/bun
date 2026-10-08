@@ -1,6 +1,7 @@
 // Compares what `run-eslint.ts` printed with what `bun-lint js_plugin batch` printed for the same cases.
 //
 //   bun compare.ts cases.jsonl expected.jsonl actual.jsonl [--show=n] [--json: the one message of a case is JSON, show the first difference in it]
+//     [--recorded: the expected messages are those of `conformance.ts`, which have no `data` in their suggestions]
 
 import { readFileSync } from "node:fs";
 
@@ -8,6 +9,7 @@ const flags = process.argv.slice(2).filter(it => it.startsWith("--"));
 const [casesPath, expectedPath, actualPath] = process.argv.slice(2).filter(it => !it.startsWith("--"));
 const show = Number(flags.find(it => it.startsWith("--show="))?.slice(7) ?? 3);
 const isJson = flags.includes("--json");
+const isRecorded = flags.includes("--recorded");
 const read = (path: string) =>
   readFileSync(path, "utf8")
     .split("\n")
@@ -21,6 +23,7 @@ function difference(a: any, b: any, path = ""): [string, unknown, unknown] | nul
   if (a === b) return null;
   // With an old `ecmaVersion` espree leaves out the fields that newer syntax has brought.
   if (a === undefined && /\/(?:optional|async|attributes|computed|await|options|directive|generator|expression|method|shorthand)$/.test(path)) return null;
+  if (isRecorded && a === undefined && /\/suggestions\/\d+\/data$/.test(path)) return null;
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null || Array.isArray(a) !== Array.isArray(b)) {
     return [path, a, b];
   }

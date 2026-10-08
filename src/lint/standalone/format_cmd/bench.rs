@@ -18,7 +18,12 @@ pub(super) fn bench(args: &Args) {
     let is_only_parsing = args.flag("only") == Some("parse");
     let iterations: usize = (args.flag("iterations").and_then(|it| it.parse().ok())).unwrap_or(if is_check { 1 } else { 10 });
     let threads: usize = args.flag("threads").and_then(|it| it.parse().ok()).unwrap_or(1);
-    let paths: Vec<String> = collect_files(&args.positional).iter().map(|it| it.to_string_lossy().into_owned()).collect();
+    let is_script = |path: &std::path::PathBuf| {
+        let extension = path.extension().and_then(|it| it.to_str());
+        matches!(extension, Some("js" | "jsx" | "mjs" | "cjs" | "ts" | "tsx" | "mts" | "cts"))
+    };
+    let paths: Vec<String> =
+        collect_files(&args.positional).iter().filter(|it| is_script(it)).map(|it| it.to_string_lossy().into_owned()).collect();
     let in_memory: Vec<Vec<u8>> = match is_check {
         true => Vec::new(),
         false => paths.iter().map(|path| std::fs::read(path).unwrap_or_default()).collect(),

@@ -17,7 +17,7 @@ pub(crate) enum FormatElement {
     Nop,
     /// The next so many elements are not part of what this is in. They are what an [`Interned`]
     /// is a range of, left where they were written. See `Formatter::capture`.
-    Skip(u32),
+    Skip(Skip),
     /// A space, unless it would end up at the start or at the end of a line.
     Space,
     Line(LineMode),
@@ -37,6 +37,70 @@ pub(crate) enum FormatElement {
     /// Several ways to write the same thing. The printer picks the first that fits.
     BestFitting(BestFitting),
     Tag(Tag),
+}
+
+/// See [`FormatElement::Skip`].
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub(crate) struct Skip {
+    /// The number of elements.
+    pub(crate) len: u32,
+    /// What they are on one line.
+    pub(crate) flat: Flat,
+}
+
+impl Skip {
+    #[inline]
+    pub(crate) fn new(len: u32) -> Self {
+        Skip {
+            len,
+            flat: Flat::default(),
+        }
+    }
+}
+
+/// What `document::propagate_expand` finds out about the content of a group, or about interned
+/// content: all that the printer has to know to tell whether it fits on the rest of a line.
+///
+/// A space is pending until a text follows it, and two in a row are one. So the spaces before
+/// the first text and after the last are not part of the width.
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+pub(crate) struct Flat {
+    /// The number of columns from the start of the first text to the end of the last.
+    pub(crate) width: u16,
+    pub(crate) flags: FlatFlags,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+pub(crate) struct FlatFlags(u8);
+
+impl FlatFlags {
+    /// The rest is known, and printing the content flat is only a matter of writing its texts.
+    /// It is not set if that depends on what the printer has done before: the content has
+    /// something that depends on a group by its id, a line suffix, a forced line break in a
+    /// variant.
+    pub(crate) const MEASURED: FlatFlags = FlatFlags(1);
+    pub(crate) const HAS_TEXT: FlatFlags = FlatFlags(1 << 1);
+    /// A line break that is a space on one line comes before the first text.
+    pub(crate) const STARTS_WITH_LINE: FlatFlags = FlatFlags(1 << 2);
+    /// A [`FormatElement::Space`] comes before the first text. It counts unless the line is empty.
+    pub(crate) const STARTS_WITH_SPACE: FlatFlags = FlatFlags(1 << 3);
+    /// A space is pending after the last text.
+    pub(crate) const ENDS_WITH_SPACE: FlatFlags = FlatFlags(1 << 4);
+    pub(crate) const HAS_LINE_SUFFIX_BOUNDARY: FlatFlags = FlatFlags(1 << 5);
+    /// There is a group with an id in it.
+    pub(crate) const HAS_GROUP_IDS: FlatFlags = FlatFlags(1 << 6);
+    /// There is a forced line break in it. Of interned content only: a group has its mode.
+    pub(crate) const EXPANDS: FlatFlags = FlatFlags(1 << 7);
+
+    #[inline]
+    pub(crate) const fn has(self, flag: FlatFlags) -> bool {
+        self.0 & flag.0 != 0
+    }
+
+    #[inline]
+    pub(crate) const fn with(self, flag: FlatFlags, is_set: bool) -> FlatFlags {
+        FlatFlags(self.0 | if is_set { flag.0 } else { 0 })
+    }
 }
 
 /// At most [`Token::MAX`] bytes, stored inline.
@@ -68,6 +132,12 @@ impl Token {
     #[inline(always)]
     pub(crate) fn len(&self) -> usize {
         self.len as usize
+    }
+
+    /// With what is behind the text.
+    #[inline(always)]
+    pub(crate) fn padded(&self) -> &[u8; Token::MAX] {
+        &self.bytes
     }
 }
 
@@ -261,41 +331,6 @@ impl Tag {
     pub(crate) const fn is_end(&self) -> bool {
         !self.is_start()
     }
-
-    pub(crate) const fn kind(&self) -> TagKind {
-        match self {
-            Tag::StartIndent | Tag::EndIndent => TagKind::Indent,
-            Tag::StartAlign(_) | Tag::EndAlign => TagKind::Align,
-            Tag::StartDedent(_) | Tag::EndDedent(_) => TagKind::Dedent,
-            Tag::StartGroup(_) | Tag::EndGroup => TagKind::Group,
-            Tag::StartConditionalContent(_) | Tag::EndConditionalContent => {
-                TagKind::ConditionalContent
-            }
-            Tag::StartIndentIfGroupBreaks(_) | Tag::EndIndentIfGroupBreaks(_) => {
-                TagKind::IndentIfGroupBreaks
-            }
-            Tag::StartFill | Tag::EndFill => TagKind::Fill,
-            Tag::StartEntry | Tag::EndEntry => TagKind::Entry,
-            Tag::StartLineSuffix | Tag::EndLineSuffix => TagKind::LineSuffix,
-            Tag::StartLabelled(_) | Tag::EndLabelled => TagKind::Labelled,
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) enum TagKind {
-    Indent,
-    Align,
-    Dedent,
-    Group,
-    ConditionalContent,
-    IndentIfGroupBreaks,
-    Fill,
-    /// There is no such tag. It is a frame of the printer: see `Printer::print_fill_item`.
-    FillSeparator,
-    Entry,
-    LineSuffix,
-    Labelled,
 }
 
 #[derive(Debug, Copy, Default, Clone, Eq, PartialEq)]
@@ -314,9 +349,16 @@ impl GroupMode {
     }
 }
 
+/// The halves of the numbers are apart so that it is aligned to two bytes, and the element is 16 bytes.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default)]
 pub(crate) struct Group {
-    id: Option<GroupId>,
+    /// 0 is none.
+    id: [u16; 2],
+    /// Where the end tag is in the pool, once `flat` is measured.
+    end: [u16; 2],
+    /// Those of a [`Flat`].
+    width: u16,
+    flags: FlatFlags,
     mode: GroupMode,
 }
 
@@ -327,7 +369,8 @@ impl Group {
 
     #[must_use]
     pub(crate) fn with_id(mut self, id: Option<GroupId>) -> Self {
-        self.id = id;
+        let id = id.map_or(0, |id| id.0.get());
+        self.id = [id as u16, (id >> 16) as u16];
         self
     }
 
@@ -351,7 +394,28 @@ impl Group {
 
     #[inline]
     pub(crate) fn id(&self) -> Option<GroupId> {
-        self.id
+        NonZeroU32::new(u32::from(self.id[0]) | u32::from(self.id[1]) << 16).map(GroupId)
+    }
+
+    /// What the content is on one line.
+    #[inline]
+    pub(crate) fn flat(&self) -> Flat {
+        Flat {
+            width: self.width,
+            flags: self.flags,
+        }
+    }
+
+    /// The index of the end tag. Only if [`Group::flat`] is measured.
+    #[inline]
+    pub(crate) fn end(&self) -> u32 {
+        u32::from(self.end[0]) | u32::from(self.end[1]) << 16
+    }
+
+    #[inline]
+    pub(crate) fn set_flat(&mut self, flat: Flat, end: u32) {
+        (self.width, self.flags) = (flat.width, flat.flags);
+        self.end = [end as u16, (end >> 16) as u16];
     }
 }
 

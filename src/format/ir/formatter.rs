@@ -1,7 +1,7 @@
 //! [`Format`], and the [`Formatter`] that it writes to.
 
 use super::element::{
-    BestFitting, FormatElement, GroupId, Interned, LabelId, LineMode, PrintMode, Tag, Text,
+    BestFitting, FormatElement, GroupId, Interned, LabelId, LineMode, PrintMode, Skip, Tag, Text,
     TextWidth,
 };
 use crate::js::comments::Comments;
@@ -161,7 +161,7 @@ impl Storage {
         let mut elements = elements.iter();
         while let Some(element) = elements.next() {
             match element {
-                FormatElement::Skip(count) => skip(&mut elements, *count),
+                FormatElement::Skip(it) => skip(&mut elements, it.len),
                 FormatElement::Tag(Tag::StartLineSuffix) => ignore_depth += 1,
                 FormatElement::Tag(Tag::EndLineSuffix) => {
                     ignore_depth = ignore_depth.saturating_sub(1);
@@ -180,7 +180,7 @@ impl Storage {
         let mut elements = elements.iter();
         while let Some(element) = elements.next() {
             match element {
-                FormatElement::Skip(count) => skip(&mut elements, *count),
+                FormatElement::Skip(it) => skip(&mut elements, it.len),
                 FormatElement::Tag(Tag::StartLineSuffix) => ignore_depth += 1,
                 FormatElement::Tag(Tag::EndLineSuffix) => {
                     ignore_depth = ignore_depth.saturating_sub(1);
@@ -204,8 +204,8 @@ impl Storage {
         let mut elements = elements.iter();
         while let Some(element) = elements.next() {
             return match element {
-                FormatElement::Skip(count) => {
-                    skip(&mut elements, *count);
+                FormatElement::Skip(it) => {
+                    skip(&mut elements, it.len);
                     continue;
                 }
                 FormatElement::Nop => continue,
@@ -469,7 +469,7 @@ impl<'a> Formatter<'a> {
     /// it is written, behind an element that tells whoever reads the pool to skip it.
     #[inline]
     fn start_capture(&mut self) -> usize {
-        self.storage.pool.push(FormatElement::Skip(0));
+        self.storage.pool.push(FormatElement::Skip(Skip::new(0)));
         self.storage.pool.len() - 1
     }
 
@@ -477,7 +477,7 @@ impl<'a> Formatter<'a> {
     fn end_capture(&mut self, slot: usize) -> Interned {
         let len = self.storage.pool.len().saturating_sub(slot + 1) as u32;
         match self.storage.pool.get_mut(slot) {
-            Some(element) if len > 0 => *element = FormatElement::Skip(len),
+            Some(element) if len > 0 => *element = FormatElement::Skip(Skip::new(len)),
             _ => self.storage.pool.truncate(slot),
         }
         Interned {
@@ -559,9 +559,9 @@ impl<'a> Formatter<'a> {
         let mut indices = range.range();
         while let Some(&element) = indices.next().and_then(|index| self.storage.pool.get(index)) {
             let cleaned = match element {
-                FormatElement::Skip(count) => {
-                    if count > 0 {
-                        indices.nth(count as usize - 1);
+                FormatElement::Skip(it) => {
+                    if it.len > 0 {
+                        indices.nth(it.len as usize - 1);
                     }
                     continue;
                 }

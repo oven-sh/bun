@@ -13,9 +13,9 @@ pub(crate) fn dump(root: Interned, storage: &Storage, source: &[u8]) -> String {
 fn dump_range(range: Interned, storage: &Storage, source: &[u8], mut depth: usize, out: &mut String) {
     let mut elements = storage.interned(range).iter();
     while let Some(element) = elements.next() {
-        if let FormatElement::Skip(count) = element {
-            if *count > 0 {
-                elements.nth(*count as usize - 1);
+        if let FormatElement::Skip(it) = element {
+            if it.len > 0 {
+                elements.nth(it.len as usize - 1);
             }
             continue;
         }

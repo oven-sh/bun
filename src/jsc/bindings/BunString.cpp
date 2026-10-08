@@ -373,6 +373,18 @@ std::optional<UTF8View> UTF8View::tryCreate(JSC::JSGlobalObject* globalObject, J
     return result;
 }
 
+std::optional<std::span<const char8_t>> UTF8View::convertShort(WTF::StringView view, std::span<char8_t, shortLength * 3> buffer)
+{
+    if (view.is8Bit()) {
+        auto latin1 = view.span8();
+        return buffer.first(simdutf::convert_latin1_to_utf8(reinterpret_cast<const char*>(latin1.data()), latin1.size(), reinterpret_cast<char*>(buffer.data())));
+    }
+    size_t size = WTF::StringImpl::tryConvertUTF16ToUTF8(view.span16(), buffer);
+    if (size == WTF::notFound) [[unlikely]]
+        return std::nullopt;
+    return buffer.first(size);
+}
+
 }
 
 extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject* globalObject, const BunString* bunString)

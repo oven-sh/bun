@@ -2729,6 +2729,23 @@ describe("string parameters are encoded as well-formed UTF-8", () => {
     });
   });
 
+  // The conversion takes another path from 342 code units, and another from 1,025 bytes.
+  it.each([340, 341, 342, 1024, 1025])("strings of about %d code units", length => {
+    using db = new Database(":memory:");
+    const fill = (unit, units) => unit.repeat(Math.ceil(units / unit.length)).slice(0, units);
+    const inputs = [
+      fill("caf\u00E9 ", length),
+      fill("\u65E5\u672C\u8A9E", length),
+      fill("\u{1F600}", length - (length % 2)),
+      fill("ab", length - 1) + "\uD800",
+      "\uDC00" + fill("\u65E5", length - 1),
+    ];
+    const q = db.query("SELECT hex(CAST(? AS BLOB)) AS h, ? AS v");
+    for (const input of inputs) {
+      expect(q.get(input, input)).toEqual({ h: expectedHex(input), v: input.toWellFormed() });
+    }
+  });
+
   it("a string that starts with a byte-order mark does not match the string without it", () => {
     using db = new Database(":memory:");
     db.run("CREATE TABLE users (name TEXT PRIMARY KEY); INSERT INTO users VALUES ('admin')");

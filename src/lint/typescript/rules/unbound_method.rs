@@ -193,8 +193,7 @@ struct PropertyNode<'a> {
     node: TsNode<'a>,
 }
 
-fn is_natively_bound<'a>(object: impl Into<ObjectNode<'a>>, property: PropertyNode<'a>) -> bool {
-    let object = object.into();
+fn is_natively_bound<'a>(object: ObjectNode<'a>, property: PropertyNode<'a>) -> bool {
     // The types alone do not tell: some declarations are not from the default library but from
     // `@types/node`, and the signature in an interface does not say whether a method is bound.
     if let (Some(object_name), Some(property_name)) = (object.identifier, property.identifier)
@@ -370,7 +369,7 @@ impl UnboundMethod {
                     identifier: Some(name.bytes()),
                     node: NameOf(node).ts_node(),
                 };
-                if !is_natively_bound(object, property) {
+                if !is_natively_bound(object.into(), property) {
                     self.check_union_constituents_and_report(cx, node.span(), name.bytes(), object.ty());
                 }
             }
@@ -379,7 +378,7 @@ impl UnboundMethod {
                     identifier: index.as_ident().map(Name::bytes),
                     node: index.ts_node(),
                 };
-                if is_natively_bound(object, property) {
+                if is_natively_bound(object.into(), property) {
                     return;
                 }
                 for part in union_constituents(index.ty()) {
@@ -444,7 +443,7 @@ impl UnboundMethod {
                 identifier: Some(key_name.bytes()),
                 node: key_node,
             };
-            if !is_natively_bound(init_node, property) {
+            if !is_natively_bound(init_node.into(), property) {
                 if self.check_if_method_and_report(cx, key, init_node.ty().get_property(key_name.bytes())) {
                     return;
                 }

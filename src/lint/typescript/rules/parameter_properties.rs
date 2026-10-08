@@ -48,7 +48,7 @@ fn plain_name<'a>(param: Param<'a>) -> Option<Name<'a>> {
 }
 
 /// The name of a key that is an `Identifier`, in brackets or not.
-fn identifier_key<'a>(member: Member<'a>) -> Option<Name<'a>> {
+pub(crate) fn identifier_key<'a>(member: Member<'a>) -> Option<Name<'a>> {
     match member.key()?.kind() {
         KeyKind::Ident(name) => Some(name),
         KeyKind::Computed(e) => e.as_ident(),

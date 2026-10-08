@@ -108,7 +108,7 @@ impl Rule for TripleSlashReference {
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
         let mut directives = Vec::new();
         let program = file.program_span();
-        if !strings::contains(file.slice(Span::new(0, program.start)), b"<reference") {
+        if !strings::contains(file.slice(Span::before(0, program)), b"<reference") {
             return State::default();
         }
         for comment in file.comments_before(program) {

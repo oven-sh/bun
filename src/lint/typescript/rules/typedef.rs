@@ -1,3 +1,4 @@
+use crate::rules::parameter_properties::identifier_key;
 use bun_lint::prelude::*;
 
 /// Require type annotations in certain places.
@@ -15,15 +16,6 @@ pub struct Typedef {
 const EXPECTED_TYPEDEF: Message = Message::new("expectedTypedef", "Expected a type annotation.");
 const EXPECTED_TYPEDEF_NAMED: Message =
     Message::new("expectedTypedefNamed", "Expected {{name}} to have a type annotation.");
-
-/// The name of the `key` of a member, if it is an `Identifier`. It can be in brackets.
-fn get_key_name(member: Member<'_>) -> Option<Name<'_>> {
-    match member.key()?.kind() {
-        KeyKind::Ident(name) => Some(name),
-        KeyKind::Computed(key) => key.as_ident(),
-        _ => None,
-    }
-}
 
 /// The `typeAnnotation` of an `ObjectPattern` or an `ArrayPattern`. That of `...[a]: T` belongs to
 /// the `RestElement`.
@@ -149,7 +141,7 @@ impl Typedef {
             MemberKind::Property if node.ty().is_some() => {}
             MemberKind::Property if node.is_signature() => {
                 if self.property_declaration {
-                    Self::report(cx, node.span(), get_key_name(node));
+                    Self::report(cx, node.span(), identifier_key(node));
                 }
             }
             // The others are a `TSAbstractPropertyDefinition` and an `AccessorProperty`.
@@ -157,7 +149,7 @@ impl Typedef {
                 if self.member_variable_declaration
                     && !node.init().is_some_and(|value| self.is_variable_declaration_ignore_function(value))
                 {
-                    Self::report(cx, node.span(), get_key_name(node));
+                    Self::report(cx, node.span(), identifier_key(node));
                 }
             }
             _ => {}

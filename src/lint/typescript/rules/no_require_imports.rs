@@ -9,6 +9,15 @@ pub struct NoRequireImports {
 const NO_REQUIRE_IMPORTS: Message =
     Message::new("noRequireImports", "A `require()` style import is forbidden.");
 
+/// What `require(..)` is called with, if that is a string or a template without substitutions.
+pub(crate) fn required_path(call: Call<'_>) -> Option<Name<'_>> {
+    match call.args().first()?.kind() {
+        ExprKind::String(value) => Some(value),
+        ExprKind::Template(template) => template.as_static(),
+        _ => None,
+    }
+}
+
 impl NoRequireImports {
     fn is_import_path_allowed(&self, path: Option<Name>) -> bool {
         path.is_some_and(|path| self.allow.iter().any(|pattern| pattern.test(path.bytes())))
@@ -22,11 +31,7 @@ impl NoRequireImports {
         if !callee.is_ident("require") || callee.symbol().is_some() {
             return;
         }
-        let path = call.args().first().and_then(|argument| match argument.kind() {
-            ExprKind::String(value) => Some(value),
-            ExprKind::Template(template) => template.as_static(),
-            _ => None,
-        });
+        let path = required_path(call);
         // Upstream looks `require` up by its name alone, so a type of that name counts too.
         if self.is_import_path_allowed(path) || Node::Expr(e).scope().resolve("require").is_some() {
             return;

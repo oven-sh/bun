@@ -5,6 +5,7 @@ use bun_lint::regex::{Mode, Options as RegexOptions, parse_pattern};
 use bun_lint::types::utils::get_constrained_type_at_location;
 use bun_lint::types::{NameOf, SyntaxKind, TsNode};
 use bun_lint::utils::eslint_utils::get_static_value;
+use bun_lint::utils::text::push_code_point;
 use bun_lint::utils::ts_utils::is_static_member_access_of_value;
 use std::borrow::Cow;
 
@@ -66,18 +67,6 @@ fn has_matching_includes_method(index_of_method_decl: TsNode) -> bool {
     type_decl.get_type_at_location().get_property(b"includes").is_some_and(|includes| {
         includes.declarations().any(|decl| has_same_parameters(decl, index_of_method_decl))
     })
-}
-
-/// A code point as UTF-8. Half a surrogate pair is the three bytes that its code point would have.
-fn push_code_point(out: &mut Vec<u8>, c: u32) {
-    match char::from_u32(c) {
-        Some(c) => out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
-        None => out.extend_from_slice(&[
-            0xE0 | ((c >> 12) & 0x0F) as u8,
-            0x80 | ((c >> 6) & 0x3F) as u8,
-            0x80 | (c & 0x3F) as u8,
-        ]),
-    }
 }
 
 /// The one string that `node` matches, if it is a `RegExp` that matches only one.

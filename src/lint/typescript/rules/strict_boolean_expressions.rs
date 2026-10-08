@@ -333,7 +333,7 @@ fn is_traversed_from_parent(node: Expr) -> bool {
 }
 
 /// Checks the variants of a union for the types that matter.
-fn inspect_variant_types<'a>(types: impl Iterator<Item = Type<'a>>) -> VariantTypes {
+fn inspect_variant_types(types: &mut dyn Iterator<Item = Type<'_>>) -> VariantTypes {
     let nullish = TypeFlags::NULL | TypeFlags::UNDEFINED | TypeFlags::VOID_LIKE;
     let number_like = TypeFlags::NUMBER_LIKE | TypeFlags::BIG_INT_LIKE;
     let any = TypeFlags::TYPE_PARAMETER | TypeFlags::ANY | TypeFlags::UNKNOWN;
@@ -530,7 +530,7 @@ impl StrictBooleanExpressions {
         if ty.is_unresolved() {
             return;
         }
-        let types = inspect_variant_types(union_constituents(ty).iter());
+        let types = inspect_variant_types(&mut union_constituents(ty).iter());
         if let Some(report_type) = self.determine_report_type(types) {
             let report = cx.report(node, report_type.message()).data("context", "conditional");
             suggest_for_condition_error(report, node, report_type);
@@ -597,7 +597,7 @@ impl StrictBooleanExpressions {
                 }
             }
         }
-        let types = inspect_variant_types(flatten_types.iter().copied());
+        let types = inspect_variant_types(&mut flatten_types.iter().copied());
         let Some(report_type) = self.determine_report_type(types) else {
             return;
         };

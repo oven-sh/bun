@@ -653,6 +653,26 @@ pub struct State<'a> {
     analysis: OnceCell<VariableAnalysis<'a>>,
 }
 
+/// Those of the modifiers `global`, `exported` and `unused` that are among `wanted` and that `name` has in `scope`.
+fn modifiers_in_scope<'a>(
+    cx: &Cx<'a, NamingConvention>,
+    name: Name<'a>,
+    wanted: u32,
+    scope: Option<Scope<'a>>,
+) -> u32 {
+    let mut modifiers = 0;
+    if wanted & GLOBAL != 0 && matches!(scope.map(Scope::kind), Some(ScopeKind::Global | ScopeKind::Module)) {
+        modifiers |= GLOBAL;
+    }
+    if wanted & EXPORTED != 0 && has_export_reference(name, scope) {
+        modifiers |= EXPORTED;
+    }
+    if wanted & UNUSED != 0 && is_unused(cx, name, scope) {
+        modifiers |= UNUSED;
+    }
+    modifiers
+}
+
 impl NamingConvention {
     #[inline]
     fn validator(&self, selector: Selector) -> &Validator {
@@ -725,22 +745,12 @@ impl NamingConvention {
         kinds: u32,
         scope: impl FnOnce() -> Option<Scope<'a>>,
     ) -> u32 {
-        let mut modifiers = if has_export_keyword { EXPORTED } else { 0 };
+        let modifiers = if has_export_keyword { EXPORTED } else { 0 };
         let wanted = self.validator(selector).modifiers & kinds & !modifiers;
         if wanted == 0 {
             return modifiers;
         }
-        let scope = scope();
-        if wanted & GLOBAL != 0 && matches!(scope.map(Scope::kind), Some(ScopeKind::Global | ScopeKind::Module)) {
-            modifiers |= GLOBAL;
-        }
-        if wanted & EXPORTED != 0 && has_export_reference(name, scope) {
-            modifiers |= EXPORTED;
-        }
-        if wanted & UNUSED != 0 && is_unused(cx, name, scope) {
-            modifiers |= UNUSED;
-        }
-        modifiers
+        modifiers | modifiers_in_scope(cx, name, wanted, scope())
     }
 
     fn check_function<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {

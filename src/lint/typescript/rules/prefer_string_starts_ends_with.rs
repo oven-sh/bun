@@ -5,7 +5,7 @@ use bun_lint::regex::{Mode, Options as RegexOptions, parse_pattern};
 use bun_lint::types::TypeFlags;
 use bun_lint::types::utils::get_type_name;
 use bun_lint::utils::eslint_utils::{StaticValue, get_property_name, get_static_value};
-use bun_lint::utils::text::{json_stringify, utf16_len};
+use bun_lint::utils::text::{json_stringify, string_from_code_points, utf16_len};
 use bun_lint::utils::ts_utils::is_static_member_access_of_value;
 
 /// Enforce using `String#startsWith` and `String#endsWith` over other equivalent methods of
@@ -118,42 +118,6 @@ fn is_last_index_expression<'a>(node: Expr<'a>, expected_object_node: Expr<'a>) 
 /// The `[foo]` of `obj[foo]`, the `.foo` of `(obj).foo`.
 fn get_property_range<'a>(node: Expr<'a>, object: Expr<'a>) -> Span {
     Span::new(skip_trivia(node.file().text(), object.outer_span().end), node.span().end)
-}
-
-// TODO(api): replace by utils::text::string_from_code_points
-/// `String.fromCodePoint(...values)`. Half a surrogate pair is the three bytes that its code point
-/// would have.
-fn string_from_code_points(values: impl Iterator<Item = u32>) -> Vec<u8> {
-    fn push(out: &mut Vec<u8>, c: u32) {
-        match char::from_u32(c) {
-            Some(c) => out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
-            None => out.extend_from_slice(&[
-                0xE0 | ((c >> 12) & 0x0F) as u8,
-                0x80 | ((c >> 6) & 0x3F) as u8,
-                0x80 | (c & 0x3F) as u8,
-            ]),
-        }
-    }
-    let mut text = Vec::new();
-    let mut lead: Option<u32> = None;
-    for value in values {
-        match (lead.take(), value) {
-            (Some(lead), 0xDC00..=0xDFFF) => push(&mut text, 0x10000 + ((lead - 0xD800) << 10) + (value - 0xDC00)),
-            (alone, _) => {
-                if let Some(alone) = alone {
-                    push(&mut text, alone);
-                }
-                match value {
-                    0xD800..=0xDBFF => lead = Some(value),
-                    _ => push(&mut text, value),
-                }
-            }
-        }
-    }
-    if let Some(alone) = lead {
-        push(&mut text, alone);
-    }
-    text
 }
 
 /// The string that `pattern` matches besides its `^` or `$`, if there is only one.

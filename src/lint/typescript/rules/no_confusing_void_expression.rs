@@ -222,7 +222,7 @@ impl NoConfusingVoidExpression {
             let arrow_token = arrow_function.arrow_span()?;
             let (body, whole) = (body.span(), arrow_function.estree_span());
             Some([
-                fixer.replace(Span::new(arrow_token.end, body.start), " { "),
+                fixer.replace(arrow_token.between(body), " { "),
                 fixer.replace(Span::new(body.end, whole.end), "; }"),
             ])
         });

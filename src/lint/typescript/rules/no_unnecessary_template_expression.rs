@@ -162,9 +162,9 @@ fn escape_template_syntax(value: &[u8]) -> Vec<u8> {
     escaped
 }
 
-fn remove(start: u32, end: u32) -> Fix {
+fn remove(span: Span) -> Fix {
     Fix {
-        span: Span::new(start, end),
+        span,
         text: Vec::new(),
     }
 }
@@ -224,7 +224,10 @@ fn report_interpolations<'a>(
             next_raw,
         });
     }
+    report_infos(&infos, cx);
+}
 
+fn report_infos<'a>(infos: &[InterpolationInfo<'a>], cx: &Context<'a>) {
     let mut next_character_is_opening_curly_brace = false;
     for info in infos.iter().rev() {
         let interpolation = info.interpolation;
@@ -232,8 +235,8 @@ fn report_interpolations<'a>(
         let warn_loc_end = info.next_quasi.start + 1;
         // The parts of the quasis that belong to the expression.
         let mut fixes = vec![
-            remove(warn_loc_start, interpolation.start),
-            remove(interpolation.end, warn_loc_end),
+            remove(Span::before(warn_loc_start, interpolation)),
+            remove(Span::after(interpolation, warn_loc_end)),
         ];
 
         if !info.next_raw.is_empty() {
@@ -256,8 +259,8 @@ fn report_interpolations<'a>(
                 if quasi_count == 1 && !first_raw.is_empty() {
                     next_character_is_opening_curly_brace = first_raw.starts_with(b"{");
                 }
-                fixes.push(remove(interpolation.start, interpolation.start + 1));
-                fixes.push(remove(interpolation.end - 1, interpolation.end));
+                fixes.push(remove(Span::new(interpolation.start, interpolation.start + 1)));
+                fixes.push(remove(Span::new(interpolation.end - 1, interpolation.end)));
                 None
             }
             // Without the quotes.

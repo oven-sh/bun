@@ -29,7 +29,7 @@ fn fix_type_alias<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, alias: Alias<'a>) -
     let before_equals_token = file.tokens_before(equals_token).with_comments().next()?;
     Some(vec![
         fixer.replace(type_token, "interface"),
-        fixer.replace(Span::new(before_equals_token.end(), ty.start), " "),
+        fixer.replace(Span::before(before_equals_token.end(), ty), " "),
         fixer.remove(Span::new(ty.end, statement.span().end)),
     ])
 }
@@ -40,7 +40,7 @@ fn fix_interface<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, interface: Interface
     let mut fixes = Vec::new();
     if let Some(first_token) = file.token_before(name) {
         fixes.push(fixer.replace(first_token, "type"));
-        fixes.push(fixer.replace(Span::new(head_end, body.start), " = "));
+        fixes.push(fixer.replace(Span::before(head_end, body), " = "));
     }
     for heritage in interface.extends() {
         fixes.push(fixer.insert_after(body, [&b" & "[..], heritage.text()].concat()));

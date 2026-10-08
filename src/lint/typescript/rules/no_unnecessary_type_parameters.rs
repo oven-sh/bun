@@ -98,6 +98,20 @@ struct UsageCounter<'a, 'c> {
     depth: u32,
 }
 
+/// Upstream's `assumeMultipleUses`: what one appearance of a type parameter counts as.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Uses {
+    One,
+    Multiple,
+}
+
+/// Upstream's `isReturnType`.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Place {
+    Return,
+    Elsewhere,
+}
+
 fn get_declared_constraint_type(type_parameter: Type<'_>) -> Option<Type<'_>> {
     let mut declarations = type_parameter.get_symbol()?.declarations();
     let declaration = declarations.find(|it| it.kind() == SyntaxKind::TypeParameter)?;
@@ -105,7 +119,7 @@ fn get_declared_constraint_type(type_parameter: Type<'_>) -> Option<Type<'_>> {
 }
 
 impl<'a> UsageCounter<'a, '_> {
-    fn visit_type(&mut self, ty: Type<'a>, assume_multiple_uses: bool, is_return_type: bool) {
+    fn visit_type(&mut self, ty: Type<'a>, uses: Uses, place: Place) {
         // The same type more than 3 ** 2 times is likely a recursive type, like
         // `type T = { [P in keyof T]: T }`. If not, what it refers to has been counted often enough.
         let usages = self.type_usages.entry(ty).or_insert(0);
@@ -114,29 +128,30 @@ impl<'a> UsageCounter<'a, '_> {
             return;
         }
         self.depth += 1;
-        self.visit_parts(ty, assume_multiple_uses, is_return_type);
+        self.visit_parts(ty, uses, place);
         self.depth -= 1;
     }
 
-    fn visit_types_list(&mut self, types: impl IntoIterator<Item = Type<'a>>, assume_multiple_uses: bool) {
+    fn visit_types_list(&mut self, types: impl IntoIterator<Item = Type<'a>>, uses: Uses) {
         for ty in types {
-            self.visit_type(ty, assume_multiple_uses, false);
+            self.visit_type(ty, uses, Place::Elsewhere);
         }
     }
 
-    fn visit_parts(&mut self, ty: Type<'a>, assume_multiple_uses: bool, is_return_type: bool) {
+    fn visit_parts(&mut self, ty: Type<'a>, uses: Uses, place: Place) {
         let flags = ty.flags();
         if flags.contains(TypeFlags::TYPE_PARAMETER) {
-            self.visit_type_parameter(ty, assume_multiple_uses);
+            self.visit_type_parameter(ty, uses);
         } else if !ty.alias_type_arguments().is_empty() {
             // The definition of the type alias is not looked into, so how often it uses them is
             // not known.
-            self.visit_types_list(ty.alias_type_arguments(), true);
+            self.visit_types_list(ty.alias_type_arguments(), Uses::Multiple);
         } else if flags.intersects(TypeFlags::UNION_OR_INTERSECTION) {
-            self.visit_types_list(ty.types(), assume_multiple_uses);
+            self.visit_types_list(ty.types(), uses);
         } else if is_type_reference(ty) {
             // A readonly array or tuple uses the type parameter once. A mutable one uses it
             // several times if it is returned. Any other reference does.
+            let is_return_type = place == Place::Return;
             let is_multiple_uses = match ty.tuple_target() {
                 Some(target) => is_return_type && !target.readonly(),
                 None if ty.is_array_type() => {
@@ -144,33 +159,36 @@ impl<'a> UsageCounter<'a, '_> {
                 }
                 None => true,
             };
-            let this_assume_multiple_uses = self.from_class || assume_multiple_uses || is_multiple_uses;
+            let uses = match self.from_class || is_multiple_uses {
+                true => Uses::Multiple,
+                false => uses,
+            };
             for type_argument in ty.get_type_arguments() {
-                self.visit_type(type_argument, this_assume_multiple_uses, is_return_type);
+                self.visit_type(type_argument, uses, place);
             }
         } else if flags.contains(TypeFlags::OBJECT) {
             self.visit_object_type(ty);
         } else {
             match ty.structure() {
                 TypeStructure::IndexedAccess { object_type, index_type } => {
-                    self.visit_type(object_type, assume_multiple_uses, false);
-                    self.visit_type(index_type, assume_multiple_uses, false);
+                    self.visit_type(object_type, uses, Place::Elsewhere);
+                    self.visit_type(index_type, uses, Place::Elsewhere);
                 }
-                TypeStructure::TemplateLiteral { types, .. } => self.visit_types_list(types, assume_multiple_uses),
+                TypeStructure::TemplateLiteral { types, .. } => self.visit_types_list(types, uses),
                 TypeStructure::Conditional { check_type, extends_type, .. } => {
-                    self.visit_type(check_type, assume_multiple_uses, false);
-                    self.visit_type(extends_type, assume_multiple_uses, false);
+                    self.visit_type(check_type, uses, Place::Elsewhere);
+                    self.visit_type(extends_type, uses, Place::Elsewhere);
                 }
                 // `keyof T`, `Uppercase<T>`
                 TypeStructure::Index { ty } | TypeStructure::StringMapping { ty } => {
-                    self.visit_type(ty, assume_multiple_uses, false);
+                    self.visit_type(ty, uses, Place::Elsewhere);
                 }
                 _ => {}
             }
         }
     }
 
-    fn visit_type_parameter(&mut self, ty: Type<'a>, assume_multiple_uses: bool) {
+    fn visit_type_parameter(&mut self, ty: Type<'a>, uses: Uses) {
         let Some(declaration) = ty.get_symbol().and_then(|symbol| symbol.declarations().next()) else {
             return;
         };
@@ -178,18 +196,21 @@ impl<'a> UsageCounter<'a, '_> {
         if declaration.kind() != SyntaxKind::TypeParameter {
             return;
         }
-        *self.found_identifier_usages.entry(declaration).or_insert(0) += if assume_multiple_uses { 2 } else { 1 };
+        *self.found_identifier_usages.entry(declaration).or_insert(0) += match uses {
+            Uses::One => 1,
+            Uses::Multiple => 2,
+        };
 
         if let Some(constraint) = declaration.constraint()
             && self.visited_constraints.insert(constraint)
         {
-            self.visit_type(constraint.get_type_at_location(), false, false);
+            self.visit_type(constraint.get_type_at_location(), Uses::One, Place::Elsewhere);
         }
         if let Some(default) = declaration.default_type()
             && !self.visited_default
         {
             self.visited_default = true;
-            self.visit_type(default.get_type_at_location(), false, false);
+            self.visit_type(default.get_type_at_location(), Uses::One, Place::Elsewhere);
         }
     }
 
@@ -199,7 +220,7 @@ impl<'a> UsageCounter<'a, '_> {
         let properties = ty.get_properties();
         if self.visited_symbol_lists.insert(ty) {
             for symbol in properties {
-                self.visit_type(symbol.get_type(), false, false);
+                self.visit_type(symbol.get_type(), Uses::One, Place::Elsewhere);
             }
         }
 
@@ -211,23 +232,23 @@ impl<'a> UsageCounter<'a, '_> {
             ..
         } = ty.structure()
         {
-            self.visit_type(type_parameter, false, false);
+            self.visit_type(type_parameter, Uses::One, Place::Elsewhere);
             // `{ [k in "a"]: T }` is like `{ a: T }`: its properties have been counted.
             if properties.is_empty() {
-                self.visit_type(template_type, false, false);
+                self.visit_type(template_type, Uses::One, Place::Elsewhere);
                 // The declaration of the type parameter has the constraint from before the
                 // instantiation.
                 if get_declared_constraint_type(type_parameter) != Some(constraint_type) {
-                    self.visit_type(constraint_type, false, false);
+                    self.visit_type(constraint_type, Uses::One, Place::Elsewhere);
                 }
             }
             if let Some(name_type) = name_type {
-                self.visit_type(name_type, false, false);
+                self.visit_type(name_type, Uses::One, Place::Elsewhere);
             }
         }
 
-        self.visit_types_list(ty.get_number_index_type(), true);
-        self.visit_types_list(ty.get_string_index_type(), true);
+        self.visit_types_list(ty.get_number_index_type(), Uses::Multiple);
+        self.visit_types_list(ty.get_string_index_type(), Uses::Multiple);
 
         for signature in ty.get_call_signatures() {
             self.visit_signature(signature);
@@ -239,15 +260,15 @@ impl<'a> UsageCounter<'a, '_> {
 
     fn visit_signature(&mut self, signature: Signature<'a>) {
         if let Some(this_parameter) = signature.this_parameter() {
-            self.visit_type(this_parameter.get_type(), false, false);
+            self.visit_type(this_parameter.get_type(), Uses::One, Place::Elsewhere);
         }
         for parameter in signature.parameters() {
-            self.visit_type(parameter.get_type(), false, false);
+            self.visit_type(parameter.get_type(), Uses::One, Place::Elsewhere);
         }
-        self.visit_types_list(signature.type_parameters(), false);
+        self.visit_types_list(signature.type_parameters(), Uses::One);
 
         let predicate_type = signature.get_type_predicate().and_then(|predicate| predicate.ty());
-        self.visit_type(predicate_type.unwrap_or_else(|| signature.get_return_type()), false, true);
+        self.visit_type(predicate_type.unwrap_or_else(|| signature.get_return_type()), Uses::One, Place::Return);
     }
 }
 
@@ -271,7 +292,7 @@ fn collect_type_parameter_usage_counts<'a>(
                 counter.visit_signature(signature);
             }
         }
-        _ => counter.visit_type(node.get_type_at_location(), false, false),
+        _ => counter.visit_type(node.get_type_at_location(), Uses::One, Place::Elsewhere),
     }
 }
 

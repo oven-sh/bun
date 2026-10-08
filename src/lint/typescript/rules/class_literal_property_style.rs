@@ -125,7 +125,7 @@ impl ClassLiteralPropertyStyle {
             fix_or_suggest,
             PREFER_FIELD_STYLE_SUGGESTION,
             |fixer| {
-                let between_parens_and_body = Span::new(func.close_paren()? + 1, func.body_span()?.start);
+                let between_parens_and_body = Span::before(func.close_paren()? + 1, func.body_span()?);
                 let mut text = print_modifiers_and_key(member, key, "readonly");
                 text.extend_from_slice(file.slice(between_parens_and_body));
                 text.extend_from_slice(b"= ");

@@ -1,3 +1,4 @@
+use crate::rules::no_require_imports::required_path;
 use bun_lint::prelude::*;
 
 /// Disallow `require` statements except in import statements.
@@ -33,11 +34,7 @@ impl NoVarRequires {
         if !is_used {
             return;
         }
-        let path = call.args().first().and_then(|argument| match argument.kind() {
-            ExprKind::String(value) => Some(value),
-            ExprKind::Template(template) => template.as_static(),
-            _ => None,
-        });
+        let path = required_path(call);
         if path.is_some_and(|path| self.allow.iter().any(|pattern| pattern.test(path.bytes()))) {
             return;
         }

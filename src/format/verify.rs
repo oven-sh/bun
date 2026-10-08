@@ -9,6 +9,7 @@
 //!   quotes.
 //! - How numbers are written: `0XAB`, `1.0`, `.5`, `1E5`.
 //! - The order of the flags of a regular expression.
+//! - The order of modifiers: `readonly abstract` is `abstract readonly`.
 //! - The white space in JSX text, and `{" "}`.
 //! - The indentation of the lines of block comments.
 //!
@@ -115,7 +116,8 @@ fn items<'a>(file: &'a File<'a>) -> Vec<Item<'a>> {
                 // In front of the first type.
                 b"|" | b"&"
                     if before.is_some_and(|it| {
-                        (it.kind() == TokenKind::Punctuator && !is_closer(it)) || it.is_keyword("extends")
+                        (it.kind() == TokenKind::Punctuator && !is_closer(it))
+                            || matches!(it.text(), b"extends" | b"as" | b"satisfies" | b"is" | b"keyof" | b"readonly")
                     }) =>
                 {
                     continue;
@@ -166,8 +168,21 @@ fn items<'a>(file: &'a File<'a>) -> Vec<Item<'a>> {
             _ => {}
         }
         out.push((Cow::Borrowed(text), start));
+        // Modifiers are put in order.
+        let mut at = out.len() - 1;
+        while is_modifier(text) && at > 0 && is_modifier(&out[at - 1].0) && out[at - 1].0 > out[at].0 {
+            out.swap(at - 1, at);
+            at -= 1;
+        }
     }
     out
+}
+
+fn is_modifier(text: &[u8]) -> bool {
+    matches!(
+        text,
+        b"declare" | b"public" | b"protected" | b"private" | b"static" | b"abstract" | b"override" | b"readonly"
+    )
 }
 
 /// The comments, each without the white space at the start and at the end of its lines.

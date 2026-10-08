@@ -206,9 +206,12 @@ fn print<'a>(file: &'a File<'a>, first_error: Option<&Diagnostic>, how: &How, sc
         without_final_newline(&mut out);
     }
     // Imports that the formatter itself moves are not where they were.
-    let moves_imports = options.sort_imports.as_deref().is_some_and(|it| it.is_applied_by_format());
-    if how.verifies && !moves_imports && out != file.text() {
-        let is_same = with_file(how, &out, |after, _| !after.has_parse_errors() && bun_format::verify::compare(file, after).is_ok());
+    let compare = match options.sort_imports.as_deref().is_some_and(|it| it.is_applied_by_format()) {
+        true => bun_format::verify::compare_with_sorted_imports,
+        false => bun_format::verify::compare,
+    };
+    if how.verifies && out != file.text() {
+        let is_same = with_file(how, &out, |after, _| !after.has_parse_errors() && compare(file, after).is_ok());
         if !is_same {
             return Err(Failure::Bug("formatting would change what the code means"));
         }

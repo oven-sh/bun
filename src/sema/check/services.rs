@@ -42,6 +42,9 @@ pub struct Services<'c, 'p, 's> {
     arena: &'c Arena,
     symbols: Vec<Entry<'c>>,
     symbol_ids: FxHashMap<Key<'c>, SymbolRef>,
+    /// What `properties_of_type` and `signature_info` have answered.
+    properties: FxHashMap<TypeId, &'c [SymbolRef]>,
+    signatures: FxHashMap<SigId, SignatureInfo<'c>>,
     /// `Checker::symbols_of_declarations` of `file`.
     symbols_of_declarations: OnceCell<FxHashMap<Decl, SymbolId>>,
     read_library: Option<ReadLibrary<'c>>,
@@ -70,6 +73,8 @@ impl<'p, 's> Checker<'p, 's> {
             read_library,
             symbols: Vec::new(),
             symbol_ids: FxHashMap::default(),
+            properties: FxHashMap::default(),
+            signatures: FxHashMap::default(),
             symbols_of_declarations: OnceCell::new(),
         };
         then(&mut services)

@@ -41,6 +41,9 @@ pub(super) struct Entry<'p> {
     /// `symbol.name`, where it is not that of the key: of a late bound member, of a type name that
     /// does not resolve.
     pub(super) name: Atom,
+    /// What `symbol_info` and `declarations` have answered.
+    info: Option<SymbolInfo<'p>>,
+    declarations: Option<&'p [NodeRef]>,
 }
 
 /// `removeFileExtension`
@@ -67,6 +70,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 && entry.prop.is_none()
             {
                 entry.prop = prop;
+                entry.info = None;
             }
             return id;
         }
@@ -75,6 +79,8 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             key,
             prop,
             name: Atom::NONE,
+            info: None,
+            declarations: None,
         });
         self.symbol_ids.insert(key, id);
         id
@@ -91,6 +97,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         let id = self.intern_symbol(key, None);
         if let Some(entry) = self.symbols.get_mut(id.0 as usize) {
             entry.name = name;
+            entry.info = None;
         }
         id
     }
@@ -173,6 +180,7 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         });
         if let Some(entry) = self.symbols.get_mut(symbol.0 as usize) {
             entry.prop = Some((prop, MapperId::IDENTITY));
+            entry.info = None;
         }
         Some((prop, MapperId::IDENTITY))
     }
@@ -206,6 +214,17 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     // ───────────────────────────── fields ─────────────────────────────
 
     pub fn symbol_info(&mut self, symbol: SymbolRef) -> SymbolInfo<'c> {
+        if let Some(known) = self.symbols.get(symbol.0 as usize).and_then(|entry| entry.info) {
+            return known;
+        }
+        let info = self.symbol_info_uncached(symbol);
+        if let Some(entry) = self.symbols.get_mut(symbol.0 as usize) {
+            entry.info = Some(info);
+        }
+        info
+    }
+
+    fn symbol_info_uncached(&mut self, symbol: SymbolRef) -> SymbolInfo<'c> {
         let mut info = SymbolInfo {
             name: b"",
             flags: SymbolFlags::empty(),
@@ -441,6 +460,17 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     }
 
     pub fn declarations(&mut self, symbol: SymbolRef) -> &'c [NodeRef] {
+        if let Some(known) = self.symbols.get(symbol.0 as usize).and_then(|entry| entry.declarations) {
+            return known;
+        }
+        let declarations = self.declarations_uncached(symbol);
+        if let Some(entry) = self.symbols.get_mut(symbol.0 as usize) {
+            entry.declarations = Some(declarations);
+        }
+        declarations
+    }
+
+    fn declarations_uncached(&mut self, symbol: SymbolRef) -> &'c [NodeRef] {
         let Some((key, prop)) = self.entry(symbol) else {
             return &[];
         };
@@ -707,6 +737,15 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     // ───────────────────────────── members of types ─────────────────────────────
 
     pub fn properties_of_type(&mut self, ty: TypeId) -> &'c [SymbolRef] {
+        if let Some(&known) = self.properties.get(&ty) {
+            return known;
+        }
+        let properties = self.properties_of_type_uncached(ty);
+        self.properties.insert(ty, properties);
+        properties
+    }
+
+    fn properties_of_type_uncached(&mut self, ty: TypeId) -> &'c [SymbolRef] {
         let ty = self.c.reduced_apparent_type_as_object(ty);
         let Some(members) = self.c.members(ty) else {
             return &[];
@@ -751,6 +790,15 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
     // ───────────────────────────── signatures ─────────────────────────────
 
     pub fn signature_info(&mut self, signature: SigId) -> SignatureInfo<'c> {
+        if let Some(&known) = self.signatures.get(&signature) {
+            return known;
+        }
+        let info = self.signature_info_uncached(signature);
+        self.signatures.insert(signature, info);
+        info
+    }
+
+    fn signature_info_uncached(&mut self, signature: SigId) -> SignatureInfo<'c> {
         let parameters = self.c.sig_params(signature);
         let symbols: SmallVec<[SymbolRef; 4]> =
             (0..parameters.len() as u32).map(|index| self.intern_symbol(Key::Parameter(signature, index), None)).collect();

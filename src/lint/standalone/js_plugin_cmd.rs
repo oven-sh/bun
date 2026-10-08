@@ -1,3 +1,148 @@
 //! `bun-lint js_plugin ..`: for the oracles of the JavaScript plugin API.
+//!
+//! - `lint --plugin=<specifier> [--alias=<name>] [--rules=<{ "rule": [options] }>] [--language=<languageOptions>] <files..>`:
+//!   what the rules of a plugin, all of them unless `--rules` says which, report for each file, a line of JSON for each.
 
-pub(crate) fn run(_args: &[String]) {}
+use bun_lint::js_plugin::{BOOTSTRAP, Channel, Configured, FileSettings, Host, Report};
+use bun_lint::language::LanguageOptions;
+use bun_lint::options::Json;
+use std::io::{Read, Write};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::sync::Arc;
+
+struct Process {
+    child: Child,
+    input: Option<ChildStdin>,
+    output: ChildStdout,
+}
+
+impl Channel for Process {
+    fn send(&mut self, bytes: &[u8]) -> Result<(), Vec<u8>> {
+        let input = self.input.as_mut().ok_or(b"closed".as_slice())?;
+        input.write_all(bytes).map_err(|error| error.to_string().into_bytes())
+    }
+
+    fn receive(&mut self, into: &mut [u8]) -> Result<(), Vec<u8>> {
+        self.output.read_exact(into).map_err(|error| error.to_string().into_bytes())
+    }
+}
+
+impl Drop for Process {
+    fn drop(&mut self) {
+        drop(self.input.take());
+        let _ = self.child.wait();
+    }
+}
+
+/// Starts a worker with the `bun` that is in `PATH`.
+pub(crate) fn spawn() -> Result<Box<dyn Channel>, Vec<u8>> {
+    let mut command = Command::new(std::env::var("BUN_LINT_BUN").unwrap_or_else(|_| "bun".to_owned()));
+    command.args(["-e", BOOTSTRAP]).stdin(Stdio::piped()).stdout(Stdio::piped());
+    let mut child = command.spawn().map_err(|error| error.to_string().into_bytes())?;
+    let (input, output) = (child.stdin.take(), child.stdout.take());
+    Ok(Box::new(Process {
+        child,
+        input,
+        output: output.ok_or(b"no pipe".as_slice())?,
+    }))
+}
+
+/// With `BUN_LINT_WORKER=<src/lint/js_plugin/worker>` the workers run the program that is there now.
+fn new_host(cwd: &str, max_workers: usize) -> Host<'static> {
+    let mut host = Host::new(&spawn, cwd.as_bytes(), max_workers);
+    if let Ok(directory) = std::env::var("BUN_LINT_WORKER") {
+        let part = |it: &(&str, &str)| std::fs::read(format!("{directory}/{}", it.0)).expect("a part of the program");
+        host.set_program(bun_lint::js_plugin::PROGRAM.iter().flat_map(part).collect());
+    }
+    host
+}
+
+fn text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn report_as_json(report: &Report, enabled: &[Arc<Configured>], code: &[u8]) -> Json {
+    let string = |text: &[u8]| Json::String(text.to_vec());
+    let number = |n: u32| Json::Number(f64::from(n));
+    let fix = |fix: &bun_lint::fix::Fix| {
+        let mut offsets = bun_lint::linter::Utf16Offsets::new(code);
+        let range = [offsets.convert(fix.span.start), offsets.convert(fix.span.end)];
+        Json::Object(vec![
+            (b"range".to_vec(), Json::Array(range.iter().map(|it| Json::Number(*it as f64)).collect())),
+            (b"text".to_vec(), string(&fix.text)),
+        ])
+    };
+    let mut fields = vec![
+        (b"ruleId".to_vec(), enabled.get(report.rule as usize).map_or(Json::Null, |it| string(&it.rule.id))),
+        (b"message".to_vec(), string(&report.message)),
+        (b"line".to_vec(), number(report.line)),
+        (b"column".to_vec(), number(report.column)),
+    ];
+    if let Some(id) = &report.message_id {
+        fields.push((b"messageId".to_vec(), string(id.as_bytes())));
+    }
+    if let Some((line, column)) = report.end {
+        fields.push((b"endLine".to_vec(), number(line)));
+        fields.push((b"endColumn".to_vec(), number(column)));
+    }
+    if let Some(it) = &report.fix {
+        fields.push((b"fix".to_vec(), fix(it)));
+    }
+    if !report.suggestions.is_empty() {
+        let suggestions = report.suggestions.iter().map(|it| {
+            let mut fields = Vec::new();
+            if let Some(id) = &it.message_id {
+                fields.push((b"messageId".to_vec(), string(id.as_bytes())));
+            }
+            fields.push((b"desc".to_vec(), string(&it.message)));
+            fields.push((b"fix".to_vec(), fix(&it.fix)));
+            Json::Object(fields)
+        });
+        fields.push((b"suggestions".to_vec(), Json::Array(suggestions.collect())));
+    }
+    Json::Object(fields)
+}
+
+fn lint(args: &[String]) {
+    let flag = |name: &str| args.iter().find_map(|it| it.strip_prefix(name));
+    let cwd = std::env::current_dir().expect("the working directory").to_string_lossy().into_owned();
+    let host = new_host(&cwd, 1);
+    let specifier = flag("--plugin=").expect("--plugin");
+    let plugin = match host.load(cwd.as_bytes(), specifier.as_bytes(), flag("--alias=").map(str::as_bytes)) {
+        Ok(plugin) => plugin,
+        Err(why) => return println!("cannot load {specifier}: {}", text(&why)),
+    };
+    let rules = flag("--rules=").map(|it| bun_lint::json::parse(it.as_bytes()).expect("--rules is JSON"));
+    let enabled: Vec<Arc<Configured>> = match &rules {
+        None => plugin.rules.iter().map(|it| Configured::new(Arc::clone(it), &it.default_options)).collect(),
+        Some(rules) => (rules.as_object().unwrap_or_default().iter())
+            .map(|(name, options)| {
+                let rule = plugin.rule(name).unwrap_or_else(|| panic!("no rule {}", text(name)));
+                Configured::new(Arc::clone(rule), options.as_array().unwrap_or_default())
+            })
+            .collect(),
+    };
+    let language = flag("--language=").map(|it| bun_lint::json::parse(it.as_bytes()).expect("--language is JSON"));
+    let language = LanguageOptions::from_json(language.as_ref().unwrap_or(&Json::Null), &Json::Null);
+    let settings = FileSettings::new(&language);
+    let references: Vec<&Configured> = enabled.iter().map(|it| &**it).collect();
+    for path in args.iter().filter(|it| !it.starts_with("--")) {
+        let code = std::fs::read(path).expect("the file");
+        let absolute = std::path::Path::new(&cwd).join(path).to_string_lossy().into_owned();
+        let result = crate::with_file(&absolute, &code, &language, |file| host.run(file, &settings, &references, true));
+        let mut line = Vec::new();
+        let json = match result {
+            Ok(reports) => Json::Array(reports.iter().map(|it| report_as_json(it, &enabled, &code)).collect()),
+            Err(failure) => Json::Object(vec![(b"failure".to_vec(), Json::String(failure.message))]),
+        };
+        bun_lint::linter::write_json(&mut line, &json);
+        println!("{path}\t{}", text(&line));
+    }
+}
+
+pub(crate) fn run(args: &[String]) {
+    match args.first().map(String::as_str) {
+        Some("lint") => lint(&args[1..]),
+        _ => println!("usage: bun-lint js_plugin lint --plugin=<specifier> <files..>"),
+    }
+}

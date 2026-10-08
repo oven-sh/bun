@@ -1,0 +1,56 @@
+//! What a worker is told when it starts.
+
+use super::ast::STRINGS;
+use crate::estree::NodeType;
+use crate::linter::write_json_string;
+
+/// The program of a worker: the names of its parts in `worker/`, and what is in them. They share one scope.
+pub const PROGRAM: &[(&str, &str)] = &[
+    ("ast.js", include_str!("worker/ast.js")),
+    ("tokens.js", include_str!("worker/tokens.js")),
+    ("scope.js", include_str!("worker/scope.js")),
+    ("source_code.js", include_str!("worker/source_code.js")),
+    ("report.js", include_str!("worker/report.js")),
+    ("main.js", include_str!("worker/main.js")),
+];
+
+/// `{ cwd, strings, types }`. `types`: for each [`NodeType`] `[name, [[field, flags], ..]]`, where the
+/// flags are 1 for a visitor key, 2 for what only typescript-estree has, 4 for what only espree has,
+/// 8 for what is not enumerable.
+pub(super) fn write_start(cwd: &[u8], out: &mut Vec<u8>) {
+    out.extend_from_slice(b"{\"cwd\":");
+    write_json_string(out, cwd);
+    out.extend_from_slice(b",\"strings\":[");
+    for (i, string) in STRINGS.iter().enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        write_json_string(out, string.as_bytes());
+    }
+    out.extend_from_slice(b"],\"types\":[");
+    for (i, node_type) in NodeType::ALL.iter().enumerate() {
+        if i > 0 {
+            out.push(b',');
+        }
+        out.extend_from_slice(b"[\"");
+        out.extend_from_slice(node_type.name().as_bytes());
+        out.extend_from_slice(b"\",[");
+        for (i, entry) in node_type.fields().iter().enumerate() {
+            let flags = u8::from(entry.is_child)
+                | u8::from(entry.is_typescript_only) << 1
+                | u8::from(entry.is_espree_only) << 2
+                | u8::from(entry.is_hidden) << 3;
+            if i > 0 {
+                out.push(b',');
+            }
+            out.extend_from_slice(b"[\"");
+            out.extend_from_slice(entry.field.name().as_bytes());
+            out.extend_from_slice(b"\",");
+            out.extend_from_slice(if flags >= 10 { b"1" } else { b"" });
+            out.push(b'0' + flags % 10);
+            out.push(b']');
+        }
+        out.extend_from_slice(b"]]");
+    }
+    out.extend_from_slice(b"]}");
+}

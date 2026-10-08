@@ -7,6 +7,7 @@
 //! - [`types`]: types.
 //! - [`code_path`]: ESLint's code path analysis.
 //! - [`rule`]: what a rule is. Start there.
+//! - [`js_plugin`]: rules that are written in JavaScript.
 //!
 //! The rules are in the crates `bun_lint_eslint`, `bun_lint_typescript` and `bun_lint_plugins`.
 
@@ -15,6 +16,7 @@ pub mod code_path;
 pub mod context;
 pub(crate) mod estree;
 pub mod fix;
+pub mod js_plugin;
 pub mod json;
 pub mod language;
 pub mod linter;

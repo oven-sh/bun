@@ -635,9 +635,9 @@ fn fix_assertion<'a>(fixer: Fixer<'a>, assertion: Assertion<'a>) -> Option<Vec<F
     Some(vec![fixer.remove(Span::new(token_before_as.end(), node.span().end))])
 }
 
-fn fix_non_null_assertion(fixer: Fixer, node: Expr) -> Fix {
-    let end = node.span().end;
-    fixer.remove(Span::new(end.saturating_sub(1), end))
+/// `node`: the range of a `TSNonNullExpression`, which ends with its `!`.
+fn fix_non_null_assertion(fixer: Fixer, node: Span) -> Fix {
+    fixer.remove(Span::new(node.end.saturating_sub(1), node.end))
 }
 
 impl NoUnnecessaryTypeAssertion {
@@ -727,31 +727,58 @@ impl NoUnnecessaryTypeAssertion {
         let ExprKind::NonNull(expression) = node.kind() else {
             return;
         };
+        // `x!!` is one node here. For ESLint it is `x!` in another assertion, and each is looked at.
+        let mut inner = node.inner_non_null_spans();
+        let innermost = inner.next();
+        let is_run = innermost.is_some();
+        let outermost = node.span();
+
+        let actual_type = expression.ty();
+        let is_resolved = !actual_type.is_unresolved();
+        let constrained_type = get_constrained_type_at_location(expression);
+        // The constraint of a type parameter can be `any`, which is nullable, while TypeScript
+        // takes the type parameter itself for what it is.
+        let is_nullable = is_nullable_type(constrained_type) || is_nullable_type(actual_type);
+        // What an assertion is applied to in a run, from the second on: the type of the one before.
+        let asserted_type = node.ty();
+        if let Some(innermost) = innermost
+            && is_resolved
+        {
+            // Nothing is known about what an assertion accepts, so `x!` is only reported if `x` cannot be null.
+            if !is_nullable && !(expression.tag() == ExprTag::Ident && is_possibly_used_before_assigned(expression)) {
+                cx.report(innermost, UNNECESSARY_ASSERTION).fix(|fixer| fix_non_null_assertion(fixer, innermost));
+            }
+            if !is_nullable_type(asserted_type) {
+                for between in inner {
+                    cx.report(between, UNNECESSARY_ASSERTION).fix(|fixer| fix_non_null_assertion(fixer, between));
+                }
+            }
+        }
+
         if let Node::Expr(parent) = node.parent()
             && let ExprKind::Assign { op: None, target, .. } = parent.kind()
             && !parent.is_assignment_target()
         {
             if target == node {
-                cx.report(node, CONTEXTUALLY_UNNECESSARY).fix(|fixer| fix_non_null_assertion(fixer, node));
+                cx.report(node, CONTEXTUALLY_UNNECESSARY).fix(|fixer| fix_non_null_assertion(fixer, outermost));
             }
             // What is assigned is not looked at: an assertion that the assignment does not need
             // can change the type of the variable in what follows.
             return;
         }
-
-        let actual_type = expression.ty();
-        if actual_type.is_unresolved() {
+        if !is_resolved {
             return;
         }
-        let constrained_type = get_constrained_type_at_location(expression);
+        let (actual_type, constrained_type, is_nullable) = match is_run {
+            true => (asserted_type, asserted_type, is_nullable_type(asserted_type)),
+            false => (actual_type, constrained_type, is_nullable),
+        };
 
-        // The constraint of a type parameter can be `any`, which is nullable, while TypeScript
-        // takes the type parameter itself for what it is.
-        if !is_nullable_type(constrained_type) && !is_nullable_type(actual_type) {
-            if expression.tag() == ExprTag::Ident && is_possibly_used_before_assigned(expression) {
+        if !is_nullable {
+            if !is_run && expression.tag() == ExprTag::Ident && is_possibly_used_before_assigned(expression) {
                 return;
             }
-            cx.report(node, UNNECESSARY_ASSERTION).fix(|fixer| fix_non_null_assertion(fixer, node));
+            cx.report(node, UNNECESSARY_ASSERTION).fix(|fixer| fix_non_null_assertion(fixer, outermost));
             return;
         }
 
@@ -772,7 +799,7 @@ impl NoUnnecessaryTypeAssertion {
             .into_iter()
             .all(|flag| !is_type_flag_set(constrained_type, flag) || is_type_flag_set(contextual_type, flag));
         if is_valid {
-            cx.report(node, CONTEXTUALLY_UNNECESSARY).fix(|fixer| fix_non_null_assertion(fixer, node));
+            cx.report(node, CONTEXTUALLY_UNNECESSARY).fix(|fixer| fix_non_null_assertion(fixer, outermost));
         }
     }
 }

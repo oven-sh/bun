@@ -1,6 +1,7 @@
 //! What is known here of a plugin, and what a configuration makes of its rules.
 
 use crate::language::{Global, LanguageOptions, SourceType};
+use crate::linter::globals::environment;
 use crate::linter::write_json;
 use crate::options::Json;
 use crate::rule::Kind;
@@ -90,7 +91,7 @@ impl Configured {
 #[derive(Debug)]
 pub struct FileSettings {
     pub(super) id: u32,
-    /// `[id, { settings, languageOptions }]`
+    /// `[id, { settings, languageOptions, globals }]`
     pub(super) json: Box<[u8]>,
 }
 
@@ -124,9 +125,32 @@ impl FileSettings {
             Json::Null => Json::Object(Vec::new()),
             settings => settings.clone(),
         };
+        // ESLint's `configGlobals`.
+        let setting_name = |setting: Global| -> &'static [u8] {
+            match setting {
+                Global::Readonly => b"readonly",
+                Global::Writable => b"writable",
+                Global::Off => b"off",
+            }
+        };
+        let mut all_globals: Vec<(Vec<u8>, Json)> = Vec::new();
+        let mut put = |name: &[u8], setting: Global| match all_globals.iter_mut().find(|it| it.0 == name) {
+            Some(existing) => existing.1 = string(setting_name(setting)),
+            None => all_globals.push((name.to_vec(), string(setting_name(setting)))),
+        };
+        let version = format!("es{}", language.ecma_version);
+        environment(version.as_bytes()).into_iter().flatten().for_each(|it| put(it.0, it.1));
+        if language.source_type == SourceType::CommonJs {
+            environment(b"commonjs").into_iter().flatten().for_each(|it| put(it.0, it.1));
+        }
+        language.globals.iter().for_each(|it| put(&it.0, it.1));
         let all = Json::Array(vec![
             Json::Number(f64::from(id)),
-            Json::Object(vec![(b"settings".to_vec(), settings), (b"languageOptions".to_vec(), language_options)]),
+            Json::Object(vec![
+                (b"settings".to_vec(), settings),
+                (b"languageOptions".to_vec(), language_options),
+                (b"globals".to_vec(), Json::Object(all_globals)),
+            ]),
         ]);
         let mut json = Vec::new();
         write_json(&mut json, &all);

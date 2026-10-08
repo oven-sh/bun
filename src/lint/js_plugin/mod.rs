@@ -31,5 +31,7 @@ pub use rules::{Configured, FileSettings, Plugin, Rule, Schema};
 #[doc(hidden)]
 pub use schema::PROGRAM;
 
-/// What a worker is started with: `bun -e BOOTSTRAP`. It reads the program from its standard input.
+/// What a worker is started with: `bun -e BOOTSTRAP`. It reads what [`Channel::send`] sends from the file descriptor 3, and
+/// what it writes to 4 is for [`Channel::receive`]. Both are pipes that block. Its standard output is for what plugins
+/// print, and should be the standard error of this process.
 pub const BOOTSTRAP: &str = include_str!("worker/bootstrap.js");

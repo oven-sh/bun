@@ -1,7 +1,7 @@
 // ───────────── the worker ─────────────
 //
-// Reads messages from standard input and answers on standard output: see `wire.rs`. All of it is
-// synchronous but for loading a plugin.
+// Reads messages from the file descriptor 3 and answers on 4: see `wire.rs`. All of it is synchronous
+// but for loading a plugin.
 
 const { writeSync } = require("node:fs");
 const { pathToFileURL } = require("node:url");
@@ -9,10 +9,6 @@ const { createRequire } = require("node:module");
 const nodePath = require("node:path");
 
 const decoder = new TextDecoder("utf-8", { ignoreBOM: true });
-
-// What a plugin prints must not get between the messages.
-console.log = console.info = console.debug = console.error;
-process.stdout.write = process.stderr.write.bind(process.stderr);
 
 const START = 2;
 const LOAD = 3;
@@ -63,7 +59,7 @@ function send(kind, content) {
   message.writeUInt32LE(bytes.length, 0);
   message.writeUInt32LE(kind, 4);
   message.set(bytes, 8);
-  for (let at = 0; at < message.length; ) at += writeSync(1, message, at);
+  for (let at = 0; at < message.length; ) at += writeSync(4, message, at);
 }
 
 // Sends a request, and waits for the answer, which is of the kind `expected`.

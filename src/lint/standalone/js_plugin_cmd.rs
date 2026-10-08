@@ -2,8 +2,11 @@
 //!
 //! - `lint --plugin=<specifier> [--alias=<name>] [--rules=<{ "rule": [options] }>] [--language=<languageOptions>] <files..>`:
 //!   what the rules of a plugin, all of them unless `--rules` says which, report for each file, a line of JSON for each.
+//! - `batch --plugin=<specifier> [--alias=<name>] [--rules=..] <cases.jsonl>`: the same for each case, which is
+//!   `{ id, filename, code, languageOptions, settings, rules }`, of which only `id` and `code` are required. Prints
+//!   `{ id, messages }` or `{ id, failure }`, a line for each.
 
-use bun_lint::js_plugin::{BOOTSTRAP, Channel, Configured, FileSettings, Host, Report};
+use bun_lint::js_plugin::{BOOTSTRAP, Channel, Configured, FileSettings, Host, Plugin, Report};
 use bun_lint::language::LanguageOptions;
 use bun_lint::options::Json;
 use std::io::{Read, Write};
@@ -36,8 +39,10 @@ impl Drop for Process {
 
 /// Starts a worker with the `bun` that is in `PATH`.
 pub(crate) fn spawn() -> Result<Box<dyn Channel>, Vec<u8>> {
-    let mut command = Command::new(std::env::var("BUN_LINT_BUN").unwrap_or_else(|_| "bun".to_owned()));
-    command.args(["-e", BOOTSTRAP]).stdin(Stdio::piped()).stdout(Stdio::piped());
+    let bun = std::env::var("BUN_LINT_BUN").unwrap_or_else(|_| "bun".to_owned());
+    let mut command = Command::new("sh");
+    command.args(["-c", "exec \"$0\" \"$@\" 3<&0 4>&1 1>&2 </dev/null", &bun, "-e", BOOTSTRAP]);
+    command.stdin(Stdio::piped()).stdout(Stdio::piped());
     let mut child = command.spawn().map_err(|error| error.to_string().into_bytes())?;
     let (input, output) = (child.stdin.take(), child.stdout.take());
     Ok(Box::new(Process {
@@ -113,15 +118,7 @@ fn lint(args: &[String]) {
         Err(why) => return println!("cannot load {specifier}: {}", text(&why)),
     };
     let rules = flag("--rules=").map(|it| bun_lint::json::parse(it.as_bytes()).expect("--rules is JSON"));
-    let enabled: Vec<Arc<Configured>> = match &rules {
-        None => plugin.rules.iter().map(|it| Configured::new(Arc::clone(it), &it.default_options)).collect(),
-        Some(rules) => (rules.as_object().unwrap_or_default().iter())
-            .map(|(name, options)| {
-                let rule = plugin.rule(name).unwrap_or_else(|| panic!("no rule {}", text(name)));
-                Configured::new(Arc::clone(rule), options.as_array().unwrap_or_default())
-            })
-            .collect(),
-    };
+    let enabled = enabled_by(&plugin, rules.as_ref());
     let language = flag("--language=").map(|it| bun_lint::json::parse(it.as_bytes()).expect("--language is JSON"));
     let language = LanguageOptions::from_json(language.as_ref().unwrap_or(&Json::Null), &Json::Null);
     let settings = FileSettings::new(&language);
@@ -140,9 +137,79 @@ fn lint(args: &[String]) {
     }
 }
 
+fn enabled_by(plugin: &Plugin, rules: Option<&Json>) -> Vec<Arc<Configured>> {
+    match rules {
+        None | Some(Json::Null) => plugin.rules.iter().map(|it| Configured::new(Arc::clone(it), &it.default_options)).collect(),
+        Some(rules) => (rules.as_object().unwrap_or_default().iter())
+            .map(|(name, options)| {
+                let rule = plugin.rule(name).unwrap_or_else(|| panic!("no rule {}", text(name)));
+                Configured::new(Arc::clone(rule), options.as_array().unwrap_or_default())
+            })
+            .collect(),
+    }
+}
+
+fn batch(args: &[String]) {
+    let flag = |name: &str| args.iter().find_map(|it| it.strip_prefix(name));
+    let cwd = std::env::current_dir().expect("the working directory").to_string_lossy().into_owned();
+    let host = new_host(&cwd, 1);
+    let specifier = flag("--plugin=").expect("--plugin");
+    let plugin = match host.load(cwd.as_bytes(), specifier.as_bytes(), flag("--alias=").map(str::as_bytes)) {
+        Ok(plugin) => plugin,
+        Err(why) => return println!("cannot load {specifier}: {}", text(&why)),
+    };
+    let rules = flag("--rules=").map(|it| bun_lint::json::parse(it.as_bytes()).expect("--rules is JSON"));
+    let for_all = enabled_by(&plugin, rules.as_ref());
+    let cases = std::fs::read(args.iter().find(|it| !it.starts_with("--")).expect("the cases")).expect("the cases");
+    // By what they are made of.
+    let mut known: Vec<(Vec<u8>, Arc<(LanguageOptions, Arc<FileSettings>)>)> = Vec::new();
+    std::panic::set_hook(Box::new(|_| {}));
+    for line in bun_core::strings::split(&cases, b"\n").filter(|it| !it.is_empty()) {
+        let case = bun_lint::json::parse(line).expect("a case");
+        let (language, settings) = (case.get(b"languageOptions").unwrap_or(&Json::Null), case.get(b"settings").unwrap_or(&Json::Null));
+        let mut key = Vec::new();
+        bun_lint::linter::write_json(&mut key, &Json::Array(vec![language.clone(), settings.clone()]));
+        let configuration = match known.iter().find(|it| it.0 == key) {
+            Some(found) => Arc::clone(&found.1),
+            None => {
+                let language = LanguageOptions::from_json(language, settings);
+                let settings = FileSettings::new(&language);
+                known.push((key, Arc::new((language, settings))));
+                Arc::clone(&known[known.len() - 1].1)
+            }
+        };
+        let own = case.get(b"rules").map(|it| enabled_by(&plugin, Some(it)));
+        let enabled = own.as_ref().unwrap_or(&for_all);
+        let references: Vec<&Configured> = enabled.iter().map(|it| &**it).collect();
+        let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
+        let name = case.get(b"filename").and_then(Json::as_str).map_or_else(|| "file.js".to_owned(), text);
+        let path = std::path::Path::new(&cwd).join(name).to_string_lossy().into_owned();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::with_file(&path, code, &configuration.0, |file| {
+                if bun_lint::linter::parse_error(file).is_some() {
+                    return Err(bun_lint::js_plugin::Failure::from(b"the parser rejects the code".to_vec()));
+                }
+                host.run(file, &configuration.1, &references, true)
+            })
+        }));
+        let outcome = match result {
+            Ok(Ok(reports)) => {
+                (b"messages".to_vec(), Json::Array(reports.iter().map(|it| report_as_json(it, enabled, code)).collect()))
+            }
+            Ok(Err(failure)) => (b"failure".to_vec(), Json::String(failure.message)),
+            Err(_) => (b"failure".to_vec(), Json::String(b"panicked".to_vec())),
+        };
+        let mut line = Vec::new();
+        let id = (b"id".to_vec(), case.get(b"id").cloned().unwrap_or(Json::Null));
+        bun_lint::linter::write_json(&mut line, &Json::Object(vec![id, outcome]));
+        println!("{}", text(&line));
+    }
+}
+
 pub(crate) fn run(args: &[String]) {
     match args.first().map(String::as_str) {
         Some("lint") => lint(&args[1..]),
+        Some("batch") => batch(&args[1..]),
         _ => println!("usage: bun-lint js_plugin lint --plugin=<specifier> <files..>"),
     }
 }

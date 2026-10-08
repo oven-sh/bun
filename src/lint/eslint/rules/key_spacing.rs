@@ -260,8 +260,8 @@ impl KeySpacing {
         let Some(actual) = get_property_whitespace(cx.file(), key, value_start) else {
             return;
         };
-        let is_single_line =
-            self.single_line != self.multi_line && !text::has_line_break(cx.slice(parent()));
+        let is_on_one_line = |span: Span| cx.line_of(span.start) == cx.line_of(span.end);
+        let is_single_line = self.single_line != self.multi_line && is_on_one_line(parent());
         let options = if is_single_line { self.single_line } else { self.multi_line };
         verify_spacing(cx, key, actual, options);
     }

@@ -404,10 +404,11 @@ pub(super) fn get_member<'a>(object: &StaticValue<'a>, key: &PropertyKey<'a>) ->
                 };
             }
             // Whether all the properties of this one are listed.
-            let is_known = builtin.member() != Member::Function
+            let is_known = !is_constructor
+                || builtin.member() != Member::Function
                 || matches!(
                     path,
-                    "Array" | "ArrayBuffer" | "DataView" | "Function" | "Promise" | "Proxy" | "Symbol" | "WeakMap" | "WeakSet"
+                    "Array" | "ArrayBuffer" | "DataView" | "Function" | "Promise" | "Symbol" | "WeakMap" | "WeakSet"
                 );
             match (is_known, builtin.is_callable()) {
                 (false, _) => Err(Stop::Abort),

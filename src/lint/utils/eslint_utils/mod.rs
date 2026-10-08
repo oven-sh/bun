@@ -33,6 +33,21 @@
 //!
 //! What `getStaticValue` needs of JavaScript's numbers is of use on its own: [`js_number`].
 //!
+//! | JavaScript | [`js_number`] |
+//! | --- | --- |
+//! | `n.toFixed(d)`, `n.toExponential(d)`, `n.toPrecision(p)`, `n.toString(radix)` | `to_fixed`, `to_exponential`, `to_precision`, `to_radix_string` |
+//! | the digits and the exponent of `n.toPrecision(p)` | `decimal_digits` |
+//! | `parseInt(s, radix)`, `parseFloat(s)` | `parse_int`, `parse_float` |
+//! | `n \| 0`, `n >>> 0` | `to_int32`, `to_uint32` |
+//!
+//! `test/cli/lint/oracle/utils-eslint` compares all of this with upstream, node by node. What is
+//! known to differ:
+//! - [`get_static_value`] has no value for what [`StaticValue`] does not represent: `Date`, typed
+//!   arrays, a `bigint` beyond 128 bits, an object with a prototype or a conversion of its own.
+//! - `class A implements b.c` and `interface A extends b.c` have no member access here, so
+//!   [`has_side_effect`] sees no getter in them and [`ReferenceTracker`] does not follow them.
+//! - `x as const` is no reference to a global `const`.
+//!
 //! No function takes a `sourceCode`: every handle knows its file.
 //!
 //! The token predicates take `&Token`, which is what `Iterator::find` and `Iterator::filter` pass:

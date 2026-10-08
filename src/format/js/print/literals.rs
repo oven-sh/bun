@@ -21,11 +21,30 @@ pub(crate) fn write_big_int_literal<'a>(e: Expr<'a>, f: &mut Formatter<'a>) {
     }
 }
 
+/// An error: `/a/é`. The characters are sorted as JavaScript sorts strings, by UTF-16 code units.
+#[cold]
+fn write_reg_exp_literal_with_unknown_flags<'a>(raw: &'a [u8], flags: &[u8], f: &mut Formatter<'a>) {
+    let Ok(characters) = std::str::from_utf8(flags) else {
+        return write!(f, text(raw));
+    };
+    let mut characters: Vec<char> = characters.chars().collect();
+    characters.sort_by(|a, b| a.encode_utf16(&mut [0; 2]).cmp(&b.encode_utf16(&mut [0; 2])));
+    f.write_built_text(|out| {
+        out.extend_from_slice(raw.get(..raw.len() - flags.len()).unwrap_or_default());
+        for character in characters {
+            out.extend_from_slice(character.encode_utf8(&mut [0; 4]).as_bytes());
+        }
+    });
+}
+
 /// The flags are sorted.
 pub(crate) fn write_reg_exp_literal<'a>(e: Expr<'a>, regex: Regex<'a>, f: &mut Formatter<'a>) {
     let (raw, flags) = (e.text(), regex.flags());
     if flags.is_sorted() {
         return write!(f, text(raw));
+    }
+    if !flags.is_ascii() {
+        return write_reg_exp_literal_with_unknown_flags(raw, flags, f);
     }
     f.write_built_text(|out| {
         let start = out.len() + raw.len() - flags.len();

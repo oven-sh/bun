@@ -1,9 +1,9 @@
-use super::child_list::{FormatChildrenResult, FormatJsxChildList, JsxChildListLayout};
+use super::child_list::{FormatChildrenResult, format_children};
 use super::opening_element::FormatOpeningElement;
 use super::{FormatJsxChild, write_jsx_closing_element, write_jsx_fragment_tag};
 use crate::js::format::write_trailing_comments_of;
 use crate::js::parentheses::expression::needs_parentheses;
-use crate::js::utils::jsx::{WrapState, is_meaningful_jsx_text};
+use crate::js::utils::jsx::WrapState;
 use crate::js::utils::suppressed::FormatSuppressedNode;
 use crate::prelude::*;
 use crate::{best_fitting, format_args, write};
@@ -49,18 +49,13 @@ impl<'a> AnyJsxTagWithChildren<'a> {
 
     /// Prettier's `maybeWrapJsxElementInParens`.
     fn get_wrap_state(&self) -> WrapState {
-        let is_argument = |call: Expr<'a>| call.callee() != Some(self.expr);
         match self.parent() {
             AstNodes::ArrayExpression(_)
             | AstNodes::JSXAttribute(_)
             | AstNodes::JSXExpressionContainer(_)
-            | AstNodes::ConditionalExpression(_) => WrapState::NoWrap,
-            AstNodes::StaticMemberExpression(member) | AstNodes::ComputedMemberExpression(member)
-                if member.is_optional() =>
-            {
-                WrapState::NoWrap
-            }
-            AstNodes::CallExpression(call) | AstNodes::NewExpression(call) if is_argument(call) => WrapState::NoWrap,
+            | AstNodes::ConditionalExpression(_)
+            | AstNodes::CallExpression(_)
+            | AstNodes::NewExpression(_) => WrapState::NoWrap,
             AstNodes::ExpressionStatement(statement) if !statement.is_arrow_function_body() => WrapState::NoWrap,
             _ => WrapState::WrapOnBreak,
         }
@@ -86,27 +81,17 @@ impl<'a> AnyJsxTagWithChildren<'a> {
     }
 
     fn layout(&self) -> ElementLayout<'a> {
-        let children = self.jsx.children();
-        let Some(child) = children.first() else {
-            return ElementLayout::NoChildren;
-        };
-        if children.len() > 1 {
-            return ElementLayout::Default;
-        }
-        // Whitespace with a line break next to the only child makes it more than one.
-        let has_whitespace = self.jsx.children_with_whitespace().count() > 1;
-        if child.is_jsx_text() {
-            match is_meaningful_jsx_text(child.text()) {
-                true => ElementLayout::Default,
-                false => ElementLayout::NoChildren,
+        let mut children = self.jsx.children_with_whitespace();
+        match (children.next(), children.next()) {
+            (None, _) if !self.jsx.is_fragment() => ElementLayout::NoChildren,
+            (Some(JsxChild::Whitespace(_)), None) if !self.jsx.is_fragment() => ElementLayout::NoChildren,
+            (Some(JsxChild::Expr(child)), None)
+                if child.jsx_container_span().is_some()
+                    && matches!(child.kind(), ExprKind::Template(_) | ExprKind::TaggedTemplate(_)) =>
+            {
+                ElementLayout::Template(child)
             }
-        } else if !has_whitespace
-            && child.jsx_container_span().is_some()
-            && matches!(child.kind(), ExprKind::Template(_) | ExprKind::TaggedTemplate(_))
-        {
-            ElementLayout::Template(child)
-        } else {
-            ElementLayout::Default
+            _ => ElementLayout::Default,
         }
     }
 }
@@ -131,17 +116,13 @@ impl<'a> Format<'a> for AnyJsxTagWithChildren<'a> {
                     let format_opening = format_opening.memoized();
                     let opening_breaks = format_opening.inspect(f).will_break();
                     let multiple_attributes = self.jsx.attrs().len() > 1;
-                    let list_layout = match multiple_attributes || opening_breaks {
-                        true => JsxChildListLayout::Multiline,
-                        false => JsxChildListLayout::BestFitting,
-                    };
 
-                    match (FormatJsxChildList { layout: list_layout }).fmt_children(self.jsx, f) {
+                    match format_children(self.jsx, multiple_attributes || opening_breaks, f) {
                         FormatChildrenResult::SingleChild(child) => {
                             write!(f, group(&format_args!(format_opening, child, format_closing)));
                         }
                         FormatChildrenResult::ForceMultiline(multiline) => {
-                            write!(f, [format_opening, multiline, format_closing]);
+                            write!(f, group(&format_args!(format_opening, multiline, format_closing)));
                         }
                         FormatChildrenResult::BestFitting {
                             flat_children,
@@ -151,8 +132,8 @@ impl<'a> Format<'a> for AnyJsxTagWithChildren<'a> {
                             write!(
                                 f,
                                 best_fitting![
-                                    format_args!(format_opening, flat_children, format_closing),
-                                    format_args!(format_opening, expanded_children, format_closing)
+                                    group(&format_args!(format_opening, flat_children, format_closing)),
+                                    group(&format_args!(format_opening, expanded_children, format_closing))
                                 ]
                             );
                         }

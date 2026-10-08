@@ -1,71 +1,73 @@
 //! Prettier's `printNumber`.
 
 use crate::prelude::*;
+use smallvec::SmallVec;
 use std::borrow::Cow;
 
-/// - Lowercase everything: `0XAB` is `0xab`, `1E5` is `1e5`, `10N` is `10n`.
+/// - Lowercase everything: `0XAB` is `0xab`, `1E5` is `1e5`.
 /// - No `+` and no leading zeros in the exponent: `1e+05` is `1e5`. No exponent that is zero.
 /// - A digit before the dot: `.5` is `0.5`.
 /// - No trailing zeros after the dot, except for one if there is nothing else: `1.50` is `1.5`,
 ///   `1.00` is `1.0`.
 /// - No trailing dot: `1.` is `1`.
+///
+/// Prettier does this with regular expressions that know nothing about `_`, so a separator in the
+/// wrong place keeps a rule from being applied: `1_0.50` is `1_0.5`, `1.5_0` stays.
 pub(crate) fn format_trimmed_number(text: &[u8]) -> Cow<'_, [u8]> {
-    let is_plain = |b: &u8| b.is_ascii_digit();
-    if text.len() == 1 || text.iter().all(is_plain) {
+    if text.len() == 1 || text.iter().all(u8::is_ascii_digit) {
         return Cow::Borrowed(text);
     }
-    let lower = text.to_ascii_lowercase();
-    // Only decimal literals without separators match the patterns.
-    let is_decimal = lower.iter().all(|b| b.is_ascii_digit() || matches!(b, b'.' | b'e' | b'+' | b'-'));
-    if !is_decimal {
-        let mut out = lower;
-        if out.first() == Some(&b'.') {
-            out.insert(0, b'0');
-        }
-        return finish(text, out);
-    }
+    let mut out: SmallVec<[u8; 32]> = text.iter().map(u8::to_ascii_lowercase).collect();
 
-    let (mantissa, exponent) = match bun_core::strings::split_once_char(&lower, b'e') {
-        Some((mantissa, exponent)) => (mantissa, Some(exponent)),
-        None => (&lower[..], None),
-    };
-    let mut out = Vec::with_capacity(lower.len() + 1);
-    if mantissa.first() == Some(&b'.') {
-        out.push(b'0');
-    }
-    match bun_core::strings::split_once_char(mantissa, b'.') {
-        Some((integer, fraction)) => {
-            out.extend_from_slice(integer);
-            // `(\.\d+?)0+(?=e|$)` keeps at least one digit.
-            let significant = fraction.len() - fraction.iter().rev().take_while(|b| **b == b'0').count();
-            let kept = &fraction[..significant.max(1).min(fraction.len())];
-            if !kept.is_empty() {
-                out.push(b'.');
-                out.extend_from_slice(kept);
+    let mantissa_len = out.iter().take_while(|b| b.is_ascii_digit() || **b == b'.').count();
+    if mantissa_len > 0 && out.get(mantissa_len) == Some(&b'e') {
+        // `^([\d.]+e)(?:\+|(-))?0*(?=\d)` becomes `$1$2`
+        let sign = mantissa_len + 1;
+        let digits = sign + usize::from(matches!(out.get(sign), Some(b'+' | b'-')));
+        let zeros = out.iter().skip(digits).take_while(|b| **b == b'0').count();
+        let removed_zeros = match out.get(digits + zeros) {
+            Some(next) if next.is_ascii_digit() => zeros,
+            _ => zeros.saturating_sub(1),
+        };
+        if out.get(digits + removed_zeros).is_some_and(u8::is_ascii_digit) {
+            out.drain(digits..digits + removed_zeros);
+            if out.get(sign) == Some(&b'+') {
+                out.remove(sign);
             }
         }
-        None => out.extend_from_slice(mantissa),
-    }
-    if let Some(exponent) = exponent {
-        let (sign, digits) = match exponent.split_first() {
-            Some((b'-', digits)) => (&b"-"[..], digits),
-            Some((b'+', digits)) => (&b""[..], digits),
-            _ => (&b""[..], exponent),
-        };
-        let digits = &digits[digits.iter().take_while(|b| **b == b'0').count()..];
-        if !digits.is_empty() {
-            out.push(b'e');
-            out.extend_from_slice(sign);
-            out.extend_from_slice(digits);
+        // `^([\d.]+)e[+-]?0+$` becomes `$1`
+        let digits = sign + usize::from(matches!(out.get(sign), Some(b'+' | b'-')));
+        if digits < out.len() && out.iter().skip(digits).all(|b| *b == b'0') {
+            out.truncate(mantissa_len);
         }
     }
-    finish(text, out)
-}
 
-fn finish(text: &[u8], out: Vec<u8>) -> Cow<'_, [u8]> {
-    match out == text {
+    // `^\.` becomes `0.`
+    if out.first() == Some(&b'.') {
+        out.insert(0, b'0');
+    }
+
+    if let Some(dot) = bun_core::strings::index_of_char_usize(&out, b'.') {
+        // `(\.\d+?)0+(?=e|$)` becomes `$1`
+        let fraction = dot + 1;
+        let fraction_end = fraction + out.iter().skip(fraction).take_while(|b| b.is_ascii_digit()).count();
+        if matches!(out.get(fraction_end), None | Some(b'e')) {
+            let digits = out.get(fraction..fraction_end).unwrap_or_default();
+            let zeros = digits.iter().rev().take_while(|b| **b == b'0').count();
+            let kept_end = (fraction_end - zeros).max(fraction + 1);
+            if kept_end < fraction_end {
+                out.drain(kept_end..fraction_end);
+            }
+        }
+        // `\.(?=e|$)` is removed
+        if matches!(out.get(fraction), None | Some(b'e')) {
+            out.remove(dot);
+        }
+    }
+
+    match out[..] == *text {
         true => Cow::Borrowed(text),
-        false => Cow::Owned(out),
+        false => Cow::Owned(out.to_vec()),
     }
 }
 

@@ -4,7 +4,7 @@
 //! a line break in the source.
 
 use super::type_parameters::type_arguments;
-use crate::core::width::string_width;
+use crate::ir::width::string_width;
 use crate::js::utils::call_expression::is_test_each_pattern;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::prelude::*;
@@ -88,44 +88,70 @@ enum TemplateLike<'a> {
     TSTemplateLiteralType(TypeTemplate<'a>),
 }
 
-impl<'a> Format<'a> for TemplateLike<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        write!(f, "`");
-        let mut indention = TemplateElementIndention::default();
-        let quasi_count = match self {
+impl<'a> TemplateLike<'a> {
+    fn quasi_count(self) -> usize {
+        match self {
             Self::TemplateLiteral(t) => t.quasi_count(),
             Self::TSTemplateLiteralType(t) => t.quasi_count(),
-        };
-
-        for i in 0..quasi_count {
-            let (quasi_text, expression) = match self {
-                Self::TemplateLiteral(t) => (t.raw(i), t.exprs().get(i).map(TemplateExpression::Expression)),
-                Self::TSTemplateLiteralType(t) => (t.raw(i), t.types().get(i).map(TemplateExpression::TSType)),
-            };
-            write!(f, text(quasi_text));
-
-            if let Some(expression) = expression {
-                let tab_width = u32::from(f.options().indent_width.value());
-                indention = TemplateElementIndention::after_last_new_line(quasi_text, tab_width, indention);
-                FormatTemplateExpression {
-                    expression,
-                    options: FormatTemplateExpressionOptions {
-                        indention,
-                        after_new_line: quasi_text.ends_with(b"\n"),
-                    },
-                }
-                .fmt(f);
-            }
         }
-        write!(f, "`");
+    }
+
+    fn raw(self, i: usize) -> &'a [u8] {
+        match self {
+            Self::TemplateLiteral(t) => t.raw(i),
+            Self::TSTemplateLiteralType(t) => t.raw(i),
+        }
+    }
+
+    fn expression(self, i: usize) -> Option<TemplateExpression<'a>> {
+        match self {
+            Self::TemplateLiteral(t) => t.exprs().get(i).map(TemplateExpression::Expression),
+            Self::TSTemplateLiteralType(t) => t.types().get(i).map(TemplateExpression::TSType),
+        }
+    }
+
+    /// What is between the `${` and the `}` of the substitution at `i`.
+    fn interpolation_span(self, i: usize) -> Span {
+        match self {
+            Self::TemplateLiteral(t) => Span::new(t.quasi_span(i).end, t.quasi_span(i + 1).start),
+            Self::TSTemplateLiteralType(t) => Span::new(t.quasi_span(i).end, t.quasi_span(i + 1).start),
+        }
+    }
+
+    /// The substitutions. `is_in_jest_each`: they are the cells of a table, which is indented.
+    fn expressions(
+        self,
+        is_in_jest_each: bool,
+        f: &Formatter<'a>,
+    ) -> impl Iterator<Item = FormatTemplateExpression<'a>> + use<'a> {
+        let tab_width = u32::from(f.options().indent_width.value());
+        let mut indention = TemplateElementIndention::default();
+        (0..self.quasi_count()).map_while(move |i| {
+            let quasi_text = self.raw(i);
+            indention = TemplateElementIndention::after_last_new_line(quasi_text, tab_width, indention);
+            let indention = match is_in_jest_each {
+                true => TemplateElementIndention(indention.0.max(tab_width)),
+                false => indention,
+            };
+            Some(FormatTemplateExpression {
+                expression: self.expression(i)?,
+                interpolation: self.interpolation_span(i),
+                indention,
+                after_new_line: indention.0 == 0 && quasi_text.ends_with(b"\n"),
+            })
+        })
     }
 }
 
-#[derive(Debug, Copy, Clone, Default)]
-struct FormatTemplateExpressionOptions {
-    indention: TemplateElementIndention,
-    /// The `${` is the first thing on its line.
-    after_new_line: bool,
+impl<'a> Format<'a> for TemplateLike<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        write!(f, [line_suffix_boundary(), "`"]);
+        let mut expressions = self.expressions(false, f);
+        for i in 0..self.quasi_count() {
+            write!(f, [text(self.raw(i)), expressions.next()]);
+        }
+        write!(f, "`");
+    }
 }
 
 #[derive(Copy, Clone)]
@@ -146,12 +172,15 @@ impl Spanned for TemplateExpression<'_> {
 /// `${e}`
 struct FormatTemplateExpression<'a> {
     expression: TemplateExpression<'a>,
-    options: FormatTemplateExpressionOptions,
+    /// What is between the `${` and the `}`.
+    interpolation: Span,
+    indention: TemplateElementIndention,
+    /// The `${` is the first thing on its line.
+    after_new_line: bool,
 }
 
 impl<'a> Format<'a> for FormatTemplateExpression<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
-        let options = self.options;
         let mut has_comment_in_expression = false;
 
         let interned_expression = match self.expression {
@@ -176,7 +205,7 @@ impl<'a> Format<'a> for FormatTemplateExpression<'a> {
             return write!(f, "${}");
         };
 
-        let layout = match self.has_new_line_in_range(f) || element.will_break(f) {
+        let layout = match f.source_text().contains_newline(self.interpolation) || element.will_break(f) {
             true => TemplateElementLayout::Fit,
             false => TemplateElementLayout::SingleLine,
         };
@@ -186,23 +215,24 @@ impl<'a> Format<'a> for FormatTemplateExpression<'a> {
             TemplateElementLayout::SingleLine => f.write_without_soft_lines(&content),
             TemplateElementLayout::Fit => {
                 let indent = matches!(self.expression, TemplateExpression::Expression(e) if {
+                    // Prettier's `stripChainElementWrappers`
+                    let mut stripped = e;
+                    while let ExprKind::NonNull(inner) = stripped.kind() {
+                        stripped = inner;
+                    }
                     has_comment_in_expression
-                        || match e.as_ast_nodes() {
-                            AstNodes::StaticMemberExpression(_)
-                            | AstNodes::ComputedMemberExpression(_)
-                            | AstNodes::PrivateFieldExpression(_)
-                            | AstNodes::ConditionalExpression(_)
-                            | AstNodes::SequenceExpression(_)
-                            | AstNodes::TSAsExpression(_)
-                            | AstNodes::TSSatisfiesExpression(_)
-                            | AstNodes::BinaryExpression(_)
-                            | AstNodes::LogicalExpression(_)
-                            | AstNodes::IdentifierReference(_) => true,
-                            AstNodes::ChainExpression(chain) => {
-                                matches!(chain.kind(), ExprKind::Dot { .. } | ExprKind::Index { .. })
-                            }
-                            _ => false,
-                        }
+                        || matches!(stripped.kind(), ExprKind::Dot { .. } | ExprKind::Index { .. })
+                        || matches!(
+                            e.as_ast_nodes(),
+                            AstNodes::ConditionalExpression(_)
+                                | AstNodes::SequenceExpression(_)
+                                | AstNodes::TSAsExpression(_)
+                                | AstNodes::TSSatisfiesExpression(_)
+                                | AstNodes::BinaryExpression(_)
+                                | AstNodes::LogicalExpression(_)
+                                | AstNodes::PrivateInExpression(_)
+                                | AstNodes::IdentifierReference(_)
+                        )
                 });
                 match indent {
                     true => write!(f, soft_block_indent(&content)),
@@ -211,21 +241,12 @@ impl<'a> Format<'a> for FormatTemplateExpression<'a> {
             }
         });
 
-        let format_indented = format_with(|f| match options.after_new_line {
+        let format_indented = format_with(|f| match self.after_new_line {
             true => write!(f, dedent_to_root(&format_inner)),
-            false => write_with_indention(&format_inner, options.indention, f.options().indent_width, f),
+            false => write_with_indention(&format_inner, self.indention, f.options().indent_width, f),
         });
 
         write!(f, group(&format_args!("${", format_indented, line_suffix_boundary(), "}")));
-    }
-}
-
-impl<'a> FormatTemplateExpression<'a> {
-    fn has_new_line_in_range(&self, f: &Formatter<'a>) -> bool {
-        let span = self.expression.span();
-        f.source_text().has_line_terminator_before(span.start)
-            || f.source_text().has_line_terminator_after(span.end)
-            || f.source_text().contains_newline(span)
     }
 }
 
@@ -340,11 +361,8 @@ impl EachTemplateTable {
         }
         table.entry(EachTemplateElement::LineBreak);
 
-        for (index, expression) in template.exprs().iter().enumerate() {
-            let format_expression = FormatTemplateExpression {
-                expression: TemplateExpression::Expression(expression),
-                options: FormatTemplateExpressionOptions::default(),
-            };
+        let expressions = TemplateLike::TemplateLiteral(template).expressions(true, f);
+        for (index, format_expression) in expressions.enumerate() {
             let text = f.print_to_text(&format_with(|f| f.write_without_soft_lines(&format_expression)));
             let will_break = bun_core::strings::contains_char(&text, b'\n');
             table.entry(EachTemplateElement::Column(EachTemplateColumn::new(text, will_break)));
@@ -399,6 +417,6 @@ impl<'a> Format<'a> for EachTemplateTable {
                 }
             }
         });
-        write!(f, ["`", indent(&table_content), hard_line_break(), "`"]);
+        write!(f, [line_suffix_boundary(), "`", indent(&table_content), hard_line_break(), "`"]);
     }
 }

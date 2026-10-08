@@ -91,12 +91,17 @@ pub(crate) struct FormatJsxChild<'a>(pub(crate) Expr<'a>);
 impl<'a> Format<'a> for FormatJsxChild<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let e = self.0;
-        match e.jsx_container_span() {
-            Some(span) if !matches!(e.kind(), ExprKind::Spread(_)) => {
+        let Some(span) = e.jsx_container_span() else {
+            return e.fmt(f);
+        };
+        match e.kind() {
+            ExprKind::Spread(argument) => {
+                format_node(span, || AstNodes::JSXSpreadChild(e).parent(), f, |f| write_jsx_spread(argument, span, f));
+            }
+            _ => {
                 let node = AstNodes::JSXExpressionContainer(e);
                 format_node(span, || node.parent(), f, |f| write_jsx_expression_container(e, span, node.parent(), f));
             }
-            _ => e.fmt(f),
         }
     }
 }
@@ -109,88 +114,64 @@ impl Spanned for FormatJsxChild<'_> {
 
 /// `{e}`. `span`: of the braces.
 fn write_jsx_expression_container<'a>(expression: Expr<'a>, span: Span, parent: AstNodes<'a>, f: &mut Formatter<'a>) {
+    if matches!(expression.kind(), ExprKind::Missing) {
+        // `{/* comment */}`
+        let comments = f.comments().comments_before(span.end);
+        let has_line_comment = comments.iter().any(|c| c.is_line());
+        let indent = if has_line_comment { DanglingIndentMode::Block } else { DanglingIndentMode::None };
+        return write!(
+            f,
+            group(&format_args!(
+                "{",
+                FormatDanglingComments::Comments { comments, indent },
+                line_suffix_boundary(),
+                "}"
+            ))
+        );
+    }
+
     let has_comment = !f.is_quiet()
         && (f.comments().has_comment_before(expression.span().start)
             || f.comments().has_comment_in_range(expression.span().end, span.end));
+    let is_child = matches!(parent, AstNodes::JSXElement(_) | AstNodes::JSXFragment(_));
+    if !has_comment && should_inline_jsx_expression(expression, is_child) {
+        return write!(f, group(&format_args!("{", expression, line_suffix_boundary(), "}")));
+    }
+
     let format_with_comments = format_with(|f| {
         write!(f, expression);
         let comments = f.comments().comments_before(span.end);
         write!(f, FormatTrailingComments::Comments(comments));
     });
-    let format_indented = soft_block_indent(&format_with_comments);
-
-    if !matches!(parent, AstNodes::JSXElement(_) | AstNodes::JSXFragment(_)) {
-        // The value of an attribute
-        return match !has_comment && should_inline_jsx_expression(expression) {
-            true => write!(f, ["{", expression, line_suffix_boundary(), "}"]),
-            false => write!(f, group(&format_args!("{", format_indented, line_suffix_boundary(), "}"))),
-        };
-    }
-
-    if matches!(expression.kind(), ExprKind::Missing) {
-        // `{/* comment */}`
-        let comments = f.comments().comments_before(span.end);
-        write!(f, "{");
-        if comments.iter().any(|c| c.is_line()) {
-            write!(
-                f,
-                [
-                    FormatDanglingComments::Comments {
-                        comments,
-                        indent: DanglingIndentMode::Block
-                    },
-                    format_dangling_comments(span).with_block_indent(),
-                    hard_line_break()
-                ]
-            );
-        } else {
-            write!(
-                f,
-                FormatDanglingComments::Comments {
-                    comments,
-                    indent: DanglingIndentMode::None
-                }
-            );
-        }
-        return write!(f, "}");
-    }
-
-    let is_conditional_or_binary = matches!(
-        expression.as_ast_nodes(),
-        AstNodes::ConditionalExpression(_) | AstNodes::LogicalExpression(_) | AstNodes::BinaryExpression(_)
-    );
-    let should_inline = !has_comment && (is_conditional_or_binary || should_inline_jsx_expression(expression));
-    let format_expression = format_with(|f| match should_inline {
-        true => write!(f, expression),
-        false => write!(f, format_indented),
-    });
-    write!(f, group(&format_args!("{", format_expression, line_suffix_boundary(), "}")));
+    write!(f, group(&format_args!("{", soft_block_indent(&format_with_comments), line_suffix_boundary(), "}")));
 }
 
 /// Prettier's `shouldInline` in `printJsxExpressionContainer`: it starts right after the `{` and
-/// ends right before the `}`, even if it breaks.
-pub(crate) fn should_inline_jsx_expression(expression: Expr<'_>) -> bool {
-    fn is_inlined(node: AstNodes<'_>) -> bool {
-        matches!(
-            node,
-            AstNodes::ArrayExpression(_)
-                | AstNodes::ObjectExpression(_)
-                | AstNodes::ArrowFunctionExpression(_)
-                | AstNodes::CallExpression(_)
-                | AstNodes::ImportExpression(_)
-                | AstNodes::MetaProperty(_)
-                | AstNodes::Function(_)
-                | AstNodes::TemplateLiteral(_)
-                | AstNodes::TaggedTemplateExpression(_)
-        )
-    }
+/// ends right before the `}`, even if it breaks. `is_child`: the braces are among the children of
+/// an element.
+fn should_inline_jsx_expression(expression: Expr<'_>, is_child: bool) -> bool {
     match expression.as_ast_nodes() {
-        AstNodes::ChainExpression(chain) => matches!(chain.kind(), ExprKind::Call(_)),
+        AstNodes::ArrayExpression(_)
+        | AstNodes::ObjectExpression(_)
+        | AstNodes::ArrowFunctionExpression(_)
+        | AstNodes::Function(_)
+        | AstNodes::TemplateLiteral(_)
+        | AstNodes::TaggedTemplateExpression(_) => true,
         AstNodes::AwaitExpression(it) => it.argument().is_some_and(|argument| {
-            let node = argument.as_ast_nodes();
-            is_inlined(node) || matches!(node, AstNodes::JSXElement(_) | AstNodes::JSXFragment(_))
+            should_inline_jsx_expression(argument, false) || matches!(argument.as_ast_nodes(), AstNodes::JSXElement(_))
         }),
-        node => is_inlined(node),
+        AstNodes::ConditionalExpression(_)
+        | AstNodes::LogicalExpression(_)
+        | AstNodes::BinaryExpression(_)
+        | AstNodes::PrivateInExpression(_) => is_child,
+        _ => {
+            // Prettier's `stripChainElementWrappers`
+            let mut callee = expression;
+            while let ExprKind::NonNull(inner) = callee.kind() {
+                callee = inner;
+            }
+            matches!(callee.as_chain_element(), AstNodes::CallExpression(_))
+        }
     }
 }
 

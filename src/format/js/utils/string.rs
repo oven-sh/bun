@@ -56,7 +56,7 @@ pub(crate) fn is_simple_number(text: &[u8]) -> bool {
 }
 
 /// `String(Number(text)) === text`, for a simple number.
-fn is_canonical_simple_number(text: &[u8]) -> bool {
+pub(crate) fn is_canonical_simple_number(text: &[u8]) -> bool {
     let Some(number) = std::str::from_utf8(text).ok().and_then(|it| it.parse::<f64>().ok()) else {
         return false;
     };
@@ -281,10 +281,14 @@ impl std::ops::Deref for CleanedStringLiteralText<'_> {
     }
 }
 
-impl CleanedStringLiteralText<'_> {
+impl<'a> CleanedStringLiteralText<'a> {
     /// The number of columns that it takes.
     pub(crate) fn width(&self) -> usize {
-        crate::core::width::string_width(&self.text) as usize
+        crate::ir::width::string_width(&self.text) as usize
+    }
+
+    pub(crate) fn into_text(self) -> Cow<'a, [u8]> {
+        self.text
     }
 }
 

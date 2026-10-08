@@ -2267,7 +2267,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     return p.process_import_statement(stmt, path, loc, false);
                 }
 
-                if p.is_tolerant() && default_name_raw == b"defer" && Self::defer_is_modifier(p) {
+                // For Babel `source` is a phase too. It is kept like `defer`: the text tells them apart.
+                if p.is_tolerant()
+                    && (default_name_raw == b"defer" || default_name_raw == b"source" && p.is_babel())
+                    && Self::defer_is_modifier(p)
+                {
                     return Self::import_after_defer(p, loc);
                 }
 

@@ -1382,6 +1382,12 @@ impl<'a> Lexer<'a> {
         if self.is_under_tag {
             return;
         }
+        // Prettier lets Babel recover from an invalid escape in a template without a tag.
+        if self.is_babel
+            && matches!(start.checked_sub(1).and_then(|at| self.contents.get(at)), Some(b'`' | b'}'))
+        {
+            return;
+        }
         let is_unterminated = start.checked_sub(1) == Some(self.unterminated_at);
         // `tolerate_unterminated` has reported those of an unterminated string. `scan_string` goes
         // over them again for the value.
@@ -4416,8 +4422,9 @@ impl<'a> Lexer<'a> {
         }
 
         match self.code_point {
-            // `ReScanSlashToken` reads bytes: only "\n" and "\r" end the line.
-            0x2028 | 0x2029 if self.tolerant => {
+            // `ReScanSlashToken` reads bytes: only "\n" and "\r" end the line. That of TypeScript 5
+            // reads characters.
+            0x2028 | 0x2029 if self.tolerant && !self.is_typescript_5 => {
                 self.step();
             }
             0x0D | 0x0A | 0x2028 | 0x2029 => {

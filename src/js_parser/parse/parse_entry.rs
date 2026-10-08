@@ -627,25 +627,18 @@ impl<'a> Parser<'a> {
         };
         has_errors |= file.ran_out_of_stack;
         file.has_errors = has_errors;
-        // What the parser of the dialect accepts is left for whoever wants to know.
+        // What the parser of the dialect accepts does not make it refuse the file.
         let (is_ecmascript, is_typescript_5) = (p.is_ecmascript(), p.is_typescript_5());
-        if is_typescript_5 {
-            for d in logged.iter_mut().chain(&mut file.diagnostics) {
-                let is_accepted = match d.code {
-                    // Octal literals and escapes, `\8`, `08`: errors in strict mode only. `a?.#b`
-                    1121 | 1487 | 1488 | 1489 | 18030 => is_ecmascript,
-                    // `assert { type: "json" }`
-                    2880 => true,
-                    _ => false,
-                };
-                if is_accepted && d.kind == DiagnosticKind::Parse {
-                    d.kind = DiagnosticKind::Grammar;
-                }
-            }
-        }
+        let is_accepted = |d: &Diagnostic| match d.code {
+            // Octal literals and escapes, `\8`, `08`: errors in strict mode only. `a?.#b`
+            1121 | 1487 | 1488 | 1489 | 18030 => is_ecmascript,
+            // `assert { type: "json" }`
+            2880 => is_typescript_5,
+            _ => false,
+        };
         let is_parse_error = |d: &Diagnostic| d.kind == DiagnosticKind::Parse;
-        file.has_parse_diagnostics =
-            has_errors || logged.iter().chain(&file.diagnostics).any(is_parse_error);
+        file.has_parse_diagnostics = has_errors
+            || (logged.iter().chain(&file.diagnostics)).any(|d| is_parse_error(d) && !is_accepted(d));
         if has_errors {
             (file.diagnostics)
                 .retain(|d| !matches!(d.kind, DiagnosticKind::Parse | DiagnosticKind::Grammar));
@@ -660,6 +653,11 @@ impl<'a> Parser<'a> {
             logged.retain(|d| !suppress_grammar_errors || d.kind != DiagnosticKind::Grammar);
         }
         file.diagnostics.extend(logged);
+        if is_ecmascript || is_typescript_5 {
+            for d in file.diagnostics.iter_mut().filter(|d| is_accepted(d)) {
+                d.kind = DiagnosticKind::Grammar;
+            }
+        }
         (file, awaited)
     }
 

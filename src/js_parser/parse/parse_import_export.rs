@@ -214,7 +214,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let name = p.lexer.range();
         let word = p.lexer.identifier;
         let text = E::Str::new(word);
-        let is_defer = word == b"defer";
+        // For Babel `import.source(..)` is an import call too.
+        let is_defer = word == b"defer" || word == b"source" && p.is_babel();
         p.lexer.next()?;
         // `parseMemberExpressionRest`: type arguments are tried after it as after any expression.
         // `parseCallExpressionRest` makes them those of the call whose arguments follow them.

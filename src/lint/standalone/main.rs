@@ -208,7 +208,8 @@ fn run_fixture(fixture: &Json, entry: &'static RuleEntry) -> (Tally, String) {
     let cases = fixture.get(b"cases").and_then(Json::as_array).unwrap_or_default();
     for (index, case) in cases.iter().enumerate() {
         let has_test_only_rules = str_of(case, "skip").is_some_and(test_only_rules::is_known);
-        let is_skipped = !matches!(case.get(b"skip"), None | Some(Json::Null)) && !has_test_only_rules;
+        // "parser: custom": `@typescript-eslint/parser` without its services.
+        let is_skipped = !matches!(str_of(case, "skip"), None | Some("parser: custom")) && !has_test_only_rules;
         let is_type_aware = case.get(b"typeAware").and_then(Json::as_bool) == Some(true);
         if is_skipped || is_type_aware {
             tally.skipped += 1;

@@ -1051,9 +1051,13 @@ impl Expansion {
 
     /// Whether `path` can match, as far as that shows without looking at its parts.
     fn can_match(&self, path: &[u8]) -> bool {
-        path.starts_with(&self.head)
-            && (self.head.is_empty() || matches!(path.get(self.head.len()), None | Some(b'/')))
-            && (path.ends_with(&self.tail) || path.ends_with(b"/"))
+        // Most heads are empty and most tails are a few bytes, which are compared without a call.
+        let ends_with_tail = || {
+            path.len() >= self.tail.len() && path.iter().rev().zip(self.tail.iter().rev()).all(|(a, b)| a == b)
+        };
+        (self.head.is_empty()
+            || path.starts_with(&self.head) && matches!(path.get(self.head.len()), None | Some(b'/')))
+            && (ends_with_tail() || path.last() == Some(&b'/'))
             && (self.inner.is_empty() || strings::contains(path, &self.inner))
     }
 }

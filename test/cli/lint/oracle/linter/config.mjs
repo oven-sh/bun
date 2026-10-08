@@ -42,7 +42,7 @@ const languageOptions = () => {
 const object = canExtend => {
   const out = {};
   if (rng.int(6) === 0) out.name = rng.pick(["one", "two"]);
-  if (rng.int(10) === 0) out.basePath = rng.pick(["src", "packages/a", "/root/project/lib", "."]);
+  if (rng.int(10) === 0) out.basePath = rng.pick(["src", "packages/a", "/work/project/lib", "."]);
   if (rng.int(2) === 0) out.files = list(() => (rng.int(6) === 0 ? list(glob, 2) : glob()), 3);
   if (rng.int(3) === 0) out.ignores = list(ignore, 3);
   if (rng.int(5) !== 0 || Object.keys(out).length === 0) {
@@ -59,7 +59,7 @@ const object = canExtend => {
   return out;
 };
 
-const basePath = "/root/project";
+const basePath = "/work/project";
 const setting = value => (value === "off" ? "off" : [true, "true", "writable", "writeable"].includes(value) ? "writable" : "readonly");
 const number = value => ({ off: 0, warn: 1, error: 2 })[value] ?? value;
 const ecmaVersion = value => (value === undefined || value === "latest" ? 2026 : value === 3 || value === 5 || value >= 2015 ? value : value + 2009);
@@ -89,7 +89,7 @@ for (let i = 0; i < 3000; i++) {
   const it = {
     basePath,
     config,
-    files: list(() => rng.pick([`${basePath}/`, `${basePath}/`, `${basePath}/`, "/root/other/", `${basePath}/../project/`]) + path(), 12),
+    files: list(() => rng.pick([`${basePath}/`, `${basePath}/`, `${basePath}/`, "/work/other/", `${basePath}/../project/`]) + path(), 12),
     directories: list(() => `${basePath}/${list(() => rng.pick(dirs), 3).join("/")}`, 4),
   };
   try {

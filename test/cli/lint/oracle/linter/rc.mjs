@@ -9,7 +9,7 @@ const environments = requireFromEslint("globals");
 const implemented = JSON.parse(execFileSync(bunLint, ["linter", "rules"]).toString()).filter(id => !id.includes("/"));
 
 const rng = random(8);
-const basePath = "/root/project";
+const basePath = "/work/project";
 const dirs = ["src", "lib", "test", "dist", "node_modules", "packages", "a", "b", ".hidden", "build"];
 const names = ["index.js", "a.js", "b.mjs", "c.cjs", "d.ts", "e.tsx", "f.test.js", ".eslintrc.js", "i.d.ts", "j.jsx"];
 const path = () => [...Array.from({ length: rng.int(4) }, () => rng.pick(dirs)), rng.pick(names)].join("/");

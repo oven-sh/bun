@@ -288,7 +288,10 @@ impl Linter {
 }
 
 fn to_message(diagnostic: Diagnostic, entry: &'static RuleEntry, locator: &Locator) -> LintMessage {
-    let (line, column) = locator.position(diagnostic.span.start);
+    let (line, column) = match diagnostic.start_position {
+        Some(start) => (start.line, start.column.wrapping_add(1)),
+        None => locator.position(diagnostic.span.start),
+    };
     LintMessage {
         rule_id: Some(RuleId::Known(entry.meta)),
         severity: diagnostic.severity,

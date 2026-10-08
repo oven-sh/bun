@@ -19,7 +19,11 @@ fn is_getter(func: Func) -> bool {
     match func.kind() {
         FnKind::Getter => true,
         FnKind::Expr | FnKind::Arrow | FnKind::Method | FnKind::Setter => {
-            let Node::Prop(prop) = utils::estree_parent(Node::Func(func)) else {
+            let parent = match func.owner() {
+                Node::Expr(e) => e.parent(),
+                owner => owner,
+            };
+            let Node::Prop(prop) = parent else {
                 return false;
             };
             let Node::Expr(object) = prop.parent() else {

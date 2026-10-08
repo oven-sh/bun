@@ -6695,16 +6695,33 @@ impl<'p, 's> Checker<'p, 's> {
                     let Some(other) = earlier.resolved.prop(prop.name) else {
                         continue;
                     };
-                    let (mut first, mut second) =
-                        (other.clone_in(self.arena), prop.clone_in(self.arena));
-                    self.instantiate_prop(&mut first, earlier.mapper);
-                    self.instantiate_prop(&mut second, later.mapper);
+                    // FOR SPEED: a property of a union has a property of each constituent in it, and
+                    // the identity changes nothing.
+                    let (first_copy, second_copy);
+                    let first = match earlier.mapper {
+                        MapperId::IDENTITY => other,
+                        mapper => {
+                            let mut copy = other.clone_in(self.arena);
+                            self.instantiate_prop(&mut copy, mapper);
+                            first_copy = copy;
+                            &first_copy
+                        }
+                    };
+                    let second = match later.mapper {
+                        MapperId::IDENTITY => prop,
+                        mapper => {
+                            let mut copy = prop.clone_in(self.arena);
+                            self.instantiate_prop(&mut copy, mapper);
+                            second_copy = copy;
+                            &second_copy
+                        }
+                    };
                     // The same property reached through two paths.
                     if first == second {
                         continue;
                     }
-                    let first = self.type_of_prop(&first, MapperId::IDENTITY);
-                    let second = self.type_of_prop(&second, MapperId::IDENTITY);
+                    let first = self.type_of_prop(first, MapperId::IDENTITY);
+                    let second = self.type_of_prop(second, MapperId::IDENTITY);
                     may |= (prop.flags | other.flags).contains(PropFlags::PRIVATE)
                         || !(prop.flags & other.flags).contains(PropFlags::OPTIONAL)
                             && first != second

@@ -141,7 +141,7 @@ pub(crate) fn lint_project<R: Send>(
     let args: Vec<&[u8]> = args.iter().map(Vec::as_slice).collect();
     let command_line = bun_sema_driver::parse_command_line(&args, project.cwd.as_bytes());
 
-    let results: Mutex<Vec<(FileId, Vec<u8>, R)>> = Mutex::new(Vec::new());
+    let results: Mutex<Vec<(Vec<u8>, R)>> = Mutex::new(Vec::new());
     let wanted: Vec<Vec<u8>> = (project.files.iter()).map(|it| bun_sema_driver::host::from_native(it.as_bytes())).collect();
     let read_library = |path: &[u8], then: &mut dyn FnMut(&[u8])| {
         if let Ok(text) = std::fs::read(text(bun_sema_driver::host::to_native(path))) {
@@ -162,8 +162,9 @@ pub(crate) fn lint_project<R: Send>(
             return;
         };
         let mut results = results.lock().unwrap_or_else(|it| it.into_inner());
-        results.retain(|it| it.0 != file);
-        results.push((file, path.to_vec(), result));
+        // By path: the files can be in several programs, each with its own numbers.
+        results.retain(|it| it.0 != path);
+        results.push((path.to_vec(), result));
     };
     let request = bun_sema_driver::Request {
         compiler_options: &command_line.compiler_options,
@@ -185,6 +186,8 @@ pub(crate) fn lint_project<R: Send>(
             checks_only_named: checks_like_an_editor(),
             reads_sources_of_references: checks_like_an_editor(),
             current_directory_is_of_the_project: checks_like_an_editor(),
+            warm_up_files: (std::env::var("BUN_LINT_WARM_UP_FILES").ok().and_then(|it| it.parse().ok()))
+                .unwrap_or(bun_sema_driver::PlanOptions::default().warm_up_files),
             ..Default::default()
         },
         retains_everything: false,
@@ -208,8 +211,7 @@ pub(crate) fn lint_project<R: Send>(
             println!("{loaded} files loaded, {checked} checked, in {projects} projects: {:.3} s to load, {:.3} s to check", report.load_time.as_secs_f64(), report.check_time.as_secs_f64());
         }
     });
-    let results = results.into_inner().unwrap_or_else(|it| it.into_inner());
-    results.into_iter().map(|it| (it.1, it.2)).collect()
+    results.into_inner().unwrap_or_else(|it| it.into_inner())
 }
 
 fn absolute(path: &str) -> String {
@@ -916,6 +918,11 @@ fn time(args: &[String]) {
     let results = lint_project(project, &LanguageOptions::default(), &|file| linter().lint(file, &config, &LintOptions::default()).messages.len());
     let messages: usize = results.iter().map(|it| it.1).sum();
     println!("{:.3} s: {} of {} files linted, {messages} messages", started.elapsed().as_secs_f64(), results.len(), files.len());
+    if args.iter().any(|a| a == "--not-linted") {
+        for file in files.iter().filter(|file| !results.iter().any(|it| it.0 == file.as_bytes())) {
+            println!("not linted: {file}");
+        }
+    }
 }
 
 pub(crate) fn run(args: &[String]) {

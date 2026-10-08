@@ -91,6 +91,7 @@ fn format_embedded(
     code: &[u8],
     width: usize,
     options: &FormatOptions,
+    is_in_template: bool,
 ) -> Option<Vec<u8>> {
     // Nothing to format: front matter without anything in it.
     if language.is_empty() {
@@ -99,6 +100,10 @@ fn format_embedded(
     let parser = infer_parser(language)?;
     // To the parsers of Prettier it is white space.
     let code = code.strip_prefix(BOM).unwrap_or(code);
+    // To these parsers, nothing is a syntax error. Only a whole file with nothing in it does not get to them.
+    if matches!(parser, b"json" | b"json5" | b"json-stringify" | b"graphql") && trim_start(code).is_empty() {
+        return None;
+    }
     let options = FormatOptions {
         line_width: LineWidth(width.clamp(1, usize::from(u16::MAX)) as u16),
         line_ending: LineEnding::Lf,
@@ -126,7 +131,7 @@ fn format_embedded(
         match parser {
             b"graphql" => crate::graphql::format(code, &options, &mut Default::default(), &mut out).is_ok(),
             b"yaml" => crate::yaml::format(code, &options, &mut Default::default(), &mut out).is_ok(),
-            b"markdown" => format(code, &options, &mut Default::default(), &mut out).is_ok(),
+            b"markdown" => format_in(code, &options, &mut Default::default(), &mut out, is_in_template).is_ok(),
             b"babel" => format_javascript(b"dummy.jsx", &mut out),
             _ if language == b"tsx" => format_javascript(b"dummy.tsx", &mut out),
             _ => format_javascript(b"dummy.ts", &mut out),
@@ -184,6 +189,17 @@ fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
 
 /// Appends the formatted `text` to `out`.
 pub fn format(text: &[u8], options: &FormatOptions, scratch: &mut Scratch, out: &mut Vec<u8>) -> Result<(), FormatError> {
+    format_in(text, options, scratch, out, false)
+}
+
+/// `is_in_template`: see [`with_document`].
+fn format_in(
+    text: &[u8],
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+    is_in_template: bool,
+) -> Result<(), FormatError> {
     let original = text;
     let first = if text.starts_with(BOM) { BOM.len() } else { 0 };
     let Offsets { start, end, .. } = Offsets::new(original, first, options);
@@ -226,7 +242,7 @@ pub fn format(text: &[u8], options: &FormatOptions, scratch: &mut Scratch, out: 
         return Ok(());
     }
 
-    with_document(text, &options, &mut scratch.tree, false, |document| doc::print(document, &options, text, out))
+    with_document(text, &options, &mut scratch.tree, is_in_template, |document| doc::print(document, &options, text, out))
 }
 
 /// Calls `then` with the document for `text`, in which every line break is `\n`. `is_in_template`: it is for a
@@ -258,7 +274,7 @@ fn with_document<R>(
 
     let formats_embedded = matches!(options.embedded_language_formatting, EmbeddedLanguageFormatting::Auto);
     let mut embed = |embedded: &printer::Embedded<'_>| match formats_embedded {
-        true => format_embedded(embedded.language, embedded.code, embedded.width, options),
+        true => format_embedded(embedded.language, embedded.code, embedded.width, options, is_in_template),
         false => None,
     };
     let mut printer = printer::Printer {

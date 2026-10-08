@@ -62,10 +62,11 @@ pub struct UsedMarks {
 }
 
 impl UsedMarks {
-    /// `variable.eslintUsed = true`
+    /// `variable.eslintUsed = true`. Other rules see it: [`Symbol::is_marked_used`].
     #[inline]
     pub fn mark(&mut self, symbol: Symbol) {
         self.marked.insert(symbol);
+        symbol.mark_used();
     }
 
     /// `variable.eslintUsed`
@@ -187,6 +188,15 @@ fn is_definition(declaration: Declaration) -> bool {
     }
 }
 
+/// Whether one of the declarations of `symbol` is a class. The flags do not tell if the class is in
+/// conflict with an earlier declaration.
+fn is_class(symbol: Symbol) -> bool {
+    symbol.flags().contains(SymFlags::CLASS)
+        || symbol
+            .declarations()
+            .any(|it| matches!(it, Declaration::Class(_)))
+}
+
 impl<'a> Variable<'a> {
     /// The variable that `symbol` is in the scope it is declared in.
     #[inline]
@@ -195,15 +205,6 @@ impl<'a> Variable<'a> {
             symbol,
             class: None,
         }
-    }
-
-    /// The variable that the name of `class` is inside the class. `None` if it has no name.
-    pub fn in_class_scope(class: Class<'a>) -> Option<Self> {
-        class.name()?;
-        Some(Variable {
-            symbol: class.symbol()?,
-            class: Some(class),
-        })
     }
 
     #[inline]
@@ -244,7 +245,7 @@ impl<'a> Variable<'a> {
 
     /// `variable.references`
     pub fn references(self) -> impl Iterator<Item = Reference<'a>> + 'a {
-        let is_class = self.symbol.flags().contains(SymFlags::CLASS);
+        let is_class = is_class(self.symbol);
         self.symbol
             .references()
             .filter(move |it| !is_class || self.has_reference_at(it.span()))
@@ -373,8 +374,7 @@ fn has_marked_parameters(func: Func) -> bool {
 fn mark_identifier<'a>(name: Name<'a>, holder: Node<'a>, marks: &mut UsedMarks) {
     // Inside a class its name is the other variable, which counts as used anyway.
     if let Some(symbol) = holder.scope().resolve_name(name)
-        && (!symbol.flags().contains(SymFlags::CLASS)
-            || Variable::new(symbol).has_reference_at(holder.span()))
+        && (!is_class(symbol) || Variable::new(symbol).has_reference_at(holder.span()))
     {
         marks.mark(symbol);
     }
@@ -764,11 +764,9 @@ pub fn is_used_variable(variable: Variable) -> bool {
 /// declare, which is no [`Symbol`]: one that a `/* global name */` comment or the configuration
 /// defines.
 pub fn is_used_global_variable<'a>(file: &'a File<'a>, name: &[u8]) -> bool {
-    has_use(
-        file.unresolved_references()
-            .filter(|reference| reference.name() == name),
-        |_| true,
-    )
+    file.unresolved_references_to(name)
+        .any(is_assigned_by_loop_that_only_returns)
+        || has_use(file.unresolved_references_to(name), |_| true)
 }
 
 // ───────────────────────────── the analysis ─────────────────────────────
@@ -828,9 +826,12 @@ pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> Vari
     mark_identifiers_in_parameters(file, &mut analysis.eslint_used);
     let declares_globals = file.scope().symbols().len() != 0;
     for symbol in file.symbols() {
-        if symbol.flags().contains(SymFlags::CLASS) {
+        if is_class(symbol) {
             let classes = symbol.declarations().filter_map(|it| match it {
-                Declaration::Class(class) => Variable::in_class_scope(class),
+                Declaration::Class(class) if class.name().is_some() => Some(Variable {
+                    symbol,
+                    class: Some(class),
+                }),
                 _ => None,
             });
             analysis.used_variables.extend(classes);
@@ -887,7 +888,7 @@ pub fn is_referenced_in_array_pattern(reference: Reference<'_>) -> bool {
         Node::Pat(pat) => is_array_pattern_element(pat),
         Node::Expr(id) => matches!(
             id.parent(),
-            Node::Expr(parent) if parent.tag() == ExprTag::Array && is_assignment_target(parent)
+            Node::Expr(parent) if parent.tag() == ExprTag::Array && parent.is_assignment_target()
         ),
         _ => false,
     }
@@ -926,7 +927,7 @@ pub fn has_rest_sibling(id: Node<'_>) -> bool {
                     properties
                         .last()
                         .is_some_and(|last| last.kind() == PropKind::Spread)
-                        && is_assignment_target(object)
+                        && object.is_assignment_target()
                 }
                 _ => false,
             }

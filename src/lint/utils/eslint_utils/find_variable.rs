@@ -11,12 +11,12 @@ pub fn find_variable<'a>(scope: Scope<'a>, name: impl AsRef<[u8]>) -> Option<Sym
     scope.resolve_bytes(name.as_ref())
 }
 
-/// eslint-utils' `findVariable(initialScope, identifierNode)`: what the identifier `expr` refers
-/// to. The binder has resolved it, so no scope is needed. `None` for a global variable, as with
-/// [`find_variable`].
-#[inline]
+/// eslint-utils' `findVariable(initialScope, identifierNode)`: what the name of the identifier
+/// `expr` means where it is written. As upstream, it looks the name up in the scopes, and finds a type
+/// of that name as well, which is not what a reference resolves to ([`Expr::reference`]). `None` for
+/// a global variable, as with [`find_variable`].
 pub fn find_variable_of(expr: Expr<'_>) -> Option<Symbol<'_>> {
-    expr.symbol()
+    Node::Expr(expr).scope().resolve_name(expr.as_ident()?)
 }
 
 /// eslint-utils' `getInnermostScope`: the innermost scope that contains the start of `node`. For a

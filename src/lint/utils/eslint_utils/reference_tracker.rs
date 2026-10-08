@@ -1,5 +1,6 @@
 //! `reference-tracker.mjs`
 
+use super::find_variable::find_variable_of;
 use super::get_property_name::{get_property_name, property_name_of_key};
 use super::get_string_if_constant::get_string_if_constant;
 use crate::ast::{BinOp, Call, Expr, ExprKind, File, Name, Node, StmtKind, TypeKind};
@@ -601,7 +602,7 @@ impl<'a, 'm, T: Copy> Walk<'a, 'm, T> {
             TargetKind::Ident(name) => {
                 let symbol = match pattern {
                     Target::Pat(pat) => pat.symbol(),
-                    Target::Expr(e) => e.symbol(),
+                    Target::Expr(e) => find_variable_of(e),
                 };
                 let variable = match symbol {
                     Some(symbol) => Variable::Symbol(symbol),

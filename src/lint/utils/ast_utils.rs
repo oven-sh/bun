@@ -24,7 +24,7 @@ use crate::ast::{
     Member, MemberKind, Name, Node, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, UnOp,
     VarKind,
 };
-use crate::semantic::{Declaration, Reference, Scope, Symbol};
+use crate::semantic::{Reference, Scope, Symbol};
 use crate::span::{Position, Span, Spanned};
 use crate::tokens::{Token, TokenKind, skip_trivia, skip_trivia_back, token_len};
 use bun_core::strings;
@@ -210,13 +210,45 @@ pub fn is_token_on_same_line(file: &File<'_>, left: impl Spanned, right: impl Sp
     }
 }
 
+/// The code points of a name, with what its `\u0061` and `\u{61}` stand for.
+fn decoded_name(name: &[u8]) -> impl Iterator<Item = u32> {
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        let (c, size) = match name.get(at) {
+            Some(b'\\') => bun_core::lexer::peek_unicode_escape(name, at)
+                .map_or((u32::from(b'\\'), 1), |(c, size)| (c as u32, size)),
+            _ => text::code_point_at(name, at),
+        };
+        at += size;
+        (size > 0).then_some(c)
+    })
+}
+
+/// Whether espree has the same `type` and `value` for two names that are written differently: it
+/// decodes their escape sequences.
+fn is_same_name_decoded(left: &Token<'_>, right: &Token<'_>) -> bool {
+    let is_name = |kind| {
+        matches!(
+            kind,
+            TokenKind::Identifier | TokenKind::Keyword | TokenKind::Boolean | TokenKind::Null
+        )
+    };
+    let is_private = |kind| kind == TokenKind::PrivateIdentifier;
+    let (l, r) = (left.kind(), right.kind());
+    ((is_name(l) && is_name(r)) || (is_private(l) && is_private(r)))
+        && (strings::contains_char(left.text(), b'\\')
+            || strings::contains_char(right.text(), b'\\'))
+        && decoded_name(left.text()).eq(decoded_name(right.text()))
+}
+
 /// ESLint's `equalTokens`: `left` and `right` consist of the same tokens.
 pub fn equal_tokens<'a>(file: &'a File<'a>, left: impl Spanned, right: impl Spanned) -> bool {
     let (left, right) = (file.tokens_in(left), file.tokens_in(right));
     left.len() == right.len()
-        && left
-            .zip(right)
-            .all(|(l, r)| l.kind() == r.kind() && l.text() == r.text())
+        && left.zip(right).all(|(l, r)| match l.text() == r.text() {
+            true => l.kind() == r.kind(),
+            false => !file.uses_typescript_parser() && is_same_name_decoded(&l, &r),
+        })
 }
 
 /// ESLint's `canContinueExpressionInClassBody`.
@@ -1192,17 +1224,17 @@ pub fn is_configured_global<'a>(file: &'a File<'a>, name: &[u8]) -> bool {
 /// ESLint's `sourceCode.isGlobalReference`: `e` is an identifier that refers to a global variable
 /// which the file does not declare, but the configuration, a `/* global */` comment or a library of
 /// TypeScript does.
+///
+/// It goes by the scopes as ESLint has them, not by [`Expr::symbol`]: `namespace Promise {}` hides
+/// the global although it has no value, what another block of a merged namespace exports does not,
+/// and `interface Object {}` in a script is a definition of the global variable itself.
 pub fn is_global_reference(e: Expr<'_>) -> bool {
-    // What only an assignment in JavaScript declares, such as `module.exports = ..`, is not declared
-    // as far as ESLint is concerned.
-    let is_declared = |symbol: Symbol<'_>| {
-        symbol
-            .declarations()
-            .any(|it| !matches!(it, Declaration::Other))
+    let (Some(name), file) = (e.as_ident(), e.file()) else {
+        return false;
     };
-    e.as_ident().is_some_and(|name| {
-        !e.symbol().is_some_and(is_declared) && is_configured_global(e.file(), name.bytes())
-    })
+    file.global(name.bytes()).is_some()
+        && e.reference().is_some_and(|it| it.global().is_some())
+        && file.scope().get_name(name).is_none()
 }
 
 /// ESLint's `isReferenceToGlobalVariable`. The same as [`is_global_reference`].

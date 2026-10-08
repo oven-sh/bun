@@ -6,7 +6,8 @@ use crate::ast::{Name, Node};
 /// call, the type reference, the identifier.
 ///
 /// As upstream, it looks at the first reference to that name that is written directly in the scope
-/// of `node`. `true` if there is none, or if nothing in the file declares what it refers to.
+/// of `node`. `true` if there is none, or if nothing in the file declares what it refers to, which
+/// also holds for the implicit `arguments` of a function.
 pub fn is_reference_to_global_function<'a>(
     callee_name: Name<'a>,
     node: impl Into<Node<'a>>,
@@ -14,5 +15,6 @@ pub fn is_reference_to_global_function<'a>(
     let mut references = node.into().scope().references();
     references
         .find(|reference| reference.name() == callee_name)
-        .is_none_or(|reference| reference.symbol().is_none())
+        .and_then(|reference| reference.symbol())
+        .is_none_or(|symbol| symbol.declarations().len() == 0)
 }

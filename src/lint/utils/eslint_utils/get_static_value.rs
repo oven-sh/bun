@@ -2,6 +2,7 @@
 
 use super::builtins::{Member, get_member, global_value, set_property};
 use super::calls::{assign, call, construct, iterate, sorted_flags, string_raw};
+use super::find_variable::find_variable_of;
 use super::js_string;
 use super::operators::{binary, unary};
 use super::static_value::{Eval, MAX_LEN, PropertyKey, StaticValue, Stop, parse_bigint_digits};
@@ -21,7 +22,7 @@ use std::borrow::Cow;
 /// With a `scope`, identifiers are resolved: the global variables of the standard library that
 /// the file does not shadow (`undefined`, `Number`, `Symbol.iterator`, ..), and variables that
 /// are declared once with an initializer and never written again. Which scope it is makes no
-/// difference, the binder has resolved every identifier. Without one, an identifier has no static
+/// difference, an identifier is looked up from where it is written. Without one, an identifier has no static
 /// value.
 ///
 /// Only the functions that upstream calls are called: `"a".repeat(2)` has no static value. What
@@ -211,22 +212,10 @@ impl<'a> Evaluator<'a> {
         if !self.resolves {
             return Err(Stop::NotStatic);
         }
-        // What only an assignment in JavaScript declares is not declared as far as ESLint is concerned.
-        let is_declared = |symbol: &Symbol<'a>| {
-            symbol
-                .declarations()
-                .any(|it| !matches!(it, Declaration::Other))
-        };
-        let Some(symbol) = e.symbol().filter(is_declared) else {
+        let Some(symbol) = find_variable_of(e) else {
             let name = e.as_ident().map_or(&b""[..], |name| name.bytes());
-            // Upstream looks the name up, and finds a type of that name as well.
             return match global_value(name) {
-                Some(value)
-                    if e.file().global(name).is_some()
-                        && Node::Expr(e).scope().resolve_bytes(name).is_none() =>
-                {
-                    Ok(value)
-                }
+                Some(value) if e.file().global(name).is_some() => Ok(value),
                 _ => Err(Stop::NotStatic),
             };
         };

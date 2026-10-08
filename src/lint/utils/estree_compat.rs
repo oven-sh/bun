@@ -138,37 +138,34 @@ pub fn is_expression_statement(statement: Stmt<'_>) -> bool {
 /// Whether `e` is written where ESTree has a pattern: it is what an assignment or a `for`-`in` or
 /// `for`-`of` loop assigns to, or a part of that which is not a default value or a computed key.
 ///
-/// For an `Array`, an `Object`, an `Assign` or a `Spread` it tells that ESTree calls it an
-/// `ArrayPattern`, an `ObjectPattern`, an `AssignmentPattern` or a `RestElement`. For anything
-/// else, that it is written to. The operand of `++` and `--` is not a pattern.
-pub fn is_assignment_target(mut e: Expr<'_>) -> bool {
-    loop {
-        match e.parent() {
-            Node::Expr(parent) => match parent.kind() {
-                ExprKind::Assign { target, .. } => return target == e,
-                ExprKind::Array(_) | ExprKind::Spread(_) => e = parent,
-                _ => return false,
-            },
-            Node::Prop(prop) => match (prop.value() == Some(e), prop.parent()) {
-                (true, Node::Expr(object)) if !prop.is_jsx_attribute() => e = object,
-                _ => return false,
-            },
-            Node::Stmt(statement) => {
-                let head = match statement.kind() {
-                    StmtKind::Expr(_) => statement
-                        .parent()
-                        .as_stmt()
-                        .filter(|_| is_for_init(statement)),
-                    _ => Some(statement),
-                };
-                return matches!(
-                    head.map(Stmt::kind),
-                    Some(StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. })
-                        if matches!(left.kind(), StmtKind::Expr(target) if target == e)
-                );
-            }
-            _ => return false,
+/// For an `Array`, an `Object`, an `Assign` or a `Spread` it is [`Expr::is_assignment_target`]: ESTree
+/// calls it an `ArrayPattern`, an `ObjectPattern`, an `AssignmentPattern` or a `RestElement`, which
+/// in parentheses it is not. For anything else it tells that it is written to, in parentheses or
+/// not. The operand of `++` and `--` is not a pattern.
+pub fn is_assignment_target(e: Expr<'_>) -> bool {
+    if matches!(
+        e.kind(),
+        ExprKind::Array(_) | ExprKind::Object(_) | ExprKind::Assign { .. } | ExprKind::Spread(_)
+    ) {
+        return e.is_assignment_target();
+    }
+    match e.parent() {
+        Node::Expr(parent) => match parent.kind() {
+            ExprKind::Assign { target, .. } => target == e,
+            ExprKind::Array(_) | ExprKind::Spread(_) => parent.is_assignment_target(),
+            _ => false,
+        },
+        Node::Prop(prop) => {
+            prop.value() == Some(e)
+                && !prop.is_jsx_attribute()
+                && matches!(prop.parent(), Node::Expr(object) if object.is_assignment_target())
         }
+        Node::Stmt(statement) => matches!(
+            statement.kind(),
+            StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. }
+                if matches!(left.kind(), StmtKind::Expr(target) if target == e)
+        ),
+        _ => false,
     }
 }
 
@@ -368,20 +365,11 @@ impl<'a> Target<'a> {
 
 // ───────────────────────────── node.type ─────────────────────────────
 
-/// Whether `e` is the `a.b.c` of the type `typeof a.b.c`, or the `a` or the `a.b` in it. ESTree has
-/// an `Identifier` or a `TSQualifiedName` there, not a `MemberExpression`.
+/// [`Expr::is_in_type_query`]: `e` is the `a.b.c` of the type `typeof a.b.c`, or the `a` or the `a.b`
+/// in it. ESTree has an `Identifier` or a `TSQualifiedName` there, not a `MemberExpression`.
+#[inline]
 pub fn is_in_type_query(e: Expr<'_>) -> bool {
-    let mut at = e;
-    loop {
-        match at.parent() {
-            Node::Expr(parent) if matches!(parent.kind(), ExprKind::Dot { obj, .. } if obj == at) =>
-            {
-                at = parent;
-            }
-            Node::Type(ty) => return matches!(ty.kind(), TypeKind::Typeof { .. }),
-            _ => return false,
-        }
-    }
+    e.is_in_type_query()
 }
 
 fn is_jsx_child(e: Expr<'_>) -> bool {

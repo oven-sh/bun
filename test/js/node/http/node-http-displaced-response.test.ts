@@ -188,16 +188,26 @@ describe.concurrent.each(["tcp", "tls"])("a response that lost the connection to
     timeout,
   );
 
-  // The frame of the WebSocket is all that follows the 101, and end() does the same with trailers as without.
+  // The frames of the WebSocket are all that follows the 101, and end() does the same with trailers
+  // as without. The last case is the order of a timing wrapper: it adds the trailer in its finally,
+  // so the response ends after the WebSocket carried frames.
   test(
     "the response of the request that a WebSocket adopted can end with trailers",
     async () => {
       expect(await run("upgraded", transport)).toEqual({
-        results: ["end", "addTrailers+end"].map(use => ({
-          use,
-          result: "threw ERR_STREAM_ALREADY_FINISHED",
-          afterSwitch: Buffer.from("\x81\x05hello", "latin1").toString("hex"),
-        })),
+        results: [
+          ...["end", "addTrailers+end"].map(use => ({
+            use,
+            result: "threw ERR_STREAM_ALREADY_FINISHED",
+            afterSwitch: Buffer.from("\x81\x05hello", "latin1").toString("hex"),
+          })),
+          {
+            use: "after the WebSocket closed",
+            result: "returned",
+            // The echo frame, then the Close frame of the server.
+            afterSwitch: Buffer.from("\x81\x05hello\x88\x00", "latin1").toString("hex"),
+          },
+        ],
         stderr: "",
         exitCode: 0,
         signalCode: null,

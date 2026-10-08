@@ -644,8 +644,11 @@ pub(super) fn local_certificate_der(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
     if ssl.is_null() {
         return None;
     }
-    // SAFETY: returns a borrowed X509 owned by the SSL.
-    let cert = unsafe { ssl::SSL_get_certificate(ssl) };
+    // The leaf of the SSL's context: a certificate is only ever installed on
+    // a context (`load_cert_chain`), and the context parses its leaf once,
+    // where `SSL_get_certificate` parses a copy for each SSL.
+    // SAFETY: returns a borrowed X509 owned by the context `ssl` holds.
+    let cert = unsafe { ssl::SSL_CTX_get0_certificate(ssl::SSL_get_SSL_CTX(ssl)) };
     if cert.is_null() {
         return None;
     }

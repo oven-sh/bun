@@ -52,6 +52,24 @@ const STREAM_ID_UNI_BIT: u64 = 0x2;
 const H3_NO_ERROR: u64 = 0x100;
 const H3_INTERNAL_ERROR: u64 = 0x102;
 
+/// What a session's ALPN selects, with the values of node's
+/// `Session::Application::Type` (node/src/quic/application.h). An engine
+/// frames HTTP/3 or raw QUIC for every conn it owns, so the engine's mode
+/// decides it (`QuicEndpoint::application`).
+#[derive(Clone, Copy)]
+#[repr(u8)]
+pub(super) enum Application {
+    /// A version-negotiation probe has no engine and never handshakes.
+    None = 0,
+    /// Raw QUIC: node's `DefaultApplication`.
+    Default = 1,
+    Http3 = 2,
+}
+
+/// Node's `HeadersSupportState`; 0 is "no application".
+const HEADERS_SUPPORTED: u8 = 1;
+const HEADERS_UNSUPPORTED: u8 = 2;
+
 /// Node's DefaultApplication normalized option defaults
 /// (node/src/quic/session.cc).
 const DEFAULT_MAX_HEADER_PAIRS: u64 = 128;
@@ -243,6 +261,9 @@ pub(crate) const SESSION_STATS_FIELDS: &[&str] = &[
     "PKT_DISCARDED",
 ];
 
+/// What a session keeps of its handshake. lsquic can free the conn in the
+/// engine pass that completes the handshake, before any event of that pass is
+/// dispatched, so every field is copied while the conn is alive.
 pub(super) struct HskSnapshot {
     sni: Option<Vec<u8>>,
     cipher: Option<Vec<u8>>,
@@ -254,6 +275,8 @@ pub(super) struct HskSnapshot {
     ephemeral: Option<(&'static str, Option<&'static str>, u32)>,
     /// `(early_data_attempted, early_data_accepted)` (RFC 8446 §2.3).
     early_data: (bool, bool),
+    /// `state.max_datagram_size` once the handshake is reported.
+    max_datagram_size: u16,
 }
 
 pub(super) struct DeferredAbort {
@@ -456,6 +479,7 @@ impl QuicSession {
         endpoint_handle: JSValue,
         conn: *mut lsquic::lsquic_conn,
         is_server: bool,
+        application: Application,
     ) -> JsResult<(*mut QuicSession, JSValue)> {
         let raw = bun_core::heap::into_raw(Box::new(Self::new(global, vtable)));
         let handle = crate::generated_classes::js_QuicSession::to_js(raw, global);
@@ -482,11 +506,23 @@ impl QuicSession {
             reason = "`state_ptr` is the base of a fresh JSC ArrayBuffer (byteOffset 0); JSC allocates its backing store through Gigacage/fastMalloc, which is at least 16-byte aligned"
         )]
         this.state.set(state_ptr.cast::<SessionState>());
+        // Node's `Session::SetApplication`. Nothing else writes the
+        // application fields: the fate of the handshake does not change them.
         this.with_state(|s| {
             s.no_error_code = 0;
             s.internal_error_code = 1;
             s.stream_open_allowed = 1;
-            s.headers_supported = 0;
+            s.application_type = application as u8;
+            match application {
+                Application::None => {}
+                Application::Default => s.headers_supported = HEADERS_UNSUPPORTED,
+                Application::Http3 => {
+                    s.headers_supported = HEADERS_SUPPORTED;
+                    s.priority_supported = 1;
+                    s.no_error_code = H3_NO_ERROR;
+                    s.internal_error_code = H3_INTERNAL_ERROR;
+                }
+            }
         });
         #[expect(
             clippy::cast_ptr_alignment,
@@ -616,6 +652,12 @@ impl QuicSession {
     }
     pub(super) fn push_event(&self, event: SessionEvent) {
         self.events.with_mut(|e| e.push(event));
+    }
+    /// The one producer of a successful handshake: every callback that learns
+    /// of one passes the conn it completed on.
+    pub(super) fn note_handshake_ok(&self, conn: lsquic::Conn) {
+        self.capture_hsk_snapshot(conn);
+        self.push_event(SessionEvent::HandshakeDone { ok: true });
     }
     /// The `endpoint_js` Strong keeps it alive while this session holds the
     /// back-pointer; teardown nulls the pointer before that Strong is
@@ -824,13 +866,9 @@ impl QuicSession {
     }
 
     pub(super) fn apply_peer_datagram_budget(&self) {
-        let Some(tp) = self.conn().and_then(|c| c.peer_transport_params()) else {
+        let Some(sz) = self.conn().and_then(peer_datagram_budget) else {
             return;
         };
-        let sz = tp
-            .max_datagram_frame_size
-            .saturating_sub(DATAGRAM_FRAME_OVERHEAD)
-            .min(DATAGRAM_PAYLOAD_BUDGET) as u16;
         self.with_state(|s| s.max_datagram_size = sz);
     }
 
@@ -934,7 +972,6 @@ impl QuicSession {
         match event {
             SessionEvent::HandshakeDone { ok } => {
                 if ok {
-                    self.capture_hsk_snapshot();
                     if self.is_server.get() || self.peer_verification_refused() {
                         // Node's server reports at handshake COMPLETION
                         // (session.cc: server completion == confirmation
@@ -1501,9 +1538,6 @@ impl QuicSession {
         if self.handshake_reported.replace(true) || self.destroyed.get() {
             return;
         }
-        if ok {
-            self.capture_hsk_snapshot();
-        }
         let cert_ok = {
             if let Some(endpoint) = self.endpoint_ref().filter(|_| ok && self.is_server.get()) {
                 let verify_client = endpoint.server_verify_client.get();
@@ -1521,22 +1555,17 @@ impl QuicSession {
             self.peer_cert_rejected.set(true);
         }
         let open_allowed = ok && !self.peer_cert_rejected.get();
-        let peer_frame_size = if !ok || self.conn.get().is_null() {
-            0
-        } else {
-            // SAFETY: `conn` is live (handshake just reported on it).
-            unsafe { lsquic::Conn::from_raw(self.conn.get()) }
-                .and_then(|c| c.peer_transport_params())
-                .map(|tp| tp.max_datagram_frame_size)
-                .unwrap_or(0)
-        };
+        let max_datagram_size = self
+            .hsk_snapshot
+            .get()
+            .as_ref()
+            .filter(|_| ok)
+            .map_or(0, |s| s.max_datagram_size);
         self.with_state(|s| {
             s.handshake_completed = ok as u8;
             s.handshake_confirmed = ok as u8;
             s.stream_open_allowed = open_allowed as u8;
-            s.max_datagram_size = peer_frame_size
-                .saturating_sub(DATAGRAM_FRAME_OVERHEAD)
-                .min(DATAGRAM_PAYLOAD_BUDGET) as u16;
+            s.max_datagram_size = max_datagram_size;
         });
         if !ok {
             return;
@@ -1562,28 +1591,6 @@ impl QuicSession {
         };
         let sni = opt_bytes_to_js(global, snap_sni.as_deref());
         let cipher = opt_bytes_to_js(global, snap_cipher.as_deref());
-        // HTTP/3 application bits: when the engine runs in `LSENG_HTTP` mode
-        // (and ALPN confirms it), enable headers/priority and switch the
-        // close-error codes to RFC 9114's H3_NO_ERROR / H3_INTERNAL_ERROR.
-        let is_http = self
-            .endpoint_ref()
-            .map(|ep| ep.is_http(self.is_server.get()))
-            .unwrap_or(false)
-            && alpn_bytes
-                .as_deref()
-                .map(|a| a == b"h3" || a.starts_with(b"h3-"))
-                .unwrap_or(false);
-        if is_http {
-            self.with_state(|s| {
-                s.headers_supported = 1;
-                s.application_type = 1;
-                s.priority_supported = 1;
-                s.no_error_code = H3_NO_ERROR;
-                s.internal_error_code = H3_INTERNAL_ERROR;
-            });
-        } else {
-            self.with_state(|s| s.headers_supported = 2);
-        }
         let alpn = alpn_bytes
             .map(|b| bun_string_jsc::create_utf8_for_js(global, &b).or_report())
             .unwrap_or(JSValue::UNDEFINED);
@@ -1685,13 +1692,7 @@ impl QuicSession {
                 .is_some_and(|s| s.validation.is_some())
     }
 
-    fn capture_hsk_snapshot(&self) {
-        if self.hsk_snapshot.get().is_some() {
-            return;
-        }
-        let Some(conn) = self.conn() else {
-            return;
-        };
+    fn capture_hsk_snapshot(&self, conn: lsquic::Conn) {
         let sni = conn.sni().map(|s| s.to_bytes().to_vec());
         let cipher = conn.cipher().map(|s| s.to_bytes().to_vec());
         let ssl = conn.ssl().cast();
@@ -1704,6 +1705,7 @@ impl QuicSession {
         let local_cert_der = tls::local_certificate_der(ssl);
         let ephemeral = tls::ephemeral_key_info(ssl);
         let early_data = tls::early_data_info(ssl);
+        let max_datagram_size = peer_datagram_budget(conn).unwrap_or(0);
         self.hsk_snapshot.with_mut(|s| {
             *s = Some(HskSnapshot {
                 sni,
@@ -1714,6 +1716,7 @@ impl QuicSession {
                 local_cert_der,
                 ephemeral,
                 early_data,
+                max_datagram_size,
             });
         });
     }
@@ -2355,6 +2358,16 @@ impl QuicSession {
     }
 }
 
+/// The largest DATAGRAM payload the peer's transport parameters allow.
+fn peer_datagram_budget(conn: lsquic::Conn) -> Option<u16> {
+    let tp = conn.peer_transport_params()?;
+    Some(
+        tp.max_datagram_frame_size
+            .saturating_sub(DATAGRAM_FRAME_OVERHEAD)
+            .min(DATAGRAM_PAYLOAD_BUDGET) as u16,
+    )
+}
+
 fn opt_bytes_to_js(global: &JSGlobalObject, bytes: Option<&[u8]>) -> JSValue {
     match bytes {
         Some(b) => bun_string_jsc::create_utf8_for_js(global, b).or_report(),
@@ -2427,27 +2440,26 @@ lsquic_callback! {
 
     pub(super) fn on_hsk_done(session: &QuicSession, status: c_int) {
         let ok = status == lsquic::LSQ_HSK_OK || status == lsquic::LSQ_HSK_RESUMED_OK;
-        if ok && !session.is_server.get() && session.reject_unverified_peer.get() {
-            session.capture_hsk_snapshot();
-            if session.peer_verification_refused() {
-                session.peer_cert_rejected.set(true);
-                session.self_close.with_mut(|s| {
-                    *s = Some((
-                        false,
-                        CRYPTO_ERROR_BAD_CERTIFICATE,
-                        b"peer certificate verification failed".to_vec(),
-                    ));
-                });
-                if let Some(c) = session.conn() {
-                    c.abort_error(
-                        false,
-                        CRYPTO_ERROR_BAD_CERTIFICATE as c_uint,
-                        c"peer certificate verification failed",
-                    );
-                }
-            }
+        let Some(conn) = session.conn().filter(|_| ok) else {
+            session.push_event(SessionEvent::HandshakeDone { ok: false });
+            return;
+        };
+        session.note_handshake_ok(conn);
+        if session.peer_verification_refused() {
+            session.peer_cert_rejected.set(true);
+            session.self_close.with_mut(|s| {
+                *s = Some((
+                    false,
+                    CRYPTO_ERROR_BAD_CERTIFICATE,
+                    b"peer certificate verification failed".to_vec(),
+                ));
+            });
+            conn.abort_error(
+                false,
+                CRYPTO_ERROR_BAD_CERTIFICATE as c_uint,
+                c"peer certificate verification failed",
+            );
         }
-        session.push_event(SessionEvent::HandshakeDone { ok });
     }
 }
 

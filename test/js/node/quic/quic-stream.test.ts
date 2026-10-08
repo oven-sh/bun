@@ -2,10 +2,12 @@
 // `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
 // must deliver it with a FIN, never retract it with a RESET_STREAM.
 import { describe, expect, test } from "bun:test";
-import { createPrivateKey } from "node:crypto";
+import { createPrivateKey, randomBytes, X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { connect, listen } from "node:quic";
+import { inspect } from "node:util";
+import { rawQuicExchange, type RawQuicOptions, type RawQuicStream } from "./raw-quic-client";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
@@ -334,6 +336,76 @@ describe("verifyClient", () => {
       client: "ERR_QUIC_TRANSPORT_ERROR",
     });
   });
+
+  // The same engine pass with a well-formed peer: a node:quic client that queues
+  // a stream before the handshake and destroys itself once it has its 1-RTT
+  // keys. Its Finished, its stream and its CONNECTION_CLOSE are all sent before
+  // the listener, on this thread, reads any of them.
+  const closesWithItsFinished = {
+    keylog: true,
+    onkeylog(this: any, line: string) {
+      if (line.startsWith("CLIENT_TRAFFIC_SECRET_0")) this.destroy();
+    },
+    onerror() {},
+  };
+
+  test("a client that presented a certificate and closes with its Finished is not read as having none", async () => {
+    const clientKey = createPrivateKey(readFileSync(join(keysDir, "agent2-key.pem")));
+    const clientCert = readFileSync(join(keysDir, "agent2-cert.pem"));
+    const events: unknown[] = [];
+    const serverClosed = Promise.withResolvers<void>();
+    await using server = await listen(
+      (session: any) => {
+        session.onerror = () => {};
+        session.onhandshake = (info: any) =>
+          events.push([
+            "handshake",
+            { protocol: info.protocol, validationErrorCode: info.validationErrorCode },
+            {
+              peerCertificate: session.peerCertificate?.fingerprint256,
+              // A getter that only a live connection answers.
+              remoteTransportParams: session.remoteTransportParams,
+            },
+          ]);
+        session.onstream = (stream: any) => {
+          events.push(["stream"]);
+          stream.closed.catch(() => {});
+        };
+        session.closed.then(serverClosed.resolve, serverClosed.resolve);
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        alpn: ["quic-test"],
+        verifyClient: true,
+        ca: [clientCert],
+        transportParams: { maxIdleTimeout: 5 },
+      },
+    );
+
+    const client = await connect(server.address!, {
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      keys: [clientKey],
+      certs: [clientCert],
+      transportParams: { maxIdleTimeout: 5 },
+      ...closesWithItsFinished,
+    });
+    client.opened.catch(() => {});
+    client.closed.catch(() => {});
+    const stream = await client.createBidirectionalStream({ body: new TextEncoder().encode("early body") });
+    stream.closed.catch(() => {});
+
+    await serverClosed.promise;
+    expect(events).toEqual([
+      [
+        "handshake",
+        { protocol: "quic-test", validationErrorCode: undefined },
+        { peerCertificate: new X509Certificate(clientCert).fingerprint256, remoteTransportParams: undefined },
+      ],
+      ["stream"],
+    ]);
+  });
 });
 
 describe("headers queued before the handshake", () => {
@@ -371,6 +443,284 @@ describe("headers queued before the handshake", () => {
       () => "closed",
     );
     expect(await Promise.race([gotHeaders.promise, closed])).toBe("/queued");
+    client.close();
+  });
+});
+
+// lsquic can complete a handshake, read the peer's first stream and close the
+// connection in one engine pass, before any of that reaches JS. What a listener
+// sees must not depend on it. The raw client puts its streams in the datagram
+// of its Finished, or in a later one, and both have to report the same.
+//
+// RFC 9114 section 4.1 requires HEADERS first on a request stream, so a DATA
+// frame first is answered with CONNECTION_CLOSE H3_FRAME_UNEXPECTED (0x105).
+describe("a malformed first request stream", () => {
+  // An empty DATA frame (type 0x00, length 0).
+  const emptyData: RawQuicStream[] = [{ id: 0, data: Uint8Array.of(0x00, 0x00) }];
+  // A control stream (type 0x00) that carries SETTINGS, then DATA "a" on the request stream.
+  const dataBehindControlStream: RawQuicStream[] = [
+    { id: 2, data: Uint8Array.of(0x00, 0x04, 0x00) },
+    { id: 0, data: Uint8Array.of(0x00, 0x01, 0x61) },
+  ];
+  const streamCallbacks = ["onheaders", "ontrailers", "oninfo", "onwanttrailers"];
+  function respond(this: any) {
+    this.sendHeaders({ ":status": "200" }, { terminal: true });
+  }
+
+  /** What the listener's first session reports, and the status a later connection gets. */
+  async function exchange(
+    streams: RawQuicStream[],
+    send: RawQuicOptions["send"],
+    listenCallbacks: Record<string, unknown> = { onheaders: respond },
+  ) {
+    const events: unknown[] = [];
+    const sessions: Promise<unknown>[] = [];
+    await using server = await listen(
+      (session: any) => {
+        const closed = Promise.withResolvers<void>();
+        sessions.push(closed.promise);
+        const record = sessions.length === 1 ? (event: unknown[]) => events.push(event) : () => {};
+        session.onerror = (err: any) => record(["error", err?.code]);
+        session.onhandshake = (info: any) =>
+          record([
+            "handshake",
+            { protocol: info.protocol, cipher: info.cipher, servername: info.servername },
+            { maxDatagramSize: session.maxDatagramSize, certificate: session.certificate?.fingerprint256 },
+          ]);
+        session.onstream = (stream: any) => {
+          record([
+            "stream",
+            {
+              priority: stream.priority,
+              callbacks: streamCallbacks.filter(name => typeof stream[name] === "function"),
+            },
+          ]);
+          // A listener that gave listen() no `onheaders` sets it on each stream.
+          if (!listenCallbacks.onheaders) stream.onheaders = respond;
+          stream.closed.catch(() => {});
+        };
+        session.closed.then(closed.resolve, closed.resolve);
+      },
+      {
+        alpn: ["h3"],
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 5 },
+        ...listenCallbacks,
+      },
+    );
+
+    const close = await rawQuicExchange({ port: server.address!.port, alpn: "h3", streams, send });
+
+    // The listener is still serving: it answers a well-formed request on a
+    // new connection.
+    const client = await connect(server.address!, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+    });
+    const answered = Promise.withResolvers<string>();
+    const stream = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+      onheaders: (headers: Record<string, string>) => answered.resolve(headers[":status"]),
+    });
+    stream.closed.catch(() => {});
+    const status = await answered.promise;
+    client.close();
+    await Promise.all(sessions);
+    return { close, events, status };
+  }
+
+  const expected = (listenCallbacks: string[]) => ({
+    close: { application: true, code: 0x105, reason: "unexpected HTTP/3 frame on stream 0" },
+    events: [
+      [
+        "handshake",
+        { protocol: "h3", cipher: "TLS_AES_128_GCM_SHA256", servername: "localhost" },
+        // The raw client's max_datagram_frame_size, less the 3 bytes of a DATAGRAM frame header.
+        { maxDatagramSize: 997, certificate: new X509Certificate(cert).fingerprint256 },
+      ],
+      ["stream", { priority: { level: "default", incremental: false }, callbacks: listenCallbacks }],
+      ["error", "ERR_QUIC_TRANSPORT_ERROR"],
+    ],
+    status: "200",
+  });
+
+  test.each([
+    ["an empty DATA frame", emptyData],
+    ["a DATA frame behind a control stream", dataBehindControlStream],
+  ])("%s in the handshake's last flight closes only that connection", async (_, streams) => {
+    expect(await exchange(streams, "with-finished")).toEqual(expected(["onheaders"]));
+    expect(await exchange(streams, "after-handshake-done")).toEqual(expected(["onheaders"]));
+  });
+
+  // Each listen()-time stream callback has its own setter.
+  test.each(["ontrailers", "oninfo", "onwanttrailers"])(
+    "a listener whose only listen()-time stream callback is %s reports the same",
+    async name => {
+      expect(await exchange(emptyData, "with-finished", { [name]() {} })).toEqual(expected([name]));
+    },
+  );
+});
+
+// Node selects a session's application (HTTP/3 or raw QUIC) when the ALPN is
+// known, not when the handshake is reported: a client has it from connect(),
+// and a server session has it inside the listen callback.
+describe("a session's application", () => {
+  const listenOptions = { sni: { "*": { keys: [key], certs: [cert] } }, transportParams: { maxIdleTimeout: 5 } };
+  const connectOptions = { servername: "localhost", verifyPeer: "manual", transportParams: { maxIdleTimeout: 5 } };
+  const quiet = (session: any) => {
+    session.onerror = () => {};
+    session.onstream = (stream: any) => stream.closed.catch(() => {});
+    session.closed.catch(() => {});
+  };
+  const thrownCode = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (err: any) {
+      return err.code;
+    }
+  };
+
+  test("an HTTP/3 client can set a stream's priority before its handshake", async () => {
+    await using server = await listen(quiet, { ...listenOptions, onheaders() {} });
+    const client = await connect(server.address!, { ...connectOptions, onerror() {} });
+    client.closed.catch(() => {});
+    const stream = await client.createBidirectionalStream({});
+    stream.closed.catch(() => {});
+    const result = {
+      setPriority: thrownCode(() => stream.setPriority({ level: "high" })),
+      priority: stream.priority,
+    };
+    client.destroy();
+    expect(result).toEqual({ setPriority: undefined, priority: { level: "high", incremental: false } });
+  });
+
+  test("a raw-QUIC client has no headers and no priority before its handshake", async () => {
+    await using server = await listen(quiet, { ...listenOptions, alpn: ["quic-test"] });
+    const client = await connect(server.address!, { ...connectOptions, alpn: "quic-test", onerror() {} });
+    client.closed.catch(() => {});
+    const stream = await client.createBidirectionalStream({});
+    stream.closed.catch(() => {});
+    const result = {
+      onheaders: thrownCode(() => {
+        stream.onheaders = () => {};
+      }),
+      sendHeaders: thrownCode(() => stream.sendHeaders({ ":method": "GET", ":path": "/" })),
+      priority: stream.priority,
+    };
+    client.destroy();
+    expect(result).toEqual({ onheaders: "ERR_INVALID_STATE", sendHeaders: "ERR_INVALID_STATE", priority: null });
+  });
+
+  /** The application fields of a session's state, as util.inspect prints them. */
+  const applicationState = (session: unknown) => {
+    const text = inspect(session, { depth: 2 });
+    const fields = ["applicationType", "headersSupported", "isPrioritySupported", "internalErrorCode"];
+    return Object.fromEntries(fields.map(name => [name, text.match(new RegExp(`\\b${name}: ([^,\\s]+)`))?.[1]]));
+  };
+
+  // `applicationType` is node's Session::Application::Type: 1 for raw QUIC, 2 for HTTP/3.
+  test.each([
+    ["h3", { applicationType: "2", headersSupported: "1", isPrioritySupported: "true", internalErrorCode: "258n" }],
+    [
+      "quic-test",
+      { applicationType: "1", headersSupported: "2", isPrioritySupported: "false", internalErrorCode: "1n" },
+    ],
+  ])("a server session for %s has it inside the listen callback", async (alpn, application) => {
+    const states = Promise.withResolvers<unknown>();
+    await using server = await listen(
+      (session: any) => {
+        quiet(session);
+        const inListenCallback = applicationState(session);
+        session.onhandshake = () => states.resolve({ inListenCallback, inOnhandshake: applicationState(session) });
+      },
+      { ...listenOptions, alpn: [alpn] },
+    );
+    const client = await connect(server.address!, { ...connectOptions, alpn, onerror() {} });
+    client.closed.catch(() => {});
+    const seen = await states.promise;
+    await client.close();
+    expect(seen).toEqual({ inListenCallback: application, inOnhandshake: application });
+  });
+
+  // A server that cannot accept the 0-RTT data of a ticket makes the client
+  // drop its early streams, and an HTTP/3 client resets them with
+  // H3_INTERNAL_ERROR (0x102). That happens before the handshake is reported.
+  test("an HTTP/3 client resets rejected 0-RTT streams with H3_INTERNAL_ERROR", async () => {
+    const tokenSecret = randomBytes(16);
+    const first = { ...listenOptions, endpoint: { tokenSecret }, application: { enableDatagrams: true } };
+    const second = { ...listenOptions, endpoint: { tokenSecret }, application: { enableDatagrams: false } };
+
+    const ticket = Promise.withResolvers<Buffer>();
+    {
+      await using server = await listen(quiet, first);
+      const client = await connect(server.address!, {
+        ...connectOptions,
+        ...first,
+        onsessionticket: ticket.resolve,
+        onerror() {},
+      });
+      await ticket.promise;
+      await client.close();
+    }
+
+    // This listener no longer offers datagrams, so the ticket's 0-RTT is refused.
+    await using server = await listen(quiet, second);
+    const client = await connect(server.address!, {
+      ...connectOptions,
+      ...second,
+      sessionTicket: await ticket.promise,
+      onerror() {},
+    });
+    client.closed.catch(() => {});
+    const early = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+    });
+    const reset = await early.closed.then(
+      () => undefined,
+      (err: any) => ({ code: err.code, errorCode: err.errorCode }),
+    );
+    const info = await client.opened;
+    await client.close();
+    expect({ reset, earlyDataAttempted: info.earlyDataAttempted, earlyDataAccepted: info.earlyDataAccepted }).toEqual({
+      reset: { code: "ERR_QUIC_APPLICATION_ERROR", errorCode: 0x102n },
+      earlyDataAttempted: true,
+      earlyDataAccepted: false,
+    });
+  });
+});
+
+// A raw-QUIC session has no headers. The setter says so inside `onstream`,
+// where the error is the session's: it reaches `onerror`.
+describe("a header callback on a raw-QUIC stream", () => {
+  test("set inside onstream destroys the session with ERR_INVALID_STATE", async () => {
+    const failed = Promise.withResolvers<string>();
+    await using server = await listen(
+      (session: any) => {
+        session.onerror = (err: any) => failed.resolve(err?.code);
+        session.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+          stream.onheaders = () => {};
+        };
+      },
+      {
+        alpn: ["quic-test"],
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 5 },
+      },
+    );
+
+    const client = await connect(server.address!, {
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+      onerror() {},
+    });
+    client.closed.catch(() => {});
+    const stream = await client.createBidirectionalStream({ body: new TextEncoder().encode("hi") });
+    stream.closed.catch(() => {});
+    expect(await failed.promise).toBe("ERR_INVALID_STATE");
     client.close();
   });
 });

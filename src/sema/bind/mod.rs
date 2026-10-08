@@ -5,7 +5,7 @@
 mod binder;
 mod parents;
 
-pub use parents::bind_for_format;
+pub use parents::{bind_for_format, bind_for_format_in};
 
 use crate::atom::{Atom, known};
 use crate::hir::*;
@@ -1779,6 +1779,199 @@ impl BoundBuilder {
         self.move_to_arena(arena)
     }
 
+    /// Makes it what `BoundBuilder::default()` is, but for the room that its lists keep.
+    fn clear(&mut self) {
+        // Every field, so that one that is added cannot be left out.
+        let BoundIn {
+            ran_out_of_stack,
+            symbols,
+            scopes,
+            tables,
+            entries,
+            large_tables,
+            nested_names,
+            ids,
+            file_symbol,
+            export_stars,
+            ambient_modules,
+            pattern_ambient_modules,
+            global_augmentations,
+            redeclarations,
+            umd_globals,
+            specifiers,
+            module_augmentations,
+            ambient_specifiers,
+            commonjs_indicator,
+            module_exports_property,
+            expr_symbol,
+            expr_parent,
+            expr_flow,
+            stmt_parent,
+            stmt_scope,
+            type_scope,
+            type_by_alias,
+            this_in_type_literal,
+            pat_parent,
+            pat_symbol,
+            prop_owner,
+            member_symbol,
+            property_symbol,
+            member_owner,
+            member_scope,
+            param_fn,
+            type_param_symbol,
+            type_param_scope,
+            fns,
+            requires_scope_change,
+            fn_symbol,
+            class_symbol,
+            class_owner,
+            class_scope,
+            interface_symbol,
+            interface_scope,
+            interface_contains_this,
+            enum_scope,
+            module_scope,
+            alias_symbol,
+            alias_scope,
+            enum_symbol,
+            enum_member_symbol,
+            enum_member_owner,
+            module_symbol,
+            module_instance_state,
+            var_stmt,
+            assignments,
+            unchecked_assignment_targets,
+            type_query_operands,
+            unchecked_exprs,
+            unchecked_types,
+            infer_positions,
+            expando_declarations,
+            computed_symbols,
+            case_stmt,
+            stmt_flow,
+            case_fallthrough,
+            hoisted_vars,
+            refused_decorators,
+            unused_labels,
+            import_scope,
+            import_equals_scope,
+            export_scope,
+            expr_scope,
+            private_class,
+            private_names_outside_class_bodies,
+            classes_of_private_names,
+            free_idents,
+            alias_idents,
+            arguments_objects,
+            identifiers_in_parameters,
+            jsdoc_param_errors,
+            names_resolved_for_arguments,
+            flow,
+            flow_edges,
+            flow_shared,
+            flow_places,
+            expr_kinds,
+            expr_kind_counts,
+            ident_scope,
+            declared,
+            scope_node,
+        } = self;
+        *ran_out_of_stack = Default::default();
+        symbols.clear();
+        scopes.clear();
+        tables.clear();
+        entries.clear();
+        large_tables.clear();
+        nested_names.clear();
+        ids.clear();
+        *file_symbol = Default::default();
+        export_stars.clear();
+        ambient_modules.clear();
+        pattern_ambient_modules.clear();
+        global_augmentations.clear();
+        redeclarations.clear();
+        umd_globals.clear();
+        specifiers.clear();
+        module_augmentations.clear();
+        ambient_specifiers.clear();
+        *commonjs_indicator = Default::default();
+        *module_exports_property = Default::default();
+        expr_symbol.clear();
+        expr_parent.clear();
+        expr_flow.clear();
+        stmt_parent.clear();
+        stmt_scope.clear();
+        type_scope.clear();
+        type_by_alias.clear();
+        this_in_type_literal.clear();
+        pat_parent.clear();
+        pat_symbol.clear();
+        prop_owner.clear();
+        member_symbol.clear();
+        property_symbol.clear();
+        member_owner.clear();
+        member_scope.clear();
+        param_fn.clear();
+        type_param_symbol.clear();
+        type_param_scope.clear();
+        fns.clear();
+        requires_scope_change.clear();
+        fn_symbol.clear();
+        class_symbol.clear();
+        class_owner.clear();
+        class_scope.clear();
+        interface_symbol.clear();
+        interface_scope.clear();
+        interface_contains_this.clear();
+        enum_scope.clear();
+        module_scope.clear();
+        alias_symbol.clear();
+        alias_scope.clear();
+        enum_symbol.clear();
+        enum_member_symbol.clear();
+        enum_member_owner.clear();
+        module_symbol.clear();
+        module_instance_state.clear();
+        var_stmt.clear();
+        assignments.clear();
+        unchecked_assignment_targets.clear();
+        type_query_operands.clear();
+        unchecked_exprs.clear();
+        unchecked_types.clear();
+        infer_positions.clear();
+        expando_declarations.clear();
+        computed_symbols.clear();
+        case_stmt.clear();
+        stmt_flow.clear();
+        case_fallthrough.clear();
+        hoisted_vars.clear();
+        refused_decorators.clear();
+        unused_labels.clear();
+        import_scope.clear();
+        import_equals_scope.clear();
+        export_scope.clear();
+        expr_scope.clear();
+        private_class.clear();
+        private_names_outside_class_bodies.clear();
+        classes_of_private_names.clear();
+        free_idents.clear();
+        alias_idents.clear();
+        arguments_objects.clear();
+        identifiers_in_parameters.clear();
+        jsdoc_param_errors.clear();
+        names_resolved_for_arguments.clear();
+        flow.clear();
+        flow_edges.clear();
+        flow_shared.clear();
+        *flow_places = Default::default();
+        expr_kinds.clear();
+        expr_kind_counts.clear();
+        ident_scope.clear();
+        declared.clear();
+        scope_node.clear();
+    }
+
     /// The same. What is left is empty, and the lists that are long in most files keep their room.
     fn move_to_arena<'s>(&mut self, arena: &'s Arena) -> Bound<'s> {
         Bound {
@@ -1941,4 +2134,37 @@ pub fn bind_for_lint<'s>(
     arena: &'s Arena,
 ) -> Bound<'s> {
     binder::run_for_lint(file, options, atoms, arena)
+}
+
+/// The lists of the last file that was bound on this thread, for the next one to use their room. They
+/// go back to the thread when this is dropped.
+pub struct Recycled(Option<Box<binder::Room>>);
+
+impl Recycled {
+    pub fn of_this_thread() -> Recycled {
+        Recycled(Some(binder::take_room()))
+    }
+
+    fn room(&mut self) -> &mut binder::Room {
+        self.0.get_or_insert_default()
+    }
+}
+
+impl Drop for Recycled {
+    fn drop(&mut self) {
+        if let Some(room) = self.0.take() {
+            binder::leave_room(room);
+        }
+    }
+}
+
+/// [`bind_for_lint`] without an arena: the result is in `recycled`, where it is until the next file is
+/// bound there. Nothing is copied, and little is allocated after the first few files.
+pub fn bind_for_lint_in<'r>(
+    file: &File,
+    options: BindOptions,
+    atoms: &dyn crate::atom::Intern,
+    recycled: &'r mut Recycled,
+) -> &'r BoundBuilder {
+    binder::run_for_lint_in(file, options, atoms, recycled.room())
 }

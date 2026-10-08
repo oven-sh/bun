@@ -97,7 +97,7 @@ enum IsComputedName {
 /// What a run of the binder leaves for the next one on the thread: lists that are empty and have room.
 #[derive(Default)]
 pub(super) struct Room {
-    b: BoundBuilder,
+    pub(super) b: BoundBuilder,
     tables: Vec<Table>,
     statement_lists: Vec<IdList<StmtId>>,
     idents: Vec<(ExprId, ScopeId)>,
@@ -121,12 +121,29 @@ pub(super) fn run_for_lint<'s>(
     atoms: &dyn crate::atom::Intern,
     arena: &'s Arena,
 ) -> Bound<'s> {
-    let mut room = ROOM.take().unwrap_or_default();
-    let mut b = Binder::<true>::run_in(f, options, atoms, &mut room);
-    let bound = b.move_to_arena(arena);
-    room.b = b;
-    ROOM.set(Some(room));
+    let mut room = take_room();
+    let bound = run_for_lint_in(f, options, atoms, &mut room).move_to_arena(arena);
+    leave_room(room);
     bound
+}
+
+pub(super) fn take_room() -> Box<Room> {
+    ROOM.take().unwrap_or_default()
+}
+
+pub(super) fn leave_room(room: Box<Room>) {
+    ROOM.set(Some(room));
+}
+
+/// [`bind_for_lint_in`]
+pub(super) fn run_for_lint_in<'r>(
+    f: &File,
+    options: BindOptions,
+    atoms: &dyn crate::atom::Intern,
+    room: &'r mut Room,
+) -> &'r mut BoundBuilder {
+    room.b = Binder::<true>::run_in(f, options, atoms, room);
+    &mut room.b
 }
 
 /// `list`, which is empty, with `len` times `value`.
@@ -254,6 +271,7 @@ impl<'f, 's, const LINT: bool> Binder<'f, 's, LINT> {
         atoms: &'f dyn crate::atom::Intern,
         room: &mut Room,
     ) -> BoundBuilder {
+        room.b.clear();
         let old = std::mem::take(&mut room.b);
         // The length of a list that only the checker reads.
         let for_checker = |len: usize| if LINT { 0 } else { len };

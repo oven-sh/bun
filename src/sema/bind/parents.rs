@@ -9,6 +9,43 @@ fn filled<T: Copy>(arena: &Arena, len: usize, value: T) -> ArenaVec<'_, T> {
     list
 }
 
+fn refilled<T: Copy>(list: &mut Vec<T>, len: usize, value: T) {
+    list.clear();
+    list.resize(len, value);
+}
+
+const NO_FUNCTION: FnInfo = FnInfo {
+    owner: FnOwner::None,
+    scope: ScopeId::NONE,
+    enclosing: FnId::NONE,
+    returns: IdList::EMPTY,
+    yields: IdList::EMPTY,
+    end: UNREACHABLE,
+    exit: FlowId::NONE,
+    contains_this: false,
+};
+
+/// What is filled in, each as long as the list of the file and with nothing in it.
+struct Lists<'l> {
+    expr_parent: &'l mut [Parent],
+    stmt_parent: &'l mut [Parent],
+    pat_parent: &'l mut [PatParent],
+    prop_owner: &'l mut [ExprId],
+    member_owner: &'l mut [MemberOwner],
+    param_fn: &'l mut [FnId],
+    var_stmt: &'l mut [StmtId],
+    case_stmt: &'l mut [StmtId],
+    class_owner: &'l mut [ClassOwner],
+    enum_member_owner: &'l mut [EnumId],
+    fns: &'l mut [FnInfo],
+    type_query_operands: &'l mut Vec<ExprId>,
+}
+
+/// What comes from JSDoc comments is bound where the comment is.
+fn is_for_the_binder(f: &File) -> bool {
+    f.is_js && !f.jsdoc_comments.is_empty()
+}
+
 /// [`bind`] for a formatter, which goes down from the file and now and then asks what a node is part
 /// of. It declares nothing and resolves nothing.
 ///
@@ -27,8 +64,7 @@ pub fn bind_for_format<'s>(
     atoms: &dyn crate::atom::Intern,
     arena: &'s Arena,
 ) -> Bound<'s> {
-    // What comes from JSDoc comments is bound where the comment is.
-    if f.is_js && !f.jsdoc_comments.is_empty() {
+    if is_for_the_binder(f) {
         return bind_for_lint(f, options, atoms, arena);
     }
     let mut expr_parent = filled(arena, f.exprs.len(), Parent::None);
@@ -40,19 +76,108 @@ pub fn bind_for_format<'s>(
     let mut var_stmt = filled(arena, f.var_decls.len(), StmtId::NONE);
     let mut case_stmt = filled(arena, f.cases.len(), StmtId::NONE);
     let mut class_owner = filled(arena, f.classes.len(), ClassOwner::Stmt(StmtId::NONE));
+    let mut fns = filled(arena, f.fns.len(), NO_FUNCTION);
     let mut enum_member_owner = vec![EnumId::NONE; f.enum_members.len()];
     let mut type_query_operands = Vec::new();
-    let no_function = FnInfo {
-        owner: FnOwner::None,
-        scope: ScopeId::NONE,
-        enclosing: FnId::NONE,
-        returns: IdList::EMPTY,
-        yields: IdList::EMPTY,
-        end: UNREACHABLE,
-        exit: FlowId::NONE,
-        contains_this: false,
-    };
-    let mut fns = filled(arena, f.fns.len(), no_function);
+    let is_done = fill(
+        f,
+        Lists {
+            expr_parent: &mut expr_parent,
+            stmt_parent: &mut stmt_parent,
+            pat_parent: &mut pat_parent,
+            prop_owner: &mut prop_owner,
+            member_owner: &mut member_owner,
+            param_fn: &mut param_fn,
+            var_stmt: &mut var_stmt,
+            case_stmt: &mut case_stmt,
+            class_owner: &mut class_owner,
+            enum_member_owner: &mut enum_member_owner,
+            fns: &mut fns,
+            type_query_operands: &mut type_query_operands,
+        },
+    );
+    if !is_done {
+        return bind_for_lint(f, options, atoms, arena);
+    }
+    Bound {
+        expr_parent,
+        stmt_parent,
+        pat_parent,
+        prop_owner,
+        member_owner,
+        param_fn,
+        var_stmt,
+        case_stmt,
+        class_owner,
+        fns,
+        enum_member_owner: few_to_arena(enum_member_owner, arena),
+        type_query_operands: few_to_arena(type_query_operands, arena),
+        ..Bound::empty_in(arena)
+    }
+}
+
+/// [`bind_for_format`] without an arena: see [`bind_for_lint_in`].
+pub fn bind_for_format_in<'r>(
+    f: &File,
+    options: BindOptions,
+    atoms: &dyn crate::atom::Intern,
+    recycled: &'r mut Recycled,
+) -> &'r BoundBuilder {
+    if is_for_the_binder(f) {
+        return bind_for_lint_in(f, options, atoms, recycled);
+    }
+    let b = &mut recycled.room().b;
+    b.clear();
+    refilled(&mut b.expr_parent, f.exprs.len(), Parent::None);
+    refilled(&mut b.stmt_parent, f.stmts.len(), Parent::None);
+    refilled(&mut b.pat_parent, f.pats.len(), PatParent::None);
+    refilled(&mut b.prop_owner, f.props.len(), ExprId::NONE);
+    refilled(&mut b.member_owner, f.members.len(), MemberOwner::None);
+    refilled(&mut b.param_fn, f.params.len(), FnId::NONE);
+    refilled(&mut b.var_stmt, f.var_decls.len(), StmtId::NONE);
+    refilled(&mut b.case_stmt, f.cases.len(), StmtId::NONE);
+    refilled(&mut b.class_owner, f.classes.len(), ClassOwner::Stmt(StmtId::NONE));
+    refilled(&mut b.enum_member_owner, f.enum_members.len(), EnumId::NONE);
+    refilled(&mut b.fns, f.fns.len(), NO_FUNCTION);
+    let is_done = fill(
+        f,
+        Lists {
+            expr_parent: &mut b.expr_parent,
+            stmt_parent: &mut b.stmt_parent,
+            pat_parent: &mut b.pat_parent,
+            prop_owner: &mut b.prop_owner,
+            member_owner: &mut b.member_owner,
+            param_fn: &mut b.param_fn,
+            var_stmt: &mut b.var_stmt,
+            case_stmt: &mut b.case_stmt,
+            class_owner: &mut b.class_owner,
+            enum_member_owner: &mut b.enum_member_owner,
+            fns: &mut b.fns,
+            type_query_operands: &mut b.type_query_operands,
+        },
+    );
+    match is_done {
+        true => &recycled.room().b,
+        false => bind_for_lint_in(f, options, atoms, recycled),
+    }
+}
+
+/// `false`: it takes the binder.
+fn fill(f: &File, lists: Lists) -> bool {
+    let Lists {
+        expr_parent,
+        stmt_parent,
+        pat_parent,
+        prop_owner,
+        member_owner,
+        param_fn,
+        var_stmt,
+        case_stmt,
+        class_owner,
+        enum_member_owner,
+        fns,
+        type_query_operands,
+    } = lists;
 
     // An id that is `NONE` is the index of nothing.
     macro_rules! set {
@@ -166,7 +291,7 @@ pub fn bind_for_format<'s>(
         let id = TypeNodeId(i as u32);
         match ty.kind {
             // An error. Its expression is part of what the type is in.
-            TypeNodeKind::Heritage { .. } => return bind_for_lint(f, options, atoms, arena),
+            TypeNodeKind::Heritage { .. } => return false,
             TypeNodeKind::Typeof { expr, .. } => {
                 set!(expr_parent[expr] = Parent::File);
                 let mut at = expr;
@@ -395,19 +520,5 @@ pub fn bind_for_format<'s>(
     }
     type_query_operands.sort_unstable();
     type_query_operands.dedup();
-    Bound {
-        expr_parent,
-        stmt_parent,
-        pat_parent,
-        prop_owner,
-        member_owner,
-        param_fn,
-        var_stmt,
-        case_stmt,
-        class_owner,
-        fns,
-        enum_member_owner: few_to_arena(enum_member_owner, arena),
-        type_query_operands: few_to_arena(type_query_operands, arena),
-        ..Bound::empty_in(arena)
-    }
+    true
 }

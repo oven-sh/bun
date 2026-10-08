@@ -920,11 +920,64 @@ fn differences_for_format(full: &bun_sema::bind::Bound, ours: &bun_sema::bind::B
     different
 }
 
+/// The tables in which `recycled`, which is in lists that the file before has used, is not `copied`, from the same binder.
+fn differences_of_recycled<A: bun_sema::hir::Storage, B: bun_sema::hir::Storage>(
+    copied: &bun_sema::bind::BoundIn<A>,
+    recycled: &bun_sema::bind::BoundIn<B>,
+) -> Vec<String> {
+    let mut different = Vec::new();
+    macro_rules! same {
+        ($($field:ident)*) => {$(
+            if copied.$field[..] != recycled.$field[..] {
+                different.push(format!("recycled {}: {} and {} long", stringify!($field), copied.$field.len(), recycled.$field.len()));
+            }
+        )*};
+    }
+    same! {
+        ids expr_symbol expr_parent stmt_parent type_scope pat_parent pat_symbol prop_owner member_owner param_fn
+        type_param_symbol type_param_scope fn_symbol class_symbol class_owner class_scope interface_symbol alias_symbol
+        enum_symbol enum_member_symbol enum_member_owner module_symbol var_stmt case_stmt type_query_operands
+        requires_scope_change stmt_flow case_fallthrough expr_kinds expr_kind_counts ident_scope declared scope_node
+    }
+    fn functions<S: bun_sema::hir::Storage>(of: &bun_sema::bind::BoundIn<S>) -> Vec<String> {
+        let one = |it: &bun_sema::bind::FnInfo| {
+            let lists = (it.returns.start, it.returns.len, it.yields.start, it.yields.len);
+            format!("{:?} {:?} {:?} {lists:?} {} {:?} {:?}", it.owner, it.scope, it.enclosing, it.contains_this, it.end, it.exit)
+        };
+        of.fns.iter().map(one).collect()
+    }
+    fn symbols<S: bun_sema::hir::Storage>(of: &bun_sema::bind::BoundIn<S>) -> Vec<String> {
+        let one = |it: &bun_sema::bind::SymbolIn<S>| {
+            let links = (it.value_declaration, it.parent, it.export_symbol);
+            format!("{:?} {:?} {:?} {links:?}", it.name, it.flags, it.decls.as_slice())
+        };
+        of.symbols.iter().map(one).collect()
+    }
+    fn refused<S: bun_sema::hir::Storage>(of: &bun_sema::bind::BoundIn<S>) -> Vec<String> {
+        of.redeclarations.iter().map(|it| format!("{:?} {} {:?} {}", it.symbol, it.count, it.decl, it.code)).collect()
+    }
+    if functions(copied) != functions(recycled) {
+        different.push("recycled fns".to_owned());
+    }
+    if symbols(copied) != symbols(recycled) {
+        different.push("recycled symbols".to_owned());
+    }
+    if refused(copied) != refused(recycled) {
+        different.push("recycled redeclarations".to_owned());
+    }
+    if copied.scopes.len() != recycled.scopes.len() || copied.ran_out_of_stack != recycled.ran_out_of_stack {
+        different.push("recycled scopes, or ran_out_of_stack".to_owned());
+    }
+    different
+}
+
 fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool) {
-    use bun_sema::bind::{BindOptions, bind, bind_for_format, bind_for_lint};
+    use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format, bind_for_format_in, bind_for_lint, bind_for_lint_in};
     std::panic::set_hook(Box::new(|_| {}));
     let inputs = read_inputs(path);
     let (mut same, mut by_kind) = (0, BTreeMap::<String, (usize, Vec<String>)>::new());
+    // How many inputs have expressions, statements, functions or classes that `bind` does not get to.
+    let left_behind = std::cell::Cell::new([0usize; 4]);
     for input in &inputs {
         let language = LanguageOptions {
             parser: language.parser,
@@ -955,12 +1008,29 @@ fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool) {
                 before_es2017: false,
             };
             let full = bind(&hir, options, &atoms, arena);
+            let mut counts = left_behind.get();
+            let has = [
+                full.expr_parent.iter().any(|it| *it == bun_sema::bind::Parent::None),
+                full.stmt_parent.iter().any(|it| *it == bun_sema::bind::Parent::None),
+                full.fns.iter().any(|it| it.owner == bun_sema::bind::FnOwner::None),
+                full.class_scope.iter().any(|it| it.is_none()),
+            ];
+            (0..4).for_each(|i| counts[i] += usize::from(has[i]));
+            left_behind.set(counts);
             match is_for_format {
-                true => differences_for_format(&full, &bind_for_format(&hir, options, &atoms, arena)),
+                true => {
+                    let ours = bind_for_format(&hir, options, &atoms, arena);
+                    let mut different = differences_for_format(&full, &ours);
+                    let mut recycled = Recycled::of_this_thread();
+                    different.extend(differences_of_recycled(&ours, bind_for_format_in(&hir, options, &atoms, &mut recycled)));
+                    different
+                }
                 false => {
                     let lint = bind_for_lint(&hir, options, &atoms, arena);
                     let mut different = differences(&full, &lint);
                     different.extend(problems_of_lint_tables(&hir, &full, &lint));
+                    let mut recycled = Recycled::of_this_thread();
+                    different.extend(differences_of_recycled(&lint, bind_for_lint_in(&hir, options, &atoms, &mut recycled)));
                     different
                 }
             }
@@ -980,6 +1050,8 @@ fn bind_check(path: &str, language: &LanguageOptions, is_for_format: bool) {
         println!("{count:6} {name}");
         examples.iter().for_each(|it| println!("         {it}"));
     }
+    let [exprs, stmts, fns, classes] = left_behind.get();
+    println!("not reached by bind: expressions in {exprs} inputs, statements in {stmts}, functions in {fns}, classes in {classes}");
     println!("{} inputs, {same} the same, {} tables differ", inputs.len(), by_kind.len());
 }
 

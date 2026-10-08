@@ -65,7 +65,7 @@ fn check_and_lint(
         };
         let config = files[indices[at]].config;
         let started = context.timing.now();
-        let linted = bun_lint::types::with_file(checker, file, &config.language, Some(&read_library), |file| {
+        let linted = bun_lint::types::with_file_and_modules(checker, file, &config.language, Some(&read_library), Some(context.modules), |file| {
             let mut result = context.linter.lint(file, config, &options);
             context.promote_suggestions(&mut result);
             let is_reported = !result.messages.is_empty() || !result.suppressed.is_empty();

@@ -353,9 +353,9 @@ impl<'l> Loader<'l> {
                 entries.push((b"reportUnusedDisableDirectives".to_vec(), severity_name(severity)));
             }
         }
-        // A file that `--config` names is for the working directory, wherever it is. What it extends
-        // is next to it.
-        let base_path = if options.config.is_some() { self.cwd() } else { paths::dirname(path) };
+        // An `.eslintrc.json` that `--config` names is for the working directory, wherever it is. What
+        // it extends is next to it. The patterns of oxlint are from the directory of the file.
+        let base_path = if options.config.is_some() && flavor == RcFlavor::Eslint { self.cwd() } else { paths::dirname(path) };
         let mut moved: Vec<(Vec<u8>, Vec<u8>)> = vec![(base_path.to_vec(), paths::dirname(path).to_vec())];
         let mut load = |directory: &[u8], name: &[u8]| {
             // A package, which would have to be run.

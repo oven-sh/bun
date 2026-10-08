@@ -1,7 +1,7 @@
 //! `getBaseTypesOfClassMember.ts`
 
 use crate::ast::{Member, Node};
-use crate::types::{SyntaxKind, Type};
+use crate::types::{SyntaxKind, TsNode, Type};
 use smallvec::SmallVec;
 
 /// What [`get_base_types_of_class_member`] yields.
@@ -37,10 +37,12 @@ pub fn get_base_types_of_class_member(
     let Some(class_node) = member_ts_node.parent() else {
         return found;
     };
-    for clause_node in class_node
+    // They follow each other, before the members.
+    let is_heritage_clause = |child: &TsNode| child.kind() == SyntaxKind::HeritageClause;
+    let children = class_node
         .children()
-        .filter(|child| child.kind() == SyntaxKind::HeritageClause)
-    {
+        .skip_while(|child| !is_heritage_clause(child));
+    for clause_node in children.take_while(is_heritage_clause) {
         for base_type_node in clause_node.children() {
             let base_type = base_type_node.get_type_at_location();
             let Some(base_member_symbol) = base_type.get_property(member_symbol.name()) else {

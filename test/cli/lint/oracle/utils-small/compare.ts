@@ -15,6 +15,7 @@ const { directivesPattern } = lib("shared/directives");
 const { createGlobalLinebreakMatcher, shebangPattern } = lib("shared/ast-utils");
 const keywords: string[] = lib("rules/utils/keywords");
 const unicode = lib("rules/utils/unicode");
+const { isValidWithUnicodeFlag } = lib("rules/utils/regular-expressions");
 
 let seed = 0x2545f491;
 function random(below: number): number {
@@ -133,6 +134,18 @@ for (let i = 0; i < 40000; i++) {
   add("directivesPattern", [text], directivesPattern.exec(text)?.[1] ?? "null");
 }
 
+// ── regular expressions ──
+const PATTERN = [
+  "a", "b", "1", "é", "\u{1f600}", ".", "*", "+", "?", "{", "}", "{1}", "{1,2}", "{2,1}", "(", ")", "(?:", "(?=", "(?<=", "(?<!", "(?<a>", "(?<b>", "(?i:", "(?-i:", "|", "[", "]", "[^", "-", "^", "$", "&&", "--",
+  "\\d", "\\w", "\\b", "\\B", "\\1", "\\2", "\\k<a>", "\\k", "\\p{L}", "\\p{Script=Greek}", "\\p{Foo}", "\\P{Lu}", "\\p{RGI_Emoji}", "\\q{ab|c}", "\\u{41}", "\\u{110000}", "\\u0041", "\\uD83D", "\\u12", "\\x41", "\\x4", "\\c", "\\cA", "\\a", "\\-", "\\/", "\\0", "\\00", "\\8", "\\$", "\\",
+];
+for (let i = 0; i < 60000; i++) {
+  const pattern = sequence(PATTERN, 7);
+  const version = pick([3, 5, 2015, 2017, 2018, 2019, 2020, 2022, 2023, 2024, 2025, 2026]);
+  const flag = pick(["u", "v"]);
+  add("isValidWithUnicodeFlag", [pattern, flag + version], isValidWithUnicodeFlag(version, pattern, flag));
+}
+
 // ── the source of code units ──
 const PIECES = [
   "a", "b", "0", "7", "8", "9", "x", "u", "{", "}", "$", "${", "'", '"', "`", " ", "é", "中", "\u{1f600}", "\u{10000}", " ", " ", "﻿",
@@ -185,7 +198,7 @@ for (let i = 0; i < 400000; i++) {
 const directory = mkdtempSync(join(tmpdir(), "utils-small-"));
 const input = join(directory, "input.txt");
 writeFileSync(input, cases.map(it => it.line).join("\n") + "\n");
-const { stdout, status } = spawnSync(binary, ["utils-small", input], { encoding: "utf8", maxBuffer: 1 << 30 });
+const { stdout, status } = spawnSync(binary, ["utils-small", "call", input], { encoding: "utf8", maxBuffer: 1 << 30 });
 rmSync(directory, { recursive: true, force: true });
 const actual = stdout.split("\n");
 const failed: Record<string, number> = {};

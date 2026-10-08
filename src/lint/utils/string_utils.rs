@@ -30,8 +30,9 @@ pub fn contains_letter(text: &[u8]) -> bool {
     code_points(text).any(|(_, c)| is_letter(c))
 }
 
-/// ESLint's `getGraphemeCount`, and typescript-eslint's `getStringLength`. The length of text that
-/// is ASCII, where `\r\n` counts as two, and otherwise the number of [`graphemes`].
+/// ESLint's `getGraphemeCount`. The length of text that is ASCII, where `\r\n` counts as two, and
+/// otherwise the number of [`graphemes`]. typescript-eslint's `getStringLength`, which differs for
+/// control characters, is `ts_utils::get_string_length`.
 pub fn get_grapheme_count(text: &[u8]) -> usize {
     match strings::first_non_ascii(text) {
         None => text.len(),

@@ -16,6 +16,7 @@ use crate::context::Severity;
 use crate::fix::Fix;
 use crate::span::Span;
 use bun_core::strings;
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
@@ -186,7 +187,7 @@ fn ranges<'a>(
     let text = file.text();
     let (mut ranges, mut unused_enables) = (Vec::new(), Vec::new());
     let mut all: Option<Open<'a>> = None;
-    let mut by_name: Vec<(&'a [u8], Open<'a>)> = Vec::new();
+    let mut by_name: FxHashMap<&'a [u8], Open<'a>> = FxHashMap::default();
     for comment in comments {
         let content = content_of(text, comment.span);
         let prefix: Prefix = file.slice(comment.label_span).get(..6).unwrap_or_default();
@@ -222,9 +223,7 @@ fn ranges<'a>(
             }
             Label::Disable => {
                 for &(name, span) in &names {
-                    if !by_name.iter().any(|it| it.0 == name) {
-                        by_name.push((name, open(content.end, span)));
-                    }
+                    by_name.entry(name).or_insert_with(|| open(content.end, span));
                 }
             }
             Label::DisableNextLine => {
@@ -264,8 +263,8 @@ fn ranges<'a>(
                     }
                 }
                 for &(name, span) in &names {
-                    match by_name.iter().position(|it| it.0 == name) {
-                        Some(at) => close(by_name.swap_remove(at).1, Some(name), span),
+                    match by_name.remove(name) {
+                        Some(it) => close(it, Some(name), span),
                         None => unused_enables.push((prefix, Some(name), span)),
                     }
                 }
@@ -287,8 +286,84 @@ fn ranges<'a>(
         justification: it.justification,
         is_used: false,
     }));
-    ranges.sort_by_key(|it| (it.start, it.stop));
+    ranges.sort_by_key(|it| (it.start, it.stop, it.name_span.start));
     (ranges, unused_enables)
+}
+
+/// A line and a column.
+type Place = (u32, u32);
+
+/// What is after the last `/` of the name of a rule. Names that mean the same rule have it in common.
+fn last_part(name: &[u8]) -> &[u8] {
+    strings::last_index_of_char(name, b'/').map_or(name, |it| &name[it + 1..])
+}
+
+/// The ranges by the rule that they are about, to find those that overlap a message in the time it takes to look at them and
+/// the logarithm of how many there are.
+struct Index<'a> {
+    /// The last part of the name, which is empty for all rules, and the number of the range. Sorted. So the ranges of a name
+    /// are in the order of where they start, and form a balanced search tree whose root is the one in the middle.
+    entries: Vec<(&'a [u8], u32)>,
+    /// For each entry: the last place where a range of its subtree stops.
+    last_stop: Vec<Place>,
+}
+
+impl<'a> Index<'a> {
+    fn new(ranges: &[Range<'a>], places: &[(Place, Place)]) -> Self {
+        let numbered = ranges.iter().zip(0u32..);
+        let mut entries: Vec<_> = numbered.map(|(it, i)| (it.name.map_or(&b""[..], last_part), i)).collect();
+        entries.sort_unstable();
+        let mut index = Index { last_stop: vec![(0, 0); entries.len()], entries };
+        let mut start = 0;
+        for len in index.entries.chunk_by(|a, b| a.0 == b.0).map(<[_]>::len).collect::<Vec<_>>() {
+            index.note_stops(places, start, start + len);
+            start += len;
+        }
+        index
+    }
+
+    fn note_stops(&mut self, places: &[(Place, Place)], start: usize, end: usize) -> Place {
+        if start >= end {
+            return (0, 0);
+        }
+        let middle = start + (end - start) / 2;
+        let own = places[self.entries[middle].1 as usize].1;
+        let last = own.max(self.note_stops(places, start, middle)).max(self.note_stops(places, middle + 1, end));
+        self.last_stop[middle] = last;
+        last
+    }
+
+    /// Adds the numbers of the ranges with the key `name` that overlap `start..end`, in ascending order.
+    fn overlapping(&self, name: &[u8], places: &[(Place, Place)], (start, end): (Place, Place), found: &mut SmallVec<[u32; 8]>) {
+        let first = self.entries.partition_point(|it| it.0 < name);
+        let len = self.entries[first..].partition_point(|it| it.0 == name);
+        self.search(places, (first, first + len), (start, end), found);
+    }
+
+    fn search(
+        &self,
+        places: &[(Place, Place)],
+        (first, last): (usize, usize),
+        (start, end): (Place, Place),
+        found: &mut SmallVec<[u32; 8]>,
+    ) {
+        if first >= last {
+            return;
+        }
+        let middle = first + (last - first) / 2;
+        if self.last_stop[middle] <= start {
+            return;
+        }
+        self.search(places, (first, middle), (start, end), found);
+        let number = self.entries[middle].1;
+        let (from, to) = places[number as usize];
+        if from < end {
+            if to > start {
+                found.push(number);
+            }
+            self.search(places, (middle + 1, last), (start, end), found);
+        }
+    }
 }
 
 /// Marks the messages that comments suppress, and adds a message for each comment that does nothing. `comments`: those that
@@ -303,10 +378,12 @@ pub(crate) fn apply<'a>(
     if ranges.is_empty() && unused_enables.is_empty() {
         return;
     }
-    let places: Vec<((u32, u32), (u32, u32))> = (ranges
+    let places: Vec<(Place, Place)> = (ranges
         .iter()
         .map(|it| (locator.position(it.start), locator.position(it.stop))))
     .collect();
+    let index = Index::new(&ranges, &places);
+    let mut overlapping = SmallVec::new();
     for problem in problems.iter_mut().filter(|it| !it.is_fatal) {
         let Some(id) = &problem.rule_id else {
             continue;
@@ -314,10 +391,20 @@ pub(crate) fn apply<'a>(
         let shown = (problem.line, problem.column);
         let (start, end) =
             (problem.comments_apply_at).unwrap_or_else(|| (shown, problem.end.unwrap_or(shown)));
-        for (range, &(from, to)) in ranges.iter_mut().zip(&places) {
-            let overlaps = from < end && to > start;
-            if overlaps
-                && (!range.is_about_a_line || from <= start && start < to)
+        overlapping.clear();
+        index.overlapping(b"", &places, (start, end), &mut overlapping);
+        let for_all_rules = overlapping.len();
+        match id {
+            RuleId::Known(meta) => index.overlapping(last_part(meta.name.as_bytes()), &places, (start, end), &mut overlapping),
+            RuleId::Js(rule) => index.overlapping(last_part(&rule.id), &places, (start, end), &mut overlapping),
+            RuleId::Unknown(_) => {}
+        }
+        if for_all_rules > 0 && overlapping.len() > for_all_rules {
+            overlapping.sort_unstable();
+        }
+        for &number in &overlapping {
+            let (range, (from, to)) = (&mut ranges[number as usize], places[number as usize]);
+            if (!range.is_about_a_line || from <= start && start < to)
                 && range.name.is_none_or(|name| is_name_of(name, id))
             {
                 range.is_used = true;

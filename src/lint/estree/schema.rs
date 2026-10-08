@@ -46,6 +46,12 @@ pub struct FieldEntry {
     pub get: for<'a> fn(VNode<'a>) -> Value<'a>,
 }
 
+/// What `get` makes. `Value::Undefined` if a `?` in it gives up.
+#[inline]
+fn or_undefined<'a>(get: impl FnOnce() -> Option<Value<'a>>) -> Value<'a> {
+    get().unwrap_or(Value::Undefined)
+}
+
 macro_rules! estree_schema {
     ($(
         $name:ident [$($tag:expr),*] ($v:ident) {
@@ -79,7 +85,7 @@ macro_rules! estree_schema {
                             get: {
                                 fn get<'a>($v: VNode<'a>) -> Value<'a> {
                                     let _ = $v;
-                                    (|| Some(Value::from($value)))().unwrap_or(Value::Undefined)
+                                    or_undefined(|| Some(Value::from($value)))
                                 }
                                 get
                             },

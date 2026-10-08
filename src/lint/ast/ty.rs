@@ -230,7 +230,7 @@ impl<'a> TypeNode<'a> {
     /// Without the parentheses around it.
     #[inline]
     pub fn span(self) -> Span {
-        (self.try_raw()).map_or(Span::default(), |raw| Span::new(raw.pos, raw.end))
+        (self.try_raw()).map_or_else(Span::default, |raw| Span::new(raw.pos, raw.end))
     }
 
     /// With all the parentheses around it. The HIR does not record them: they are found in the

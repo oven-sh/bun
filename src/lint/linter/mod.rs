@@ -58,7 +58,7 @@ pub use resolved::{ConfiguredJsRule, ConfiguredRule, LinterOptions, ResolvedConf
 pub(crate) use space::trim as trim_js_space;
 pub use syntax::{
     Refusal, TypesInJavaScript, not_in_a_project, parse_error, refusal_of_prettier,
-    refused_by_prettier, refused_by_prettier_with,
+    goes_to_flow, refused_by_prettier, refused_by_prettier_with,
 };
 
 use crate::ast::File;

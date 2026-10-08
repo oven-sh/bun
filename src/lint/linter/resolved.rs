@@ -81,6 +81,16 @@ pub struct ResolvedConfig {
     /// The plugins that are configured and that are not implemented here, by the prefix of their
     /// rules. Their rules are skipped.
     pub foreign_plugins: Vec<Box<[u8]>>,
+    /// A rule that does not exist is skipped, whatever its name.
+    pub skips_unknown_rules: bool,
+    /// A rule of ESLint that typescript-eslint extends stands for the extension, as in oxlint.
+    pub prefers_typescript_rules: bool,
+    /// `language`, if it is configured: `js/js`, `json/json`, .. Only JavaScript can be linted.
+    pub language_name: Option<Box<[u8]>>,
+    /// The name of the `processor`, if one is configured. None is implemented.
+    pub processor: Option<Box<[u8]>>,
+    /// The configuration is invalid, and ESLint would refuse to run: its message.
+    pub error: Option<Vec<u8>>,
 }
 
 impl ResolvedConfig {
@@ -89,10 +99,32 @@ impl ResolvedConfig {
         self.rules.iter().find(|it| it.entry.meta.plugin == plugin && it.entry.meta.name == name)
     }
 
-    /// Whether the rule called `id` is of a plugin that is configured but not implemented here.
+    /// ESLint's `validateRulesConfig` for one rule. The first error is kept.
+    pub(crate) fn validate(&mut self, entry: &'static RuleEntry, severity: Severity, options: &[Json]) {
+        if severity != Severity::Off
+            && self.error.is_none()
+            && let Err(lines) = super::schema::validate(entry.meta, options)
+        {
+            let id = super::RuleId::Known(entry.meta).to_vec();
+            self.error = Some([b"Key \"rules\": Key \"", &id[..], b"\":\n", &lines].concat());
+        }
+    }
+
+    /// The rule that the configuration, or a comment of a file that it is for, calls `id`.
+    pub fn find_rule(&self, registry: &Registry, id: &[u8]) -> Option<&'static RuleEntry> {
+        registry.find_preferring(id, self.prefers_typescript_rules)
+    }
+
+    /// Whether the rule called `id`, which does not exist here, is skipped silently: it is of a
+    /// plugin that is configured.
     pub fn is_foreign(&self, id: &[u8]) -> bool {
         let plugin = parse_rule_id(id).0;
-        self.foreign_plugins.iter().any(|it| **it == *plugin)
+        self.skips_unknown_rules || self.foreign_plugins.iter().any(|it| **it == *plugin)
+    }
+
+    /// Whether the file can be linted: it is JavaScript or TypeScript, as it is.
+    pub fn is_supported(&self) -> bool {
+        self.processor.is_none() && self.language_name.as_deref().is_none_or(|it| matches!(it, b"@/js" | b"js/js"))
     }
 }
 
@@ -153,6 +185,7 @@ impl ResolvedConfig {
                 continue;
             };
             let options: Arc<[Json]> = value[1..].into();
+            config.validate(entry, severity, &options);
             let instance = (severity != Severity::Off).then(|| Arc::from((entry.build)(&Options::new(&options))));
             config.rules.push(ConfiguredRule::new(entry, severity, options, instance));
         }

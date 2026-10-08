@@ -63,6 +63,31 @@ impl Registry {
         Some(self.rules[at.ok()?])
     }
 
+    /// The position of a rule in [`Registry::all`].
+    pub fn index_of(&self, entry: &RuleEntry) -> Option<usize> {
+        let key = (entry.meta.plugin as u8, entry.meta.name);
+        self.rules.binary_search_by(|it| (it.meta.plugin as u8, it.meta.name).cmp(&key)).ok()
+    }
+
+    /// The same as [`Registry::get`]. With `prefers_typescript`, for a rule of ESLint that
+    /// typescript-eslint extends, the extension.
+    pub fn get_preferring(&self, plugin: Plugin, name: &[u8], prefers_typescript: bool) -> Option<&'static RuleEntry> {
+        if prefers_typescript
+            && plugin == Plugin::Eslint
+            && let Some(extension) = self.get(Plugin::TypeScript, name)
+            && extension.meta.extends_base_rule.is_some()
+        {
+            return Some(extension);
+        }
+        self.get(plugin, name)
+    }
+
+    /// The same as [`Registry::find`], with what [`Registry::get_preferring`] does.
+    pub fn find_preferring(&self, id: &[u8], prefers_typescript: bool) -> Option<&'static RuleEntry> {
+        let entry = self.find(id)?;
+        self.get_preferring(entry.meta.plugin, entry.meta.name.as_bytes(), prefers_typescript)
+    }
+
     /// The rule that a configuration or a comment calls `id`: `no-debugger`,
     /// `@typescript-eslint/no-explicit-any`. The names that oxlint has for the same plugins are
     /// understood too: `eslint/no-debugger`, `typescript/no-explicit-any`,

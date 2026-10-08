@@ -1,0 +1,322 @@
+//! Reads `.oxlintrc.json` and `.eslintrc.json`, and turns them into the objects of a flat
+//! configuration.
+
+#[path = "oxlint_categories.rs"]
+mod categories;
+
+use super::flat::{ConfigError, Reader};
+use super::merge::RuleSetting;
+use super::{Config, ConfigObject, Pattern, path, presets};
+use crate::context::Severity;
+use crate::linter::registry::Registry;
+use crate::linter::space::trim_end;
+use crate::options::Json;
+use crate::rule::Plugin;
+use bun_core::strings;
+
+/// Whose file it is. The two agree on the format and differ in what some of it means.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum RcFlavor {
+    /// `.oxlintrc.json`:
+    /// - The rules of the category `correctness` warn unless `categories` says otherwise.
+    /// - A rule setting that is only a severity resets the options of the rule.
+    /// - What is extended passes on its rules, categories, plugins and overrides only.
+    /// - A rule of ESLint that typescript-eslint extends (`no-unused-vars`) understands TypeScript:
+    ///   the extension runs in its place, and is reported under its own name.
+    Oxlint,
+    /// `.eslintrc.json`
+    Eslint,
+}
+
+/// The files that are linted if nothing else says so.
+const LINTED_FILES: &[u8] = b"**/*.{js,mjs,cjs,jsx,ts,mts,cts,tsx}";
+
+/// `convertIgnorePatternToMinimatch` of `@eslint/compat`: a pattern of a `.gitignore` as a pattern
+/// for `ignores`.
+fn ignore_pattern_to_minimatch(pattern: &[u8]) -> Vec<u8> {
+    let (negation, pattern): (&[u8], _) = match pattern.strip_prefix(b"!") {
+        Some(rest) => (b"!", rest),
+        None => (b"", pattern),
+    };
+    let pattern = trim_end(pattern);
+    if matches!(pattern, b"" | b"**" | b"/**" | b"**/") {
+        return [negation, pattern].concat();
+    }
+    let first_slash = strings::index_of_char_usize(pattern, b'/');
+    let everywhere: &[u8] = if first_slash.is_none_or(|at| at == pattern.len() - 1) { b"**/" } else { b"" };
+    let without_slash = if first_slash == Some(0) { &pattern[1..] } else { pattern };
+    // Braces and parentheses mean nothing in a `.gitignore`.
+    let mut escaped = Vec::with_capacity(without_slash.len());
+    let mut at = 0;
+    while at < without_slash.len() {
+        match without_slash[at] {
+            b'\\' if at + 1 < without_slash.len() => {
+                escaped.extend_from_slice(&without_slash[at..at + 2]);
+                at += 2;
+                continue;
+            }
+            b'{' | b'(' => escaped.push(b'\\'),
+            _ => {}
+        }
+        escaped.push(without_slash[at]);
+        at += 1;
+    }
+    let inside: &[u8] = if pattern.ends_with(b"/**") { b"/*" } else { b"" };
+    [negation, everywhere, &escaped, inside].concat()
+}
+
+/// A pattern of `overrides[].files`: one without a slash matches in every directory.
+fn override_pattern(pattern: &[u8]) -> Pattern {
+    match pattern.strip_prefix(b"./") {
+        Some(rest) => Pattern::new(rest),
+        None if strings::contains_char(pattern, b'/') => Pattern::new(pattern),
+        None => Pattern::new(&[b"**/", pattern].concat()),
+    }
+}
+
+fn strings_of(json: Option<&Json>) -> Vec<&[u8]> {
+    match json {
+        Some(Json::String(one)) => vec![&one[..]],
+        Some(Json::Array(items)) => items.iter().filter_map(Json::as_str).collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// `"allow"` and `"deny"` are oxlint's names for `"off"` and `"error"`.
+fn with_eslint_severities(rules: &Json) -> Json {
+    let severity = |value: &Json| match value.as_str() {
+        Some(b"allow") => Json::Number(0.0),
+        Some(b"deny") => Json::Number(2.0),
+        _ => value.clone(),
+    };
+    let entries = rules.as_object().unwrap_or_default().iter().map(|(id, value)| {
+        let value = match value {
+            Json::Array(items) if !items.is_empty() => {
+                let mut items = items.clone();
+                items[0] = severity(&items[0]);
+                Json::Array(items)
+            }
+            value => severity(value),
+        };
+        (id.clone(), value)
+    });
+    Json::Object(entries.collect())
+}
+
+struct Rc<'r, 'l> {
+    reader: Reader<'r>,
+    flavor: RcFlavor,
+    /// Reads the file that `extends` names, relative to the directory given first.
+    load: &'l mut dyn FnMut(&[u8], &[u8]) -> Option<Json>,
+    /// `categories`, the later entries overriding the earlier ones.
+    categories: Vec<(Vec<u8>, Severity)>,
+    /// `plugins` names typescript, or nothing has `plugins`.
+    plugins: Option<Vec<Vec<u8>>>,
+}
+
+impl Rc<'_, '_> {
+    /// `languageOptions` for `env`, `globals`, `parser` and `parserOptions`.
+    fn language_options(&self, json: &Json) -> Json {
+        let mut entries = Vec::new();
+        for (from, to) in [(&b"env"[..], &b"$env"[..]), (b"globals", b"globals"), (b"parser", b"parser"), (b"parserOptions", b"parserOptions")] {
+            if let Some(value) = json.get(from) {
+                entries.push((to.to_vec(), value.clone()));
+            }
+        }
+        // In an `.eslintrc` these two are parser options.
+        for key in [&b"ecmaVersion"[..], b"sourceType"] {
+            if let Some(value) = json.get(b"parserOptions").and_then(|it| it.get(key)) {
+                entries.push((key.to_vec(), value.clone()));
+            }
+        }
+        if entries.is_empty() { Json::Null } else { Json::Object(entries) }
+    }
+
+    fn rules(&mut self, json: &Json) -> Result<Vec<RuleSetting>, ConfigError> {
+        match json.get(b"rules") {
+            Some(rules) => self.reader.rules(&with_eslint_severities(rules), &[]),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    fn note_js_plugins(&mut self, json: &Json) {
+        for plugin in json.get(b"jsPlugins").and_then(Json::as_array).unwrap_or_default() {
+            let specifier = plugin.as_str().or_else(|| plugin.get(b"specifier").and_then(Json::as_str)).unwrap_or(b"?");
+            self.reader.note(&[b"jsPlugins are not supported: \"", specifier, b"\". Its rules are skipped."]);
+        }
+    }
+
+    /// Adds the objects for the file `json`, which is in `directory`. `is_extended`: another file
+    /// extends it.
+    fn file(&mut self, json: &Json, directory: &[u8], is_extended: bool, depth: usize) -> Result<(), ConfigError> {
+        if json.as_object().is_none() {
+            return Err(ConfigError::new(&[b"Unexpected non-object config."]));
+        }
+        if depth > 32 {
+            return Err(ConfigError::new(&[b"Too many levels of \"extends\"."]));
+        }
+        for name in strings_of(json.get(b"extends")) {
+            if let Some(objects) = presets::find(name) {
+                for object in &objects {
+                    let object = self.reader.object(object)?;
+                    self.reader.objects.push(object);
+                }
+                continue;
+            }
+            let Some(extended) = (self.load)(directory, name) else {
+                return Err(ConfigError::new(&[b"Failed to load config \"", name, b"\" to extend from."]));
+            };
+            let file = path::resolve(directory, name);
+            self.file(&extended, path::dirname(&file), true, depth + 1)?;
+        }
+        for (category, severity) in json.get(b"categories").and_then(Json::as_object).unwrap_or_default() {
+            let severity = match severity.as_str() {
+                Some(b"allow") => Some(Severity::Off),
+                Some(b"deny") => Some(Severity::Error),
+                _ => crate::linter::severity_of(severity),
+            };
+            let Some(severity) = severity else {
+                return Err(ConfigError::new(&[b"Key \"categories\": Key \"", category, b"\": Expected severity."]));
+            };
+            self.categories.retain(|it| it.0 != *category);
+            self.categories.push((category.clone(), severity));
+        }
+        if let Some(plugins) = json.get(b"plugins").and_then(Json::as_array) {
+            let all = self.plugins.get_or_insert_default();
+            all.extend(plugins.iter().filter_map(Json::as_str).map(<[u8]>::to_vec));
+        }
+        self.note_js_plugins(json);
+        let base_path = (directory != &self.reader.base_path[..]).then(|| directory.to_vec());
+        let passes_everything_on = !is_extended || self.flavor == RcFlavor::Eslint;
+
+        let ignore_patterns = strings_of(json.get(b"ignorePatterns"));
+        if !ignore_patterns.is_empty() && passes_everything_on {
+            self.reader.objects.push(ConfigObject {
+                base_path: base_path.clone(),
+                ignores: Some(ignore_patterns.iter().map(|it| Pattern::new(&ignore_pattern_to_minimatch(it))).collect()),
+                is_global_ignores: true,
+                ..ConfigObject::default()
+            });
+        }
+        let mut linter_options = Vec::new();
+        for key in [&b"noInlineConfig"[..], b"reportUnusedDisableDirectives"] {
+            let value = json.get(key).or_else(|| json.get(b"options").and_then(|it| it.get(key)));
+            if let Some(value) = value {
+                let value = if value.as_str() == Some(b"deny") { Json::Number(2.0) } else { value.clone() };
+                linter_options.push((key.to_vec(), value));
+            }
+        }
+        let mut base = ConfigObject {
+            rules: self.rules(json)?,
+            ..ConfigObject::default()
+        };
+        if passes_everything_on {
+            base.language_options = self.language_options(json);
+            base.settings = json.get(b"settings").cloned().unwrap_or(Json::Null);
+            base.linter_options = Json::Object(linter_options);
+        }
+        self.reader.objects.push(base);
+
+        for item in json.get(b"overrides").and_then(Json::as_array).unwrap_or_default() {
+            let files = strings_of(item.get(b"files"));
+            if files.is_empty() {
+                return Err(ConfigError::new(&[b"Key \"overrides\": Key \"files\": Expected value to be a non-empty array."]));
+            }
+            let excluded = strings_of(item.get(b"excludeFiles").or_else(|| item.get(b"excludedFiles")));
+            self.note_js_plugins(item);
+            if let Some(plugins) = item.get(b"plugins").and_then(Json::as_array) {
+                let all = self.plugins.get_or_insert_default();
+                all.extend(plugins.iter().filter_map(Json::as_str).map(<[u8]>::to_vec));
+            }
+            let object = ConfigObject {
+                base_path: base_path.clone(),
+                files: Some(files.iter().map(|it| vec![override_pattern(it)]).collect()),
+                ignores: (!excluded.is_empty()).then(|| excluded.iter().map(|it| override_pattern(it)).collect()),
+                language_options: self.language_options(item),
+                settings: item.get(b"settings").cloned().unwrap_or(Json::Null),
+                rules: self.rules(item)?,
+                ..ConfigObject::default()
+            };
+            self.reader.objects.push(object);
+        }
+        Ok(())
+    }
+
+    /// The rules that `categories` turns on, which everything else overrides.
+    fn category_rules(&self) -> Vec<RuleSetting> {
+        let has_typescript = self.plugins.as_ref().is_none_or(|all| {
+            all.iter().any(|it| matches!(&it[..], b"typescript" | b"@typescript-eslint" | b"typescript-eslint"))
+        });
+        let mut settings = Vec::new();
+        for (category, severity) in &self.categories {
+            let Some((_, eslint, typescript)) = categories::CATEGORIES.iter().find(|it| it.0.as_bytes() == &category[..]) else {
+                continue;
+            };
+            let lists = [(Plugin::Eslint, *eslint), (Plugin::TypeScript, if has_typescript { *typescript } else { "" })];
+            for (plugin, names) in lists {
+                for name in strings::split(names.as_bytes(), b" ").filter(|it| !it.is_empty()) {
+                    let Some(entry) = self.reader.registry.get_preferring(plugin, name, true) else {
+                        continue;
+                    };
+                    settings.push(RuleSetting {
+                        id: crate::linter::RuleId::Known(entry.meta).to_vec().into(),
+                        severity: *severity,
+                        options: Vec::new(),
+                        has_only_severity: true,
+                    });
+                }
+            }
+        }
+        settings
+    }
+}
+
+impl Config {
+    /// From `.oxlintrc.json` or `.eslintrc.json`. `base_path`: the directory that the file is in,
+    /// absolute.
+    ///
+    /// `load(directory, name)` reads a file that `extends` names, relative to `directory`.
+    /// It is not asked for the configurations that ESLint and typescript-eslint publish:
+    /// `eslint:recommended`, `plugin:@typescript-eslint/recommended`, `typescript-eslint/strict`, ..
+    pub fn from_rc_json(
+        registry: &Registry,
+        base_path: &[u8],
+        json: &Json,
+        flavor: RcFlavor,
+        load: &mut dyn FnMut(&[u8], &[u8]) -> Option<Json>,
+    ) -> Result<Config, ConfigError> {
+        let base_path = path::resolve(b"/", base_path);
+        let mut rc = Rc {
+            reader: Reader {
+                registry,
+                base_path: base_path.clone(),
+                prefers_typescript_rules: flavor == RcFlavor::Oxlint,
+                objects: Vec::new(),
+                notes: Vec::new(),
+                unknown_rules: Vec::new(),
+            },
+            flavor,
+            load,
+            categories: match flavor {
+                RcFlavor::Oxlint => vec![(b"correctness".to_vec(), Severity::Warn)],
+                RcFlavor::Eslint => Vec::new(),
+            },
+            plugins: None,
+        };
+        rc.reader.objects.push(ConfigObject {
+            files: Some(vec![vec![Pattern::new(LINTED_FILES)]]),
+            ..ConfigObject::default()
+        });
+        rc.reader.objects.push(ConfigObject {
+            ignores: Some(vec![Pattern::new(b"**/node_modules/"), Pattern::new(b".git/")]),
+            is_global_ignores: true,
+            ..ConfigObject::default()
+        });
+        // The place of the rules of the categories, which are known when all files are read.
+        let categories_at = rc.reader.objects.len();
+        rc.reader.objects.push(ConfigObject::default());
+        rc.file(json, &base_path, false, 0)?;
+        rc.reader.objects[categories_at].rules = rc.category_rules();
+        Ok(rc.reader.finish(flavor == RcFlavor::Eslint, true))
+    }
+}

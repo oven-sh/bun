@@ -2,12 +2,14 @@
 //! change it (`eslint-disable`, `global`, `exported`, `eslint rule: ..`), and the globals.
 //!
 //! - [`Registry`]: the rules that exist.
+//! - [`Config`]: the configuration of a run.
 //! - [`ResolvedConfig`]: what is configured for one file.
 //! - [`Linter::lint`]: ESLint's `Linter.verify` for a file that is parsed already.
 //! - [`LintMessage`]: what it reports.
 //! - [`globals`]: the global variables that a file does not declare.
 
 mod comment;
+pub mod config;
 mod directives;
 mod disable;
 pub mod globals;
@@ -17,8 +19,10 @@ mod message;
 mod per_file;
 mod registry;
 mod resolved;
+mod schema;
 mod space;
 
+pub use config::{Config, ConfigError, FileConfig, RcFlavor};
 pub use globals::{CommentGlobal, GlobalVariable};
 pub use message::{LintMessage, RuleId, Suppression, Utf16Offsets};
 pub(crate) use per_file::PerFile;
@@ -40,6 +44,7 @@ pub mod testing {
     pub use super::comment::{parse_directive, parse_json_like_config, parse_list_config, parse_string_config};
     pub use super::json_v8::parse as json_parse;
     pub use super::message::write_json;
+    pub use super::schema::validate_by_id;
 }
 
 /// ESLint's `VerifyOptions`: what the command line says about how to lint.
@@ -309,7 +314,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
     /// The rule called `id`. If there is none, reports that, unless the plugin is one that the
     /// configuration knows.
     fn find(&mut self, comment: &ConfigComment, id: &[u8]) -> Option<&'static RuleEntry> {
-        let found = self.linter.registry.find(id);
+        let found = self.config.find_rule(&self.linter.registry, id);
         if found.is_none() {
             if self.config.is_foreign(id) {
                 if !self.skipped.iter().any(|it| **it == *id) {
@@ -392,7 +397,17 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
                 _ => &inline[1..],
             };
             if self.config.linter.report_unused_inline_configs != Severity::Off {
-                self.report_if_unused(comment, &id, existing, severity, options, inline.len() == 1);
+                self.report_if_unused(comment, &id, entry, existing, severity, options, inline.len() == 1);
+            }
+            // The options of a rule that the configuration enables are validated already.
+            let is_validated = inline.len() == 1 && existing.is_some_and(|it| it.severity != Severity::Off);
+            if !is_validated
+                && severity != Severity::Off
+                && let Err(lines) = schema::validate(entry.meta, options)
+            {
+                let message = quoted(&[b"Inline configuration for rule \"", &id, b"\" is invalid:\n\t", space::trim(&lines), b"\n"]);
+                self.error(comment, Some(RuleId::Known(entry.meta)), message);
+                continue;
             }
             self.configured.push(entry);
             let shared = existing.filter(|_| inline.len() == 1).and_then(ConfiguredRule::instance);
@@ -417,6 +432,7 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
         &mut self,
         comment: &ConfigComment,
         id: &[u8],
+        entry: &'static RuleEntry,
         existing: Option<&ConfiguredRule>,
         severity: Severity,
         options: &[Json],
@@ -434,10 +450,11 @@ impl<'c, 'a> Inline<'_, 'c, 'a> {
             Some(_) => format!("is already configured to '{name}'"),
             None => "is not enabled so can't be turned off".to_owned(),
         };
-        let existing_options = existing.map_or(&[][..], |it| &it.options);
+        let existing_options = existing.map_or(Vec::new(), |it| schema::with_defaults(entry.meta, &it.options));
+        let options = schema::with_defaults(entry.meta, options);
         let suffix: &[u8] = if existing_options.is_empty() && options.is_empty() || severity == Severity::Off {
             b")."
-        } else if options.len() == existing_options.len() && options.iter().zip(existing_options).all(|(a, b)| is_same_json(a, b)) {
+        } else if options.len() == existing_options.len() && options.iter().zip(&existing_options).all(|(a, b)| is_same_json(a, b)) {
             if has_only_severity { b")." } else { b" with the same options)." }
         } else {
             return;

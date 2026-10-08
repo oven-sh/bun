@@ -310,7 +310,13 @@ impl Parser<'_> {
 
 /// `Err`: the message of the `SyntaxError`.
 pub fn parse(text: &[u8]) -> Result<Json, Vec<u8>> {
-    let units: Vec<u16> = String::from_utf8_lossy(text).encode_utf16().collect();
+    let mut units: Vec<u16> = Vec::with_capacity(text.len());
+    for chunk in text.utf8_chunks() {
+        units.extend(chunk.valid().encode_utf16());
+        if !chunk.invalid().is_empty() {
+            units.push(0xFFFD);
+        }
+    }
     let mut parser = Parser {
         text: &units,
         at: 0,

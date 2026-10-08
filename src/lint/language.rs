@@ -151,6 +151,9 @@ impl LanguageOptions {
     /// From ESLint's `languageOptions` and `settings` after all configuration objects are merged.
     /// What is missing has ESLint's default. What is invalid is ignored.
     ///
+    /// `$env` is the `env` of an `.eslintrc`: the variables of each environment that is `true` are
+    /// globals, which `globals` overrides.
+    ///
     /// `parser` is a string: `"espree"`, `"@typescript-eslint/parser"`, `"typescript-eslint/parser"`
     /// or `"typescript"`, each with or without `@version`. Any other is [`Parser::Other`].
     pub fn from_json(language_options: &Json, settings: &Json) -> LanguageOptions {
@@ -172,6 +175,14 @@ impl LanguageOptions {
         };
         let source_type = source_type_of(language_options.get(b"sourceType")).unwrap_or(SourceType::Module);
         let mut globals: Vec<(Box<[u8]>, Global)> = Vec::new();
+        // `env` of an `.eslintrc` or an `.oxlintrc.json`.
+        for (name, is_enabled) in language_options.get(b"$env").and_then(Json::as_object).unwrap_or_default() {
+            let name: &[u8] = if name == b"es6" { b"es2015" } else { name };
+            if is_enabled.as_bool() == Some(true) {
+                let variables = crate::linter::globals::environment(name).into_iter().flatten();
+                globals.extend(variables.map(|(name, setting)| (name.into(), setting)));
+            }
+        }
         for (name, value) in language_options.get(b"globals").and_then(Json::as_object).unwrap_or_default() {
             if let Some(value) = Global::of_json(value) {
                 globals.push((name[..].into(), value));

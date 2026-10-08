@@ -6,15 +6,21 @@
 //! - `json-parse <cases.json>`: `JSON.parse` for each string.
 //! - `globals <cases.json>`: for each `{ code, filename, languageOptions, names }`, what `File::global` says about each name.
 //! - `environments`: the tables of the `globals` package.
+//! - `minimatch <cases.json>`: for each `{ pattern, path, flipNegate }`, whether it matches.
+//! - `config <cases.json>`: for each `{ basePath, config, flavor, files, directories }`, the configuration of each file, and
+//!   whether each directory is ignored.
+//! - `validate <cases.json>`: for each `{ rule, options }`, the message of ESLint if the options are invalid.
+//! - `parse-fixtures <fixtures>`: the test cases that the parser rejects, all of which ESLint parses.
 //! - `rules`: the names of the rules that exist.
 //! - `conformance <fixtures> [--rule=r] [--verbose]`: the test cases of ESLint and typescript-eslint, each linted as its
 //!   `languageOptions`, its `settings` and the comments in its code say.
 
 use bun_lint::ast::File;
 use bun_lint::context::Severity;
-use bun_lint::language::{Global, LanguageOptions};
+use bun_lint::language::{Global, LanguageOptions, SourceType};
 use bun_lint::linter::{
-    LintMessage, LintOptions, Linter, Registry, ResolvedConfig, RuleId, Utf16Offsets, severity_of, testing,
+    Config, FileConfig, LintMessage, LintOptions, Linter, RcFlavor, Registry, ResolvedConfig, RuleId, Utf16Offsets, severity_of,
+    testing,
 };
 use bun_lint::options::Json;
 use bun_lint::rule::Plugin;
@@ -150,10 +156,14 @@ fn verify(args: &[String]) {
                 _ => None,
             },
         };
-        let result = with_file(&filename, code, &config.language, |file| linter().lint(file, &config, &options));
         if i > 0 {
             out.extend_from_slice(b",\n");
         }
+        if let Some(error) = &config.error {
+            testing::write_json(&mut out, &Json::Object(vec![(b"error".to_vec(), Json::String(error.clone()))]));
+            continue;
+        }
+        let result = with_file(&filename, code, &config.language, |file| linter().lint(file, &config, &options));
         out.extend_from_slice(b"{\"messages\":");
         write_messages(&mut out, &result.messages, code);
         out.extend_from_slice(b",\"suppressedMessages\":");
@@ -257,6 +267,148 @@ fn environments() {
     testing::write_json(&mut out, &Json::Object(tables.collect()));
     out.push(b'\n');
     print(&out);
+}
+
+fn minimatch(args: &[String]) {
+    let cases = read_cases(args);
+    let results = cases.iter().map(|case| {
+        let part = |key: &[u8]| case.get(key).and_then(Json::as_str).unwrap_or_default();
+        let flip_negate = case.get(b"flipNegate").and_then(Json::as_bool) == Some(true);
+        Json::Bool(bun_lint::linter::config::testing::minimatch(part(b"pattern"), part(b"path"), flip_negate))
+    });
+    let mut out = Vec::new();
+    testing::write_json(&mut out, &Json::Array(results.collect()));
+    out.push(b'\n');
+    print(&out);
+}
+
+fn describe(config: &ResolvedConfig) -> Vec<(Vec<u8>, Json)> {
+    let number = |severity: Severity| Json::Number(f64::from(severity as u8));
+    let rules = config.rules.iter().map(|rule| {
+        let mut value = vec![number(rule.severity)];
+        value.extend(rule.options.iter().cloned());
+        Json::Array(vec![Json::String(RuleId::Known(rule.entry.meta).to_vec()), Json::Array(value)])
+    });
+    let language = &config.language;
+    let globals = language.globals.iter().map(|(name, setting)| Json::Array(vec![Json::String(name.to_vec()), setting_name(*setting)]));
+    vec![
+        (b"rules".to_vec(), Json::Array(rules.collect())),
+        (b"ecmaVersion".to_vec(), Json::Number(f64::from(language.ecma_version))),
+        (
+            b"sourceType".to_vec(),
+            Json::String(match language.source_type {
+                SourceType::Module => b"module".to_vec(),
+                SourceType::Script => b"script".to_vec(),
+                SourceType::CommonJs => b"commonjs".to_vec(),
+            }),
+        ),
+        (b"globals".to_vec(), Json::Array(globals.collect())),
+        (b"parserOptions".to_vec(), language.parser_options.clone()),
+        (b"settings".to_vec(), language.settings.clone()),
+        (b"noInlineConfig".to_vec(), Json::Bool(config.linter.no_inline_config)),
+        (b"reportUnusedDisableDirectives".to_vec(), number(config.linter.report_unused_disable_directives)),
+        (b"reportUnusedInlineConfigs".to_vec(), number(config.linter.report_unused_inline_configs)),
+    ]
+}
+
+fn config(args: &[String]) {
+    let cases = read_cases(args);
+    let registry = linter().registry();
+    let results = cases.iter().map(|case| {
+        let null = Json::Null;
+        let base_path = case.get(b"basePath").and_then(Json::as_str).unwrap_or(b"/");
+        let json = case.get(b"config").unwrap_or(&null);
+        let extended = case.get(b"extended");
+        let mut load = |_: &[u8], name: &[u8]| extended.and_then(|it| it.get(name)).cloned();
+        let config = match case.get(b"flavor").and_then(Json::as_str) {
+            Some(b"oxlint") => Config::from_rc_json(registry, base_path, json, RcFlavor::Oxlint, &mut load),
+            Some(b"eslintrc") => Config::from_rc_json(registry, base_path, json, RcFlavor::Eslint, &mut load),
+            _ => Config::from_flat_json(registry, base_path, json),
+        };
+        let config = match config {
+            Ok(config) => config,
+            Err(error) => return Json::Object(vec![(b"error".to_vec(), Json::String(error.message))]),
+        };
+        let paths = |key: &[u8]| case.get(key).and_then(Json::as_array).unwrap_or_default().iter().filter_map(Json::as_str);
+        let files = paths(b"files").map(|file| {
+            let status = |name: &[u8]| (b"status".to_vec(), Json::String(name.to_vec()));
+            Json::Object(match config.get(registry, file) {
+                FileConfig::External => vec![status(b"external")],
+                FileConfig::Ignored => vec![status(b"ignored")],
+                FileConfig::Unconfigured => vec![status(b"unconfigured")],
+                FileConfig::Matched(resolved) => std::iter::once(status(b"matched")).chain(describe(&resolved)).collect(),
+            })
+        });
+        let strings = |all: &[Box<[u8]>]| Json::Array(all.iter().map(|it| Json::String(it.to_vec())).collect());
+        let mut out = vec![
+            (b"files".to_vec(), Json::Array(files.collect())),
+            (b"directories".to_vec(), Json::Array(paths(b"directories").map(|it| Json::Bool(config.is_directory_ignored(it))).collect())),
+        ];
+        if case.get(b"flavor").is_some() {
+            out.push((b"unknownRules".to_vec(), strings(config.unknown_rules())));
+            out.push((b"notes".to_vec(), Json::Array(config.notes().iter().map(|it| Json::String(it.clone())).collect())));
+        }
+        Json::Object(out)
+    });
+    let mut out = Vec::new();
+    testing::write_json(&mut out, &Json::Array(results.collect()));
+    out.push(b'\n');
+    print(&out);
+}
+
+fn validate(args: &[String]) {
+    let cases = read_cases(args);
+    let results = cases.iter().map(|case| {
+        let id = case.get(b"rule").and_then(Json::as_str).unwrap_or_default();
+        let options = case.get(b"options").and_then(Json::as_array).unwrap_or_default();
+        match testing::validate_by_id(id, options) {
+            Ok(()) => Json::Null,
+            Err(lines) => Json::String([b"Key \"rules\": Key \"", id, b"\":\n", &lines].concat()),
+        }
+    });
+    let mut out = Vec::new();
+    testing::write_json(&mut out, &Json::Array(results.collect()));
+    out.push(b'\n');
+    print(&out);
+}
+
+fn parse_fixtures(args: &[String]) {
+    let root = args.first().expect("the fixtures directory");
+    let (mut parsed, mut rejected) = (0, 0);
+    for directory in ["eslint", "typescript-eslint"] {
+        let mut paths: Vec<_> = std::fs::read_dir(format!("{root}/{directory}")).expect("the fixtures").flatten().map(|it| it.path()).collect();
+        paths.sort();
+        for path in paths {
+            let Some(fixture) = std::fs::read(&path).ok().and_then(|it| bun_lint::json::parse(&it)) else {
+                continue;
+            };
+            for (index, case) in fixture.get(b"cases").and_then(Json::as_array).unwrap_or_default().iter().enumerate() {
+                if !matches!(case.get(b"skip"), None | Some(Json::Null)) {
+                    continue;
+                }
+                let null = Json::Null;
+                let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
+                let filename = case.get(b"filename").and_then(Json::as_str).map(text).unwrap_or_default();
+                let given = case.get(b"languageOptions").unwrap_or(&null);
+                let config = ResolvedConfig {
+                    language: LanguageOptions::from_json(given, &null),
+                    ..ResolvedConfig::default()
+                };
+                let messages = with_file(&filename, code, &config.language, |file| linter().lint(file, &config, &LintOptions::default()).messages);
+                match messages.first().filter(|it| it.is_fatal && it.message.starts_with(b"Parsing error")) {
+                    None => parsed += 1,
+                    Some(error) => {
+                        rejected += 1;
+                        let mut written = Vec::new();
+                        testing::write_json(&mut written, given);
+                        let name = path.file_stem().unwrap_or_default().to_string_lossy();
+                        println!("{}\t{directory}/{name}#{index}\t{}\t{:?}", text(&error.message), text(&written), text(code));
+                    }
+                }
+            }
+        }
+    }
+    println!("{parsed} parsed, {rejected} rejected");
 }
 
 /// A message as a fixture has it, for comparing.
@@ -378,6 +530,10 @@ pub(crate) fn run(args: &[String]) {
         Some("conformance") => conformance(&args[1..]),
         Some("globals") => globals(&args[1..]),
         Some("environments") => environments(),
+        Some("minimatch") => minimatch(&args[1..]),
+        Some("validate") => validate(&args[1..]),
+        Some("parse-fixtures") => parse_fixtures(&args[1..]),
+        Some("config") => config(&args[1..]),
         Some("rules") => {
             let ids = linter().registry().all().iter().map(|it| Json::String(RuleId::Known(it.meta).to_vec()));
             let mut out = Vec::new();

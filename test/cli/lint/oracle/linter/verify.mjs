@@ -177,6 +177,7 @@ function eslintAnswer({ code, filename, config, options }) {
 }
 
 function normalize(answer) {
+  if (answer.error) return answer;
   const message = ({ suggestions, ...m }) => ({
     ...m,
     message: m.message.replaceAll("oxlint-", "eslint-"),
@@ -195,14 +196,20 @@ for (const [name, make] of Object.entries({ generated, upstream })) {
     try {
       expected.push(normalize(eslintAnswer(it)));
       cases.push(it);
-    } catch {
-      invalid++; // The configuration is invalid.
+    } catch (error) {
+      // The configuration is invalid. Only what is said about the options of a rule is compared.
+      if (!error.message.includes("\tValue ")) {
+        invalid++;
+        continue;
+      }
+      expected.push({ error: error.message });
+      cases.push(it);
     }
   }
   if (invalid > 0) console.log(`${name}: ${invalid} cases left out, ESLint throws`);
   const actual = runBunLint("verify", cases).map(normalize);
   // What espree rejects and the parser here accepts is counted by itself.
-  const isFatal = answer => answer.messages[0]?.message === "Parsing error";
+  const isFatal = answer => answer.messages?.[0]?.message === "Parsing error";
   const lenient = cases.filter((_, i) => isFatal(expected[i]) && !isFatal(actual[i]));
   if (lenient.length > 0) {
     console.log(`${name}: ${lenient.length} cases left out, only ESLint reports a syntax error`);

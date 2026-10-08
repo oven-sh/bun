@@ -1,0 +1,43 @@
+FAIL rejected js/_errors_/html-like-comments.js
+FAIL rejected js/_errors_/static-import-source-should-not-has-extra-token.js
+FAIL rejected js/_errors_/deferred-import-evaluation/no-default.js
+FAIL rejected js/_errors_/deferred-import-evaluation/no-named.js
+FAIL rejected js/_errors_/explicit-resource-management/invalid-for-using-binding-in.js
+FAIL rejected js/_errors_/explicit-resource-management/invalid-using-binding-let.js
+FAIL rejected js/_errors_/explicit-resource-management/invalid-using-binding-pattern.js
+FAIL rejected js/_errors_/object/getter-with-parameter.js
+FAIL rejected js/_errors_/object/setter-without-parameter.js
+FAIL rejected js/_errors_/regex-v-u-flags/invalid-flags.js
+FAIL rejected js/_errors_/regex-v-u-flags/invalid-flags2.js
+FAIL format js/explicit-resource-management/valid-await-using-binding-escaped.js
+FAIL format js/explicit-resource-management/valid-using-binding-escaped.js
+FAIL rejected js/optional-chaining-assignment/invalid-destructuring-arr.js
+FAIL rejected js/optional-chaining-assignment/invalid-destructuring-obj.js
+FAIL rejected js/optional-chaining-assignment/invalid-for-await-of.js
+FAIL rejected js/optional-chaining-assignment/invalid-for-in.js
+FAIL rejected js/optional-chaining-assignment/invalid-for-of.js
+FAIL rejected js/optional-chaining-assignment/invalid-inc-postfix.js
+FAIL rejected js/optional-chaining-assignment/invalid-inc-prefix.js
+FAIL format js/range/issue-7082.js rangeEnd=42 rangeStart=29
+FAIL rejected js/source-phase-imports/no-named.js
+FAIL format jsx/cursor/before-first-jsx-text.js cursorOffset=2
+FAIL rejected typescript/_errors_/babel-ts2/multiline-declaration-abstract-class.ts
+FAIL rejected typescript/_errors_/babel-ts2/multiline-declaration-interface.ts
+FAIL rejected typescript/_errors_/babel-ts2/multiline-declaration-module.ts
+FAIL rejected typescript/_errors_/babel-ts2/parenthesized-decorators-tagged-template.ts
+FAIL format css/cursor/test.css cursorOffset=19
+FAIL format css/yaml/dirty.css
+css: format 159/161 (0 syntax errors), rejected 2/2, second format 134/134, CRLF 159/159, CR 159/159, BOM 158/158
+js: format 1303/1306 (0 syntax errors), rejected 39/58, second format 1017/1017, CRLF 1293/1293, CR 1293/1293, BOM 1299/1299
+json: format 785/785 (0 syntax errors), rejected 0/0, second format 696/696, CRLF 785/785, CR 785/785, BOM 781/781
+jsx: format 183/184 (0 syntax errors), rejected 0/0, second format 165/165, CRLF 182/182, CR 182/182, BOM 183/183
+less: format 238/238 (0 syntax errors), rejected 4/4, second format 191/191, CRLF 236/236, CR 236/236, BOM 238/238
+misc: format 236/236 (0 syntax errors), rejected 0/0, second format 207/207, CRLF 30/30, CR 30/30, BOM 235/235
+scss: format 136/136 (0 syntax errors), rejected 1/1, second format 117/117, CRLF 136/136, CR 136/136, BOM 136/136
+typescript: format 745/745 (0 syntax errors), rejected 24/28, second format 598/598, CRLF 744/744, CR 744/744, BOM 732/732
+format: 3785/3791 (99.84%)
+all checks: 17872/17901 (99.84%)
+not run: 17: Flow's type syntax
+not run: 2: an input that Prettier's `typescript` parser rejects: the snapshot is made with `babel-ts`
+not run: 67: embedded CSS, GraphQL, HTML or Markdown, which needs a formatter for that language
+not run: 66: syntax of a proposal at stage 2 or below, which only Babel parses

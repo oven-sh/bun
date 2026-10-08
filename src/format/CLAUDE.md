@@ -187,10 +187,10 @@ $B format check-idempotent <files or directories>
 $B format verify <files or directories>                # same tokens before and after
 $B format bench <files or directories>
 bun test/cli/format/oracle/compare.ts --bin=$B --prettier=<dir with node_modules/prettier> --options='{"semi":false}' <dirs>
-bun test/cli/format/oxfmt/run.ts --bin=$B --list                     # oxfmt's fixtures, judged by Prettier and, with its flavor, by oxfmt
+$B format oxfmt-fixtures <(zstd -dc test/cli/format/oxfmt/bundle.zst)   # oxfmt's fixtures, judged by Prettier and, with its flavor, by oxfmt
 ```
 
-`conformance` makes the six checks of Prettier's own runner for every fixture and set of options: the snapshot, that what Prettier rejects is rejected, a second format, CRLF, CR, a byte order mark. `EXCLUDED` in `format_cmd/conformance.rs` is all that it leaves out, with the reason.
+`conformance` makes the six checks of Prettier's own runner for every fixture and set of options: the snapshot, that what Prettier rejects is rejected, a second format, CRLF, CR, a byte order mark. `EXCLUDED` in `src/format/conformance/prettier.rs` is all that it leaves out, with the reason. `test/cli/format/{prettier,oxfmt}/expected.txt` is what the two commands print: write them again in the commit that makes one more case pass.
 
 Fixtures show a fraction of what differs. What found the rest: real code through `compare.ts`, and fuzzers that put every kind of expression into every kind of parent, a comment of every form into every gap of a statement, and random JSX children at narrow widths, each against the npm package.
 

@@ -1,0 +1,21 @@
+------------------
+{ printWidth: 80 }
+------------------
+if (1) const enum A {}
+else const enum B {}
+enum C {}
+function f() {
+  enum D {}
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+if (1) const enum A {}
+else const enum B {}
+enum C {}
+function f() {
+  enum D {}
+}
+
+===================== End =====================

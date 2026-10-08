@@ -1,0 +1,33 @@
+------------------
+{ printWidth: 80 }
+------------------
+x = {
+  a:
+    // comment
+    "value",
+  b: (
+    // comment
+    <div>a</div>
+  ),
+  c:
+    // comment
+    f(x),
+};
+
+-------------------
+{ printWidth: 100 }
+-------------------
+x = {
+  a:
+    // comment
+    "value",
+  b: (
+    // comment
+    <div>a</div>
+  ),
+  c:
+    // comment
+    f(x),
+};
+
+===================== End =====================

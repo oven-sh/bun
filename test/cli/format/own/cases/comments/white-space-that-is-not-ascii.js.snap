@@ -1,0 +1,25 @@
+------------------
+{ printWidth: 80 }
+------------------
+const qux = function () {
+  return 1;
+} /*a*/;
+foo; // b
+bar(/* c */ a);
+let x =
+  // d
+  1;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const qux = function () {
+  return 1;
+} /*a*/;
+foo; // b
+bar(/* c */ a);
+let x =
+  // d
+  1;
+
+===================== End =====================

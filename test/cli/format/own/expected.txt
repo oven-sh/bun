@@ -1,0 +1,15 @@
+FAIL oxfmt cases/blocks/empty-enum.ts { printWidth: 80 }
+FAIL oxfmt cases/blocks/empty-enum.ts { printWidth: 100 }
+FAIL oxfmt cases/classes/semicolon-on-a-later-line.js { printWidth: 80 }
+FAIL oxfmt cases/classes/semicolon-on-a-later-line.js { printWidth: 100 }
+FAIL oxfmt cases/classes/semicolon-on-a-later-line.ts { printWidth: 80 }
+FAIL oxfmt cases/classes/semicolon-on-a-later-line.ts { printWidth: 100 }
+FAIL prettier cases/comments/after-the-dot-of-a-member.js { printWidth: 80 }
+FAIL prettier cases/comments/after-the-dot-of-a-member.js { printWidth: 100 }
+FAIL oxfmt cases/comments/after-the-dot-of-a-member.js { printWidth: 80 }
+FAIL oxfmt cases/comments/after-the-dot-of-a-member.js { printWidth: 100 }
+FAIL oxfmt cases/comments/white-space-that-is-not-ascii.js { printWidth: 80 }
+FAIL oxfmt cases/comments/white-space-that-is-not-ascii.js { printWidth: 100 }
+FAIL oxfmt cases/jsx-narrow/group-with-nothing-but-text.jsx { printWidth: 35 }
+as Prettier prints them: 40/42
+as oxfmt prints them, in its flavor: 25/36

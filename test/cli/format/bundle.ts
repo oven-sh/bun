@@ -17,13 +17,18 @@ export function readBundle(path: string): Map<string, Buffer> {
   return files;
 }
 
-export function writeBundle(path: string, files: Map<string, Uint8Array>) {
+/** The files one after the other, not compressed. */
+export function concatenate(files: Map<string, Uint8Array>) {
   const parts: Uint8Array[] = [];
   for (const name of [...files.keys()].sort()) {
     const bytes = files.get(name)!;
     parts.push(Buffer.from(`=== /${name} ${bytes.length}\n`), bytes, Buffer.from("\n"));
   }
-  writeFileSync(path, Bun.zstdCompressSync(Buffer.concat(parts), { level: 19 }));
+  return Buffer.concat(parts);
+}
+
+export function writeBundle(path: string, files: Map<string, Uint8Array>) {
+  writeFileSync(path, Bun.zstdCompressSync(concatenate(files), { level: 19 }));
 }
 
 /** Writes the files whose path contains `part` below `into`. */

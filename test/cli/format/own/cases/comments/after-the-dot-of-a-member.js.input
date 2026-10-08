@@ -1,0 +1,5 @@
+x = a.
+  // remove
+  replace(/a/, "").
+  // and again
+  replace(/b/, "");

@@ -291,6 +291,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             && old_await == AwaitOrYield::AllowExpr
             && !self.lexer.await_name_seen
             && !self.is_ecmascript()
+            // Only the native parser has this.
+            && !self.is_typescript_5()
         {
             self.fn_or_arrow_data_parse.allow_await = AwaitOrYield::AllowIdent;
         }

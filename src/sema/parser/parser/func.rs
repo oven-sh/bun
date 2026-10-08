@@ -170,6 +170,11 @@ impl Parser<'_> {
             }
             let (name, pos) = self.identifier();
             let constraint = match self.eat(T::Extends) {
+                // What starts an expression and no type is read as an expression, and reported.
+                true if !self.is_start_of_type(false) && self.is_start_of_expression() => {
+                    self.fail();
+                    TypeNodeId::NONE
+                }
                 true => self.ty(),
                 false => TypeNodeId::NONE,
             };

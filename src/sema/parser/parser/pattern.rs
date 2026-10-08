@@ -63,8 +63,9 @@ impl Parser<'_> {
                     start,
                     end: self.prev_end(),
                 });
+                // `checkGrammarBindingElement`
                 if is_rest && self.token() == T::Comma && self.peek() == T::CloseBracket {
-                    self.report();
+                    self.flag(DiagnosticKind::Grammar, 1013, (self.lx.start, self.lx.end), &[]);
                 }
             }
             if !self.eat(T::Comma) {
@@ -146,7 +147,8 @@ impl Parser<'_> {
                 break;
             }
             if property.is_rest && self.token() == T::CloseBrace {
-                self.report();
+                let at = (self.prev_end() - 1, self.prev_end());
+                self.flag(DiagnosticKind::Grammar, 1013, at, &[]);
             }
         }
         self.context = saved;

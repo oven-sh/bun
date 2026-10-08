@@ -161,18 +161,13 @@ impl Parser<'_> {
             }
         }
         let statement = self.statement();
+        // The other parser takes these for statements of the file if no block is around them.
         if let Some(Stmt {
-            kind:
-                StmtKind::Import(_)
-                | StmtKind::ImportEquals(_)
-                | StmtKind::ExportNamed(_)
-                | StmtKind::ExportStar { .. }
-                | StmtKind::ExportDefault(_)
-                | StmtKind::ExportAssign(_),
+            kind: StmtKind::Import(_) | StmtKind::ExportNamed(_) | StmtKind::ExportStar { .. },
             ..
         }) = self.f.stmts.get(statement.idx())
         {
-            self.report();
+            self.f.has_module_syntax = true;
         }
         statement
     }
@@ -383,6 +378,10 @@ impl Parser<'_> {
                 return flags;
             }
             let flag = modifier_flag(token);
+            // The other parser does not go on after `export export`.
+            if flags.contains(flag) && flag.intersects(Flags::EXPORT | Flags::DEFAULT) {
+                self.report();
+            }
             flags |= flag;
             self.s.modifiers.push(Modifier {
                 kind: ModifierKind::Keyword(flag),
@@ -426,6 +425,9 @@ impl Parser<'_> {
         };
         // No other modifier is before a declaration.
         if self.is_ecmascript && flags.intersects(!(Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC)) {
+            self.report();
+        }
+        if flags.intersects(Flags::IN | Flags::OUT) {
             self.report();
         }
         // Only its modifiers say that `default class {}` has `default`.
@@ -564,23 +566,26 @@ impl Parser<'_> {
         while self.is_in_list(T::CloseBrace) {
             // `parseEnumMember`
             let member = self.start();
-            let (name, name_kind) = match self.token() {
-                T::String => (self.lx.atom, NameKind::StringLiteral),
-                token if token.is_identifier_or_keyword() => (self.lx.atom, NameKind::Identifier),
-                // A number, a computed name and so on are errors.
-                _ => {
-                    self.refuse(Refusal::Reported);
-                    break;
-                }
+            // The checker reports a number, a computed name and so on.
+            let is_bigint = self.token() == T::BigInt;
+            let (mut key, name_kind, _) = self.property_name();
+            // `name.Text()` ends with the `n`.
+            if is_bigint && let PropKey::Name(digits) = key {
+                let text = [self.lx.text_of(digits), b"n"].concat();
+                key = PropKey::Name(self.atom(&text));
+            }
+            let (name, computed_name) = match key {
+                PropKey::Name(name) | PropKey::Private(name) => (name, ExprId::NONE),
+                PropKey::Computed(e) => (Atom::NONE, e),
+                PropKey::None => (Atom::NONE, ExprId::NONE),
             };
-            self.next();
             let saved = self.enter_context(0, ctx::DISALLOW_IN);
             let init = self.optional_initializer();
             self.context = saved;
             self.s.enum_members.push(EnumMember {
                 name,
                 name_kind,
-                computed_name: ExprId::NONE,
+                computed_name,
                 init,
                 pos: member.pos,
                 loc: TextRange {
@@ -714,10 +719,13 @@ impl Parser<'_> {
     #[inline]
     pub(crate) fn statements_until_close_brace(&mut self) -> IdList<StmtId> {
         let base = self.s.ids.len();
+        // Only a statement of the file makes it a module.
+        let was_module = self.f.has_module_syntax;
         while self.is_in_list(T::CloseBrace) {
             let statement = self.statement();
             self.s.ids.push(statement.0);
         }
+        self.f.has_module_syntax = was_module;
         self.take_ids(base)
     }
 
@@ -926,7 +934,7 @@ impl Parser<'_> {
         let expr = self.parenthesized_condition();
         self.expect(T::OpenBrace);
         let base = self.s.cases.len();
-        let mut has_default = false;
+        let mut defaults = 0;
         while self.is_in_list(T::CloseBrace) {
             let pos = self.pos();
             let test = match self.token() {
@@ -935,9 +943,7 @@ impl Parser<'_> {
                     self.expression_allowing_in()
                 }
                 T::Default => {
-                    if std::mem::replace(&mut has_default, true) {
-                        self.report();
-                    }
+                    defaults += 1;
                     self.next();
                     ExprId::NONE
                 }
@@ -947,6 +953,11 @@ impl Parser<'_> {
                 }
             };
             self.expect(T::Colon);
+            // `checkSwitchStatement` reports the second one, up to its `:`.
+            if defaults == 2 && test.is_none() {
+                defaults += 1;
+                self.flag(DiagnosticKind::Grammar, 1113, (pos, self.prev_end()), &[]);
+            }
             let ids = self.s.ids.len();
             while !matches!(self.token(), T::Case | T::Default | T::CloseBrace | T::Eof) {
                 let statement = self.statement();

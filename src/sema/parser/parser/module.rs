@@ -49,7 +49,12 @@ impl Parser<'_> {
         {
             mode = self.import_attributes();
         } else if self.token() == T::Assert && !self.newline_before() {
-            self.refuse(Refusal::Reported);
+            // An error of the native parser.
+            match self.options.dialect.typescript_5 {
+                true => self.flag(DiagnosticKind::Grammar, 2880, (self.lx.start, self.lx.end), &[]),
+                false => self.report(),
+            }
+            mode = self.import_attributes();
         }
         if !is_type_only {
             mode = ResolutionMode::None;

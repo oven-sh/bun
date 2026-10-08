@@ -1,7 +1,7 @@
 //! Types, and the declarations that consist of types.
 
 use super::stmt::Start;
-use super::{Parser, ctx, take_span};
+use super::{GrammarError, Parser, ctx, take_span};
 use crate::Refusal;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
@@ -600,27 +600,64 @@ impl Parser<'_> {
         name
     }
 
-    /// `parseTypeArguments`, at the `<`.
+    /// `scanTypeMemberStart`, at a modifier: whether the list of members goes on with the token.
+    fn scan_type_member_start(&mut self) -> bool {
+        // "Eat up all modifiers, but hold on to the last one in case it is actually an identifier"
+        while self.token().is_modifier() {
+            self.next();
+        }
+        // "Index signatures and computed property names are type members"
+        if self.token() == T::OpenBracket {
+            return true;
+        }
+        if self.is_literal_property_name() {
+            self.next();
+        }
+        matches!(
+            self.token(),
+            T::OpenParen | T::LessThan | T::Question | T::Colon | T::Comma
+        ) || self.can_parse_semicolon()
+    }
+
+    /// `parseTypeArguments`, at the `<`, and `checkGrammarTypeArguments`.
     pub(crate) fn type_arguments(&mut self) -> IdList<TypeNodeId> {
+        let (list, error) = self.type_arguments_unchecked();
+        if let Some((at, code)) = error {
+            self.flag(DiagnosticKind::Grammar, code, at, &[]);
+        }
+        list
+    }
+
+    /// `parseTypeArguments`, at the `<`: the list, and what `checkGrammarTypeArguments` reports
+    /// about it where it is called.
+    pub(crate) fn type_arguments_unchecked(&mut self) -> (IdList<TypeNodeId>, Option<GrammarError>) {
+        let less_than = self.pos();
         self.next();
         let base = self.s.ids.len();
-        while self.is_in_list(T::GreaterThan) {
-            let ty = self.type_in_list();
+        let error = self.type_argument_list(less_than);
+        self.expect(T::GreaterThan);
+        (self.take_ids(base), error)
+    }
+
+    /// `parseDelimitedList(PCTypeArguments, parseType)`, after the `<` at `less_than`: pushes the
+    /// types on the stack of ids. "The list ends before any token that is neither a comma nor the
+    /// start of a type", so it can be empty (1099) and can end with a comma (1009).
+    pub(crate) fn type_argument_list(&mut self, less_than: u32) -> Option<GrammarError> {
+        let base = self.s.ids.len();
+        loop {
+            if self.token() != T::Comma && !self.is_start_of_type(false) {
+                return Some(match self.s.ids.len() == base {
+                    // Up to the end of the token after the list, which is one character long.
+                    true => ((less_than, self.pos() + 1), 1099),
+                    false => ((self.prev_end() - 1, self.prev_end()), 1009),
+                });
+            }
+            let ty = self.ty();
             self.s.ids.push(ty.0);
             if !self.eat(T::Comma) {
-                break;
-            }
-            // A comma at the end is an error.
-            if self.token() == T::GreaterThan {
-                self.report();
+                return None;
             }
         }
-        if self.s.ids.len() == base {
-            // An empty list is an error.
-            self.refuse(Refusal::Reported);
-        }
-        self.expect(T::GreaterThan);
-        self.take_ids(base)
     }
 
     /// `parseType` where `isStartOfType` is asked first, as `isListElement` does: for it a reserved
@@ -635,19 +672,22 @@ impl Parser<'_> {
 
     /// `parseTypeArgumentsOfTypeReference`
     #[inline]
-    fn type_arguments_of_type_reference(&mut self) -> IdList<TypeNodeId> {
+    fn type_arguments_of_type_reference(&mut self, is_checked: bool) -> IdList<TypeNodeId> {
         if self.newline_before() {
             return IdList::EMPTY;
         }
         match self.token() {
-            T::LessThan => self.type_arguments(),
+            T::LessThan => {}
             // `ReScanLessThanToken`
             T::LessThanLessThan => {
                 self.lx.token = T::LessThan;
                 self.lx.end = self.lx.start + 1;
-                self.type_arguments()
             }
-            _ => IdList::EMPTY,
+            _ => return IdList::EMPTY,
+        }
+        match is_checked {
+            true => self.type_arguments(),
+            false => self.type_arguments_unchecked().0,
         }
     }
 
@@ -655,7 +695,7 @@ impl Parser<'_> {
     fn type_reference(&mut self) -> TypeNodeId {
         let start = self.pos();
         let name = self.entity_name();
-        let args = self.type_arguments_of_type_reference();
+        let args = self.type_arguments_of_type_reference(true);
         self.finish_type(TypeNodeKind::Ref { name, args }, start)
     }
 
@@ -779,7 +819,8 @@ impl Parser<'_> {
             name = self.f.entity_name(names.iter().copied());
             self.s.names.truncate(base);
         }
-        let args = self.type_arguments_of_type_reference();
+        // `checkImportType` does not look at the list.
+        let args = self.type_arguments_of_type_reference(false);
         let kind = TypeNodeKind::Import {
             spec,
             name,
@@ -1167,6 +1208,9 @@ impl Parser<'_> {
         } else {
             let first_modifier = self.s.modifiers.len();
             if self.token().is_modifier() {
+                if !self.look_ahead(Self::scan_type_member_start) {
+                    self.fail();
+                }
                 member.flags = self.modifiers(false, false, false);
             }
             member.modifiers = self.take_modifiers(first_modifier);

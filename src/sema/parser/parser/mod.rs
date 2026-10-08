@@ -128,6 +128,9 @@ file_lists! {
     mentioned, diagnostics,
 }
 
+/// The range and the code of an error that the checker reports about the syntax.
+pub(crate) type GrammarError = ((u32, u32), u32);
+
 /// Where a speculative parse returns to.
 pub(crate) struct Checkpoint {
     mark: Mark,

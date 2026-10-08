@@ -688,11 +688,13 @@ impl Parser<'_> {
                 let saved = self.enter_context(0, ctx::DISALLOW_IN | ctx::DECORATOR);
                 let base = self.s.ids.len();
                 let parens = self.f.parens.len();
+                // `checkGrammarImportCallExpression` reports a spread, and any number of arguments but
+                // one or two.
                 while self.is_in_list(T::CloseParen) {
-                    if self.token() == T::DotDotDot {
-                        self.refuse(Refusal::Reported);
-                    }
-                    let argument = self.assignment_expression();
+                    let argument = match self.token() {
+                        T::DotDotDot => self.spread_element(),
+                        _ => self.assignment_expression(),
+                    };
                     self.s.ids.push(argument.0);
                     // `IsStringLiteralLike`: `("m")` is a `ParenthesizedExpression`.
                     if self.s.ids.len() == base + 1 && self.f.parens.len() == parens {
@@ -705,8 +707,9 @@ impl Parser<'_> {
                 self.context = saved;
                 let close = self.pos();
                 self.expect(T::CloseParen);
-                if !(1..=2).contains(&(self.s.ids.len() - base)) {
-                    self.refuse(Refusal::Reported);
+                if self.s.ids.len() == base {
+                    let missing = self.add_expr(ExprKind::Missing, close, close);
+                    self.s.ids.push(missing.0);
                 }
                 let args = self.take_ids(base);
                 if is_deferred && !args.is_empty() {
@@ -1012,12 +1015,8 @@ impl Parser<'_> {
             }
             p.next();
             let base = p.s.ids.len();
-            loop {
-                let ty = p.type_in_list();
-                p.s.ids.push(ty.0);
-                if !p.eat(T::Comma) {
-                    break;
-                }
+            if let Some((at, code)) = p.type_argument_list(less_than as u32) {
+                p.flag(DiagnosticKind::Grammar, code, at, &[]);
             }
             // The scanner never joins a `>` with what follows it.
             if p.token() != T::GreaterThan {
@@ -1253,8 +1252,11 @@ impl Parser<'_> {
         let start = self.pos();
         self.next();
         if self.eat(T::Dot) {
-            if self.lx.text() != b"target" {
-                self.report();
+            // `checkGrammarMetaProperty`
+            if self.lx.text() != b"target" && !self.lx.has_escape {
+                let at = (self.lx.start, self.lx.end);
+                let args = [self.lx.text(), b"new", b"target"];
+                self.flag(DiagnosticKind::Grammar, 17012, at, &args);
             }
             let (name, _) = self.identifier_name();
             return self.finish_expr(ExprKind::NewTarget(name), start);
@@ -1333,7 +1335,19 @@ impl Parser<'_> {
                 // `parseComputedPropertyName`
                 self.next();
                 let parens = self.f.parens.len();
-                let expression = self.assignment_expression_allowing_in();
+                let had_await = std::mem::take(&mut self.has_top_level_await);
+                let saved = self.enter_context(0, ctx::DISALLOW_IN | ctx::TYPE);
+                let expression = self.assignment_expression();
+                self.context = saved;
+                // `parsePropertyName` of the native parser restores `statementHasAwaitIdentifier`, so
+                // that no statement is parsed again for an `await` in a name.
+                if self.has_top_level_await
+                    && !self.options.dialect.typescript_5
+                    && !self.is_ecmascript
+                {
+                    self.refuse(Refusal::Unsupported);
+                }
+                self.has_top_level_await |= had_await;
                 self.expect(T::CloseBracket);
                 // `IsDynamicName`: only a bare literal is a name.
                 let is_bare = self.f.parens.len() == parens;

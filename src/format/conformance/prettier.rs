@@ -23,7 +23,6 @@ const BABEL_TS: &str =
 const ONLY_BABEL_TS_REJECTS: &str = "an input that only `babel-ts` rejects: Prettier's `typescript` parser accepts it, and the output is the same";
 const HTML_LIKE_COMMENT: &str = "`babel` rejects HTML-like comments, but the snapshots of js/comments/html-like and of jsx/jsx-test-suite, made with `acorn`, have them formatted";
 const FLOW: &str = "Flow's type syntax";
-const EMBEDDED: &str = "embedded HTML, which needs a formatter for that language";
 const OTHER_LANGUAGE: &str = "a language that is not there: HTML, Vue, Angular";
 const PLUGIN: &str = "formatted by a plugin of Prettier";
 
@@ -60,24 +59,9 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("misc/babel-redirect-to-babel-flow", FLOW),
     ("typescript/definite/definite.ts", BABEL_TS),
     ("typescript/definite/without-annotation.ts", BABEL_TS),
-    ("js/embeded", EMBEDDED),
-    ("js/multiparser-comments", EMBEDDED),
-    ("js/multiparser-html", EMBEDDED),
-    ("typescript/angular-component-examples", EMBEDDED),
-    ("typescript/decorators-ts/angular.ts", EMBEDDED),
-    ("typescript/as/as-const-embedded.ts", EMBEDDED),
-    ("js/template-literals/expression-break.js", EMBEDDED),
-    ("misc/embedded-language-formatting/in-html", EMBEDDED),
-    ("misc/embedded-language-formatting/in-javascript", EMBEDDED),
-    ("misc/embedded-language-formatting/in-vue", EMBEDDED),
-    ("js/last-argument-expansion/embed.js", EMBEDDED),
-    ("misc/plugins/embed", EMBEDDED),
-    ("markdown/code/angular/angular-html.md", EMBEDDED),
-    ("markdown/code/angular/angular-ts.md", EMBEDDED),
-    ("markdown/code/lwc/lwc.md", EMBEDDED),
-    ("markdown/cursor/17227.md", EMBEDDED),
     ("misc/front-matter/with-plugins", PLUGIN),
     ("handlebars/front-matter/toml", PLUGIN),
+    ("misc/plugins/embed-async-printer", PLUGIN),
     ("js/_errors_/html-like-comments.js", HTML_LIKE_COMMENT),
     (
         "jsx/jsx-test-suite/rejected-snippets/0/0006-e58e.jsx",
@@ -551,7 +535,11 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, format: Format<'_>) {
                 }
                 let tally = by_directory.entry(group.clone()).or_default();
 
-                let mut options = FormatOptions::default();
+                // `bun format` does not format HTML in templates and in blocks of code by itself yet. Here it is judged.
+                let mut options = FormatOptions {
+                    embedded_html: true,
+                    ..FormatOptions::default()
+                };
                 if let Some(parser) = named_parser {
                     let _ = options.set(b"parser", parser);
                 } else if !case.parsers.is_empty()

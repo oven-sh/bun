@@ -44,7 +44,11 @@ fn parse(text: &[u8]) -> Vec<(&[u8], Vec<u8>)> {
 
 /// `{ printWidth: 80, semi: false }`. `None` if there is an option that is not one of Prettier's.
 fn options_of(line: &[u8], flavor: &[u8]) -> Option<FormatOptions> {
-    let mut options = FormatOptions::default();
+    // `bun format` does not format HTML in templates and in blocks of code by itself yet. Here it is judged.
+    let mut options = FormatOptions {
+        embedded_html: true,
+        ..FormatOptions::default()
+    };
     options.set(b"flavor", flavor).ok()?;
     for option in strings::split(trim_bytes(line, b"{} "), b", ") {
         let (name, value) = strings::split_once(option, b": ")?;

@@ -739,7 +739,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // `vm.transpiler.resolver`, not `vm.preload`).
         let preload: *const [u8] = unsafe { &raw const *(&(*vm).preload)[i] };
         // SAFETY: `preload` points at a live boxed slice for this iteration
-        // (heap-stable `Box<[u8]>` payload; nothing below mutates `vm.preload`).
+        // (heap-stable `Box<[u8]>` payload; nothing below mutates `vm.preload`:
+        // a reload that lands in the tick is deferred while `is_in_preload`).
         let preload_slice: &[u8] = unsafe { &*preload };
         // Strip "file://".
         let normalized: &[u8] = preload_slice

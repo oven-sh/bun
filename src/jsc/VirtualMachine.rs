@@ -4608,6 +4608,13 @@ impl VirtualMachine {
             bun_core::reload_process(should_clear_terminal, false);
         }
 
+        // `load_preloads` ticks the event loop between preloads and indexes the list it walks.
+        // A reload from inside that tick would run the preloads again and empty the list.
+        if self.is_in_preload {
+            self.hot_reload_deferred = true;
+            return;
+        }
+
         if let Some(p) = self.pending_internal_promise() {
             // SAFETY: `p` is a live JSC heap cell tracked by the VM.
             match crate::JSPromise::status_ptr(p) {

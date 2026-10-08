@@ -9,7 +9,7 @@ impl Rule for MaxParams {
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
-        MaxParams(Config::new(options))
+        MaxParams(Config::new_for_typescript_eslint(options))
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {

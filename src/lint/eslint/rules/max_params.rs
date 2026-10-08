@@ -19,6 +19,8 @@ pub struct Config {
     /// `None`: `{ "maximum": 0 }`, with which upstream compares to `undefined` and reports nothing.
     max: Option<usize>,
     count_this: CountThis,
+    /// typescript-eslint hands the core rule a copy of the function without `this: void`.
+    removes_void_this: bool,
 }
 
 impl Config {
@@ -33,7 +35,20 @@ impl Config {
             (Some("always"), _) | (None, Some(true)) => CountThis::Always,
             _ => CountThis::ExceptVoid,
         };
-        Config { max, count_this }
+        Config {
+            max,
+            count_this,
+            removes_void_this: false,
+        }
+    }
+
+    /// For typescript-eslint's rule.
+    pub fn new_for_typescript_eslint(options: &Options) -> Config {
+        let config = Config::new(options);
+        Config {
+            removes_void_this: !matches!(config.count_this, CountThis::Always),
+            ..config
+        }
     }
 
     pub fn check<'a, R: Rule>(&self, func: Func<'a>, cx: &Cx<'a, R>) {
@@ -57,7 +72,18 @@ impl Config {
         let count = func.params().len() + usize::from(counts_this);
         if count > max {
             let name = ast_utils::get_function_name_with_kind(func);
-            cx.report(ast_utils::get_function_head_loc(func), EXCEED)
+            let mut head = ast_utils::get_function_head_loc(func);
+            // In the copy, the parameter that is left looks like the one of `a => {}`.
+            if self.removes_void_this
+                && func.is_arrow()
+                && func.arrow_span() != Some(head)
+                && func.params().len() == 1
+                && func.this_param().is_some_and(|this| this.ty().is_some_and(|ty| ty.is_keyword(Keyword::Void)))
+                && let Some(only) = func.params().first()
+            {
+                head.end = only.span().start;
+            }
+            cx.report(head, EXCEED)
                 .data("name", text::upper_case_first(&name).into_owned())
                 .data("count", count)
                 .data("max", max);

@@ -210,45 +210,13 @@ pub fn is_token_on_same_line(file: &File<'_>, left: impl Spanned, right: impl Sp
     }
 }
 
-/// The code points of a name, with what its `\u0061` and `\u{61}` stand for.
-fn decoded_name(name: &[u8]) -> impl Iterator<Item = u32> {
-    let mut at = 0;
-    std::iter::from_fn(move || {
-        let (c, size) = match name.get(at) {
-            Some(b'\\') => bun_core::lexer::peek_unicode_escape(name, at)
-                .map_or((u32::from(b'\\'), 1), |(c, size)| (c as u32, size)),
-            _ => text::code_point_at(name, at),
-        };
-        at += size;
-        (size > 0).then_some(c)
-    })
-}
-
-/// Whether espree has the same `type` and `value` for two names that are written differently: it
-/// decodes their escape sequences.
-fn is_same_name_decoded(left: &Token<'_>, right: &Token<'_>) -> bool {
-    let is_name = |kind| {
-        matches!(
-            kind,
-            TokenKind::Identifier | TokenKind::Keyword | TokenKind::Boolean | TokenKind::Null
-        )
-    };
-    let is_private = |kind| kind == TokenKind::PrivateIdentifier;
-    let (l, r) = (left.kind(), right.kind());
-    ((is_name(l) && is_name(r)) || (is_private(l) && is_private(r)))
-        && (strings::contains_char(left.text(), b'\\')
-            || strings::contains_char(right.text(), b'\\'))
-        && decoded_name(left.text()).eq(decoded_name(right.text()))
-}
-
 /// ESLint's `equalTokens`: `left` and `right` consist of the same tokens.
 pub fn equal_tokens<'a>(file: &'a File<'a>, left: impl Spanned, right: impl Spanned) -> bool {
     let (left, right) = (file.tokens_in(left), file.tokens_in(right));
     left.len() == right.len()
-        && left.zip(right).all(|(l, r)| match l.text() == r.text() {
-            true => l.kind() == r.kind(),
-            false => !file.uses_typescript_parser() && is_same_name_decoded(&l, &r),
-        })
+        && left
+            .zip(right)
+            .all(|(l, r)| l.kind() == r.kind() && l.has_same_value(r))
 }
 
 /// ESLint's `canContinueExpressionInClassBody`.
@@ -758,11 +726,22 @@ pub fn is_empty_function(func: Func<'_>) -> bool {
     is_function_with_body(func) && func.body_statements().is_some_and(|body| body.is_empty())
 }
 
-/// ESLint's `isDirective`.
-#[inline]
+/// ESLint's `isDirective`: the parser has given the statement a `directive`. espree gives none in ES3.
+/// typescript-estree does not ask for the version, and also gives one to the strings at the start of
+/// a static block.
 pub fn is_directive(statement: Stmt<'_>) -> bool {
-    // ES3 has no directives.
-    statement.directive().is_some() && statement.file().language().ecma_version >= 5
+    let file = statement.file();
+    if !file.uses_typescript_parser() {
+        return file.language().ecma_version >= 5 && statement.directive().is_some();
+    }
+    let is_string = |it: &Stmt<'_>| matches!(it.kind(), StmtKind::Expr(e) if e.as_string().is_some() && !e.is_parenthesized());
+    match statement.parent() {
+        Node::Func(block) if block.kind() == FnKind::StaticBlock => {
+            let statements = block.body_statements().into_iter().flatten();
+            statements.take_while(is_string).any(|it| it == statement)
+        }
+        _ => statement.directive().is_some(),
+    }
 }
 
 /// ESLint's `isTopLevelExpressionStatement`: an expression statement directly in the file, in a
@@ -1237,10 +1216,14 @@ pub fn is_global_reference(e: Expr<'_>) -> bool {
         && file.scope().get_name(name).is_none()
 }
 
-/// ESLint's `isReferenceToGlobalVariable`. The same as [`is_global_reference`].
-#[inline]
+/// ESLint's `isReferenceToGlobalVariable(sourceCode.getScope(node), e)`, for a `node` that `e` is or
+/// is in, with no function or class between them: [`is_global_reference`], but upstream looks for the
+/// reference among those of that scope, where it is not if `e` is in the discriminant of a `switch`,
+/// the object of a `with`, or a decorator of a class or of a parameter.
 pub fn is_reference_to_global_variable(e: Expr<'_>) -> bool {
     is_global_reference(e)
+        && e.reference()
+            .is_some_and(|it| it.scope() == Node::Expr(e).scope())
 }
 
 /// ESLint's `getVariableByName`. A global variable that the file does not declare is not a
@@ -1460,9 +1443,9 @@ pub fn is_constant(e: Expr<'_>, in_boolean_position: bool) -> bool {
             call.chain() == Chain::No
                 && call.callee().is_ident("Boolean")
                 && call.args().first().is_none_or(|it| is_constant(it, true))
-                && is_global_reference(call.callee())
+                && is_reference_to_global_variable(call.callee())
         }
-        ExprKind::Ident(name) => name.is("undefined") && is_global_reference(e),
+        ExprKind::Ident(name) => name.is("undefined") && is_reference_to_global_variable(e),
         _ => is_literal(e),
     }
 }
@@ -1667,10 +1650,9 @@ pub fn get_function_name_with_kind(func: Func<'_>) -> Vec<u8> {
 /// have one.
 pub fn get_opening_paren_of_params(func: Func<'_>) -> Option<Span> {
     let (file, text) = (func.file(), func.file().text());
-    let params = func.params();
+    let mut params = func.params_with_this();
     if func.is_arrow()
-        && params.len() == 1
-        && let Some(only) = params.first()
+        && let (Some(only), None) = (params.next(), params.next())
     {
         let start = only.span().start;
         let before = skip_trivia_back(text, start);

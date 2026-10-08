@@ -206,7 +206,7 @@ fn is_test_call(e: Expr<'_>, is_test_callee: fn(Expr<'_>) -> bool) -> bool {
                 return false;
             };
             let has_block_body = matches!(function.body(), FnBody::Block(_));
-            arguments.len() == 2 || (function.params().len() <= 1 && has_block_body)
+            arguments.len() == 2 || (function.params_with_this().count() <= 1 && has_block_body)
         }
         _ => false,
     }

@@ -58,7 +58,8 @@ pub(crate) fn write_tagged_template_expression<'a>(e: Expr<'a>, call: Call<'a>, 
     let ExprKind::Template(template) = quasi.kind() else {
         return;
     };
-    match is_test_each_pattern(call.callee()) {
+    // Without a header it is not a table.
+    match is_test_each_pattern(call.callee()) && !template.raw(0).trim_ascii().is_empty() {
         true => EachTemplateTable::from_template(template, f).fmt(f),
         false => write_template_literal(quasi, template, f),
     }

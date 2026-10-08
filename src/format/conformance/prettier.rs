@@ -20,7 +20,7 @@ const BABEL_TS: &str = "an input that Prettier's `typescript` parser rejects: th
 const ONLY_BABEL_TS_REJECTS: &str = "an input that only `babel-ts` rejects: Prettier's `typescript` parser accepts it, and the output is the same";
 const HTML_LIKE_COMMENT: &str = "`babel` rejects HTML-like comments, but the snapshots of js/comments/html-like and of jsx/jsx-test-suite, made with `acorn`, have them formatted";
 const FLOW: &str = "Flow's type syntax";
-const EMBEDDED: &str = "embedded HTML or Markdown, which needs a formatter for that language";
+const EMBEDDED: &str = "embedded HTML, which needs a formatter for that language";
 const OTHER_LANGUAGE: &str = "a language that is not there: HTML, Vue, Angular, Handlebars, MDX";
 const PLUGIN: &str = "formatted by a plugin of Prettier";
 
@@ -60,7 +60,6 @@ const EXCLUDED: &[(&str, &str)] = &[
     ("js/embeded", EMBEDDED),
     ("js/multiparser-comments", EMBEDDED),
     ("js/multiparser-html", EMBEDDED),
-    ("js/multiparser-markdown", EMBEDDED),
     ("typescript/angular-component-examples", EMBEDDED),
     ("typescript/decorators-ts/angular.ts", EMBEDDED),
     ("typescript/as/as-const-embedded.ts", EMBEDDED),
@@ -88,6 +87,7 @@ const UNSTABLE: &[&str] = &[
     "js/ignore/semi/head-ignored.js",
     "js/comments/return-statement.js",
     "js/comments/tagged-template-literal.js",
+    "js/multiparser-markdown/codeblock.js",
     "typescript/prettier-ignore/mapped-types.ts",
     "typescript/prettier-ignore/issue-14238.ts",
     "js/for-of/comments.js",

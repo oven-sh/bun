@@ -8,6 +8,7 @@ use super::{Expr, Key, List, Name, Node, handle};
 use crate::span::Span;
 use bun_sema::bind::PatParent;
 use bun_sema::hir;
+use smallvec::{SmallVec, smallvec};
 
 handle! {
     /// A binding pattern.
@@ -95,14 +96,15 @@ impl<'a> Pat<'a> {
 
     /// Calls `visit` with every identifier that the pattern binds, in source order.
     pub fn for_each_binding(self, visit: &mut dyn FnMut(Pat<'a>)) {
-        match self.kind() {
-            PatKind::Missing => {}
-            PatKind::Ident(_) => visit(self),
-            PatKind::Object(props) => props.iter().for_each(|p| p.value().for_each_binding(visit)),
-            PatKind::Array(elems) => elems
-                .iter()
-                .filter_map(PatElem::pat)
-                .for_each(|p| p.for_each_binding(visit)),
+        // The next is the last. Not by recursion, which a pattern can be too deep for.
+        let mut pending: SmallVec<[Pat<'a>; 8]> = smallvec![self];
+        while let Some(pat) = pending.pop() {
+            match pat.kind() {
+                PatKind::Missing => {}
+                PatKind::Ident(_) => visit(pat),
+                PatKind::Object(props) => pending.extend(props.iter().rev().map(PatProp::value)),
+                PatKind::Array(elems) => pending.extend(elems.iter().rev().filter_map(PatElem::pat)),
+            }
         }
     }
 }

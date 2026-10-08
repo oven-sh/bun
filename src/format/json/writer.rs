@@ -53,7 +53,7 @@ pub(super) fn write(text: &[u8], tree: &Tree, config: &Config, frames: &mut Fram
         config,
         out,
         level: 0,
-        column: 0,
+        column: config.alignment,
     };
     let nodes = &tree.nodes[..];
     let trailing_comma = u32::from(config.trailing_comma);
@@ -159,12 +159,28 @@ impl Writer<'_, '_> {
     fn new_line(&mut self) {
         self.out.extend_from_slice(self.config.line_ending);
         let len = self.out.len();
-        let width = self.level.saturating_mul(self.config.indent_width);
-        match self.config.indent_style {
-            IndentStyle::Tab => self.out.resize(len + self.level as usize, b'\t'),
-            IndentStyle::Space => self.out.resize(len + width as usize, b' '),
-        }
-        self.column = width;
+        let Config {
+            alignment,
+            indent_width,
+            ..
+        } = *self.config;
+        self.column = match self.config.indent_style {
+            IndentStyle::Space => alignment.saturating_add(self.level.saturating_mul(indent_width)),
+            // What is left of the alignment is a tab too, unless it is the end of the indentation.
+            IndentStyle::Tab => {
+                let (tabs, spaces) = (alignment / indent_width.max(1) + self.level, alignment % indent_width.max(1));
+                if tabs == 0 {
+                    self.out.resize(len + spaces as usize, b' ');
+                    self.column = spaces;
+                    return;
+                }
+                let tabs = tabs + u32::from(spaces > 0);
+                self.out.resize(len + tabs as usize, b'\t');
+                self.column = tabs.saturating_mul(indent_width);
+                return;
+            }
+        };
+        self.out.resize(len + self.column as usize, b' ');
     }
 
     fn close(&mut self, frame: &Frame) {

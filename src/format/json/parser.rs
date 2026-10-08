@@ -512,7 +512,8 @@ impl Reader<'_, '_> {
                 if self.peek() == Some(end) {
                     return Ok(self.close());
                 }
-                if self.line_breaks > 1 && !self.config.is_stringify() {
+                // What is asked skips any number of commas: those of holes too.
+                if (self.line_breaks > 1 || self.peek() == Some(b',')) && !self.config.is_stringify() {
                     let is_blank = match container {
                         Kind::Object => is_next_line_empty(self.text, node.end as usize),
                         _ => is_line_after_element_empty(self.text, node.end as usize),

@@ -11,6 +11,7 @@
 mod comments;
 mod document;
 mod parser;
+mod range;
 mod writer;
 
 use crate::options::{Expand, IndentStyle, QuoteProperties, QuoteStyle};
@@ -132,6 +133,9 @@ struct Config {
     preferred_quote: QuoteStyle,
     /// The quotes of a name that is written without.
     name_quote: QuoteStyle,
+    /// The number of columns that all lines are indented by: what is formatted is a part of a
+    /// document.
+    alignment: u32,
 }
 
 impl Config {
@@ -153,6 +157,7 @@ impl Config {
             string_quote: is_double.then_some(QuoteStyle::Double),
             preferred_quote: options.quote_style,
             name_quote: if is_double { QuoteStyle::Double } else { options.quote_style },
+            alignment: 0,
         }
     }
 
@@ -185,12 +190,65 @@ pub fn format(
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
     const BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
+    let original = text;
     let config = Config::new(parser, options, text);
-    let printer_options = crate::ir::printer::PrinterOptions::new(options, text);
     let (bom, text) = match text.strip_prefix(BOM) {
         Some(text) => (BOM, text),
         None => (&[][..], text),
     };
+
+    // For Prettier, every `json` document has a pragma and none has one that says to ignore it.
+    let mut with_pragma = Vec::new();
+    let mut text = text;
+    if parser != Parser::Json && (options.require_pragma || options.check_ignore_pragma || options.insert_pragma) {
+        if (options.require_pragma && !crate::pragma::has_pragma(text))
+            || (options.check_ignore_pragma && crate::pragma::has_ignore_pragma(text))
+        {
+            out.extend_from_slice(original);
+            return Ok(());
+        }
+        let is_whole = options.range_start.unwrap_or(0) == 0 && options.range_end.is_none();
+        // What writes `json-stringify` cannot write a comment.
+        if options.insert_pragma
+            && !options.require_pragma
+            && is_whole
+            && parser != Parser::JsonStringify
+            && !crate::pragma::has_pragma(text)
+        {
+            crate::pragma::insert_pragma(text, &mut with_pragma);
+            text = &with_pragma;
+        }
+    }
+
+    let mut normalized = std::mem::take(&mut scratch.normalized);
+    let has_carriage_return = bun_core::strings::contains_char(text, b'\r');
+    if has_carriage_return {
+        normalize_line_breaks(text, &mut normalized);
+    }
+    let result = if options.range_start.is_some() || options.range_end.is_some() {
+        range::format(original, if has_carriage_return { &normalized } else { text }, config, options, scratch, out)
+    } else {
+        let start = out.len();
+        out.extend_from_slice(bom);
+        let result = format_normalized(if has_carriage_return { &normalized } else { text }, &config, options, scratch, out);
+        // Nothing but white space is nothing.
+        if out.len() == start + bom.len() {
+            out.truncate(start);
+        }
+        result
+    };
+    scratch.normalized = normalized;
+    result
+}
+
+/// Prettier's `coreFormat`. `text` has no byte order mark and no `\r`.
+fn format_normalized(
+    text: &[u8],
+    config: &Config,
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+) -> Result<(), FormatError> {
     let Scratch {
         tree,
         frames,
@@ -199,33 +257,30 @@ pub fn format(
         storage,
         propagate,
         printer,
-        normalized,
+        ..
     } = scratch;
-    let text = match bun_core::strings::contains_char(text, b'\r') {
-        true => {
-            normalize_line_breaks(text, normalized);
-            &normalized[..]
-        }
-        false => text,
-    };
-
-    parser::parse(text, &config, tree).map_err(|_| FormatError::SyntaxError)?;
+    parser::parse(text, config, tree).map_err(|_| FormatError::SyntaxError)?;
     if tree.comments.is_empty() {
-        // Nothing but white space is nothing.
         if !tree.nodes.is_empty() {
-            out.extend_from_slice(bom);
-            writer::write(text, tree, &config, frames, out);
+            writer::write(text, tree, config, frames, out);
         }
         return Ok(());
     }
     // Only `jsonc` takes a document that is nothing but comments.
-    if config.is_stringify() || (tree.nodes.is_empty() && parser != Parser::Jsonc) {
+    if config.is_stringify() || (tree.nodes.is_empty() && config.parser != Parser::Jsonc) {
         return Err(FormatError::SyntaxError);
     }
-    out.extend_from_slice(bom);
     comments::attach(text, tree, attached);
-    let root = document::build(text, tree, attached, &config, document_frames, storage);
+    let root = document::build(text, tree, attached, config, document_frames, storage);
     crate::ir::document::propagate_expand(root, storage, propagate);
+    // The line breaks of `config`: those of the options, or of the text if they leave it to that.
+    let mut printer_options = options.clone();
+    printer_options.line_ending = match config.line_ending {
+        b"\r\n" => crate::options::LineEnding::Crlf,
+        b"\r" => crate::options::LineEnding::Cr,
+        _ => crate::options::LineEnding::Lf,
+    };
+    let printer_options = crate::ir::printer::PrinterOptions::new(&printer_options, text);
     crate::ir::printer::print(root, storage, text, printer_options, printer, out)
         .map_err(|_| FormatError::InvalidDocument)
 }

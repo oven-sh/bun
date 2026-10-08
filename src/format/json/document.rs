@@ -15,7 +15,7 @@ use super::parser::{
     make_string,
 };
 use crate::ir::element::{
-    Condition, FormatElement, Group, GroupId, GroupMode, Interned, LineMode, PrintMode, Tag, Text, TextWidth, Token,
+    Align, Condition, FormatElement, Group, GroupId, GroupMode, Interned, LineMode, PrintMode, Tag, Text, TextWidth, Token,
 };
 use crate::ir::formatter::Storage;
 use crate::ir::width::string_width;
@@ -74,9 +74,26 @@ pub(super) fn build(
         storage,
         group_count: 0,
     };
+    // Prettier's `addAlignmentToDoc`. The line break makes the indentation take effect.
+    let (levels, spaces) = (config.alignment / config.indent_width.max(1), config.alignment % config.indent_width.max(1));
+    if spaces > 0 {
+        builder.tag(Tag::StartAlign(Align(spaces as u8)));
+    }
+    for _ in 0..levels {
+        builder.tag(Tag::StartIndent);
+    }
+    if config.alignment > 0 {
+        builder.line(LineMode::Hard);
+    }
     builder.dangling(Owner::NONE);
     builder.values(&mut frames.0);
     builder.line(LineMode::Hard);
+    for _ in 0..levels {
+        builder.tag(Tag::EndIndent);
+    }
+    if spaces > 0 {
+        builder.tag(Tag::EndAlign);
+    }
     Interned {
         start,
         len: builder.storage.pool.len() as u32 - start,

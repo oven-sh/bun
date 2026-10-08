@@ -115,7 +115,10 @@ fn unquoted<'a>(string: &'a [u8], parent: Option<AstNodes<'a>>, f: &Formatter<'a
         // In TypeScript, `1` and `"1"` are different types.
         _ => {
             is_es5_identifier_name(content)
-                || (is_javascript && is_simple_number(content) && is_canonical_simple_number(content))
+                || (is_javascript
+                    && is_simple_number(content)
+                    && is_canonical_simple_number(content)
+                    && !crate::pragma::is_flow_file(f.file().text(), f.filepath()))
         }
     };
     is_safe.then_some(content)

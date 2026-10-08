@@ -6297,8 +6297,6 @@ impl<'s> Files<'s> {
         if !self.modules.is_empty() && !self.globals.contains_key(known::undefined) {
             self.globals.insert(known::undefined, self.undefined_symbol);
         }
-        let globals = SymbolMap::from_iter_in(self.globals.iter().copied(), self.arena);
-        self.merged_exports.insert(self.global_this_symbol, globals);
         self.make_transient_symbols();
         // The target an alias resolved to during the symbol merge may have become a part of a
         // merged symbol by now.
@@ -6386,6 +6384,16 @@ impl<'s> Files<'s> {
             self.new_symbol(SymFlags::MODULE | SymFlags::MERGED, known::globalThis);
         self.globals
             .insert(known::globalThis, self.global_this_symbol);
+    }
+
+    /// `symbol.Exports` of a transient symbol. `c.globalThisSymbol.Exports = c.globals`: they are one
+    /// table, also while the symbol merge fills it.
+    fn merged_exports_of(&self, symbol: Sym) -> Option<&SymbolMap<'s>> {
+        if symbol == self.global_this_symbol {
+            Some(&self.globals)
+        } else {
+            self.merged_exports.get(&symbol)
+        }
     }
 
     /// `target.Exports` of a transient symbol, during the symbol merge.
@@ -6684,7 +6692,7 @@ impl<'s> Files<'s> {
     /// `symbol.Exports`
     fn exports_in_table(&self, sym: Sym) -> Vec<(Atom, Sym)> {
         let sym = self.holder_of_exports(sym);
-        match self.merged_exports.get(&sym) {
+        match self.merged_exports_of(sym) {
             Some(table) => table.to_vec(),
             None => {
                 let (file, bound) = (sym.file, self.bound(sym.file));
@@ -7017,7 +7025,7 @@ impl<'s> Files<'s> {
     pub fn export_in_table(&self, sym: Sym, name: Atom) -> Option<Sym> {
         let symbol = self.symbol(sym);
         if symbol.flags.contains(SymFlags::MERGED) {
-            if let Some(table) = self.merged_exports.get(&sym) {
+            if let Some(table) = self.merged_exports_of(sym) {
                 return table.get(name).copied();
             }
             if let Some(target) = self.target_of_module_clone(sym) {
@@ -7062,7 +7070,7 @@ impl<'s> Files<'s> {
         let symbol = self.symbol(sym);
         // `None`: the exports recorded by the binder.
         let merged = if symbol.flags.contains(SymFlags::MERGED) {
-            self.merged_exports.get(&sym)
+            self.merged_exports_of(sym)
         } else {
             None
         };

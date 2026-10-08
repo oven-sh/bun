@@ -3615,6 +3615,12 @@ impl<'p, 's> Checker<'p, 's> {
         if self.is_resolving_return_type(sig) {
             return self.any_for_return_type_in_resolution();
         }
+        self.return_type_not_in_resolution(sig)
+    }
+
+    /// `getReturnTypeOfSignature(sig)`, for a caller that has asked `isResolvingReturnTypeOfSignature(sig)` first: a path
+    /// that leads here a second time ends here.
+    pub(super) fn return_type_not_in_resolution(&mut self, sig: SigId) -> TypeId {
         self.non_circular_returns.push(self.stack.len());
         let ty = self.sig_return(sig);
         self.non_circular_returns.pop();

@@ -2389,7 +2389,7 @@ impl<'p, 's> Checker<'p, 's> {
             && !self.is_resolving_return_type(sig)
             && !self.is_at_first_look(sig)
         {
-            let expected = self.sig_return(sig);
+            let expected = self.return_type_not_in_resolution(sig);
             let (is_generator, is_async) = (
                 f.flags.contains(Flags::GENERATOR),
                 f.flags.contains(Flags::ASYNC),

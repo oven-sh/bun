@@ -2209,7 +2209,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Whether the first resolution on the path from `stack[i]` is a return type that
-    /// `getNonCircularReturnTypeOfSignature` has requested.
+    /// `getNonCircularReturnTypeOfSignature` or `getContextualReturnType` has requested.
     fn ends_at_non_circular_return(&self, i: usize) -> bool {
         !self.non_circular_returns.is_empty()
             && (self.stack[i..].iter().position(|&q| self.is_resolution(q))).is_some_and(|above| {
@@ -3864,7 +3864,14 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    pub fn synth(&self, shape: Shape<'s>) -> TypeId {
+    pub fn synth(&self, mut shape: Shape<'s>) -> TypeId {
+        // A symbol that is given its type has no mapper (`createSymbolWithType`, `getSpreadSymbol`). What the
+        // property it is made from had would make the shape look generic for good.
+        for prop in &mut shape.props {
+            if let PropSource::Type(_) | PropSource::Copy(..) = prop.source {
+                prop.mapper = MapperId::IDENTITY;
+            }
+        }
         self.intern(TypeData::Synth(self.boxed(shape)))
     }
 

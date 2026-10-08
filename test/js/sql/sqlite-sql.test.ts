@@ -1859,6 +1859,25 @@ describe("Helper argument validation", () => {
     await sqlSafe.close();
   });
 
+  test("BigInt out of range rejects in the default mode", async () => {
+    const sqlDefault = new SQL({ adapter: "sqlite", filename: ":memory:" });
+    await sqlDefault`CREATE TABLE t (id INTEGER PRIMARY KEY, n INTEGER)`;
+
+    const big = 2n ** 63n; // just out of int64 range
+    // The INSERT binds through db.run() and the SELECT through a prepared statement.
+    expect(
+      async () => await sqlDefault`INSERT INTO t ${sql({ id: 1, n: big })}`.execute(),
+    ).toThrowErrorMatchingInlineSnapshot(`"BigInt value '9223372036854775808' is out of range"`);
+    expect(async () => await sqlDefault`SELECT ${big} AS n`.execute()).toThrowErrorMatchingInlineSnapshot(
+      `"BigInt value '9223372036854775808' is out of range"`,
+    );
+    expect((await sqlDefault`SELECT count(*) AS c FROM t`)[0].c).toBe(0);
+
+    await sqlDefault`INSERT INTO t ${sql({ id: 2, n: big - 1n })}`;
+    expect((await sqlDefault`SELECT CAST(n AS TEXT) AS n FROM t`)[0].n).toBe("9223372036854775807");
+    await sqlDefault.close();
+  });
+
   test("insert helper filters out undefined values", async () => {
     await sql`CREATE TABLE insert_undefined_test (id INTEGER PRIMARY KEY, name TEXT NOT NULL, optional TEXT)`;
 

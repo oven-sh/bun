@@ -547,10 +547,15 @@ pub fn is_identifier_es6(name: &[u8]) -> bool {
     is_identifier_name(name) && !is_reserved_word_es6(name)
 }
 
-/// `esutils.keyword.isIdentifierES5(name)`: the same, but `yield` is an identifier and characters
-/// outside the BMP are not allowed.
+/// `esutils.keyword.isIdentifierES5(name)`: the same, but `yield` is an identifier, characters
+/// outside the BMP are not allowed, and neither is what is a letter only by `Other_ID_Start` or
+/// `Other_ID_Continue`: ES5 goes by general categories.
 pub fn is_identifier_es5(name: &[u8]) -> bool {
     is_identifier_name(name)
         && (name == b"yield" || !is_reserved_word_es6(name))
-        && code_points(name).all(|it| it.1 <= 0xFFFF)
+        && code_points(name).all(|(at, c)| match c {
+            0x1885 | 0x1886 => at != 0,
+            0x2118 | 0x212E | 0x309B | 0x309C | 0xB7 | 0x387 | 0x1369..=0x1371 | 0x19DA => false,
+            _ => c <= 0xFFFF,
+        })
 }

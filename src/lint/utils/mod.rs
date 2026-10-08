@@ -96,7 +96,7 @@ pub mod unicode;
 pub use array::array_sort_by;
 pub use estree_compat::{
     Target, TargetElement, TargetKind, catch_clause_span, chain_root, estree_ancestors,
-    estree_parent, estree_span, estree_type_name, get_node_by_range_index, is_assignment_target,
+    estree_parent, estree_span, estree_type_name, estree_types_at, get_node_by_range_index, is_assignment_target,
     is_chain_root, is_expression_statement, is_for_init, is_in_optional_chain, is_in_type_query, is_sequence_root, last_sequence_expression, normalize,
     sequence_expressions, sequence_root, type_annotation_span,
 };

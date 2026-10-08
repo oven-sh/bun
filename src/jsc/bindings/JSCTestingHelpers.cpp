@@ -8,6 +8,8 @@
 
 #include <JavaScriptCore/JSBigInt.h>
 #include <JavaScriptCore/JSBigIntInlines.h>
+#include <JavaScriptCore/RegExpObject.h>
+#include <JavaScriptCore/YarrInterpreter.h>
 #if OS(WINDOWS)
 #include <JavaScriptCore/ExecutableAllocator.h>
 #endif
@@ -95,6 +97,43 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCollectSyncWithoutSweep, (JSGlobalObject * gl
     return JSValue::encode(jsUndefined());
 }
 
+// regExpMatchStatistics(regExp, string, startOffset = 0): one match, with the engine the RegExp is
+// compiled for, as exec() does it. Reports that engine, and for JSC's non-backtracking matcher
+// what the match cost and the most it can cost (maximumStepsPerPosition, maximumScratchBytes).
+// The steps are counted, not timed, so a test can assert how they grow with the subject.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionRegExpMatchStatistics, (JSGlobalObject * globalObject, CallFrame* callframe))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* regExpObject = dynamicDowncast<RegExpObject>(callframe->argument(0));
+    if (!regExpObject) {
+        throwTypeError(globalObject, scope, "Expected a RegExp"_s);
+        return {};
+    }
+    WTF::String string = callframe->argument(1).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    uint32_t startOffset = callframe->argument(2).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    Yarr::InterpretStatistics statistics;
+    int index = regExpObject->regExp()->matchForTesting(globalObject, string, startOffset, statistics);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    bool isLinear = statistics.engine == Yarr::InterpretStatistics::Engine::Linear;
+    JSObject* result = JSC::constructEmptyObject(globalObject);
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "index"_s), jsNumber(index));
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "engine"_s), jsNontrivialString(vm, isLinear ? "linear"_s : "backtracking"_s));
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "refusal"_s), jsNontrivialString(vm, Yarr::linearRefusalName(statistics.refusal)));
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "jit"_s), jsBoolean(statistics.usesJIT));
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "programSize"_s), jsNumber(statistics.programSize));
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "maximumStepsPerPosition"_s), jsNumber(static_cast<double>(statistics.maximumStepsPerPosition)));
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "maximumScratchBytes"_s), jsNumber(static_cast<double>(statistics.maximumScratchBytes)));
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "steps"_s), jsNumber(static_cast<double>(statistics.linear.steps)));
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "scratchBytes"_s), jsNumber(statistics.linear.scratchBytes));
+    return JSValue::encode(result);
+}
+
 JSC::JSValue createJSCTestingHelpers(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -124,6 +163,11 @@ JSC::JSValue createJSCTestingHelpers(Zig::GlobalObject* globalObject)
     object->putDirectNativeFunction(
         vm, globalObject, JSC::Identifier::fromString(vm, "isLiveCellAtRawAddress"_s), 1,
         jsFunctionIsLiveCellAtRawAddress, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::DontDelete | 0);
+
+    object->putDirectNativeFunction(
+        vm, globalObject, JSC::Identifier::fromString(vm, "regExpMatchStatistics"_s), 3,
+        jsFunctionRegExpMatchStatistics, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
 
 #if OS(WINDOWS)

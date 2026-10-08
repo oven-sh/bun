@@ -7,9 +7,9 @@
 //!
 //! What the formatter changes in the tree is allowed:
 //!
-//! - The quotes of strings, and the escapes of quotes in them: the value is compared. A property name can
-//!   get or lose its quotes.
-//! - How numbers are written: `0XAB`, `1.0`, `.5`, `1E5`. The value is compared.
+//! - The quotes of strings, and the escapes of quotes in them. A property name without escapes can get or
+//!   lose its quotes.
+//! - How numbers are written: `0XAB`, `1.0`, `.5`, `1E5`.
 //! - The order of the flags of a regular expression.
 //! - The order of modifiers: `readonly abstract` is `abstract readonly`.
 //! - `a && (b && c)` is `a && b && c`, and the same for `||` and `??`.

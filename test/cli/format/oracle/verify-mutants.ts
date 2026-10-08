@@ -131,6 +131,26 @@ const mutations: Record<string, Mutation> = {
     if (text[middle - 1] === "\\") return;
     return replaced(tokens, at, 1, text.slice(0, middle) + pick(["\\'", '\\"', text[0] === '"' ? "'" : '"'])! + text.slice(middle));
   },
+  "an escape for a character": tokens => {
+    const at = pick(where(tokens, it => isString(it) && /^.[\w ]/.test(it)));
+    if (at === undefined) return;
+    return replaced(tokens, at, 1, tokens[at][0] + "\\x" + tokens[at].charCodeAt(1).toString(16).padStart(2, "0") + tokens[at].slice(2));
+  },
+  "a number is written in another way": tokens => {
+    const at = pick(where(tokens, it => /^[1-9]\d*$/.test(it)));
+    return at === undefined ? undefined : replaced(tokens, at, 1, pick(["0x" + Number(tokens[at]).toString(16), tokens[at] + "e0"])!);
+  },
+  "a statement is doubled": tokens => {
+    const text = tokens.join("");
+    const line = pick([...text.matchAll(/^[ \t]*[^\s/*].*;\n/gm)]);
+    return line === undefined ? undefined : text.slice(0, line.index) + line[0] + text.slice(line.index);
+  },
+  "a decorator is dropped": tokens => {
+    const at = pick(where(tokens, (it, at) => it === "@" && isWord(tokens[at + 1] ?? "")));
+    if (at === undefined) return;
+    const close = tokens[at + 2] === "(" ? closing(tokens, at + 2) : at + 1;
+    return close === undefined ? undefined : replaced(tokens, at, close - at + 1);
+  },
   "a digit is changed": tokens => {
     const at = pick(where(tokens, isNumber));
     if (at === undefined) return;
@@ -173,7 +193,7 @@ const mutations: Record<string, Mutation> = {
   },
 };
 
-// What is before, and what must not be made of it. Both parse.
+// What is before, and what must not be made of it.
 const cases: [name: string, extension: string, before: string, after: string][] = [
   ["parentheses that mean something", ".js", "f((a, b));", "f(a, b);"],
   ["parentheses that mean something", ".js", "x = (a + b) * c;", "x = a + b * c;"],
@@ -181,6 +201,14 @@ const cases: [name: string, extension: string, before: string, after: string][] 
   ["parentheses that mean something", ".js", "x = a * (b % c);", "x = a * b % c;"],
   ["parentheses that mean something", ".js", "x = (a, b);", "x = a, b;"],
   ["parentheses that mean something", ".js", "f = x => ({});", "f = x => {};"],
+  ["parentheses that mean something", ".js", "f = x => ({ a });", "f = x => { a };"],
+  ["parentheses that mean something", ".js", "f = x => ({ a: 1 });", "f = x => { a: 1 };"],
+  ["parentheses that mean something", ".js", "(let)[a] = 1;", "let[a] = 1;"],
+  ["parentheses that mean something", ".cjs", "(l\\u0065t)[a] = 1;", "let [a] = 1;"],
+  ["parentheses that mean something", ".cjs", "(let)\n[a] = 1;", "let\n[a] = 1;"],
+  ["parentheses that mean something", ".cjs", "for ((let) of a);", "for (let of a);"],
+  ["parentheses that mean something", ".cjs", "for ((let).a in b);", "for (let a in b);"],
+  ["parentheses that mean something", ".js", "for ((async) of a);", "for (async of a);"],
   ["parentheses that mean something", ".js", "async () => (await a).b;", "async () => await a.b;"],
   ["parentheses that mean something", ".js", "new (a())();", "new a()();"],
   ["parentheses that mean something", ".js", "new (a.b())();", "new a.b()();"],
@@ -259,6 +287,9 @@ const cases: [name: string, extension: string, before: string, after: string][] 
   ["commas", ".js", "let a;\nif (b);", "let a,\nif (b);"],
   ["commas", ".js", "let a;", "let a,;"],
   ["commas", ".js", "class A extends B {}", "class A extends B, {}"],
+  ["commas", ".ts", "let a;\nif (b);", "let a,\nif (b);"],
+  ["commas", ".ts", "let a;", "let a,;"],
+  ["commas", ".ts", "class A extends B {}", "class A extends B, {}"],
   ["commas", ".ts", "class A extends B<C> {}", "class A extends B<C>, {}"],
   ["commas", ".ts", "class A implements B {}", "class A implements B, {}"],
   ["commas", ".ts", "interface A extends B {}", "interface A extends B, {}"],
@@ -272,6 +303,18 @@ const cases: [name: string, extension: string, before: string, after: string][] 
   ["strings", ".js", "x = '\"';", "x = \"'\";"],
   ["strings", ".js", 'x = "\\\\";', 'x = "\\\\\\\\";'],
   ["strings", ".js", 'x = "a";', "x = `a`;"],
+  ["strings", ".js", 'x = "\\x61";', 'x = "a";'],
+  ["strings", ".js", 'x = "\\u0061";', 'x = "\\x61";'],
+  ["strings", ".js", 'x = "\\a";', 'x = "a";'],
+  ["strings", ".js", 'import a from "\\x61";', 'import a from "a";'],
+  ["strings", ".ts", 'type A = "\\x61";', 'type A = "a";'],
+  ["strings", ".ts", 'declare module "\\x61" {}', 'declare module "a" {}'],
+  ["strings", ".js", 'import { "\\x61" as b } from "c";', 'import { "a" as b } from "c";'],
+  ["strings", ".js", 'export { a as "\\x62" };', 'export { a as "b" };'],
+  ["strings", ".js", 'export * as "\\x61" from "b";', 'export * as "a" from "b";'],
+  ["strings", ".jsx", 'x = <a>b{"\\x20"}</a>;', "x = <a>b</a>;"],
+  ["strings", ".js", 'x = "a"; // b', 'x = "a // b";'],
+  ["strings", ".js", "x = `a`; /* b */", "x = `a /* b */`;"],
   ["strings", ".js", "x = `a\n  b`;", "x = `a\nb`;"],
   ["strings", ".js", "x = `a${b} c`;", "x = `a${b}c`;"],
   ["strings", ".js", "x = `a${b}c${d}`;", "x = `a${d}c${b}`;"],
@@ -294,6 +337,14 @@ const cases: [name: string, extension: string, before: string, after: string][] 
   ["numbers", ".js", "x = 10n;", "x = 11n;"],
   ["numbers", ".js", "x = 10n;", "x = 10;"],
   ["numbers", ".js", "x = { 1: a };", "x = { 2: a };"],
+  ["numbers", ".js", "x = 0x10;", "x = 16;"],
+  ["numbers", ".js", "x = 1e3;", "x = 1000;"],
+  ["numbers", ".js", "x = 1_000;", "x = 1000;"],
+  ["numbers", ".js", "x = { 0x10: a };", "x = { 16: a };"],
+  ["numbers", ".js", "x = { 1e3: a };", "x = { 1000: a };"],
+  ["numbers", ".js", 'x = { "1": a };', "x = { 0x1: a };"],
+  ["numbers", ".js", 'x = { 1e3: a };', 'x = { "1000": a };'],
+  ["numbers", ".ts", "type A = 0x10;", "type A = 16;"],
   ["numbers", ".js", "x = { 1n: a };", "x = { 2n: a };"],
   ["numbers", ".ts", "type A = -1;", "type A = 1;"],
 
@@ -304,6 +355,16 @@ const cases: [name: string, extension: string, before: string, after: string][] 
   ["keys", ".js", "let { a } = x;", "let { a: a } = x;"],
   ["keys", ".js", 'x = { "a-b": 1 };', 'x = { "a_b": 1 };'],
   ["keys", ".js", "class A { #a; }", "class A { a; }"],
+  ["keys", ".js", 'class A { "\\x63onstructor"() {} }', "class A { constructor() {} }"],
+  ["keys", ".js", 'class A { "\\x63onstructor"() {} }', "class A { \\x63onstructor() {} }"],
+  ["keys", ".js", 'class A { "\\x61"() {} }', "class A { a() {} }"],
+  ["keys", ".js", 'class A { "\\x61" = 1 }', "class A { a = 1 }"],
+  ["keys", ".js", 'x = { "\\x63onstructor": 1 };', "x = { constructor: 1 };"],
+  ["keys", ".js", 'x = { "\\x61": 1 };', 'x = { "a": 1 };'],
+  ["keys", ".js", 'x = { ["\\x61"]: 1 };', 'x = { ["a"]: 1 };'],
+  ["keys", ".js", 'let { "\\x61": b } = c;', "let { a: b } = c;"],
+  ["keys", ".ts", 'interface A { "\\x61": B }', "interface A { a: B }"],
+  ["keys", ".ts", 'enum A { "\\x61" = 1 }', "enum A { a = 1 }"],
   ["keys", ".js", "class A { static constructor() {} }", "class A { constructor() {} }"],
 
   ["members of types", ".ts", "interface A { a: B; c: D }", "interface A { a: B }"],
@@ -354,6 +415,20 @@ const cases: [name: string, extension: string, before: string, after: string][] 
   ["keywords", ".ts", "class A { constructor(private a) {} }", "class A { constructor(a) {} }"],
   ["keywords", ".ts", "class A { @a b; }", "class A { b; }"],
   ["keywords", ".ts", "class A { @a @b c; }", "class A { @b @a c; }"],
+  ["keywords", ".ts", "@a class B {}", "class B {}"],
+  ["keywords", ".ts", "@a export class B {}", "export class B {}"],
+  ["keywords", ".ts", "@a export class B {}", "export @a class B {}"],
+  ["keywords", ".ts", "export default @a class {}", "export default class {}"],
+  ["keywords", ".ts", "x = @a class {};", "x = class {};"],
+  ["keywords", ".ts", "class A { @a() b() {} }", "class A { b() {} }"],
+  ["keywords", ".ts", "class A { @a() b() {} }", "class A { @a b() {} }"],
+  ["keywords", ".ts", "class A { b(@c d) {} }", "class A { b(d) {} }"],
+  ["keywords", ".ts", "class A { constructor(@b private c) {} }", "class A { constructor(private c) {} }"],
+  ["keywords", ".js", "a();", "a();\na();"],
+  ["keywords", ".js", "a();\nb();", "a();\nb();\nb();"],
+  ["keywords", ".js", "function f() { a(); }", "function f() { a(); a(); }"],
+  ["keywords", ".js", "class A { a() {} }", "class A { a() {} a() {} }"],
+  ["keywords", ".js", "#!a\u2028b();", "#!a\u2028b();\nb();"],
   ["keywords", ".ts", "a as B;", "a satisfies B;"],
   ["keywords", ".ts", "a as const;", "a as Const;"],
   ["keywords", ".ts", "a!;", "a;"],
@@ -379,9 +454,17 @@ const cases: [name: string, extension: string, before: string, after: string][] 
   ["keywords", ".tsx", "x = <a.b />;", "x = <a:b />;"],
 
   ["comments", ".js", "a; // b", "a;"],
+  ["comments", ".ts", "type A = {\n  /** doc */ a: 1; // prettier-ignore\n};", "type A = {\n  a: 1; // prettier-ignore\n};"],
+  ["comments", ".ts", "type A = {\n  /** doc */ a: 1; // prettier-ignore\n};", "type A = {\n  /** doc */ a: 1;\n};"],
+  ["comments", ".ts", "class A {\n  /** doc */ a = 1; // prettier-ignore\n}", "class A {\n  a = 1; // prettier-ignore\n}"],
+  ["comments", ".js", "x = {\n  /** doc */ a: 1, // prettier-ignore\n};", "x = {\n  a: 1, // prettier-ignore\n};"],
+  ["comments", ".js", "a; // b", "a; // b\n// b"],
+  ["comments", ".js", "#!a\u2028b;", "#!c\u2028b;"],
   ["comments", ".js", "a; /* b */", "a; // b"],
   ["comments", ".js", "a; // b", "a; // c"],
   ["comments", ".js", "a; // b\n// c", "a; // b // c"],
+  ["comments", ".js", "/* a\n b */", "/* a b */"],
+  ["comments", ".js", "/* a\n\n b */", "/* a\n b */"],
   ["comments", ".js", "/* a */ /* a */ b;", "/* a */ b;"],
   ["comments", ".js", "#!/usr/bin/env a\nb;", "b;"],
   ["comments", ".js", "#!/usr/bin/env a\nb;", "#!/usr/bin/env c\nb;"],
@@ -412,6 +495,7 @@ const allowed: [extension: string, before: string, after: string][] = [
   [".js", "x = { 1: 1, 'b': 2 };", "x = { 1: 1, b: 2 };"],
   [".js", "x = { a: 1, 999: 2 };", 'x = { a: 1, 999: 2 };'],
   [".js", "x = { 0x1: 1, 1e3: 2 };", "x = { 0x1: 1, 1e3: 2 };"],
+  [".js", "x = { .5: 1, 1.50: 2, 'a-b': 3 };", 'x = { "0.5": 1, "1.5": 2, "a-b": 3 };'],
   [".js", 'class A { "constructor"() {} }', "class A {\n  constructor() {}\n}"],
   [".js", 'class A { "a"() {} }', "class A {\n  a() {}\n}"],
   [".js", "x = /a/gimsuy;", "x = /a/gimsuy;"],
@@ -429,6 +513,16 @@ const allowed: [extension: string, before: string, after: string][] = [
   [".js", "x = `a\nb`;\n/* c\n d */", "x = `a\r\nb`;\r\n/* c\r\n d */\r\n"],
   [".jsx", 'x = <a b="c\r\nd" />;', 'x = <a b="c\nd" />;'],
   [".js", "/**\n* a\n   */\nb;", "/**\n * a\n */\nb;"],
+  [".js", "/* a\r b\r\r c */\rd;", "/* a\n b\n\n c */\nd;\n"],
+  [".js", "x = 'a\\\rb';", 'x = "a\\\nb";'],
+  [".jsx", "x = <a : b c : d={1}></a : b>;", "x = <a:b c:d={1}></a:b>;"],
+  [".js", "#!a\u2028b;", "#!a\nb;\n"],
+  [".js", "#!a\u2029b;", "#!a\nb;\n"],
+  [".js", "#!a\rb;", "#!a\nb;\n"],
+  [".js", "#!a  \r\nb;", "#!a\nb;\n"],
+  [".js", "x = 'a\\\r\nb';", 'x = "a\\\nb";'],
+  [".js", "x = '\\x61\\'\"';", "x = '\\x61\\'\"';"],
+  [".js", "x = '\\x61\\'';", 'x = "\\x61\'";'],
   [".js", "f(/* a */ b /* c */);", "f(/* c */ /* a */ b);"],
   [".js", "if (a) {;}", "if (a) {\n}"],
   [".js", "class A { a;; b }", "class A {\n  a;\n  b;\n}"],
@@ -544,7 +638,7 @@ async function count(kind: string, name: string, before: string, formatted: stri
 let failures = 0;
 for (const [kind, extension, before, after] of cases) {
   const verdict = await count(kind, "case" + extension, before, before, after);
-  if (!verdict.startsWith("different") || verdict.startsWith("different (a syntax error")) {
+  if (!verdict.startsWith("different")) {
     failures++;
     console.log(`NOT NOTICED (${verdict}): ${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
   }

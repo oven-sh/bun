@@ -14,7 +14,18 @@ fn text_of<'a>(text: &'a [u8], comment: (u32, u32)) -> &'a [u8] {
 
 /// Allowed: the white space at the start and at the end of the lines of a comment.
 fn lines(comment: &[u8]) -> impl Iterator<Item = &[u8]> {
-    strings::split(comment, b"\n").map(<[u8]>::trim_ascii)
+    // A `\r` ends a line too, and `\r\n` is one end.
+    let mut rest = Some(comment);
+    std::iter::from_fn(move || {
+        let text = rest?;
+        let Some(end) = strings::index_of_any(text, b"\r\n") else {
+            rest = None;
+            return Some(text.trim_ascii());
+        };
+        let after = if text.get(end..end + 2) == Some(b"\r\n") { end + 2 } else { end + 1 };
+        rest = text.get(after..);
+        text.get(..end).map(<[u8]>::trim_ascii)
+    })
 }
 
 fn is_same(before: &[u8], after: &[u8]) -> bool {
@@ -105,28 +116,19 @@ fn word_after(text: &[u8], comment: (u32, u32)) -> &[u8] {
     rest.get(..len).unwrap_or_default()
 }
 
-/// Allowed, if JSDoc comments are formatted: anything in them. There are as many, each before the same
-/// word.
+/// Allowed, if JSDoc comments are formatted: anything in them, and those that say nothing are left out. If none is,
+/// each is before the same word.
 fn compare_without_jsdoc(before: Comments<'_>, after: Comments<'_>) -> Result<(), Difference> {
-    type Lists = (Vec<(u32, u32)>, Vec<(u32, u32)>, usize);
-    // Those that are not JSDoc comments, those that say something, and the number of the others.
-    let split = |(text, comments): Comments<'_>| -> Lists {
-        let (mut plain, mut telling, mut others) = (Vec::new(), Vec::new(), 0);
-        for &comment in comments {
-            match jsdoc(text_of(text, comment)) {
-                None => plain.push(comment),
-                Some(inner) if says_something(inner) => telling.push(comment),
-                Some(_) => others += 1,
-            }
-        }
-        (plain, telling, others)
-    };
+    type Lists = (Vec<(u32, u32)>, Vec<(u32, u32)>);
+    // Those that are not JSDoc comments, and those that are.
+    let split = |(text, comments): Comments<'_>| -> Lists { comments.iter().partition(|&&it| jsdoc(text_of(text, it)).is_none()) };
     let (x, y) = (split(before), split(after));
-    let end = |text: &[u8]| text.len() as u32;
-    if x.1.len() != y.1.len() || x.2 < y.2 {
+    let can_be_left_out = x.1.iter().filter(|&&it| !jsdoc(text_of(before.0, it)).is_some_and(says_something)).count();
+    if x.1.len() < y.1.len() || x.1.len() - y.1.len() > can_be_left_out {
+        let end = |text: &[u8]| text.len() as u32;
         return Err(Difference::new("the number of JSDoc comments", (before.0, end(before.0)), (after.0, end(after.0))));
     }
-    for (&p, &q) in x.1.iter().zip(&y.1) {
+    for (&p, &q) in x.1.iter().zip(&y.1).filter(|_| x.1.len() == y.1.len()) {
         let (word, word2) = (word_after(before.0, p), word_after(after.0, q));
         if word != word2 && !word.is_empty() && !word2.is_empty() {
             return Err(Difference::new("what follows a JSDoc comment", (before.0, p.0), (after.0, q.0)));

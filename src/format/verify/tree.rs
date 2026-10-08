@@ -16,6 +16,7 @@
 //! and the trees are walked (`Walk<false>`).
 
 use super::Difference;
+use crate::js::utils::number::format_trimmed_number;
 use crate::options::FormatOptions;
 use bun_lint::ast::{Expr as ExprHandle, File, Handle};
 use bun_lint::tokens::skip_trivia;
@@ -92,6 +93,7 @@ lists! {
     import_call_type_args: (ExprId, IdList<TypeNodeId>),
     comments: (u32, u32),
     diagnostics: Diagnostic,
+    specifier_uses: SpecifierUse,
 }
 
 impl<'a> Program<'a> {
@@ -441,10 +443,56 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 let is_number = |text: &[u8]| text.first().is_some_and(u8::is_ascii_digit);
                 self.check((!is_number(x) && !is_number(y)) || word(x).eq_ignore_ascii_case(word(y)), "a key")
             }
-            (PropKey::Name(x), PropKey::Name(y)) | (PropKey::Private(x), PropKey::Private(y)) => self.atom(x, y, "a key"),
+            (PropKey::Name(x), PropKey::Name(y)) => {
+                self.atom(x, y, "a key")?;
+                self.name_as_written(at)
+            }
+            (PropKey::Private(x), PropKey::Private(y)) => self.atom(x, y, "a key"),
             (PropKey::Computed(x), PropKey::Computed(y)) => self.expr(x, y),
             _ => self.differ_somewhere("the kind of a key"),
         }
+    }
+
+    /// Two names with the same text, which can be strings or numbers, at `at`: they are written in the same way,
+    /// but for what is allowed for a string and for a number. Allowed: a string without escapes gets or loses
+    /// its quotes.
+    #[inline]
+    fn name_as_written(&mut self, at: (u32, u32)) -> Same {
+        let is_plain = |program: &Program<'_>, at: u32| {
+            program.text.get(at as usize).is_some_and(|it| it.is_ascii_alphabetic() || matches!(it, b'_' | b'$'))
+        };
+        match is_plain(self.a, at.0) && is_plain(self.b, at.1) {
+            true => Ok(()),
+            false => self.literal_name_as_written(at),
+        }
+    }
+
+    fn literal_name_as_written(&mut self, at: (u32, u32)) -> Same {
+        // `["a"]`
+        let inside = |program: &Program<'_>, at: u32| match program.text.get(at as usize) {
+            Some(b'[') => skip_trivia(program.text, at + 1),
+            _ => at,
+        };
+        let (x, y) = (self.a.from(inside(self.a, at.0)), self.b.from(inside(self.b, at.1)));
+        // What is between the quotes is what is written without them. Allowed: `.5` is `"0.5"`.
+        let is_without_quotes = |string: &[u8], other: &[u8]| {
+            let content = string.get(1..string.len() - 1).unwrap_or_default();
+            if let Some(number) = number_at_start(other) {
+                return *content == *format_trimmed_number(number);
+            }
+            let is_part = |it: &u8| it.is_ascii_alphanumeric() || matches!(it, b'_' | b'$' | b'.') || !it.is_ascii();
+            other.strip_prefix(content).is_some_and(|rest| !rest.first().is_some_and(is_part))
+        };
+        let is_same = match (string_at_start(x), string_at_start(y)) {
+            (Some(x), Some(y)) => is_same_string(x, y),
+            (Some(string), None) => is_without_quotes(string, y),
+            (None, Some(string)) => is_without_quotes(string, x),
+            (None, None) => match (number_at_start(x), number_at_start(y)) {
+                (Some(x), Some(y)) => is_same_number(x, y),
+                _ => true,
+            },
+        };
+        self.check(is_same, "how a key is written")
     }
 
     /// Allowed: the keywords that are next to each other are put in order, but for `export`, `default`,
@@ -491,6 +539,7 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
         self.diagnostics()?;
         self.body(a.body, b.body)?;
         self.check(a.with_bodies.len() == b.with_bodies.len(), "the number of `with` statements")?;
+        self.module_specifiers()?;
         if self.imports_can_move {
             return self.moved_imports();
         }
@@ -518,6 +567,28 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 Some(at) => _ = before.swap_remove(at),
                 None if diagnostic.code == TRAILING_COMMA_NOT_ALLOWED && is_before_closing_bracket(diagnostic.start) => {}
                 None => return self.differ("what the parser says", 0, diagnostic.start),
+            }
+        }
+        Ok(())
+    }
+
+    /// The values of module specifiers are in the tree. Here they are compared as they are written.
+    fn module_specifiers(&mut self) -> Same {
+        if self.imports_can_move {
+            return Ok(());
+        }
+        // What the parser reads twice is listed twice, and not where it is.
+        let places = |program: &Program<'_>| {
+            let mut places: Vec<u32> = program.specifier_uses.iter().map(|it| it.pos).collect();
+            places.sort_unstable();
+            places.dedup();
+            places
+        };
+        for (x, y) in places(self.a).into_iter().zip(places(self.b)) {
+            if let (Some(p), Some(q)) = (string_at_start(self.a.from(x)), string_at_start(self.b.from(y)))
+                && !is_same_string(p, q)
+            {
+                return self.differ("how a string is written", x, y);
             }
         }
         Ok(())
@@ -695,6 +766,7 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 for (m, n) in i.members.iter().zip(j.members.iter()) {
                     let (m, n) = both!(self, enum_members, m, n, "a member of an enum is missing");
                     let result = (self.atom(m.name, n.name, "the name of a member of an enum"))
+                        .and_then(|()| self.name_as_written((m.pos, n.pos)))
                         .and_then(|()| self.name_kind(m.name_kind, n.name_kind))
                         .and_then(|()| self.expr(m.computed_name, n.computed_name))
                         .and_then(|()| self.expr(m.init, n.init));
@@ -707,6 +779,7 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 match (i.name, j.name) {
                     (ModuleName::Ident(x), ModuleName::Ident(y)) | (ModuleName::String(x), ModuleName::String(y)) => {
                         self.atom(x, y, "the name of a namespace")?;
+                        self.name_as_written((i.name_pos, j.name_pos))?;
                     }
                     (ModuleName::Global, ModuleName::Global) => {}
                     _ => return self.differ_somewhere("the kind of a namespace"),
@@ -773,6 +846,10 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 },
             ) => {
                 self.check(is_await == is_await2, "`await` after `for`")?;
+                // The parser says nothing about `for (async of a)`, which takes parentheses around the name.
+                let is_bare_async = matches!(self.b.stmts.get(left2.idx()), Some(Stmt { kind: Expr(e), .. })
+                    if matches!(self.b.exprs.get(e.idx()), Some(it) if self.b.slice(it.pos, it.end) == b"async") && !self.b.is_parenthesized(*e));
+                self.check(is_await2 || !is_bare_async, "the parentheses around `async`")?;
                 self.stmt(left, left2)?;
                 self.expr(expr, expr2)?;
                 self.stmt(body, body2)
@@ -862,6 +939,7 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                     if !is_same {
                         return self.differ("a name of an import", s.start, t.start);
                     }
+                    self.name_as_written((s.imported_pos, t.imported_pos))?;
                 }
                 Ok(())
             }
@@ -889,6 +967,8 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                     if !is_same {
                         return self.differ("a name of an export", s.start, t.start);
                     }
+                    self.name_as_written((s.local_pos, t.local_pos))?;
+                    self.name_as_written((s.pos, t.pos))?;
                 }
                 Ok(())
             }
@@ -898,6 +978,7 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                     alias,
                     type_only,
                     mode,
+                    alias_pos,
                     ..
                 },
                 ExportStar {
@@ -905,11 +986,15 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                     alias: alias2,
                     type_only: type_only2,
                     mode: mode2,
+                    alias_pos: alias_pos2,
                     ..
                 },
             ) => {
                 self.atom(spec, spec2, "a module specifier")?;
                 self.atom(alias, alias2, "the name of an export")?;
+                if alias.is_some() {
+                    self.name_as_written((alias_pos, alias_pos2))?;
+                }
                 self.check((type_only, mode) == (type_only2, mode2), "the keywords of an export")
             }
             _ => self.differ_somewhere("the kind of a statement"),
@@ -1175,7 +1260,7 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
             | (True, True)
             | (False, False)
             | (ImportMeta, ImportMeta) => Ok(()),
-            // Allowed: other quotes, and what has to be escaped with them. The value is the same.
+            // Allowed: see `is_same_string`.
             (String(p), String(q)) => {
                 let is_template = |program: &Program<'_>, at: u32| program.text.get(at as usize) == Some(&b'`');
                 let is_a_template = is_template(self.a, x.pos);
@@ -1184,11 +1269,17 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                     // It can be text in JSX that starts with a `` ` ``.
                     true if BY_ID => self.atom(p, q, "a string").and_then(|()| self.template((a, x, IdList::EMPTY), (y, IdList::EMPTY))),
                     true => self.template((a, x, IdList::EMPTY), (y, IdList::EMPTY)),
-                    false => self.atom(p, q, "a string"),
+                    false => {
+                        self.atom(p, q, "a string")?;
+                        self.check(is_same_string(self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end)), "how a string is written")
+                    }
                 }
             }
-            // Allowed: a number is written in another way. The value is the same.
-            (Number(x), Number(y)) => self.number(x, y),
+            // Allowed: see `is_same_number`.
+            (Number(p), Number(q)) => {
+                self.number(p, q)?;
+                self.check(is_same_number(self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end)), "how a number is written")
+            }
             // Allowed: lower case.
             (BigInt(x), BigInt(y)) => self.bigint(x, y),
             (Regex, Regex) => self.regex(self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end)),
@@ -1542,9 +1633,19 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
                 self.type_list(args, args2)
             }
             (Error, Error) | (UniqueSymbol, UniqueSymbol) => Ok(()),
-            (StringLit(x), StringLit(y)) => self.atom(x, y, "a string"),
+            (StringLit(x), StringLit(y)) => {
+                self.atom(x, y, "a string")?;
+                let (x, y) = both!(self, types, a, b, "a type is missing");
+                self.check(is_same_string(self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end)), "how a string is written")
+            }
             (BoolLit(x), BoolLit(y)) => self.check(x == y, "a type"),
-            (NumberLit(x), NumberLit(y)) => self.number(x, y),
+            (NumberLit(x), NumberLit(y)) => {
+                self.number(x, y)?;
+                let (x, y) = both!(self, types, a, b, "a type is missing");
+                let digits = |text: &'_ [u8]| -> Vec<u8> { text.iter().copied().filter(|it| *it != b'-' && !it.is_ascii_whitespace()).collect() };
+                let (x, y) = (self.a.slice(x.pos, x.end), self.b.slice(y.pos, y.end));
+                self.check(x == y || is_same_number(&digits(x), &digits(y)), "how a number is written")
+            }
             (
                 BigIntLit { text, negative },
                 BigIntLit {
@@ -1727,6 +1828,79 @@ impl<const BY_ID: bool> Walk<'_, '_, BY_ID> {
     }
 }
 
+/// The string that `text` starts with, with its quotes.
+fn string_at_start(text: &[u8]) -> Option<&[u8]> {
+    let quote = *text.first().filter(|it| matches!(it, b'"' | b'\''))?;
+    let mut len = 1;
+    while let Some(&byte) = text.get(len) {
+        len += if byte == b'\\' { 2 } else { 1 };
+        if byte == quote {
+            return text.get(..len);
+        }
+    }
+    None
+}
+
+/// The number that `text` starts with.
+fn number_at_start(text: &[u8]) -> Option<&[u8]> {
+    text.first().filter(|it| it.is_ascii_digit() || **it == b'.')?;
+    let is_hexadecimal = matches!(text, [b'0', b'x' | b'X', ..]);
+    let is_part = |at: usize, byte: u8| {
+        byte.is_ascii_alphanumeric()
+            || matches!(byte, b'.' | b'_')
+            || (matches!(byte, b'+' | b'-') && !is_hexadecimal && matches!(text.get(at.wrapping_sub(1)), Some(b'e' | b'E')))
+    };
+    text.get(..text.iter().enumerate().take_while(|&(at, &byte)| is_part(at, byte)).count())
+}
+
+/// Whether two strings, with their quotes, are written in the same way. Allowed: other quotes, a `\` before
+/// a quote, and another line break after a `\`.
+#[inline]
+fn is_same_string(a: &[u8], b: &[u8]) -> bool {
+    a == b || is_same_string_but_for_quotes(a, b)
+}
+
+fn is_same_string_but_for_quotes(a: &[u8], b: &[u8]) -> bool {
+    fn content(text: &[u8]) -> Option<&[u8]> {
+        match text {
+            [b'"' | b'\'', content @ .., b'"' | b'\''] => Some(content),
+            _ => None,
+        }
+    }
+    fn without_quote_escapes(content: &[u8]) -> Vec<u8> {
+        let mut out = Vec::with_capacity(content.len());
+        let mut bytes = content.iter().copied().peekable();
+        while let Some(byte) = bytes.next() {
+            match (byte, bytes.peek()) {
+                (b'\\', Some(b'"' | b'\'')) | (b'\r', Some(b'\n')) => {}
+                (b'\\', Some(&next)) if next != b'\r' => {
+                    out.extend([byte, next]);
+                    bytes.next();
+                }
+                (b'\r', _) => out.push(b'\n'),
+                _ => out.push(byte),
+            }
+        }
+        out
+    }
+    match (content(a), content(b)) {
+        (Some(x), Some(y)) => x == y || without_quote_escapes(x) == without_quote_escapes(y),
+        // A name in JSX. Allowed: `a : b` is `a:b`.
+        (None, None) => {
+            let without_white_space = |text: &'_ [u8]| -> Vec<u8> { text.iter().copied().filter(|it| !it.is_ascii_whitespace()).collect() };
+            without_white_space(a) == without_white_space(b)
+        }
+        _ => false,
+    }
+}
+
+/// Whether two numbers are written in the same way. Allowed: what the formatter does to a number: `0XAB`, `1.0`,
+/// `.5`, `1E5`.
+#[inline]
+fn is_same_number(a: &[u8], b: &[u8]) -> bool {
+    a == b || format_trimmed_number(a) == format_trimmed_number(b)
+}
+
 /// Allowed: see `Walk::name_kind`.
 fn without_name_kind(flags: Flags) -> Flags {
     flags - (Flags::LITERAL_NAME | Flags::STRING_NAME)
@@ -1810,7 +1984,7 @@ impl<'p> Iterator for JsxChildren<'p> {
                     end,
                 }) => match self.program.is_in_braces(child) {
                     false => self.text = self.program.slice(*pos, *end),
-                    true if self.program.atoms.bytes(*value) == b" " => {}
+                    true if *end == *pos + 3 && self.program.atoms.bytes(*value) == b" " => {}
                     true => return Some(JsxChild::Node(child)),
                 },
                 _ => return Some(JsxChild::Node(child)),

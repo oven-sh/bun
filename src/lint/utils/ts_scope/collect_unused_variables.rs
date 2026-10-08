@@ -942,13 +942,13 @@ pub fn get_self_reference_ranges(variable: Variable) -> SmallVec<[Span; 2]> {
 }
 
 /// Ranges, to ask whether an offset is in one of them, in the logarithm of their number.
-struct Ranges {
+pub struct Ranges {
     /// By where they start. Each ends where the last of those up to it ends.
     sorted: Vec<Span>,
 }
 
 impl Ranges {
-    fn new(ranges: impl Iterator<Item = Span>) -> Ranges {
+    pub fn new(ranges: impl Iterator<Item = Span>) -> Ranges {
         let mut sorted: Vec<Span> = ranges.collect();
         sorted.sort_unstable_by_key(|it| it.start);
         let mut end = 0;
@@ -967,7 +967,7 @@ impl Ranges {
         }))
     }
 
-    fn contains_offset(&self, offset: u32) -> bool {
+    pub fn contains_offset(&self, offset: u32) -> bool {
         let before = self.sorted.partition_point(|it| it.start <= offset);
         (before.checked_sub(1).and_then(|it| self.sorted.get(it))).is_some_and(|it| offset < it.end)
     }

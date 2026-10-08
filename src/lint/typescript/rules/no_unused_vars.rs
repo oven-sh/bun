@@ -1,7 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ts_scope::{
-    SymbolSet, UsedMarks, Variable, VariableAnalysis, collect_variables, has_rest_sibling,
+    Ranges, SymbolSet, UsedMarks, Variable, VariableAnalysis, collect_variables, has_rest_sibling,
     is_defined_in_array_pattern, is_referenced_in_array_pattern, is_type_only_reference,
     is_used_global_variable,
 };
@@ -79,14 +79,15 @@ fn oxlint_counts_as_used(variable: Variable, reports_vars_only_used_as_types: bo
     let is_function_or_class = variable.defs().any(|it| matches!(it, Declaration::Fn(_) | Declaration::Class(_)));
     let is_const = variable.defs().any(|it| matches!(it.node(), Some(Node::VarDecl(it)) if it.var_kind() == VarKind::Const));
     let is_callable = (is_variable || is_function_or_class) && !variable.defs().any(Declaration::is_catch_parameter);
+    let mut walks = OxlintWalks::default();
     variable.references().any(|it| {
         if is_type_only_reference(variable.symbol(), it) || !it.is_value() {
             return !reports_vars_only_used_as_types && oxlint_counts_type_query_as_use(variable, it);
         }
         it.is_read()
-            && !(is_variable && oxlint_is_self_reassignment(variable, it))
-            && !(is_variable && !is_const && !is_function_or_class && oxlint_is_discarded_read(variable, it))
-            && !(is_callable && oxlint_is_self_call(variable, it, is_function_or_class))
+            && !(is_variable && oxlint_is_self_reassignment(variable, it, &mut walks))
+            && !(is_variable && !is_const && !is_function_or_class && oxlint_is_discarded_read(variable, it, &mut walks))
+            && !(is_callable && oxlint_is_self_call(variable, it, is_function_or_class, &mut walks))
     })
 }
 
@@ -117,12 +118,53 @@ fn oxlint_relevant_parents<'a>(node: Node<'a>) -> impl Iterator<Item = Node<'a>>
     })
 }
 
+/// What the walks up from the references to one variable have found, for those that start far below: the operands of
+/// `a = a + a + ..`.
+#[derive(Default)]
+struct OxlintWalks<'a> {
+    /// The first node around a node that `oxlint_is_self_reassignment` looks at.
+    looked_at: AncestorMemo<'a, Node<'a>>,
+    /// `oxlint_outermost_operation`
+    operations: AncestorMemo<'a, Node<'a>>,
+    /// The functions and the classes that the variable is, if they are many.
+    own_ranges: Option<Ranges>,
+}
+
+/// Whether `oxlint_is_self_reassignment` does nothing with `node`.
+fn oxlint_is_passed_over(node: Node) -> bool {
+    matches!(node, Node::Expr(e)
+        if !matches!(e.kind(), ExprKind::Call(_) | ExprKind::Unary { .. } | ExprKind::Assign { .. } | ExprKind::Yield { .. })
+            && e.jsx_container_span().is_none())
+}
+
+/// `node`, or the outermost of the `a + b`, `a * b`, .. that it is an operand of without anything else in between. The
+/// walks that look at a node and the one around it do nothing with two of these.
+fn oxlint_outermost_operation<'a>(node: Node<'a>, walks: &mut OxlintWalks<'a>) -> Node<'a> {
+    let is_operation = |it: Node| {
+        matches!(it, Node::Expr(e) if matches!(e.kind(), ExprKind::Binary { op, .. }
+            if !matches!(
+                op,
+                BinOp::And
+                    | BinOp::Or
+                    | BinOp::Nullish
+                    | BinOp::Lt
+                    | BinOp::Le
+                    | BinOp::Gt
+                    | BinOp::Ge
+                    | BinOp::In
+                    | BinOp::Instanceof
+                    | BinOp::Comma
+            )))
+    };
+    walks.operations.find(node, |child, parent| (!is_operation(parent)).then_some(child)).unwrap_or(node)
+}
+
 fn refers_to<'a>(e: Expr<'a>, variable: Variable<'a>) -> bool {
     e.tag() == ExprTag::Ident && e.reference().and_then(Reference::symbol) == Some(variable.symbol())
 }
 
 /// oxlint's `is_self_reassignment`: what is read only serves to change the variable itself, as in `a++;` and `a = a + 1;`.
-fn oxlint_is_self_reassignment<'a>(variable: Variable<'a>, reference: Reference<'a>) -> bool {
+fn oxlint_is_self_reassignment<'a>(variable: Variable<'a>, reference: Reference<'a>, walks: &mut OxlintWalks<'a>) -> bool {
     let Some(e) = reference.expr() else {
         return false;
     };
@@ -131,11 +173,13 @@ fn oxlint_is_self_reassignment<'a>(variable: Variable<'a>, reference: Reference<
         return false;
     }
     let (mut is_used_by_others, mut saw_self_update) = (true, false);
-    for node in Node::Expr(e).ancestors() {
+    let mut inner = Node::Expr(e);
+    while let Some(node) = walks.looked_at.find(inner, |_, it| (!oxlint_is_passed_over(it)).then_some(it)) {
+        inner = node;
         match node {
             Node::VarDecl(_) => return false,
             Node::Member(member) if member.kind() == MemberKind::Property => return false,
-            Node::Param(_) if saw_self_update => return oxlint_is_discarded_read(variable, reference),
+            Node::Param(_) if saw_self_update => return oxlint_is_discarded_read(variable, reference, walks),
             Node::Expr(parent) => {
                 match parent.kind() {
                     ExprKind::Call(call) => {
@@ -212,14 +256,14 @@ fn oxlint_is_self_reassignment<'a>(variable: Variable<'a>, reference: Reference<
 }
 
 /// oxlint's `is_discarded_read`: it is in a sequence, and not in its last part.
-fn oxlint_is_discarded_read<'a>(variable: Variable<'a>, reference: Reference<'a>) -> bool {
+fn oxlint_is_discarded_read<'a>(variable: Variable<'a>, reference: Reference<'a>, walks: &mut OxlintWalks<'a>) -> bool {
     let Some(e) = reference.expr() else {
         return false;
     };
     let at = e.span();
     let is_assignment = |it: Expr| it.skip_type_wrappers().tag() == ExprTag::Assign;
-    let mut parent = Node::Expr(e);
-    for grandparent in oxlint_relevant_parents(Node::Expr(e)) {
+    let mut parent = oxlint_outermost_operation(Node::Expr(e), walks);
+    for grandparent in oxlint_relevant_parents(parent) {
         let (inner, outer) = (std::mem::replace(&mut parent, grandparent), grandparent.as_expr().map(Expr::kind));
         let Node::Expr(inner) = inner else {
             // A function.
@@ -268,15 +312,26 @@ fn oxlint_is_discarded_read<'a>(variable: Variable<'a>, reference: Reference<'a>
 }
 
 /// oxlint's `is_self_call`: it is in the function or the class that the variable is.
-fn oxlint_is_self_call<'a>(variable: Variable<'a>, reference: Reference<'a>, is_function_or_class: bool) -> bool {
+fn oxlint_is_self_call<'a>(
+    variable: Variable<'a>,
+    reference: Reference<'a>,
+    is_function_or_class: bool,
+    walks: &mut OxlintWalks<'a>,
+) -> bool {
     if is_function_or_class {
-        return variable.defs().any(|it| match it {
-            Declaration::Fn(func) => func.estree_span().contains(reference.span()),
-            Declaration::Class(class) => class.estree_span().contains(reference.span()),
-            _ => false,
+        let mut own = variable.defs().filter_map(|it| match it {
+            Declaration::Fn(func) => Some(func.estree_span()),
+            Declaration::Class(class) => Some(class.estree_span()),
+            _ => None,
         });
+        // With few declarations it takes less to ask each of them.
+        if variable.symbol().declaration_count() <= 8 {
+            return own.any(|it| it.contains(reference.span()));
+        }
+        return walks.own_ranges.get_or_insert_with(|| Ranges::new(own)).contains_offset(reference.span().start);
     }
-    let mut parents = oxlint_relevant_parents(reference.node()).peekable();
+    let start = oxlint_outermost_operation(reference.node(), walks);
+    let mut parents = oxlint_relevant_parents(start).peekable();
     while let Some(parent) = parents.next() {
         let is_function_expression = matches!(parent, Node::Func(func) if matches!(func.kind(), FnKind::Expr | FnKind::Arrow));
         let is_value_of_variable = match parents.peek() {

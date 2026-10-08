@@ -16,9 +16,10 @@ type TypeParameters<'a> = SmallVec<[TsNode<'a>; 4]>;
 
 /// `declaration.typeParameters`. `None` if it has none.
 fn type_parameters_of(declaration: TsNode<'_>) -> Option<TypeParameters<'_>> {
-    let children = declaration.children();
-    let type_parameters: TypeParameters =
-        children.filter(|child| child.kind() == SyntaxKind::TypeParameter).collect();
+    // They follow each other, before the members.
+    let is_type_parameter = |child: &TsNode| child.kind() == SyntaxKind::TypeParameter;
+    let children = declaration.children().skip_while(|child| !is_type_parameter(child));
+    let type_parameters: TypeParameters = children.take_while(is_type_parameter).collect();
     (!type_parameters.is_empty()).then_some(type_parameters)
 }
 

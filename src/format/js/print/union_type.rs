@@ -160,7 +160,7 @@ fn follows_printed_suppression_comment<'a>(ty: TypeNode<'a>, f: &Formatter<'a>) 
     for comment in f.comments().printed_comments().iter().rev() {
         let is_adjacent = !comment.is_moved()
             && comment.span.end <= end
-            && f.source_text().all_bytes_match(comment.span.end, end, |b| {
+            && f.source_text().all_bytes(Span::after(comment.span, end), |b| {
                 b.is_ascii_whitespace() || b == b'('
             });
         if !is_adjacent {
@@ -336,7 +336,7 @@ impl<'a> Format<'a> for UnionMembers<'a> {
                 || next.is_some_and(|next| {
                     let comments = f
                         .comments()
-                        .comments_in_range(member.span().end, next.span().start);
+                        .comments_in(member.span().between(next.span()));
                     let trailing =
                         comments.len() - count_leading_comments(comments, next.span().start, f);
                     comments[..trailing]
@@ -414,7 +414,7 @@ impl<'a> UnionMembers<'a> {
             0 => parent_end,
             following => following.min(parent_end),
         };
-        end_of_line_comments(f.comments().comments_in_range(span.end, end))
+        end_of_line_comments(f.comments().comments_in(Span::after(span, end)))
     }
 }
 
@@ -444,7 +444,7 @@ fn count_leading_comments(comments: &[Comment], start: u32, f: &Formatter<'_>) -
     let mut count = 0;
     for comment in comments.iter().rev() {
         let is_adjacent = !comment.followed_by_newline()
-            && f.source_text().all_bytes_match(comment.span.end, end, |b| {
+            && f.source_text().all_bytes(Span::after(comment.span, end), |b| {
                 b.is_ascii_whitespace() || b == b'('
             });
         if !is_adjacent {

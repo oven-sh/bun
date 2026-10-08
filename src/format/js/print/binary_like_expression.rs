@@ -388,7 +388,7 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
             if !f.is_quiet() && binary_like_expression.expr != outermost.expr {
                 let comments = f
                     .comments()
-                    .comments_in_range(right.span().end, outermost.expr.span().end);
+                    .comments_in(Span::after(right.span(), outermost.expr.span().end));
                 write!(f, FormatTrailingComments::Comments(comments));
             }
             // See `is_last_binary_operand_comment`.

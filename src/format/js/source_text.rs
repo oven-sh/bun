@@ -85,12 +85,6 @@ impl<'a> SourceText<'a> {
             .unwrap_or_default()
     }
 
-    /// The same as [`SourceText::slice_range`].
-    #[inline]
-    pub(crate) fn bytes_range(self, start: u32, end: u32) -> &'a [u8] {
-        self.slice_range(start, end)
-    }
-
     #[inline]
     pub(crate) fn text_for(self, it: &impl Spanned) -> &'a [u8] {
         let span = it.span();

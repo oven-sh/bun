@@ -197,7 +197,7 @@ fn is_empty_line_between<'a>(end: u32, next: Expr<'a>, f: &Formatter<'a>) -> boo
     match counts_line_breaks_between_arguments(f) {
         true => {
             bun_core::strings::count_char(
-                f.source_text().bytes_range(end, next.span().start),
+                f.source_text().text_for(&Span::before(end, next.span())),
                 b'\n',
             ) >= 2
         }
@@ -359,16 +359,15 @@ fn should_group_first_argument<'a>(first: Expr<'a>, second: Expr<'a>, f: &Format
     // Not if there are comments around the first argument: before it, between it and the comma, or
     // behind the comma at the end of the line.
     if !f.is_quiet() {
-        let first_end = first.span().end;
         if f.comments().has_comment_before(first.span().start)
             || f.comments()
-                .comments_in_range(first_end, second.span().start)
+                .comments_in(first.span().between(second.span()))
                 .iter()
                 .any(|comment| {
                     comment.followed_by_newline()
                         || !f
                             .source_text()
-                            .bytes_contain(first_end, comment.span.start, b',')
+                            .contains_byte(first.span().between(comment.span), b',')
                 })
         {
             return false;
@@ -418,16 +417,14 @@ fn should_group_last_argument_impl<'a>(
         let has_comment_before_last = match previous_end {
             Some(previous_end) => f
                 .comments()
-                .comments_in_range(previous_end, last_span.start)
+                .comments_in(Span::before(previous_end, last_span))
                 .iter()
                 .any(|comment| {
                     comment.preceded_by_newline()
                         || (!comment.followed_by_newline()
-                            && !f.source_text().bytes_contain(
-                                comment.span.end,
-                                last_span.start,
-                                b',',
-                            ))
+                            && !f
+                                .source_text()
+                                .contains_byte(comment.span.between(last_span), b','))
                 }),
             None => f.comments().has_comment_before(last_span.start),
         };
@@ -437,7 +434,7 @@ fn should_group_last_argument_impl<'a>(
                 .first()
                 .is_some_and(|c| {
                     !f.source_text()
-                        .bytes_contain(last_span.end, c.span.start, b')')
+                        .contains_byte(last_span.between(c.span), b')')
                 })
         {
             return false;

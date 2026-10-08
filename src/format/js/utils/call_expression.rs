@@ -86,7 +86,7 @@ fn is_line_after_the_rest_of_the_line_empty(mut rest: &[u8]) -> bool {
             break;
         };
         let (comment, after) = comment.split_at(end);
-        if SourceText::new(comment).contains_newline_between(0, comment.len() as u32) {
+        if SourceText::new(comment).contains_newline(Span::new(0, comment.len() as u32)) {
             break;
         }
         rest = after.get(2..).unwrap_or_default();
@@ -165,7 +165,7 @@ pub(crate) fn type_arguments_trailing_comments<'a>(
     f: &Formatter<'a>,
 ) -> &'a [Comment] {
     match call.args().first() {
-        Some(first) => trailing_prefix(f.comments().comments_in_range(end, first.span().start), f),
+        Some(first) => trailing_prefix(f.comments().comments_in(Span::before(end, first.span())), f),
         None => f.comments().comments_before_character(end, b'('),
     }
 }
@@ -215,13 +215,13 @@ fn has_comments_around_arguments<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     let mut start = call.callee().span().end;
     for argument in call.args() {
         if f.comments()
-            .has_any_comment_in_range(start, argument.span().start)
+            .has_any_comment_in(Span::before(start, argument.span()))
         {
             return true;
         }
         start = argument.span().end;
     }
-    f.comments().has_any_comment_in_range(start, e.span().end)
+    f.comments().has_any_comment_in(Span::new(start, e.span().end))
 }
 
 /// oxfmt has a longer list than Prettier: `it.todo("name", () => {})`, `Deno.test("name", () => {})`.

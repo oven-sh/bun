@@ -40,8 +40,7 @@ pub(crate) fn write_embedded_template_expression<'a>(
         let expression = FormatTemplateExpression {
             expression,
             interpolation: template.interpolation_span(i),
-            indention: None,
-            after_new_line: false,
+            place: Place::Unknown,
         };
         expression.fmt(f);
     }
@@ -72,7 +71,7 @@ pub(crate) fn write_tagged_template_expression<'a>(
             .map_or_else(|| call.callee().span().end, |it| it.end);
         match f
             .source_text()
-            .contains_newline_between(tag_end, first.span.start)
+            .contains_newline(Span::before(tag_end, first.span))
         {
             true => write!(f, soft_line_break()),
             false => write!(f, space()),
@@ -185,10 +184,8 @@ impl<'a> TemplateLike<'a> {
     /// What is between the `${` and the `}` of the substitution at `i`.
     fn interpolation_span(self, i: usize) -> Span {
         match self {
-            Self::TemplateLiteral(t) => Span::new(t.quasi_span(i).end, t.quasi_span(i + 1).start),
-            Self::TSTemplateLiteralType(t) => {
-                Span::new(t.quasi_span(i).end, t.quasi_span(i + 1).start)
-            }
+            Self::TemplateLiteral(t) => t.quasi_span(i).between(t.quasi_span(i + 1)),
+            Self::TSTemplateLiteralType(t) => t.quasi_span(i).between(t.quasi_span(i + 1)),
         }
     }
 
@@ -211,9 +208,10 @@ impl<'a> TemplateLike<'a> {
             Some(FormatTemplateExpression {
                 expression: self.expression(i)?,
                 interpolation: self.interpolation_span(i),
-                indention: Some(indention),
-                after_new_line: indention.0 == 0
-                    && matches!(quasi_text.last(), Some(b'\n' | b'\r')),
+                place: match indention.0 == 0 && matches!(quasi_text.last(), Some(b'\n' | b'\r')) {
+                    true => Place::StartOfLine,
+                    false => Place::After(indention),
+                },
             })
         })
     }
@@ -259,10 +257,18 @@ struct FormatTemplateExpression<'a> {
     expression: TemplateExpression<'a>,
     /// What is between the `${` and the `}`.
     interpolation: Span,
-    /// `None`: there is no telling how the text before it is written.
-    indention: Option<TemplateElementIndention>,
-    /// The `${` is the first thing on its line.
-    after_new_line: bool,
+    place: Place,
+}
+
+/// Where on its line a `${` is.
+#[derive(Clone, Copy)]
+enum Place {
+    /// There is no telling how the text before it is written.
+    Unknown,
+    /// It is the first thing on its line.
+    StartOfLine,
+    /// On a line that is indented so.
+    After(TemplateElementIndention),
 }
 
 impl<'a> Format<'a> for FormatTemplateExpression<'a> {
@@ -337,10 +343,10 @@ impl<'a> Format<'a> for FormatTemplateExpression<'a> {
             }
         });
 
-        let format_indented = format_with(|f| match self.indention {
-            None => write!(f, format_inner),
-            Some(_) if self.after_new_line => write!(f, dedent_to_root(&format_inner)),
-            Some(indention) => {
+        let format_indented = format_with(|f| match self.place {
+            Place::Unknown => write!(f, format_inner),
+            Place::StartOfLine => write!(f, dedent_to_root(&format_inner)),
+            Place::After(indention) => {
                 write_with_indention(&format_inner, indention, f.options().indent_width, f)
             }
         });

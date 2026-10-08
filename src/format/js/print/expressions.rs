@@ -308,8 +308,8 @@ pub(crate) fn is_last_binary_operand_comment<'a>(
         && !comment.preceded_by_newline()
         && comment.followed_by_newline()
         && !comment.is_multiline_block()
-        && source_text.contains_newline_between(argument.span().start, right.span().start)
-        && !source_text.contains_newline_between(right.span().start, comment.span.start)
+        && source_text.contains_newline(Span::before(argument.span().start, right.span()))
+        && !source_text.contains_newline(Span::before(right.span().start, comment.span))
 }
 
 /// For oxfmt a comment before the `)` trails all that is in the parentheses here as everywhere else, and

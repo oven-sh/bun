@@ -107,9 +107,6 @@ class BodyReadable extends ReadableFromWeb {
   }
 }
 
-// undici checks the method before it connects:
-// https://github.com/nodejs/undici/blob/v6.21.3/lib/api/api-request.js#L31-L33
-// https://github.com/nodejs/undici/blob/v6.21.3/lib/core/request.js#L59-L63
 function requestMethod(method) {
   // The usual methods need no scan and no case map.
   switch (method) {
@@ -123,11 +120,12 @@ function requestMethod(method) {
       return method;
   }
   if (!method) return "GET";
+  // https://github.com/nodejs/undici/blob/v6.21.3/lib/core/request.js#L59-L63
   if (typeof method !== "string") throw new InvalidArgumentError("method must be a string");
   if (!checkIsHttpToken(method)) throw new InvalidArgumentError("invalid request method");
   // fetch() sends GET for a spelling outside its method table (#42497), and the table has no mixed case.
   method = StringPrototypeToUpperCase.$call(method);
-  // undici rejects only "CONNECT" and sends "connect" as written. Here every case of it would go out as CONNECT.
+  // undici rejects only "CONNECT" (lib/api/api-request.js#L31) and sends "connect" as written. Here it would go out as CONNECT.
   if (method === "CONNECT") throw new InvalidArgumentError("invalid method");
   return method;
 }

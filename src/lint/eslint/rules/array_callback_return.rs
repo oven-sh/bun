@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Enforce `return` statements in callbacks of array methods.
 pub struct ArrayCallbackReturn {
@@ -60,9 +61,18 @@ fn full_method_name(array_method_name: &str) -> String {
     [prefix, array_method_name].concat()
 }
 
+#[derive(Default)]
+pub struct State<'a> {
+    /// The outermost of the `&&`, `||`, `??` and `?:` that an expression is an operand of, or itself,
+    /// and the parent of that.
+    around_choices: AncestorMemo<'a, (Node<'a>, Node<'a>)>,
+    /// ESLint's `getUpperFunction`.
+    functions: AncestorMemo<'a, Func<'a>>,
+}
+
 /// The name of the method of arrays that the function expression `func` is the callback of.
 /// Generators are excluded. Async functions are allowed only for `Array.fromAsync`.
-fn get_array_method_name(func: Func) -> Option<&'static str> {
+fn get_array_method_name<'a>(func: Func<'a>, state: &mut State<'a>) -> Option<&'static str> {
     if func.is_generator() {
         return None;
     }
@@ -70,14 +80,17 @@ fn get_array_method_name(func: Func) -> Option<&'static str> {
         return None;
     };
     loop {
-        match current.parent() {
+        // `foo.every(nativeFoo || function foo() { .. })`
+        let (outermost, parent) = state.around_choices.find(Node::Expr(current), |child, parent| {
+            let is_choice = matches!(parent, Node::Expr(parent) if matches!(
+                parent.kind(),
+                ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. } | ExprKind::Cond { .. }
+            ));
+            (!is_choice).then_some((child, parent))
+        })?;
+        current = outermost.as_expr()?;
+        match parent {
             Node::Expr(parent) => match parent.kind() {
-                // `foo.every(nativeFoo || function foo() { .. })`
-                ExprKind::Binary {
-                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
-                    ..
-                }
-                | ExprKind::Cond { .. } => current = parent,
                 ExprKind::Call(call) => {
                     let (callee, args) = (call.callee(), call.args());
                     let is_second = args.get(1) == Some(current);
@@ -98,7 +111,8 @@ fn get_array_method_name(func: Func) -> Option<&'static str> {
             // What a function that is called at once returns goes where the call is:
             // `foo.every((function() { return function callback() { .. }; })())`
             Node::Stmt(statement) if statement.tag() == StmtTag::Return => {
-                let Node::Expr(upper) = ast_utils::get_upper_function(statement)?.owner() else {
+                let function = state.functions.find(Node::Stmt(statement), |_, it| ast_utils::as_function(it));
+                let Node::Expr(upper) = function?.owner() else {
                     return None;
                 };
                 if !ast_utils::is_callee(upper) {
@@ -159,7 +173,7 @@ impl ArrayCallbackReturn {
         if !matches!(func.kind(), FnKind::Expr | FnKind::Arrow) {
             return;
         }
-        let Some(method) = get_array_method_name(func) else {
+        let Some(method) = get_array_method_name(func, &mut cx.state) else {
             return;
         };
         if method == "forEach" {
@@ -223,7 +237,7 @@ impl ArrayCallbackReturn {
 
 impl Rule for ArrayCallbackReturn {
     const META: Meta = Meta::eslint("array-callback-return", Kind::Problem).has_suggestions();
-    type State<'a> = ();
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -234,9 +248,10 @@ impl Rule for ArrayCallbackReturn {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
         if file.has_exprs([ExprTag::Call]) {
             on.funcs(Self::check_function);
         }
+        State::default()
     }
 }

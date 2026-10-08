@@ -171,7 +171,7 @@ pub(crate) fn needs_parentheses<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
             | N::TSAsExpression(_)
             | N::TSSatisfiesExpression(_)
             | N::TSNonNullExpression(_) => true,
-            N::ConditionalExpression(conditional) => conditional.test() == Some(e),
+            N::ConditionalExpression(conditional) => conditional.test() == Some(e) && !f.options().experimental_ternaries,
             _ => is_member_object(e, parent) || parent.is_call_like_callee(e),
         },
         ExprKind::Fn(func) if func.is_arrow() => match parent {

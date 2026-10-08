@@ -259,7 +259,8 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
         {
             if operands != Operands::Last {
                 write_trailing_comments_of_nested(binary_like_expression.left, f);
-                write_operator(operator, right_logical.left, is_inlined_operand(right_logical.left), f);
+                let (left, right) = (binary_like_expression.left, right_logical.left);
+                write_operator(operator, left, right, is_inlined_operand(right), f);
                 match BinaryLikeExpression::new(right_logical.left).filter(|left| left.operator == operator) {
                     Some(left_logical_child) => {
                         format_flattened_logical_expression(left_logical_child, inside_parenthesis, f);
@@ -279,7 +280,7 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
 
         let operator_and_right_expression = format_with(|f| {
             let is_inlined = binary_like_expression.should_inline_logical_expression();
-            write_operator(binary_like_expression.operator, right, is_inlined, f);
+            write_operator(binary_like_expression.operator, left, right, is_inlined, f);
             if is_inlined && !is_jsx && f.comments().has_leading_own_line_comment(right.span().start) {
                 return write!(f, soft_line_indent_or_space(&right));
             }
@@ -325,9 +326,9 @@ impl<'a> Format<'a> for BinaryLeftOrRightSide<'a> {
     }
 }
 
-/// Writes `operator` and what is around it. `right`: the operand after it. `is_inlined`: it stays on
-/// the line of the operator.
-fn write_operator<'a>(operator: BinOp, right: Expr<'a>, is_inlined: bool, f: &mut Formatter<'a>) {
+/// Writes `operator` and what is around it. `left`, `right`: the operands before and after it.
+/// `is_inlined`: `right` stays on the line of the operator.
+fn write_operator<'a>(operator: BinOp, left: Expr<'a>, right: Expr<'a>, is_inlined: bool, f: &mut Formatter<'a>) {
     if is_inlined {
         return write!(f, [space(), operator.as_str(), space()]);
     }
@@ -342,9 +343,16 @@ fn write_operator<'a>(operator: BinOp, right: Expr<'a>, is_inlined: bool, f: &mu
             _ => f.comments().has_leading_own_line_comment(start),
         }
         && !f.comments().comments_before_iter(start).any(|comment| f.comments().is_type_cast_comment(comment));
-    match has_comment_before_operator {
-        true => write!(f, [space(), soft_line_break_or_space(), format_leading_comments(right.span())]),
-        false => write!(f, soft_line_break_or_space()),
+    if has_comment_before_operator {
+        // Prettier writes a space here, which is only seen before a line comment that trails `left`.
+        let is_after_line_comment =
+            (f.comments().printed_comments().last()).is_some_and(|it| it.is_line() && it.start() >= left.span().end);
+        write!(
+            f,
+            [is_after_line_comment.then_some(" "), soft_line_break_or_space(), format_leading_comments(right.span())]
+        );
+    } else {
+        write!(f, soft_line_break_or_space());
     }
     write!(f, [operator.as_str(), space()]);
 }

@@ -14,7 +14,7 @@ use crate::js::print::patterns::FormatBindingPropertyValue;
 use crate::js::print::sequence_expression::write_comments_before_closing_parenthesis;
 use crate::js::print::type_parameters::type_arguments;
 use crate::prelude::*;
-use crate::write;
+use crate::{format_args, write};
 use smallvec::SmallVec;
 
 #[derive(Clone, Copy)]
@@ -218,8 +218,21 @@ impl<'a> AssignmentLike<'a> {
         match *self {
             Self::BindingProperty(property) => write!(f, FormatBindingPropertyValue(property)),
             _ => {
-                if let Some(right) = self.get_right_expression() {
-                    write!(f, with_assignment_layout(right, Some(layout)));
+                match self.get_right_expression().map(|right| (right, right.kind())) {
+                    // Prettier's `isOnSameLineAsAssignment`.
+                    Some((right, ExprKind::Cond { yes, no, .. }))
+                        if f.options().experimental_ternaries
+                            && layout != AssignmentLikeLayout::BreakAfterOperator
+                            && !matches!(self, Self::AccessorProperty(_))
+                            && !f.comments().is_type_cast_node(&right) =>
+                    {
+                        match matches!(yes.kind(), ExprKind::Cond { .. }) || matches!(no.kind(), ExprKind::Cond { .. }) {
+                            true => write!(f, indent(&right)),
+                            false => write!(f, group(&indent(&format_args!(soft_line_break(), right)))),
+                        }
+                    }
+                    Some((right, _)) => write!(f, with_assignment_layout(right, Some(layout))),
+                    None => {}
                 }
                 if let Self::AssignmentExpression(assignment) = *self {
                     write_comments_before_closing_parenthesis(assignment, f);
@@ -426,6 +439,10 @@ fn should_break_after_operator<'a>(right: Expr<'a>, is_left_short: bool, f: &mut
     match right.as_ast_nodes() {
         AstNodes::BinaryExpression(_) | AstNodes::PrivateInExpression(_) | AstNodes::SequenceExpression(_) => true,
         AstNodes::LogicalExpression(logical) => !can_inline(logical),
+        AstNodes::ConditionalExpression(conditional) if f.options().experimental_ternaries => {
+            matches!(conditional.kind(), ExprKind::Cond { yes, no, .. }
+                if matches!(yes.kind(), ExprKind::Cond { .. }) || matches!(no.kind(), ExprKind::Cond { .. }))
+        }
         AstNodes::ConditionalExpression(conditional) => match conditional.test().map(|test| test.as_ast_nodes()) {
             Some(AstNodes::BinaryExpression(_) | AstNodes::PrivateInExpression(_)) => true,
             Some(AstNodes::LogicalExpression(logical)) => !can_inline(logical),
@@ -576,7 +593,7 @@ fn is_poorly_breakable_member_or_call_chain<'a>(expression: Expr<'a>, f: &mut Fo
 }
 
 /// Prettier's `isShortCallArgument`/`isLoneShortArgument`.
-fn is_short_argument<'a>(argument: Expr<'a>, threshold: u16, f: &Formatter<'a>) -> bool {
+pub(crate) fn is_short_argument<'a>(argument: Expr<'a>, threshold: u16, f: &Formatter<'a>) -> bool {
     let threshold = threshold as usize;
     match argument.as_ast_nodes() {
         AstNodes::IdentifierReference(_) => argument.text().len() <= threshold,

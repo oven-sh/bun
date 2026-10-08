@@ -2,8 +2,7 @@ use bun_lint::prelude::*;
 use bun_lint::semantic::DeclarationKind;
 use bun_lint::utils::ts_scope::reference_contains_type_query;
 use bun_lint_eslint::rules::no_use_before_define::{
-    Config, definition_name_end, initializer_ranges, is_class_ref_in_class_decorator, is_in_range,
-    is_named_export,
+    Config, Initializers, definition_name_end, is_class_ref_in_class_decorator, is_named_export,
 };
 
 /// Disallow the use of variables before they are defined.
@@ -13,6 +12,13 @@ pub struct NoUseBeforeDefine {
 
 const NO_USE_BEFORE_DEFINE: Message =
     Message::new("noUseBeforeDefine", "'{{name}}' was used before it was defined.");
+
+#[derive(Default)]
+pub struct State<'a> {
+    /// Whether the file has an `export { a }`.
+    has_export_specs: bool,
+    initializers: Initializers<'a>,
+}
 
 fn report<'a>(reference: Reference<'a>, cx: &mut Cx<'a, NoUseBeforeDefine>) {
     cx.report(reference, NO_USE_BEFORE_DEFINE).data("name", reference.name());
@@ -49,16 +55,16 @@ impl NoUseBeforeDefine {
         let (Some(kind), Some(definition_end)) = (definition.kind(), definition_name_end(definition)) else {
             return;
         };
-        let initializers = initializer_ranges(definition);
+        let declared = cx.state.initializers.declared(definition);
         for reference in references {
             // What JSX makes of `React` is a reference whose identifier is the declaration.
             if reference.is_init() || reference.is_jsx_pragma() {
                 continue;
             }
             let identifier = reference.span();
-            let is_in_initializer = || {
-                initializers.iter().any(|it| is_in_range(*it, identifier.end))
-                    && variable.scope() == reference.scope()
+            let mut is_in_initializer = || {
+                variable.scope() == reference.scope()
+                    && declared.is_some_and(|it| cx.state.initializers.has(it, reference))
             };
             let is_defined_before_use =
                 definition_end <= identifier.end && !(reference.is_value() && is_in_initializer());
@@ -77,7 +83,7 @@ impl NoUseBeforeDefine {
 
     /// `export { a }` where nothing declares `a`.
     fn check_unresolved_exports<'a>(&self, cx: &mut Cx<'a, Self>) {
-        if !cx.state {
+        if !cx.state.has_export_specs {
             return;
         }
         for reference in cx.file().unresolved_references() {
@@ -91,8 +97,7 @@ impl NoUseBeforeDefine {
 impl Rule for NoUseBeforeDefine {
     const META: Meta = Meta::typescript("no-use-before-define", Kind::Problem)
         .extends_base_rule("no-use-before-define");
-    /// Whether the file has an `export { a }`.
-    type State<'a> = bool;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         NoUseBeforeDefine {
@@ -100,12 +105,12 @@ impl Rule for NoUseBeforeDefine {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> bool {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
         on.symbols(Self::check);
         if !self.config.allow_named_exports {
-            on.export_specs(|_, _, cx| cx.state = true);
+            on.export_specs(|_, _, cx| cx.state.has_export_specs = true);
             on.finish(Self::check_unresolved_exports);
         }
-        false
+        State::default()
     }
 }

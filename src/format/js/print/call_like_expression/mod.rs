@@ -92,12 +92,18 @@ impl<'a> Format<'a> for FormatCallee<'a> {
         let callee = call.callee();
         // `new A` has no `(` to look for.
         if f.is_quiet() || call.close_paren().is_none() {
-            return write!(f, [callee, line_suffix_boundary()]);
+            return write!(f, [callee, boundary_behind_callee(f)]);
         }
         write!(f, FormatNodeWithoutTrailingComments(&callee));
         let comments = callee_trailing_comments(call, callee.span().end, f);
-        write!(f, [FormatTrailingComments::Comments(comments), line_suffix_boundary()]);
+        write!(f, [FormatTrailingComments::Comments(comments), boundary_behind_callee(f)]);
     }
+}
+
+/// A comment at the end of the line of the callee stays there. oxfmt, like Prettier 3.8, moves it behind
+/// the call: `call // comment\n()` is `call(); // comment`.
+fn boundary_behind_callee(f: &Formatter<'_>) -> Option<LineSuffixBoundary> {
+    (!f.options().flavor.is_oxfmt()).then_some(line_suffix_boundary())
 }
 
 /// The `<T>` of `a<T>()`, with the comments around it.

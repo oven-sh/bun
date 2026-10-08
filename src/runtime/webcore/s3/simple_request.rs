@@ -557,6 +557,11 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
     }
 }
 
+/// The signed URL, whose request target is the path of the signature: `//dir` is not sent as `/dir`.
+pub(crate) fn signed_url(sign_result: &SignResult) -> URL<'_> {
+    URL::parse_keeping_leading_slashes(&sign_result.url)
+}
+
 /// The proxy for a request to `url`, owned for the task's lifetime. For
 /// `proxy_url`, `None` reads the environment like `fetch()` does (the variable
 /// for `url`'s scheme, unless `NO_PROXY` exempts the host), `Some("")` connects
@@ -685,7 +690,7 @@ pub(crate) fn execute_simple_s3_request(
     // heap-allocated fields of `*task` (sign_result.url / headers.buf / proxy_url) which the task
     // outlives. AsyncHTTP::init wants `'static` borrows because the HTTP thread reads them
     // concurrently; they remain valid until `task` is dropped in `on_response`.
-    let url = URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
+    let url = unsafe { signed_url(&task.sign_result).erase_lifetime() };
     // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is heap-owned
     // by `*task` and outlives the AsyncHTTP request.
     let headers_buf: &'static [u8] =

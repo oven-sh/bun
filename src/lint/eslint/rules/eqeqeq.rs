@@ -44,9 +44,6 @@ impl Eqeqeq {
         let ExprKind::Binary { op, left, right } = e.kind() else {
             return;
         };
-        if !matches!(op, BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq) {
-            return;
-        }
         let is_null = matches!(left.kind(), ExprKind::Null) || matches!(right.kind(), ExprKind::Null);
         let is_typeof = is_typeof(left) || is_typeof(right);
         let are_literals_of_same_type =
@@ -109,6 +106,9 @@ impl Rule for Eqeqeq {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Binary], Self::check);
+        on.binaries([BinOp::EqEq, BinOp::NotEq], Self::check);
+        if self.null == Null::Never {
+            on.binaries([BinOp::EqEqEq, BinOp::NotEqEq], Self::check);
+        }
     }
 }

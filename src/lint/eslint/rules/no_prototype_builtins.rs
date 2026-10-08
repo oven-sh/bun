@@ -111,7 +111,9 @@ impl Rule for NoPrototypeBuiltins {
         NoPrototypeBuiltins
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Call], Self::check);
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if file.mentions_any(&["hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable"]) {
+            on.exprs([ExprTag::Call], Self::check);
+        }
     }
 }

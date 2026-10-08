@@ -342,6 +342,11 @@ unsafe extern "C" fn highway_index_of_any_char(
         [a, b] => first(text, |c| (c == a) | (c == b)),
         [a, b, d] => first(text, |c| (c == a) | (c == b) | (c == d)),
         [a, b, d, e] => first(text, |c| (c == a) | (c == b) | (c == d) | (c == e)),
+        _ if chars.len() <= 8 => {
+            let mut set = [chars[0]; 8];
+            set[..chars.len()].copy_from_slice(chars);
+            first(text, |c| set.iter().fold(false, |is_in_set, &it| is_in_set | (c == it)))
+        }
         _ => {
             let mut is_in_set = [false; 256];
             chars.iter().for_each(|&c| is_in_set[c as usize] = true);

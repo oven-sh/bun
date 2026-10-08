@@ -68,12 +68,6 @@ impl UseIsnan {
         let ExprKind::Binary { op, left, right } = e.kind() else {
             return;
         };
-        if !matches!(
-            op,
-            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge | BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq
-        ) {
-            return;
-        }
         let (nan, compared) = if is_nan_identifier(left) {
             (left, right)
         } else if is_nan_identifier(right) {
@@ -162,8 +156,14 @@ impl Rule for UseIsnan {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Binary], Self::check_binary_expression);
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if !file.mentions("NaN") {
+            return;
+        }
+        on.binaries(
+            [BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge, BinOp::EqEq, BinOp::NotEq, BinOp::EqEqEq, BinOp::NotEqEq],
+            Self::check_binary_expression,
+        );
         if self.enforce_for_switch_case {
             on.stmts([StmtTag::Switch], Self::check_switch_statement);
         }

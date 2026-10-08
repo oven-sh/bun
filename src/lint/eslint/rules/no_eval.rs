@@ -1,4 +1,3 @@
-use bun_core::strings;
 use bun_lint::prelude::*;
 
 /// Disallow the use of `eval()`.
@@ -134,9 +133,7 @@ impl Rule for NoEval {
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        // The name can be written with escapes.
-        let text = file.text();
-        if !strings::contains(text, b"eval") && !strings::contains_char(text, b'\\') {
+        if !file.mentions("eval") {
             return;
         }
         on.exprs([ExprTag::Call], Self::check_call);

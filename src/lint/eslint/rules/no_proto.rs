@@ -14,7 +14,10 @@ impl Rule for NoProto {
         NoProto
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+        if !file.mentions("__proto__") {
+            return;
+        }
         on.exprs([ExprTag::Dot, ExprTag::Index], |_, e, cx| {
             let is_proto = match e.kind() {
                 ExprKind::Dot { name, .. } => name.name().is("__proto__") && ast_utils::is_member_expression(e),

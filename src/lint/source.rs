@@ -1,6 +1,6 @@
 //! Lines and columns.
 
-use crate::ast::File;
+use crate::ast::{File, Name};
 use crate::span::{Position, Span};
 
 /// Where the lines of a file start.
@@ -102,6 +102,49 @@ impl<'a> File<'a> {
     #[inline]
     pub fn is_on_same_line(&self, a: u32, b: u32) -> bool {
         self.line_of(a) == self.line_of(b)
+    }
+}
+
+impl<'a> File<'a> {
+    /// Whether a name or a string of the file may be `text`: an identifier, the name of a property, a key, a string, a template
+    /// without substitutions. `false` is certain, `true` is not.
+    ///
+    /// For [`Rule::register`](crate::rule::Rule::register): a rule that is about `eval` or `hasOwnProperty` has nothing to listen
+    /// for in a file that does not mention it. It costs one search of the text, which is far less than a listener that is
+    /// called with every call or every member access of the file.
+    pub fn mentions(&self, text: &str) -> bool {
+        bun_core::strings::contains(self.text(), text.as_bytes()) || self.has_other_spellings()
+    }
+
+    /// `text` as a name of this file, to compare the names of many nodes with: `name == wanted` compares two numbers, where
+    /// `name.is("text")` looks the text of the name up and compares that. For [`Rule::register`](crate::rule::Rule::register),
+    /// which keeps it in the state of the rule.
+    pub fn name_of(&'a self, text: &str) -> Name<'a> {
+        self.intern(text.as_bytes())
+    }
+
+    /// Whether the file [mentions](File::mentions) one of `texts`.
+    pub fn mentions_any(&self, texts: &[&str]) -> bool {
+        texts.iter().any(|text| bun_core::strings::contains(self.text(), text.as_bytes())) || self.has_other_spellings()
+    }
+
+    /// Whether a name or a string may be written otherwise than it reads: with `\u0061`, `\x61`, `\141`, a `\` before a line
+    /// break, or `&#97;` in JSX.
+    fn has_other_spellings(&self) -> bool {
+        *self.by_kind().has_other_spellings.get_or_init(|| {
+            let text = self.text();
+            if !self.hir.jsx.is_empty() && bun_core::strings::contains_char(text, b'&') {
+                return true;
+            }
+            let mut at = 0;
+            while let Some(found) = bun_core::strings::index_of_char_usize(&text[at..], b'\\') {
+                if matches!(text.get(at + found + 1), Some(b'u' | b'x' | b'0'..=b'9' | b'\r' | b'\n' | 0xE2)) {
+                    return true;
+                }
+                at = (at + found + 2).min(text.len());
+            }
+            false
+        })
     }
 }
 

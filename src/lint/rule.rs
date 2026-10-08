@@ -38,8 +38,8 @@
 //! - [`Listeners::finish`] is called last.
 
 use crate::ast::{
-    Case, Class, EnumMember, ExportSpec, Expr, ExprTag, File, Func, ImportSpec, Member, Node, Param,
-    Pat, PatTag, Prop, Stmt, StmtTag, TypeNode, TypeParam, TypeTag, VarDecl,
+    BinOp, Case, Class, EnumMember, ExportSpec, Expr, ExprTag, File, Func, ImportSpec, Member, Node, Param,
+    Pat, PatTag, Prop, Stmt, StmtTag, TypeNode, TypeParam, TypeTag, UnOp, VarDecl,
 };
 use crate::code_path::{CodePath, Segment};
 use crate::context::Cx;
@@ -274,6 +274,8 @@ macro_rules! sorts {
             Stmts(StmtTag, Listener<'a, R, Stmt<'a>>),
             Types(TypeTag, Listener<'a, R, TypeNode<'a>>),
             Pats(PatTag, Listener<'a, R, Pat<'a>>),
+            Binaries(BinOp, Listener<'a, R, Expr<'a>>),
+            Unaries(UnOp, Listener<'a, R, Expr<'a>>),
             $($variant(Listener<'a, R, $handle<'a>>),)*
             Nodes(NodeTags, Listener<'a, R, Node<'a>>),
             Enter(NodeTags, Listener<'a, R, Node<'a>>),
@@ -354,6 +356,27 @@ impl<'a, R: Rule> Listeners<'a, R> {
     ) {
         let tags = tags.into_iter().filter(|&tag| self.file.has_exprs([tag]));
         self.entries.extend(tags.map(|tag| Entry::Exprs(tag, listener)));
+    }
+
+    /// Every [`ExprKind::Binary`](crate::ast::ExprKind::Binary) with one of these operators, in no particular order. A rule that
+    /// is about `==` is not called with the other operators, and not at all in a file without a `==`.
+    pub fn binaries(
+        &mut self,
+        ops: impl IntoIterator<Item = BinOp>,
+        listener: Listener<'a, R, Expr<'a>>,
+    ) {
+        let ops = ops.into_iter().filter(|&op| !self.file.binaries_of(op).is_empty());
+        self.entries.extend(ops.map(|op| Entry::Binaries(op, listener)));
+    }
+
+    /// Every [`ExprKind::Unary`](crate::ast::ExprKind::Unary) with one of these operators, in no particular order.
+    pub fn unaries(
+        &mut self,
+        ops: impl IntoIterator<Item = UnOp>,
+        listener: Listener<'a, R, Expr<'a>>,
+    ) {
+        let ops = ops.into_iter().filter(|&op| !self.file.unaries_of(op).is_empty());
+        self.entries.extend(ops.map(|op| Entry::Unaries(op, listener)));
     }
 
     /// Every statement of one of these kinds, in no particular order.

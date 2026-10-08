@@ -1,13 +1,14 @@
 //! Runs rules on a file.
 
 use crate::ast::{
-    Case, Class, EnumMember, ExportSpec, Expr, ExprTag, File, Func, Handle, ImportSpec, Member,
-    Node, Param, Pat, PatElem, PatProp, PatTag, Prop, Stmt, StmtTag, TupleElem, TypeNode, TypeParam, TypeTag, VarDecl,
+    BinOp, Case, Class, EnumMember, ExportSpec, Expr, ExprTag, File, Func, Handle, ImportSpec, Member,
+    Node, Param, Pat, PatElem, PatProp, PatTag, Prop, Stmt, StmtTag, TupleElem, TypeNode, TypeParam, TypeTag, UnOp, VarDecl,
 };
 use crate::code_path::{Event, Step, steps};
 use crate::context::{Cx, Diagnostic, Severity};
 use crate::options::Options;
 use crate::rule::{Entries, Entry, Listeners, Meta, NodeTags, Rule};
+use bun_sema::hir;
 use std::cell::OnceCell;
 
 // ───────────────────────────── the nodes of a file, by kind ─────────────────────────────
@@ -25,9 +26,14 @@ const MOST_KINDS: usize = 40;
 impl<const KINDS: usize> Grouped<KINDS> {
     /// `kind_of(i)`: the kind of the node at `i`, or `None` to leave it out.
     fn new(len: usize, kind_of: impl Fn(usize) -> Option<usize>) -> Self {
+        Grouped::of_ids(0..len as u32, |id| kind_of(id as usize))
+    }
+
+    /// The same for the nodes `all`.
+    fn of_ids(all: impl ExactSizeIterator<Item = u32> + Clone, kind_of: impl Fn(u32) -> Option<usize>) -> Self {
         const { assert!(KINDS <= MOST_KINDS) };
         let mut starts = [0u32; MOST_KINDS + 2];
-        let kinds: Vec<u8> = (0..len).map(|i| kind_of(i).map_or(KINDS, |kind| kind.min(KINDS)) as u8).collect();
+        let kinds: Vec<u8> = all.clone().map(|id| kind_of(id).map_or(KINDS, |kind| kind.min(KINDS)) as u8).collect();
         for &kind in &kinds {
             starts[kind as usize + 1] += 1;
         }
@@ -35,11 +41,11 @@ impl<const KINDS: usize> Grouped<KINDS> {
             starts[kind + 1] += starts[kind];
         }
         let mut next = starts;
-        let mut ids = vec![0u32; len];
-        for (i, &kind) in kinds.iter().enumerate() {
+        let mut ids = vec![0u32; kinds.len()];
+        for (id, &kind) in all.zip(&kinds) {
             let at = &mut next[kind as usize];
-            if let Some(id) = ids.get_mut(*at as usize) {
-                *id = i as u32;
+            if let Some(place) = ids.get_mut(*at as usize) {
+                *place = id;
             }
             *at += 1;
         }
@@ -61,6 +67,9 @@ pub(crate) struct ByKind {
     stmts: OnceCell<Grouped<{ StmtTag::COUNT }>>,
     types: OnceCell<Grouped<{ TypeTag::COUNT }>>,
     pats: OnceCell<Grouped<{ PatTag::COUNT }>>,
+    /// The `ExprTag::Binary` and the `ExprTag::Unary` by operator.
+    binaries: OnceCell<Grouped<{ BinOp::Comma as usize + 1 }>>,
+    unaries: OnceCell<Grouped<{ UnOp::PostDec as usize + 1 }>>,
     fns: OnceCell<Vec<u32>>,
     classes: OnceCell<Vec<u32>>,
     members: OnceCell<Vec<u32>>,
@@ -72,11 +81,13 @@ pub(crate) struct ByKind {
     enum_members: OnceCell<Vec<u32>>,
     import_specs: OnceCell<Vec<u32>>,
     export_specs: OnceCell<Vec<u32>>,
+    /// See [`File::mentions`].
+    pub(crate) has_other_spellings: OnceCell<bool>,
 }
 
 impl File<'_> {
     #[inline]
-    fn by_kind(&self) -> &ByKind {
+    pub(crate) fn by_kind(&self) -> &ByKind {
         self.lazy.by_kind.get_or_init(ByKind::default)
     }
 
@@ -96,6 +107,26 @@ impl File<'_> {
         let grouped = (self.by_kind().types)
             .get_or_init(|| Grouped::new(self.hir.types.len(), |i| self.type_in_tree(i).map(|tag| tag as usize)));
         grouped.of(tag as usize)
+    }
+
+    pub(crate) fn binaries_of(&self, op: BinOp) -> &[u32] {
+        let grouped = self.by_kind().binaries.get_or_init(|| {
+            Grouped::of_ids(self.exprs_of(ExprTag::Binary).iter().copied(), |id| match self.hir.exprs.get(id as usize)?.kind {
+                hir::ExprKind::Binary { op, .. } => Some(op as usize),
+                _ => None,
+            })
+        });
+        grouped.of(op as usize)
+    }
+
+    pub(crate) fn unaries_of(&self, op: UnOp) -> &[u32] {
+        let grouped = self.by_kind().unaries.get_or_init(|| {
+            Grouped::of_ids(self.exprs_of(ExprTag::Unary).iter().copied(), |id| match self.hir.exprs.get(id as usize)?.kind {
+                hir::ExprKind::Unary { op, .. } => Some(op as usize),
+                _ => None,
+            })
+        });
+        grouped.of(op as usize)
     }
 
     /// Whether the file has an expression of one of these kinds. For a rule that has nothing to do otherwise, and whose listeners
@@ -401,6 +432,16 @@ impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
                 Entry::Pats(tag, listener) => {
                     for &id in file.pats_of(tag) {
                         listener(rule, Pat::from_raw(file, id), cx);
+                    }
+                }
+                Entry::Binaries(op, listener) => {
+                    for &id in file.binaries_of(op) {
+                        listener(rule, Expr::from_raw(file, id), cx);
+                    }
+                }
+                Entry::Unaries(op, listener) => {
+                    for &id in file.unaries_of(op) {
+                        listener(rule, Expr::from_raw(file, id), cx);
                     }
                 }
                 Entry::Funcs(listener) => file.every_func(|it| listener(rule, it, cx)),

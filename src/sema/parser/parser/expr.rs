@@ -114,7 +114,6 @@ impl Parser<'_> {
         let start = self.pos();
         let mut expression = self.assignment_expression();
         while self.token() == T::Comma {
-            self.refuse_after_decorated_class(expression, start);
             self.next();
             let right = self.assignment_expression();
             let kind = ExprKind::Binary {
@@ -458,11 +457,7 @@ impl Parser<'_> {
             return true;
         }
         // "here we are using similar heuristics as 'isYieldExpression'". The checker reports it.
-        if !self.is_ecmascript && self.next_is_word_or_literal_on_same_line() {
-            self.report();
-            return true;
-        }
-        false
+        !self.is_ecmascript && self.next_is_word_or_literal_on_same_line()
     }
 
     /// `parseSimpleUnaryExpression`

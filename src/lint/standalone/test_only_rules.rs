@@ -75,6 +75,7 @@ fn add_named_import<'a>(file: &'a File<'a>, id: &str, into: &mut Vec<LintMessage
             }),
             suggestions: Vec::new(),
             suppressions: Vec::new(),
+            ..LintMessage::default()
         });
     }
 }

@@ -430,7 +430,9 @@ impl Parser<'_> {
         if flags.intersects(!(Flags::EXPORT | Flags::DEFAULT | Flags::ASYNC)) {
             self.typescript_only();
         }
-        if flags.contains(Flags::ASYNC) && self.token() != T::Function {
+        if flags.contains(Flags::ASYNC) && self.token() != T::Function
+            || flags.contains(Flags::DEFAULT) && !flags.contains(Flags::EXPORT)
+        {
             self.report();
         }
         if self.options.is_javascript && self.s.modifiers.len() > base {

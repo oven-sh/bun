@@ -60,6 +60,7 @@ pub(crate) struct Checkpoint {
     type_stack: u32,
     name_stack: u32,
     function_contexts: u32,
+    keyword_identifier_positions: u32,
     rows: Rows,
     /// Index in `TypeSyntax::saved_results`. Not the results themselves: an ordinary build makes
     /// and copies checkpoints too.
@@ -850,6 +851,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     pub(crate) fn type_syntax_checkpoint(&mut self) -> Checkpoint {
         match &mut self.type_syntax {
             Some(syntax) if SEMA => Checkpoint {
+                keyword_identifier_positions: syntax.b.keyword_identifier_positions.get_mut().len()
+                    as u32,
                 nodes: syntax.notes.nodes.len() as u32,
                 notes: syntax.notes.notes.len() as u32,
                 ranges: syntax.notes.ranges.len() as u32,
@@ -935,6 +938,8 @@ impl TypeSyntax<'_> {
         self.name_stack.truncate(snapshot.name_stack as usize);
         self.function_contexts
             .truncate(snapshot.function_contexts as usize);
+        (self.b.keyword_identifier_positions.get_mut())
+            .truncate(snapshot.keyword_identifier_positions as usize);
         self.rewind_rows(snapshot.rows);
         let results = self.saved_results[snapshot.results as usize];
         self.saved_results.truncate(snapshot.results as usize);

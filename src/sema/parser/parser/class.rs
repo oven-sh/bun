@@ -13,6 +13,10 @@ impl Parser<'_> {
         let class_flags =
             self.ambient() | flags & (Flags::ABSTRACT | Flags::EXPORT | Flags::DEFAULT);
         let class = self.class(start.pos, base, class_flags);
+        let is_unnamed = |it: &Class| it.name.is_none() && !it.flags.contains(Flags::DEFAULT);
+        if self.f.classes.get(class.idx()).is_some_and(is_unnamed) {
+            self.report();
+        }
         let modifiers = self.f.classes.get(class.idx()).map(|it| it.modifiers);
         self.add_stmt(StmtKind::Class(class), start, modifiers.unwrap_or_default())
     }
@@ -36,28 +40,7 @@ impl Parser<'_> {
         }
         let keyword = self.pos();
         let class = self.class(start, base, flags & Flags::ABSTRACT);
-        let expression = self.finish_expr(ExprKind::Class(class), keyword);
-        // The expression that goes on after it would start at the keyword too.
-        if !self.can_parse_semicolon()
-            && !matches!(self.token(), T::CloseParen | T::CloseBracket | T::Comma | T::Colon)
-        {
-            self.refuse(Refusal::Unsupported);
-        }
-        expression
-    }
-
-    /// `e`, which starts at `start`, is before the comma operator.
-    pub(crate) fn refuse_after_decorated_class(&mut self, e: ExprId, start: u32) {
-        if let Some(&Expr {
-            kind: ExprKind::Class(_),
-            pos,
-            ..
-        }) = self.f.exprs.get(e.idx())
-            && pos != start
-            && self.f.parens.last().is_none_or(|last| last.0 != e)
-        {
-            self.refuse(Refusal::Unsupported);
-        }
+        self.finish_expr(ExprKind::Class(class), keyword)
     }
 
     /// `parseClassDeclarationOrExpression`, at `class`. Its modifiers are on the stack from `base`

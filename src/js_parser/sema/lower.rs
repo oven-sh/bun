@@ -2030,8 +2030,12 @@ impl<'p, 'a> Lower<'p, 'a> {
         }
         self.source_end = 0;
         let mut id = self.expr_without_casts(expr);
-        // Start of the node built from it so far.
-        let mut pos = self.b.file[id].pos;
+        // Start of the node built from it so far. What goes on after a class expression starts at
+        // the decorators of the class.
+        let mut pos = match self.b.file[id].kind {
+            ExprKind::Class(class) => self.b.file[class].start.min(self.b.file[id].pos),
+            _ => self.b.file[id].pos,
+        };
         // End of the node built from it so far.
         let mut end = self.b.file[id].end;
         if self.noted.has_notes(expr.loc) {

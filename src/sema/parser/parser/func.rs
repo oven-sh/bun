@@ -163,6 +163,9 @@ impl Parser<'_> {
                 true => self.modifiers(false, true, false),
                 false => Flags::empty(),
             };
+            if flags.intersects(!(Flags::IN | Flags::OUT | Flags::CONST)) {
+                self.report();
+            }
             let (name, pos) = self.identifier();
             let constraint = match self.eat(T::Extends) {
                 true => self.ty(),

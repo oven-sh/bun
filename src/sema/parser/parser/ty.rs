@@ -325,7 +325,7 @@ impl Parser<'_> {
                     if self.eat(T::CloseBracket) {
                         ty = self.finish_type(TypeNodeKind::Array(ty), start);
                     } else {
-                        let index = self.ty();
+                        let index = self.type_in_list();
                         self.expect(T::CloseBracket);
                         ty = self.finish_type(TypeNodeKind::IndexedAccess { obj: ty, index }, start);
                     }
@@ -612,24 +612,10 @@ impl Parser<'_> {
         self.take_ids(base)
     }
 
-    /// `parseType` for an element of a list. `isListElement` asks `isStartOfType` first, for which a
-    /// reserved word starts no type, although it can be the name in a type reference.
+    /// `parseType` where `isStartOfType` is asked first, as `isListElement` does: for it a reserved
+    /// word starts no type, although it can be the name in a type reference.
     pub(crate) fn type_in_list(&mut self) -> TypeNodeId {
-        let token = self.token();
-        if token.is_reserved_word()
-            && !matches!(
-                token,
-                T::Void
-                    | T::Null
-                    | T::This
-                    | T::TypeOf
-                    | T::New
-                    | T::True
-                    | T::False
-                    | T::Import
-                    | T::Function
-            )
-        {
+        if !self.is_start_of_type(false) {
             self.fail();
             return TypeNodeId::NONE;
         }
@@ -700,14 +686,7 @@ impl Parser<'_> {
         let first = self.identifier_name();
         self.s.names.push(first);
         while self.eat(T::Dot) {
-            let name = match self.token() {
-                T::PrivateIdentifier => {
-                    let name = (self.lx.atom, self.pos());
-                    self.next();
-                    name
-                }
-                _ => self.identifier_name(),
-            };
+            let name = self.identifier_name();
             self.s.names.push(name);
         }
         // No atom of a name that is missing is looked at.

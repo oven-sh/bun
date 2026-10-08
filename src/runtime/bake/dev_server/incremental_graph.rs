@@ -136,15 +136,11 @@ impl File {
         self.kind
     }
 
-    /// The server-side graphs that a re-bundle of this file goes to. The server
+    /// Whether a re-bundle of this file queues it for the SSR graph. The server
     /// parse of a client component boundary queues its SSR copy itself.
-    fn server_graphs(&self) -> impl Iterator<Item = bake::Graph> {
-        [
-            self.is_rsc.then_some(bake::Graph::Server),
-            (self.is_ssr && !self.is_client_component_boundary).then_some(bake::Graph::Ssr),
-        ]
-        .into_iter()
-        .flatten()
+    #[inline]
+    fn rebundles_for_ssr_graph(&self) -> bool {
+        self.is_ssr && !self.is_client_component_boundary
     }
 
     /// `ServerFile.stopsDependencyTrace` / `ClientFile.stopsDependencyTrace`.
@@ -1584,11 +1580,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             match SIDE {
                 Side::Client => enqueue(bun_ast::Target::Browser),
                 Side::Server => {
-                    for graph in file.server_graphs() {
-                        enqueue(match graph {
-                            bake::Graph::Ssr => bun_ast::Target::ServerComponentsSsr,
-                            _ => bun_ast::Target::Bun,
-                        });
+                    if file.is_rsc {
+                        enqueue(bun_ast::Target::Bun);
+                    }
+                    if file.rebundles_for_ssr_graph() {
+                        enqueue(bun_ast::Target::ServerComponentsSsr);
                     }
                 }
             }
@@ -1697,8 +1693,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     }
                 },
                 Side::Server => {
-                    for graph in self.bundled_files.values()[index].server_graphs() {
-                        entry_points.append_js(owned_path, graph)?;
+                    let f = &self.bundled_files.values()[index];
+                    if f.is_rsc {
+                        entry_points.append_js(owned_path, bake::Graph::Server)?;
+                    }
+                    if f.rebundles_for_ssr_graph() {
+                        entry_points.append_js(owned_path, bake::Graph::Ssr)?;
                     }
                 }
             }

@@ -169,10 +169,11 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* node:http: the peer sent its FIN first (HTTP_NODE_RECEIVED_FIN only covers a
          * deferred close). onSocketClosed reports it so the JS socket emits 'end'. */
         HTTP_NODE_PEER_ENDED = 1 << 22,
-        /* node:http: a write() or end() of the JS socket left bytes in user space, and JavaScript waits to
-         * hear that they are out. onWritable reports that once (onSocketDrain), in a task. Until the task
-         * has run, nothing closes this connection and no request is dispatched as its current one. */
-        HTTP_NODE_DRAIN_OWED = 1 << 23,
+        /* node:http: a write() or end() of the JS socket left bytes in user space, and the socket waits
+         * to hear that they are out. onWritable tells it once (onSocketDrain). Until then onEnd and the
+         * shouldCloseConnection() gates leave the connection open: the stream of that socket can hold
+         * chunks that uWS has not seen yet. A timeout, a destroy() and closeIfIdle() still close it. */
+        HTTP_NODE_DRAIN_OWED = 1 << 26,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a
@@ -255,8 +256,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
     /* Whether the connection should be torn down once the in-flight response (if
      * any) has completed and all buffered outgoing data has been flushed. Not
-     * while a drain report is owed (HTTP_NODE_DRAIN_OWED): the task that makes
-     * the report runs the close gate again. */
+     * while a drain report is owed (HTTP_NODE_DRAIN_OWED): onWritable makes the
+     * report and then comes to its close gate. */
     bool shouldCloseConnection() const {
         return ((state & (HTTP_CONNECTION_CLOSE | HTTP_NODE_CLOSE_AFTER_DRAIN))
             || ((state & HTTP_NODE_RECEIVED_FIN) && nodeHttpQueuedPipelinedCount == 0)

@@ -1157,6 +1157,7 @@ bitflags::bitflags! {
         const HTTP_WROTE_CONTENT_LENGTH_HEADER = 32;
         const HTTP_NODE_RECEIVED_FIN           = 1 << 15;
         const HTTP_NODE_CLOSE_AFTER_MESSAGE    = 1 << 20;
+        const HTTP_NODE_DRAIN_OWED             = 1 << 26;
     }
 }
 
@@ -1200,6 +1201,12 @@ impl State {
     #[inline]
     pub fn is_node_close_after_message(self) -> bool {
         self.bits() & State::HTTP_NODE_CLOSE_AFTER_MESSAGE.bits() != 0
+    }
+
+    /// A raw write of the connection's JS socket waits for its bytes (see HttpResponseData.h).
+    #[inline]
+    pub fn is_node_drain_owed(self) -> bool {
+        self.bits() & State::HTTP_NODE_DRAIN_OWED.bits() != 0
     }
 }
 

@@ -54,7 +54,9 @@ struct alignas(16) HttpContextData {
 private:
     std::vector<MoveOnlyFunction<void(HttpResponse<SSL> *, int)>> filterHandlers;
     using OnSocketDataCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket, const char *data, int length, bool last);
-    using OnSocketDrainCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
+    /* node:http: the bytes that the socket owed a drain report for are out. JavaScript runs in the call. False: the
+     * socket is closed, a WebSocket adopted it, or it holds bytes again. */
+    using OnSocketDrainCallback = bool (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
     using OnSocketUpgradedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
     using OnClientErrorCallback = MoveOnlyFunction<void(int is_ssl, struct us_socket_t *rawSocket, uWS::HttpParserError errorCode, char *rawPacket, int rawPacketLength)>;
     /* readError: 0, or the error of the failed read (a peer RST). peerEnded: the peer sent its FIN first. */

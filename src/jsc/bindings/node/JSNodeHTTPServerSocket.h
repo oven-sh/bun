@@ -43,8 +43,6 @@ public:
     unsigned tunnelReadsQueuedFull : 1 = 0;
     /* onData() got the end of the stream. The task that tells JS can still be queued. */
     unsigned tunnelReadEnded : 1 = 0;
-    /* onDrain() queued the task that tells JS, and the task has not run. */
-    unsigned drainReportQueued : 1 = 0;
     /* Set by onClose() for the peerEnded / closeError getters: the peer's FIN, the error of a failed read. */
     unsigned peer_ended : 1 = 0;
     int closeReadError = 0;
@@ -134,6 +132,8 @@ public:
     void updateTunnelIdle();
     /* User space holds bytes of this connection: the uWS buffer, or the ciphertext of a TLS batch. Never for a closed or an adopted socket. */
     bool hasUnsentBytes() const;
+    /* The bytes in the uWS buffer of an open connection. */
+    size_t bufferedAmount() const;
     /* If user space holds bytes, uWS calls onDrain() once they are out (HTTP_NODE_DRAIN_OWED). Returns whether it holds any. write() and end() tell JS to wait with this. */
     bool oweDrainIfUnsent();
     /* Sends the response bytes that are not in the uWS buffer (the zero-copy tail of a res.write(), the cork buffer) to the kernel or into it. A raw write or a FIN then goes out behind them. */
@@ -185,12 +185,11 @@ public:
     void onClose(int readError, bool peerEnded);
     /* A WebSocket adopted the connection. `adopted` is its socket: the adoption can move it. */
     void onUpgraded(us_socket_t* adopted);
-    /* uWS: a drain is owed, and every byte is out. */
-    void onDrain();
-    /* Queues reportDrain() as a task, once. */
-    void queueDrainReport();
-    /* Calls ondrain, unless bytes were refused again since onDrain(). Then it runs the reads and the close that uWS held back for the report. */
-    void reportDrain(Zig::GlobalObject*);
+    /* uWS: a drain was owed, and every byte is out. Calls ondrain(false), which settles the writes that waited. False when uWS has nothing more to do for this writable event: the socket is closed, a WebSocket adopted it, or it holds bytes again. */
+    bool onDrain();
+    /* A response is about to write to the connection. Calls ondrain(true): the chunks that the stream of the JS socket queued behind the write that waits go to uWS first. */
+    void handOverWaitingWrites();
+    void callOnDrain(bool handOver);
     void onData(const char* data, int length, bool last);
     void applyTunnelReads();
     void didDeliverQueuedTunnelBytes(size_t length);

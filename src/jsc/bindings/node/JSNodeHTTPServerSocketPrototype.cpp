@@ -39,6 +39,7 @@ JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnDrain);
 JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnData);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnData);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBytesWritten);
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBufferedAmount);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketClose);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketReset);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketWrite);
@@ -77,6 +78,7 @@ static const JSC::HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = 
     { "ondrain"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterOnDrain, jsNodeHttpServerSocketSetterOnDrain } },
     { "ondata"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterOnData, jsNodeHttpServerSocketSetterOnData } },
     { "bytesWritten"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterBytesWritten, noOpSetter } },
+    { "bufferedAmount"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterBufferedAmount, noOpSetter } },
     { "closed"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterClosed, noOpSetter } },
     { "response"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterResponse, noOpSetter } },
     { "duplex"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterDuplex, jsNodeHttpServerSocketSetterDuplex } },
@@ -529,7 +531,12 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterOnDrain, (JSC::JSGlobalObje
         return false;
     }
 
-    thisObject->functionToCallOnDrain.set(vm, thisObject, AsyncContextFrame::withGraphContextIfNeeded(globalObject, value).getObject());
+    // The socket stores this at its first write that waits, and that write can come from another Bun.ModuleGraph than the one that owns the socket. The callback continues the graph of the owner: the one that stored onclose.
+    JSObject* callback = value.getObject();
+    if (auto* owner = dynamicDowncast<AsyncContextFrame>(thisObject->functionToCallOnClose.get())) {
+        callback = AsyncContextFrame::create(globalObject, value, owner->context.get());
+    }
+    thisObject->functionToCallOnDrain.set(vm, thisObject, callback);
     return true;
 }
 
@@ -611,6 +618,16 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBytesWritten, (JSC::JSGloba
         return JSValue::encode(JSC::jsUndefined());
     }
     return JSValue::encode(JSC::jsNumber(thisObject->bytesWritten));
+}
+
+// The bytes of the connection that wait in the uWS buffer, whoever wrote them. The inactivity timer of the JS socket reads it to see whether a write that waits makes progress.
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterBufferedAmount, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
+    if (!thisObject || thisObject->isClosed()) [[unlikely]] {
+        return JSValue::encode(JSC::jsNumber(0));
+    }
+    return JSValue::encode(JSC::jsNumber(thisObject->bufferedAmount()));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName propertyName))

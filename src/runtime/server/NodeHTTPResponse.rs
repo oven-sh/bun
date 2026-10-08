@@ -250,6 +250,11 @@ unsafe extern "C" {
     // False when no read of this socket is being parsed.
     safe fn Bun__NodeHTTP__notifyWhenReadParsed(ssl: core::ffi::c_int, socket: *mut c_void)
     -> bool;
+    // The mirror of flushResponseBytesAhead() (JSNodeHTTPServerSocket.cpp) for the response side.
+    safe fn Bun__NodeHTTPServerSocket__handOverWaitingWrites(
+        ssl: core::ffi::c_int,
+        socket: *mut c_void,
+    );
 
     // Moves the connection's captured node:http request-trailer section out. `*out` points into
     // a C++ thread-local valid until the next call on this thread; caller copies immediately.
@@ -485,6 +490,20 @@ impl NodeHTTPResponse {
         self.connection.writer(self.flags.get())
     }
 
+    /// Every path that writes response bytes to the connection calls this first. While a raw write
+    /// of the connection's JS socket waits (`HTTP_NODE_DRAIN_OWED`), the stream of that socket can
+    /// hold chunks that were written behind it, and they go to uWS now: in Node one stream carries
+    /// the raw bytes and the response bytes in the order of the calls.
+    #[inline]
+    fn raw_writes_ahead(raw_response: uws::AnyResponse, state: uws::State) {
+        if state.is_node_drain_owed() {
+            Bun__NodeHTTPServerSocket__handOverWaitingWrites(
+                any_response_is_ssl(&raw_response) as core::ffi::c_int,
+                raw_response.socket().cast(),
+            );
+        }
+    }
+
     #[inline]
     pub(crate) fn reader(&self) -> Option<uws::AnyResponse> {
         self.connection.reader()
@@ -684,6 +703,7 @@ impl NodeHTTPResponse {
             // S008: `WebSocketUpgradeContext` is an `opaque_ffi!` ZST — safe deref
             // (`upgrade_ctx` checked non-null above).
             let ctx = bun_opaque::opaque_deref_mut(upgrade_ctx);
+            Self::raw_writes_ahead(raw_response, raw_response.state());
             let _ = raw_response.upgrade::<ServerWebSocket>(
                 ws,
                 websocket_key,
@@ -1078,6 +1098,7 @@ impl NodeHTTPResponse {
         if self.is_socket_closed_or_closing() {
             return Ok(JSValue::UNDEFINED);
         }
+        Self::raw_writes_ahead(raw_response, state);
 
         'do_it: {
             if status_message_bytes.is_empty() {
@@ -1272,6 +1293,7 @@ impl NodeHTTPResponse {
         };
         let state = raw_response.state();
         handle_ended_if_necessary(state, global_object)?;
+        Self::raw_writes_ahead(raw_response, state);
 
         raw_response.write_continue();
         Ok(JSValue::UNDEFINED)
@@ -1319,7 +1341,9 @@ impl NodeHTTPResponse {
         let Some(raw_response) = self.writer() else {
             return Ok(JSValue::UNDEFINED);
         };
-        handle_ended_if_necessary(raw_response.state(), global_object)?;
+        let state = raw_response.state();
+        handle_ended_if_necessary(state, global_object)?;
+        Self::raw_writes_ahead(raw_response, state);
         raw_response.write_informational(string_or_buffer.slice());
         Ok(JSValue::UNDEFINED)
     }
@@ -2083,6 +2107,7 @@ impl NodeHTTPResponse {
                 "Stream already ended",
             );
         }
+        Self::raw_writes_ahead(self.writer().unwrap(), state);
 
         let bytes = string_or_buffer.slice();
 
@@ -2471,6 +2496,7 @@ impl NodeHTTPResponse {
         let flags = self.flags.get();
         if !flags.contains(Flags::UPGRADED) && !self.is_socket_closed_or_closing() {
             if let Some(raw_response) = self.writer() {
+                Self::raw_writes_ahead(raw_response, raw_response.state());
                 // Don't flush immediately; queue a microtask to uncork the socket.
                 raw_response.flush_headers(false);
                 if raw_response.is_corked() {

@@ -242,10 +242,10 @@ static void assignOnNodeJSCompat(uWS::TemplatedApp<isSSL>* app)
         ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
         socket->onClose(readError, peerEnded);
     });
-    app->setOnSocketDrain([](void* socketData, int is_ssl, struct us_socket_t* rawSocket) -> void {
+    app->setOnSocketDrain([](void* socketData, int is_ssl, struct us_socket_t* rawSocket) -> bool {
         auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
         ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
-        socket->onDrain();
+        return socket->onDrain();
     });
     app->setOnSocketData([](void* socketData, int is_ssl, struct us_socket_t* rawSocket, const char* data, int length, bool last) -> void {
         auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);

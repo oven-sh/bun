@@ -4,12 +4,15 @@
 //! - `batch <cases.jsonl>`: for each line `{ path, code, ecmaVersion? }`, a line
 //!   `{ "errors": bool, "tokens": [type, start, end, ..], "comments": [..] }`. A type is an index
 //!   into `TYPES`, positions are in UTF-16 code units.
+//! - `query <cases.jsonl>`: the same with `queries: [[method, a.start, a.end, b.start, b.end, includeComments], ..]`.
+//!   A line of answers for each: the ranges of the tokens, or 0 or 1. The code has to be ASCII.
 //! - `bench <files..>`: the speed of the scan.
 
 use bun_lint::ast::File;
 use bun_lint::language::LanguageOptions;
 use bun_lint::options::Json;
-use bun_lint::tokens::{Token, TokenKind};
+use bun_lint::span::Span;
+use bun_lint::tokens::{Token, TokenKind, Tokens};
 use std::fmt::Write as _;
 use std::io::Write as _;
 
@@ -77,6 +80,63 @@ fn batch(path: &str) {
     }
 }
 
+fn answer<'a>(file: &'a File<'a>, query: &[Json]) -> Vec<u32> {
+    let number = |i: usize| match query.get(i) {
+        Some(Json::Number(n)) => *n as u32,
+        _ => 0,
+    };
+    let (a, b) = (Span::new(number(1), number(2)), Span::new(number(3), number(4)));
+    let includes_comments = number(5) != 0;
+    let with = |tokens: Tokens<'a>| if includes_comments { tokens.with_comments() } else { tokens };
+    let ranges = |tokens: &mut dyn Iterator<Item = Token<'a>>| tokens.flat_map(|t| [t.start(), t.end()]).collect();
+    let one = |plain: Option<Token<'a>>, with_comments: &mut dyn FnMut() -> Option<Token<'a>>| {
+        let token = if includes_comments { with_comments() } else { plain };
+        ranges(&mut token.into_iter())
+    };
+    match query.first().and_then(Json::as_str).unwrap_or_default() {
+        b"in" => ranges(&mut with(file.tokens_in(a))),
+        b"before" => ranges(&mut with(file.tokens_before(a)).take(4)),
+        b"after" => ranges(&mut with(file.tokens_after(a)).take(4)),
+        b"between" => ranges(&mut with(file.tokens_between(a, b))),
+        b"betweenBackwards" => ranges(&mut with(file.tokens_between(a, b)).rev()),
+        b"padded" => ranges(&mut file.tokens_in(a).padded(b.start as usize, b.end as usize)),
+        b"paddedBetween" => ranges(&mut file.tokens_between(a, b).padded(1, 1)),
+        b"first" => one(file.first_token(a), &mut || file.tokens_in(a).with_comments().next()),
+        b"last" => one(file.last_token(a), &mut || file.tokens_in(a).with_comments().next_back()),
+        b"secondLast" => ranges(&mut with(file.tokens_in(a)).nth_back(1).into_iter()),
+        b"tokenBefore" => one(file.token_before(a), &mut || file.tokens_before(a).with_comments().next()),
+        b"tokenAfter" => one(file.token_after(a), &mut || file.tokens_after(a).with_comments().next()),
+        b"secondBefore" => ranges(&mut with(file.tokens_before(a)).nth(1).into_iter()),
+        b"at" => one(file.token_at(a.start), &mut || file.token_or_comment_at(a.start)),
+        b"commentsBefore" => ranges(&mut file.comments_before(a)),
+        b"commentsAfter" => ranges(&mut file.comments_after(a)),
+        b"commentsIn" => ranges(&mut file.comments_in(a)),
+        b"commentsExist" => {
+            assert_eq!(file.comments_exist_between(a, b), file.comments_between(a, b).next().is_some());
+            vec![u32::from(file.comments_exist_between(a, b))]
+        }
+        b"space" => vec![u32::from(file.is_space_between(a, b))],
+        _ => vec![u32::MAX],
+    }
+}
+
+fn query(path: &str) {
+    let cases = std::fs::read(path).expect("the cases");
+    let stdout = std::io::stdout();
+    let mut stdout = std::io::BufWriter::new(stdout.lock());
+    for line in cases.split(|&b| b == b'\n').filter(|line| !line.is_empty()) {
+        let case = bun_lint::json::parse(line).expect("a case");
+        let code = case.get(b"code").and_then(Json::as_str).unwrap_or_default();
+        let path = case.get(b"path").and_then(Json::as_str).unwrap_or_default();
+        let queries = case.get(b"queries").and_then(Json::as_array).unwrap_or_default();
+        let answers = crate::with_file(&String::from_utf8_lossy(path), code, &language_of(&case), |file| {
+            let answers = queries.iter().map(|it| answer(file, it.as_array().unwrap_or_default()));
+            format!("{:?}", answers.collect::<Vec<_>>())
+        });
+        let _ = writeln!(stdout, "{answers}");
+    }
+}
+
 fn dump(path: &str) {
     let code = std::fs::read(path).expect("the file");
     crate::with_file(path, &code, &LanguageOptions::default(), |file| {
@@ -127,7 +187,8 @@ pub(crate) fn run(args: &[String]) {
     match args {
         [command, path] if command == "dump" => dump(path),
         [command, path] if command == "batch" => batch(path),
+        [command, path] if command == "query" => query(path),
         [command, paths @ ..] if command == "bench" => bench(paths),
-        _ => println!("usage: bun-lint tokens dump <file> | batch <cases.jsonl> | bench <files..>"),
+        _ => println!("usage: bun-lint tokens dump <file> | batch <cases.jsonl> | query <cases.jsonl> | bench <files..>"),
     }
 }

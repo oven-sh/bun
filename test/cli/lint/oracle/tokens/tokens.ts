@@ -2,9 +2,9 @@
 // JavaScript, typescript-estree for TypeScript.
 //
 //   bun tokens.ts --bin <bun-lint> --eslint <checkout> --typescript-eslint <checkout> --scratch <dir>
-//                 [--fixtures <conformance/fixtures>].. [--files <dir>].. [--jobs N] [--examples N] [--parsers]
+//                 [--fixtures <conformance/fixtures>].. [--files <dir>].. [--jobs N] [--examples N] [--rejected] [--compare-rejected] [--parsers]
 //
-// `--parsers` compares typescript-estree with espree on the JavaScript cases instead: how the two differ.
+// `--rejected` lists the cases that only `bun lint` rejects, `--compare-rejected` compares them nevertheless. `--parsers` compares typescript-estree with espree on the JavaScript cases instead: how the two differ.
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -22,7 +22,7 @@ const jobs = Number(option(args, "--jobs") ?? 16);
 const comparesParsers = args.includes("--parsers");
 
 type Difference = { kind: string; id: string; context: string };
-type Result = { cases: number; rejectedByOracle: number; rejectedByBun: number; wrong: number; tokens: number; differences: Difference[] };
+type Result = { cases: number; rejectedByOracle: number; rejectedByBun: number; wrong: number; tokens: number; differences: Difference[]; rejected: string[] };
 
 const flat = (tokens: any[]) => tokens.flatMap(t => [TYPES.indexOf(t.type), t.range[0], t.range[1]]);
 
@@ -44,7 +44,7 @@ function compare(it: Case, what: string, expected: number[], actual: number[]): 
 
 function run(cases: Case[], name: string): Result {
   const parsers = loadParsers(args);
-  const result: Result = { cases: 0, rejectedByOracle: 0, rejectedByBun: 0, wrong: 0, tokens: 0, differences: [] };
+  const result: Result = { cases: 0, rejectedByOracle: 0, rejectedByBun: 0, wrong: 0, tokens: 0, differences: [], rejected: [] };
   const accepted: { it: Case; tokens: number[]; comments: number[] }[] = [];
   for (const it of cases) {
     try {
@@ -76,7 +76,11 @@ function run(cases: Case[], name: string): Result {
     actual = lines.map(line => JSON.parse(line));
   }
   accepted.forEach(({ it, tokens, comments }, i) => {
-    if (actual[i].errors) return void result.rejectedByBun++;
+    if (actual[i].errors) {
+      result.rejected.push(`${it.id} ${it.sourceType} ${it.ecmaVersion} ${JSON.stringify(it.code.slice(0, 150))}`);
+      result.rejectedByBun++;
+      if (!args.includes("--compare-rejected")) return;
+    }
     result.cases++;
     result.tokens += tokens.length / 3;
     const difference = compare(it, "token", tokens, actual[i].tokens) ?? compare(it, "comment", comments, actual[i].comments);
@@ -102,12 +106,14 @@ const children = Array.from({ length: jobs }, (_, i) =>
 );
 const codes = await Promise.all(children.map(child => child.exited));
 if (codes.some(code => code !== 0)) process.exit(1);
-const total: Result = { cases: 0, rejectedByOracle: 0, rejectedByBun: 0, wrong: 0, tokens: 0, differences: [] };
+const total: Result = { cases: 0, rejectedByOracle: 0, rejectedByBun: 0, wrong: 0, tokens: 0, differences: [], rejected: [] };
 for (let i = 0; i < jobs; i++) {
   const part: Result = JSON.parse(readFileSync(join(scratch, `result-${i}.json`), "utf8"));
   for (const key of ["cases", "rejectedByOracle", "rejectedByBun", "wrong", "tokens"] as const) total[key] += part[key];
   total.differences.push(...part.differences);
+  total.rejected.push(...part.rejected);
 }
+if (args.includes("--rejected")) console.log(total.rejected.sort().join("\n"));
 const ranked = Map.groupBy(total.differences, it => it.kind);
 const examples = Number(option(args, "--examples") ?? 3);
 for (const [kind, list] of [...ranked].sort((a, b) => a[1].length - b[1].length)) {

@@ -167,6 +167,8 @@ pub(crate) struct Lazy {
     pub(crate) references: OnceCell<crate::semantic::ReferenceIndex>,
     pub(crate) by_kind: OnceCell<crate::runner::ByKind>,
     pub(crate) code_paths: crate::code_path::Store,
+    pub(crate) linter: crate::linter::PerFile,
+    extension: OnceCell<Box<dyn std::any::Any>>,
 }
 
 /// The file that is linted or formatted.
@@ -296,6 +298,12 @@ impl<'a> File<'a> {
     #[inline]
     pub fn span(&self) -> Span {
         Span::new(0, self.hir.text.len() as u32)
+    }
+
+    /// What another crate computes from the file once and keeps as long as the file. `init` runs
+    /// the first time. There is one slot: `None` if it holds a value of another type.
+    pub fn extension<T: 'static>(&'a self, init: impl FnOnce() -> T) -> Option<&'a T> {
+        self.lazy.extension.get_or_init(|| Box::new(init())).downcast_ref()
     }
 
     /// ESLint's `sourceCode.hasBOM`. The text starts with a byte order mark, which is part of

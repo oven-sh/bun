@@ -534,6 +534,10 @@ impl Parents {
         }
         for (i, e) in hir.exprs.iter().enumerate() {
             use hir::ExprKind as K;
+            // What the parser has left behind can share its type arguments with a node.
+            if matches!(file.bound.expr_parent.get(i), None | Some(Parent::None)) {
+                continue;
+            }
             let parent = packed(Tag::Expr, i);
             match e.kind {
                 K::As { ty, .. } | K::Satisfies { ty, .. } => one(ty, parent),

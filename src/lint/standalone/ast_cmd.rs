@@ -9,12 +9,17 @@
 //! - `bench <file>`: how long the ways through a file take.
 
 use bun_lint::ast::walk::{Visitor, walk};
-use bun_lint::ast::{ExprKind, ExprTag, File, Node, PatTag, StmtTag, TypeTag};
+use bun_lint::ast::{
+    ExprKind, ExprTag, File, FnKind, Key, List, Modifier, Node, PatTag, StmtKind, StmtTag, TypeKind, TypeTag,
+    assign_op_text, bin_op_text, un_op_text,
+};
 use bun_lint::context::Severity;
+use bun_lint::estree::{NodeType, Sink};
 use bun_lint::language::LanguageOptions;
 use bun_lint::options::{Json, Options};
 use bun_lint::rule::{Kind, Listeners, Meta, Rule};
 use bun_lint::runner::Enabled;
+use bun_lint::span::Span;
 use std::collections::{BTreeMap, HashMap};
 use std::io::Write as _;
 use std::sync::Mutex;
@@ -165,6 +170,7 @@ fn check_tree<'a>(file: &'a File<'a>, problems: &mut Vec<Problem>) -> HashMap<No
         {
             problems.push((format!("span is empty or starts or ends with a space: {}", describe(node)), place(node)));
         }
+        check_positions(node, problems);
         let mut previous_end = span.start;
         node.for_each_child(|child| {
             let edge = || format!("{} in {}", describe(child), describe(node));
@@ -175,6 +181,8 @@ fn check_tree<'a>(file: &'a File<'a>, problems: &mut Vec<Problem>) -> HashMap<No
             let inner = match child {
                 Node::Expr(e) => e.outer_span(),
                 Node::Type(t) => t.outer_span(),
+                // The span of the function of a method is that of the method.
+                Node::Func(f) => f.estree_span(),
                 _ => child.span(),
             };
             if !span.contains(inner) {
@@ -188,6 +196,247 @@ fn check_tree<'a>(file: &'a File<'a>, problems: &mut Vec<Problem>) -> HashMap<No
         });
     }
     reached
+}
+
+type Expect<'e> = &'e mut dyn FnMut(&str, Option<Span>, &dyn Fn(&[u8]) -> bool);
+
+fn within(open: u8, close: u8) -> impl Fn(&[u8]) -> bool {
+    move |text: &[u8]| text.len() >= 2 && text[0] == open && text[text.len() - 1] == close
+}
+
+fn modifiers<'a>(list: List<'a, Modifier<'a>>, expect: Expect) {
+    for modifier in list {
+        match modifier.decorator() {
+            Some(_) => expect("decorator", Some(modifier.span()), &|text| text.starts_with(b"@")),
+            None => expect("modifier", Some(modifier.span()), &|text| text.iter().all(u8::is_ascii_lowercase)),
+        }
+    }
+}
+
+fn key<'a>(file: &'a File<'a>, key: Option<Key<'a>>, expect: Expect) {
+    let Some(key) = key else { return };
+    let (outer, inner) = (key.span(file), key.inner_span(file));
+    match key.is_computed() {
+        true => {
+            expect("Key::span", Some(outer), &within(b'[', b']'));
+            expect("Key::inner_span", Some(inner), &|text| !text.is_empty() && outer.contains(inner) && outer != inner);
+        }
+        false => expect("Key::span", Some(outer), &|text| {
+            let is_quoted = matches!(text.first(), Some(b'"' | b'\''));
+            !text.is_empty() && outer == inner && (is_quoted || !text.iter().any(u8::is_ascii_whitespace))
+        }),
+    }
+}
+
+/// Checks the positions of tokens that the accessors of `node` return against the text.
+fn check_positions<'a>(node: Node<'a>, problems: &mut Vec<Problem>) {
+    let file = node.file();
+    let mut expect = |what: &str, span: Option<Span>, is_right: &dyn Fn(&[u8]) -> bool| {
+        if let Some(span) = span
+            && !is_right(file.slice(span))
+        {
+            let found = String::from_utf8_lossy(file.slice(span)).chars().take(30).collect::<String>();
+            problems.push((format!("{what} of {}", describe(node)), format!("{found:?} in {}", place(node))));
+        }
+    };
+    let at = |offset: Option<u32>| offset.map(|it| Span::new(it, it + 1));
+    let is = |token: &'static str| move |text: &[u8]| text == token.as_bytes();
+    let angles = within(b'<', b'>');
+    let braces = within(b'{', b'}');
+    let annotation = |text: &[u8]| text.starts_with(b":") || text.starts_with(b"=>");
+    match node {
+        Node::Expr(e) => {
+            for parens in e.parens() {
+                expect("Expr::parens", Some(parens), &within(b'(', b')'));
+            }
+            if e.is_parenthesized() != (e.parens().len() > 0) || e.outer_span() != e.parens().next_back().unwrap_or(e.span()) {
+                expect("Expr::is_parenthesized", Some(e.span()), &|_| false);
+            }
+            expect("Expr::jsx_container_span", e.jsx_container_span(), &braces);
+            match e.kind() {
+                ExprKind::Unary { op, .. } => expect("operator_span", e.operator_span(), &|text| text == un_op_text(op).as_bytes()),
+                ExprKind::Binary { op, .. } => expect("operator_span", e.operator_span(), &|text| text == bin_op_text(op).as_bytes()),
+                ExprKind::Assign { op, .. } => {
+                    // The default of `{ a = 1 }` and the like.
+                    expect("operator_span", e.operator_span(), &|text| text == assign_op_text(op).as_bytes());
+                }
+                ExprKind::Call(call) | ExprKind::New(call) => {
+                    expect("Call::close_paren", at(call.close_paren()), &is(")"));
+                    expect("type_args", call.type_args().angle_brackets_span(), &angles);
+                }
+                ExprKind::Dot { name, .. } => expect("Dot::name", Some(name.span()), &|text| !text.is_empty() && e.span().end == name.span().end),
+                ExprKind::Template(template) => {
+                    for i in 0..template.quasi_count() {
+                        let is_last = i + 1 == template.quasi_count();
+                        expect("Template::quasi_span", Some(template.quasi_span(i)), &|text| {
+                            text.starts_with(if i == 0 { b"`" } else { b"}" }) && text.ends_with(if is_last { b"`" } else { b"${" })
+                        });
+                    }
+                }
+                ExprKind::AsConst(_) => expect("const_keyword_span", e.const_keyword_span(), &is("const")),
+                ExprKind::Jsx(jsx) => {
+                    expect("Jsx::opening_span", Some(jsx.opening_span()), &angles);
+                    expect("Jsx::closing_span", jsx.closing_span(), &|text| text.starts_with(b"<") && text.ends_with(b">"));
+                    expect("type_args", jsx.type_args().angle_brackets_span(), &angles);
+                }
+                ExprKind::Regex(regex) => expect("Regex", Some(e.span()), &|text| {
+                    text.len() == regex.pattern().len() + regex.flags().len() + 2 && regex.flags().iter().all(u8::is_ascii_alphabetic)
+                }),
+                _ => {}
+            }
+        }
+        Node::Type(ty) => {
+            expect("TypeNode::outer_span", ty.is_parenthesized().then(|| ty.outer_span()), &within(b'(', b')'));
+            match ty.kind() {
+                TypeKind::Ref { name, args } => {
+                    expect("type_args", args.angle_brackets_span(), &angles);
+                    expect("EntityName::span", Some(name.span()), &|text| !text.is_empty() && name.span().start == ty.span().start);
+                }
+                TypeKind::UniqueSymbol => expect("unique_symbol_keyword_span", ty.unique_symbol_keyword_span(), &is("symbol")),
+                TypeKind::Import { .. } => {
+                    expect("import_span", ty.import_span(), &|text| text.starts_with(b"import"));
+                    expect("import_source_span", ty.import_source_span(), &|text| matches!(text.first(), Some(b'"' | b'\'')));
+                }
+                _ => {}
+            }
+        }
+        Node::Func(func) => {
+            let open: &'static str = if func.kind() == FnKind::IndexSignature { "[" } else { "(" };
+            let close: &'static str = if func.kind() == FnKind::IndexSignature { "]" } else { ")" };
+            expect("Func::open_paren", at(func.open_paren()), &is(open));
+            expect("Func::close_paren", at(func.close_paren()), &is(close));
+            expect("Func::arrow_span", func.arrow_span(), &is("=>"));
+            expect("Func::body_span", func.body_span(), &braces);
+            expect("Func::params_span", func.params_span().filter(|_| func.close_paren().is_some()), &|text| {
+                text.starts_with(open.as_bytes()) && text.ends_with(close.as_bytes())
+            });
+            expect("type_params", func.type_params().angle_brackets_span(), &angles);
+            expect("return_type", func.return_type().map(|it| it.annotation_span()), &annotation);
+            expect("Func::name", func.name().map(|it| it.span()), &|text| !text.is_empty());
+            if !matches!(func.kind(), FnKind::Arrow | FnKind::StaticBlock) {
+                expect("Func::span_from_params", Some(func.span_from_params()), &|text| matches!(text.first(), Some(b'(' | b'<' | b'[')));
+            }
+        }
+        Node::Param(param) => {
+            modifiers(param.modifiers(), &mut expect);
+            expect("Param::ty", param.ty().map(|it| it.annotation_span()), &annotation);
+            expect("Param::binding_span", Some(param.binding_span()), &|_| param.span().contains(param.binding_span()));
+            expect("Param::span_without_modifiers", Some(param.span_without_modifiers()), &|text| {
+                text.starts_with(b"...") == param.is_rest() && param.span_without_modifiers().contains(param.binding_span())
+            });
+        }
+        Node::Class(class) => {
+            modifiers(class.modifiers(), &mut expect);
+            expect("Class::keyword_span", Some(class.keyword_span()), &is("class"));
+            expect("Class::body_span", Some(class.body_span()), &braces);
+            expect("type_params", class.type_params().angle_brackets_span(), &angles);
+            expect("extends_args", class.extends_args().angle_brackets_span(), &angles);
+        }
+        Node::Member(member) => {
+            modifiers(member.modifiers(), &mut expect);
+            key(file, member.key(), &mut expect);
+            expect("Member::ty", member.ty().map(|it| it.annotation_span()), &annotation);
+            expect("constructor_keyword", member.constructor_keyword().map(|it| it.span()), &|text| {
+                text == b"constructor" || text.get(1..text.len() - 1) == Some(b"constructor")
+            });
+        }
+        Node::Prop(prop) => key(file, prop.key(), &mut expect),
+        Node::PatProp(prop) => key(file, prop.key(), &mut expect),
+        Node::EnumMember(member) => key(file, member.key(), &mut expect),
+        Node::VarDecl(declaration) => expect("VarDecl::ty", declaration.ty().map(|it| it.annotation_span()), &annotation),
+        Node::Stmt(statement) => {
+            modifiers(statement.modifiers(), &mut expect);
+            expect("Stmt::semicolon", statement.semicolon(), &is(";"));
+            expect("Stmt::export_span", statement.export_span(), &|text| text.starts_with(b"export"));
+            expect("Stmt::catch_clause_span", statement.catch_clause_span(), &|text| text.starts_with(b"catch") && text.ends_with(b"}"));
+            expect("Stmt::module_specifier_span", statement.module_specifier_span(), &|text| matches!(text.first(), Some(b'"' | b'\'')));
+            expect("Stmt::label", statement.label().map(|it| it.span()), &|text| !text.is_empty());
+            match statement.kind() {
+                StmtKind::Interface(it) => {
+                    expect("Interface::body_span", Some(it.body_span()), &braces);
+                    expect("type_params", it.type_params().angle_brackets_span(), &angles);
+                }
+                StmtKind::Enum(it) => expect("Enum::body_span", Some(it.body_span()), &braces),
+                StmtKind::Module(it) => expect("Module::body_span", it.body_span(), &braces),
+                StmtKind::TypeAlias(it) => expect("type_params", it.type_params().angle_brackets_span(), &angles),
+                StmtKind::Block(_) => expect("Block", Some(statement.span()), &braces),
+                StmtKind::ImportEquals(it) => expect("require_span", it.require_span(), &|text| text.starts_with(b"require") && text.ends_with(b")")),
+                StmtKind::Import(it) => {
+                    expect("namespace_span", it.namespace_span(), &|text| text.starts_with(b"*"));
+                    if let Some(attributes) = it.attributes() {
+                        expect("ImportAttributes::keyword_span", Some(attributes.keyword_span()), &|text| text == b"with" || text == b"assert");
+                        expect("ImportAttributes::braces_span", Some(attributes.braces_span()), &braces);
+                    }
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Collects what the ESTree of a file says about things that `bun_lint::ast` has an accessor for.
+#[derive(Default)]
+struct Facts {
+    chains: Vec<Span>,
+    directives: Vec<Span>,
+    open: Vec<(NodeType, Span)>,
+    is_directive: bool,
+}
+
+impl Sink for Facts {
+    fn start_node(&mut self, node_type: NodeType, span: Span) {
+        if node_type == NodeType::ChainExpression {
+            self.chains.push(span);
+        }
+        self.open.push((node_type, span));
+    }
+    fn end_node(&mut self) {
+        self.open.pop();
+    }
+    fn start_object(&mut self) {}
+    fn end_object(&mut self) {}
+    fn start_list(&mut self) {}
+    fn end_list(&mut self) {}
+    fn field(&mut self, name: &'static str) {
+        self.is_directive = name == "directive";
+    }
+    fn null(&mut self) {}
+    fn boolean(&mut self, _: bool) {}
+    fn number(&mut self, _: f64) {}
+    fn string(&mut self, _: &[u8]) {
+        // typescript-estree has directives in static blocks, ESLint's own parser has not.
+        let in_static_block = self.open.len() >= 2 && self.open[self.open.len() - 2].0 == NodeType::StaticBlock;
+        if std::mem::take(&mut self.is_directive)
+            && !in_static_block
+            && let Some(&(_, span)) = self.open.last()
+        {
+            self.directives.push(span);
+        }
+    }
+}
+
+/// Compares accessors that answer from below with the ESTree, which is made from above.
+fn check_against_estree<'a>(file: &'a File<'a>, reached: &HashMap<Node<'a>, u32>, problems: &mut Vec<Problem>) {
+    let mut facts = Facts::default();
+    bun_lint::estree::convert(file, &mut facts);
+    let (mut chains, mut directives) = (Vec::new(), Vec::new());
+    for &node in reached.keys() {
+        match node {
+            Node::Expr(e) if e.is_chain_root() => chains.push(e.span()),
+            Node::Stmt(s) if s.directive().is_some() => directives.push(s.span()),
+            _ => {}
+        }
+    }
+    for (what, mut expected, mut actual) in
+        [("is_chain_root", facts.chains, chains), ("directive", facts.directives, directives)]
+    {
+        expected.sort();
+        actual.sort();
+        if expected != actual {
+            problems.push((format!("{what} differs from the ESTree"), format!("{expected:?} {actual:?}")));
+        }
+    }
 }
 
 /// What the rule below finds.
@@ -232,6 +481,7 @@ impl Rule for Everything {
         on.finish(|_, cx| {
             let mut problems = Vec::new();
             let reached = check_tree(cx.file(), &mut problems);
+            check_against_estree(cx.file(), &reached, &mut problems);
             for (&node, &times) in &cx.state {
                 if times > 1 {
                     problems.push((format!("listener called twice: {}", describe(node)), place(node)));

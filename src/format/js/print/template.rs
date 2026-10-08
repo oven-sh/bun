@@ -9,6 +9,7 @@ use crate::ir::width::string_width;
 use crate::js::utils::call_expression::is_test_each_pattern;
 use crate::js::utils::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::utils::string::push_with_normalized_newlines;
+use crate::cursor::around_node_at;
 use crate::prelude::*;
 use crate::{format_args, write};
 
@@ -127,6 +128,15 @@ impl<'a> TemplateLike<'a> {
         }
     }
 
+    /// Where the text at `i` is, without its delimiters: the range of ESTree's `TemplateElement`.
+    fn content_span(self, i: usize) -> Span {
+        let span = match self {
+            Self::TemplateLiteral(t) => t.quasi_span(i),
+            Self::TSTemplateLiteralType(t) => t.quasi_span(i),
+        };
+        span.shrink(1, if i + 1 == self.quasi_count() { 1 } else { 2 })
+    }
+
     fn expression(self, i: usize) -> Option<TemplateExpression<'a>> {
         match self {
             Self::TemplateLiteral(t) => t.exprs().get(i).map(TemplateExpression::Expression),
@@ -173,10 +183,10 @@ impl<'a> Format<'a> for TemplateLike<'a> {
         let mut expressions = self.expressions(false, f);
         for i in 0..self.quasi_count() {
             let raw = self.raw(i);
-            match bun_core::strings::contains_char(raw, b'\r') {
+            around_node_at(|| self.content_span(i), f, |f| match bun_core::strings::contains_char(raw, b'\r') {
                 true => f.write_built_text(|out| push_with_normalized_newlines(out, raw)),
                 false => write!(f, text(raw)),
-            }
+            });
             write!(f, expressions.next());
         }
         write!(f, "`");

@@ -6,6 +6,7 @@ use super::semicolon::OptionalSemicolon;
 use super::type_parameters::type_parameters;
 use crate::js::format::{ExprOptions, FormatTypeAnnotation, format_node_without_comments, identifier, write_expression};
 use crate::js::utils::suppressed::FormatSuppressedNode;
+use crate::js::utils::typescript::end_of_line_comments;
 use crate::prelude::*;
 use crate::write;
 
@@ -31,6 +32,7 @@ pub(crate) fn write_function<'a>(func: Func<'a>, options: FormatFunctionOptions,
                 space(),
                 func.name().map(|name| identifier(name, node)),
                 group(&type_parameters(func.type_params(), Node::Func(func))),
+                (func.name().is_some() || !func.type_params().is_empty()).then_some(FormatCommentsBehindParenthesis(func)),
             ]
         );
     });
@@ -83,6 +85,26 @@ pub(crate) fn write_function<'a>(func: Func<'a>, options: FormatFunctionOptions,
     }
 }
 
+/// The comments behind the `(` of the parameters on its line, if nothing else follows on that line.
+/// They trail what is before the `(`, a name or type parameters, if there is such a node:
+///
+/// ```js
+/// function f( // comment
+///   a) {}
+/// ```
+pub(crate) struct FormatCommentsBehindParenthesis<'a>(pub(crate) Func<'a>);
+
+impl<'a> Format<'a> for FormatCommentsBehindParenthesis<'a> {
+    fn fmt(&self, f: &mut Formatter<'a>) {
+        if !f.is_quiet()
+            && let Some(first) = self.0.params_with_this().next()
+        {
+            let comments = end_of_line_comments(f.comments().comments_before(first.span().start));
+            write!(f, FormatTrailingComments::Comments(comments));
+        }
+    }
+}
+
 /// Prettier's `isIifeCalleeOrTaggedTemplateExpressionTag`.
 fn is_iife_callee_or_tagged_template_tag(e: Expr<'_>) -> bool {
     match e.ast_parent() {
@@ -104,29 +126,30 @@ fn is_iife_callee_or_tagged_template_tag(e: Expr<'_>) -> bool {
 ///
 /// Returns whether `e` is such a function and has been written.
 pub(crate) fn write_called_function_with_comments<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Formatter<'a>) -> bool {
-    if e.as_fn().is_none() {
+    if e.as_fn().is_none() || !is_iife_callee_or_tagged_template_tag(e) {
         return false;
     }
-    let span = e.span();
-    if !f.comments().has_comment_before(e.outer_span().end) || !is_iife_callee_or_tagged_template_tag(e) {
-        return false;
+    let (span, end) = (e.span(), e.outer_span().end);
+    // Whoever writes the callee may have hidden the comments after it.
+    let view_limit = f.comments_mut().limit_comments_up_to(0);
+    f.comments_mut().restore_view_limit(None);
+    f.comments_mut().limit_comments_up_to(end);
+
+    let has_comments = f.comments().has_comment_before(span.start) || f.comments().has_comment_in_range(span.end, end);
+    if has_comments {
+        let is_suppressed = f.comments().is_suppressed(span.start);
+        let content = format_with(|f| {
+            write!(f, format_leading_comments(span));
+            match is_suppressed {
+                true => write!(f, FormatSuppressedNode(span)),
+                false => write_expression(e, options, f),
+            }
+            write!(f, FormatTrailingComments::Comments(f.comments().comments_before(end)));
+        });
+        write!(f, ["(", soft_block_indent(&content), ")"]);
     }
-    let has_comments = f.comments().has_comment_before(span.start)
-        || !f.comments().comments_in_range(span.end, e.outer_span().end).is_empty();
-    if !has_comments {
-        return false;
-    }
-    let is_suppressed = f.comments().is_suppressed(span.start);
-    let content = format_with(|f| {
-        write!(f, format_leading_comments(span));
-        match is_suppressed {
-            true => write!(f, FormatSuppressedNode(span)),
-            false => write_expression(e, options, f),
-        }
-        write!(f, FormatTrailingComments::Comments(f.comments().comments_before(e.outer_span().end)));
-    });
-    write!(f, ["(", soft_block_indent(&content), ")"]);
-    true
+    f.comments_mut().restore_view_limit(view_limit);
+    has_comments
 }
 
 /// The `{ .. }` of a function.

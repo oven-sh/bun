@@ -59,6 +59,19 @@ fn write_formal_parameters<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
         write!(f, "(");
     }
     match layout {
+        // Prettier takes a comment before the `=>` for one between the parentheses, finds none
+        // there, and is left with the line breaks around it. The empty text is what makes the
+        // second one count.
+        ParameterLayout::NoParameters
+            if !f.is_quiet()
+                && !f.comments().has_comment_in_span(span)
+                && func.arrow_span().is_some_and(|token| {
+                    let start = func.return_type().map_or(span.end, |ty| ty.span().end);
+                    f.comments().has_comment_in_range(start, token.start)
+                }) =>
+        {
+            write!(f, [indent(&format_args!(soft_line_break(), "")), soft_line_break()]);
+        }
         ParameterLayout::NoParameters => write!(f, format_dangling_comments(span).with_soft_block_indent()),
         ParameterLayout::Hug => write!(f, ParameterList::with_layout(func, layout)),
         ParameterLayout::Default => write!(f, soft_block_indent(&ParameterList::with_layout(func, layout))),
@@ -190,6 +203,7 @@ impl<'a> Format<'a> for ParameterList<'a> {
 pub(crate) fn can_avoid_parentheses<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> bool {
     f.options().arrow_parentheses.is_as_needed()
         && arrow.params().len() == 1
+        && arrow.this_param().is_none()
         && arrow.type_params().is_empty()
         && arrow.return_type().is_none()
         && arrow.params().first().is_some_and(|param| {
@@ -199,7 +213,10 @@ pub(crate) fn can_avoid_parentheses<'a>(arrow: Func<'a>, f: &Formatter<'a>) -> b
                 && param.default().is_none()
                 && matches!(param.pat().kind(), PatKind::Ident(_))
         })
-        && !f.comments().has_comment_in_span(FormatFormalParameters(arrow).span())
+        && !f.comments().has_comment_in_range(
+            FormatFormalParameters(arrow).span().start,
+            arrow.arrow_span().map_or(0, |token| token.start),
+        )
 }
 
 /// Prettier's `shouldHugTheOnlyFunctionParameter`.
@@ -239,7 +256,7 @@ pub(crate) fn should_hug_function_parameters<'a>(func: Func<'a>, parentheses_not
 
 /// Whether all parameters are plain names, without default values. A rest parameter is not.
 pub(crate) fn has_only_simple_parameters(func: Func<'_>, allow_type_annotations: bool) -> bool {
-    func.params().iter().all(|parameter| {
+    func.params_with_this().all(|parameter| {
         !parameter.is_rest()
             && matches!(parameter.pat().kind(), PatKind::Ident(_))
             && parameter.default().is_none()

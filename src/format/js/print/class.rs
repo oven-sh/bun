@@ -1,5 +1,5 @@
 use super::decorators::FormatDecorators;
-use super::function::{FormatFunctionBody, should_group_function_parameters};
+use super::function::{FormatCommentsBehindParenthesis, FormatFunctionBody, should_group_function_parameters};
 use super::parameters::FormatFormalParameters;
 use super::program::FormatStatements;
 use super::semicolon::OptionalSemicolon;
@@ -284,22 +284,17 @@ impl<'a> Format<'a> for FormatClass<'a> {
                     let has_trailing_comments = comments.iter().any(|comment| comment.is_line());
 
                     let content = format_with(|f| {
-                        if has_type_arguments {
-                            write!(f, extends);
-                            match implements.is_empty() {
-                                true => super_type_arguments.write_without_comments(f),
-                                false => super_type_arguments.fmt(f),
-                            }
-                        } else if implements.is_empty() {
+                        if has_type_arguments || !implements.is_empty() {
+                            extends.fmt(f);
+                        } else {
                             FormatNodeWithoutTrailingComments(&extends).fmt(f);
                             if !has_trailing_comments {
                                 FormatTrailingComments::Comments(comments).fmt(f);
                             }
-                        } else {
-                            extends.fmt(f);
                         }
                     });
 
+                    // Prettier's `printSuperClass`.
                     if matches!(parent, AstNodes::AssignmentExpression(_)) {
                         let content = content.memoized();
                         write!(
@@ -311,6 +306,12 @@ impl<'a> Format<'a> for FormatClass<'a> {
                         );
                     } else {
                         content.fmt(f);
+                    }
+                    if has_type_arguments {
+                        match implements.is_empty() {
+                            true => super_type_arguments.write_without_comments(f),
+                            false => super_type_arguments.fmt(f),
+                        }
                     }
                 });
 
@@ -519,6 +520,10 @@ impl<'a> Format<'a> for FormatPropertyWithoutSemicolon<'a> {
 /// method.
 pub(crate) fn format_grouped_parameters_with_return_type_for_method<'a>(func: Func<'a>, f: &mut Formatter<'a>) {
     write!(f, type_parameters(func.type_params(), Node::Func(func)));
+    // Without a body, Prettier attaches no comments to the function, and the name is before them.
+    if !func.type_params().is_empty() || !func.has_body() {
+        write!(f, FormatCommentsBehindParenthesis(func));
+    }
 
     group(&format_with(|f| {
         let format_parameters = FormatFormalParameters(func).memoized();

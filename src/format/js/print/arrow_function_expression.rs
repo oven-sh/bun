@@ -184,6 +184,9 @@ fn write_arrow<'a>(
             write!(
                 f,
                 indent(&format_args!(
+                    // If the assignment has broken after the operator, Prettier breaks the line
+                    // once more. The empty text is what makes this line break count.
+                    should_print_soft_line.then_some(""),
                     should_print_soft_line.then_some(soft_line_break()),
                     group(&format_args!(format_first, format_rest)).should_expand(should_break_chain)
                 ))

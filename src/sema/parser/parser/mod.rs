@@ -181,6 +181,8 @@ pub(crate) struct Parser<'a> {
     /// `notParenthesizedArrow`: the positions at which a speculative parse has found that no arrow
     /// function starts, in order.
     pub(crate) not_arrows: Vec<u32>,
+    /// See `is_at_parameters_of_function_type`: a position, the context and the answer, in order.
+    pub(crate) function_type_starts: Vec<(u32, u32, bool)>,
     /// How many `T?` have been parsed that are not known to be an element of a tuple. Any other is
     /// an error.
     pub(crate) unclaimed_nullable_types: u32,
@@ -253,6 +255,7 @@ impl<'a> Parser<'a> {
             question_of_parameter: 0,
             private_name_before_in: u32::MAX,
             not_arrows: Vec::new(),
+            function_type_starts: Vec::new(),
             unclaimed_nullable_types: 0,
             last_nullable_type: (TypeNodeId::NONE, 0),
             speculations: 0,

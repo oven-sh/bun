@@ -102,10 +102,43 @@ impl Parser<'_> {
     fn is_start_of_function_or_constructor_type(&mut self) -> bool {
         match self.token() {
             T::LessThan | T::New => true,
-            T::OpenParen => self.look_ahead_parsing(Self::is_unambiguously_start_of_function_type),
+            T::OpenParen => self.is_at_parameters_of_function_type(),
             T::Abstract => self.peek() == T::New,
             _ => false,
         }
+    }
+
+    /// `lookAhead(isUnambiguouslyStartOfFunctionType)`
+    fn is_at_parameters_of_function_type(&mut self) -> bool {
+        // A pattern after the `(` is parsed to get past it, with the types in it, and in them every
+        // `(` is asked about again, twice. An answer that took long is kept: otherwise each level of
+        // `({[a as ({[b as ..` takes three times as long as the one in it.
+        let at = (self.pos(), self.context);
+        let mut place = 0;
+        if !self.function_type_starts.is_empty() {
+            // What is before a token that is read for good is not read again.
+            if self.speculations == 0 {
+                let read = self.function_type_starts.partition_point(|it| it.0 < at.0);
+                self.function_type_starts.drain(..read);
+            }
+            let kept = &self.function_type_starts;
+            match kept.binary_search_by_key(&at, |it| (it.0, it.1)) {
+                Ok(known) => return kept.get(known).is_some_and(|it| it.2),
+                Err(free) => place = free,
+            }
+        }
+        let mut end = at.0;
+        let answer = self.look_ahead_parsing(|p| {
+            let answer = p.is_unambiguously_start_of_function_type();
+            end = p.pos();
+            answer
+        });
+        // What was kept on the way is behind it.
+        if end.saturating_sub(at.0) > 64 {
+            self.function_type_starts
+                .insert(place, (at.0, at.1, answer));
+        }
+        answer
     }
 
     /// `isUnambiguouslyStartOfFunctionType`

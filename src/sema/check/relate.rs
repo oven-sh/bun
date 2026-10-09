@@ -4336,6 +4336,7 @@ impl<'p, 's> Checker<'p, 's> {
         members.retain(|member| !self.is_error_type(*member) && !member.is_never());
         if members.len() < 2 {
             let apparent = members.first().copied().unwrap_or(source);
+            let apparent = self.object_with_properties_of(apparent);
             // `getPropertyOfType` finds nothing in a type that is not an object type: `any`, which
             // `T & U` resolves to where `U` extends `any`.
             let properties = match self.members(apparent) {

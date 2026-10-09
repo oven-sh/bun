@@ -485,6 +485,8 @@ impl Engines {
             if state.all.len() < among && self.demand.is_worth_another(state.all.len()) {
                 let (at, desk) = (state.all.len(), Arc::<Desk>::default());
                 let (start, for_thread) = (Arc::clone(&self.start), Arc::clone(&desk));
+                // SAFETY: no VM or JS state crosses: a number, a `Once` with a flag, and a `Desk`, whose turns are bytes. This
+                // thread has no VM. The new one makes its own, and frees it itself before `end_all` returns.
                 std::thread::Builder::new()
                     .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
                     .spawn(move || run_engine(at, &start, &for_thread))

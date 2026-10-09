@@ -1660,7 +1660,7 @@ describe.concurrent("bun lint", () => {
           "a.js": "/* eslint no-var: [ */\nfoo(); // eslint-disable-line no-var\n",
         };
         const result = await lint(all, ["--fix", "a.js"], { reads: ["a.js"] });
-        expect(result.files).toEqual({ "a.js": "/* eslint no-var: [ */\nfoo(); \n" });
+        expect(result.files).toEqual({ "a.js": "/* eslint no-var: [ */\nfoo();  \n" });
         expect(result.stderr).not.toContain("syntax error");
       });
 

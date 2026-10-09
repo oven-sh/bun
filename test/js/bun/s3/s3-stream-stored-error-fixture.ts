@@ -76,7 +76,7 @@ async function stored() {
     bytes => `resolved ${bytes} bytes`,
   );
   results["Bun.write(s3file, new Response(stream))"] = await outcome(
-    Bun.write(client.file("copy"), new Response(failed())),
+    Bun.write(client.file("copy") as any, new Response(failed())),
     bytes => `resolved ${bytes} bytes`,
   );
   // Waits for requests in flight, so a PUT that went out is counted.

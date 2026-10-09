@@ -34,7 +34,6 @@
 
 namespace WebCore {
 
-class JSDOMWindow;
 enum class RejectAsHandled : uint8_t { No,
     Yes };
 
@@ -82,18 +81,6 @@ public:
         DEFERRED_PROMISE_HANDLE_AND_RETURN_IF_EXCEPTION(scope, lexicalGlobalObject);
         resolve(*lexicalGlobalObject, value_js);
         DEFERRED_PROMISE_HANDLE_AND_RETURN_IF_EXCEPTION(scope, lexicalGlobalObject);
-    }
-
-    void resolve()
-    {
-        if (shouldIgnoreRequestToFulfill())
-            return;
-
-        ASSERT(deferred());
-        ASSERT(globalObject());
-        JSC::JSGlobalObject* lexicalGlobalObject = globalObject();
-        JSC::JSLockHolder locker(lexicalGlobalObject);
-        resolve(*lexicalGlobalObject, JSC::jsUndefined());
     }
 
     template<class IDLType>

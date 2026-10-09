@@ -7,14 +7,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifndef STRING_POINTER
-#define STRING_POINTER
-typedef struct StringPointer {
-    uint32_t off;
-    uint32_t len;
-} StringPointer;
-#endif
-
 #ifdef __cplusplus
 extern "C" {
 #endif

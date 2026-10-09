@@ -59,34 +59,6 @@
 namespace WebCore {
 using namespace JSC;
 
-struct JSBlobWrapperConverter {
-    static RefPtr<Blob> toWrapped(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-    {
-        auto* globalObject = dynamicDowncast<JSDOMGlobalObject>(&lexicalGlobalObject);
-        if (!globalObject)
-            return nullptr;
-
-        auto* readableStream = dynamicDowncast<JSBlob>(value);
-        if (!readableStream)
-            return nullptr;
-
-        return Blob::create(value);
-    }
-};
-
-template<> struct JSDOMWrapperConverterTraits<Blob> {
-    using WrapperClass = JSBlobWrapperConverter;
-    using ToWrappedReturnType = RefPtr<Blob>;
-    static constexpr bool needsState = true;
-};
-
-template<> struct Converter<IDLInterface<Blob>> : DefaultConverter<IDLInterface<Blob>> {
-    static RefPtr<Blob> convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, JSDOMGlobalObject& globalObject)
-    {
-        return JSBlobWrapperConverter::toWrapped(lexicalGlobalObject, value);
-    }
-};
-
 // Functions
 
 static JSC_DECLARE_HOST_FUNCTION(jsDOMFormDataPrototypeFunction_append);

@@ -44,11 +44,6 @@ namespace WebCore {
 class JSBlob;
 }
 
-namespace uWS {
-template<bool, bool, typename>
-struct WebSocket;
-}
-
 namespace JSC {
 class ArrayBuffer;
 class ArrayBufferView;

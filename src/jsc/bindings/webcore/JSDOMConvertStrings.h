@@ -27,7 +27,6 @@
 
 #include "IDLTypes.h"
 #include "JSDOMConvertBase.h"
-#include "StringAdaptors.h"
 
 namespace WebCore {
 
@@ -56,16 +55,6 @@ template<> struct JSConverter<IDLDOMString> {
         return JSC::jsStringWithCache(JSC::getVM(&lexicalGlobalObject), value);
     }
 
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const UncachedString& value)
-    {
-        return JSC::jsString(JSC::getVM(&lexicalGlobalObject), value.string);
-    }
-
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const OwnedString& value)
-    {
-        return JSC::jsOwnedString(JSC::getVM(&lexicalGlobalObject), value.string);
-    }
-
     static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const URL& value)
     {
         return JSC::jsOwnedString(JSC::getVM(&lexicalGlobalObject), value.string());
@@ -87,26 +76,12 @@ template<> struct JSConverter<IDLByteString> {
     {
         return JSC::jsStringWithCache(JSC::getVM(&lexicalGlobalObject), value);
     }
-
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const UncachedString& value)
-    {
-        return JSC::jsString(JSC::getVM(&lexicalGlobalObject), value.string);
-    }
-
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const OwnedString& value)
-    {
-        return JSC::jsOwnedString(JSC::getVM(&lexicalGlobalObject), value.string);
-    }
 };
 
 template<> struct Converter<IDLUSVString> : DefaultConverter<IDLUSVString> {
     static String convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
         return valueToUSVString(lexicalGlobalObject, value);
-    }
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const URL& value)
-    {
-        return JSC::jsOwnedString(JSC::getVM(&lexicalGlobalObject), value.string());
     }
 };
 
@@ -117,16 +92,6 @@ template<> struct JSConverter<IDLUSVString> {
     static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const String& value)
     {
         return JSC::jsStringWithCache(JSC::getVM(&lexicalGlobalObject), value);
-    }
-
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const UncachedString& value)
-    {
-        return JSC::jsString(JSC::getVM(&lexicalGlobalObject), value.string);
-    }
-
-    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const OwnedString& value)
-    {
-        return JSC::jsOwnedString(JSC::getVM(&lexicalGlobalObject), value.string);
     }
 
     static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, const URL& value)

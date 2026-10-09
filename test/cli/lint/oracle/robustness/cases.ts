@@ -418,6 +418,8 @@ export const cases: Case[] = [
   {
     name: "a comment that declares 65,000 globals",
     isHeavy: true,
+    // oxlint does not read such comments.
+    eslint: true,
     file: "a.js",
     text: () => `/* global ${seq(65_000, i => `g${i}`, ", ")} */\n${seq(65_000, i => `f(g${i});\n`)}`,
     rules: { "no-undef": "error" },

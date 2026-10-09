@@ -130,6 +130,21 @@ describe.concurrent("a function in an eslint.config.js", () => {
 });
 
 describe.concurrent("an eslint.config.js", () => {
+  test("`basePath` can be written as the system writes paths", async () => {
+    const { problems } = await lint({
+      "eslint.config.mjs": `import { join } from "node:path";
+        export default [
+          { basePath: join(import.meta.dirname, "src", "deep"), files: ["*.js"], rules: { "no-var": "error" } },
+          { basePath: join("src", "deep"), ignores: ["ignored.js"] },
+        ];`,
+      "a.js": code,
+      "src/b.js": code,
+      "src/deep/c.js": code,
+      "src/deep/ignored.js": code,
+    });
+    expect(problems).toEqual(["src/deep/c.js:1:1 no-var"]);
+  });
+
   test("the options of the language of a plugin are not those of JavaScript", async () => {
     const { problems, stderr } = await lint({
       "eslint.config.mjs": `export default [

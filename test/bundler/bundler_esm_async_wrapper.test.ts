@@ -78,7 +78,10 @@ describe("bundler", () => {
         "var __esmEvaluator = /* @__PURE__ */ (() => {
           var stack = [], index = 0, order = 0, importer;
           var executeAsync = (module) => {
-            module.body().then(() => {
+            module.executing = 1;
+            var promise = module.body();
+            module.executing = 0;
+            promise.then(() => {
               if (module.status == 3)
                 return;
               module.order = -1;
@@ -89,12 +92,14 @@ describe("bundler", () => {
             }, (error) => reject(module, error));
           };
           var gather = (module, ready) => {
-            for (var parent of module.parents)
+            while (module.gathered < module.parents.length) {
+              var parent = module.parents[module.gathered++];
               if (!ready.includes(parent) && !parent.root.error && !--parent.pending) {
                 ready.push(parent);
                 if (!parent.hasTLA)
                   gather(parent, ready);
               }
+            }
           };
           var execute = (ready, i) => {
             for (;i < ready.length; i++) {
@@ -114,6 +119,7 @@ describe("bundler", () => {
                   module.body();
                   module.order = -1;
                   module.status = 3;
+                  gather(module, ready);
                 } catch (error) {
                   reject(module, error);
                 }
@@ -134,6 +140,7 @@ describe("bundler", () => {
             var parent = importer;
             module.status = 1;
             module.index = module.ancestor = index++;
+            module.stack = stack;
             stack.push(module);
             importer = module;
             module.imports();
@@ -172,25 +179,39 @@ describe("bundler", () => {
             if (!parent)
               return;
             var required = module;
-            if (module.status == 1)
+            if (module.status == 1) {
+              if (module.stack != stack)
+                return;
               parent.ancestor = Math.min(parent.ancestor, module.ancestor);
-            else if ((required = module.root).error)
+            } else if ((required = module.root).error)
               throw required.error[0];
-            if (required.order >= 0) {
+            if (required.order >= 0 && !required.executing) {
               parent.pending++;
               required.parents.push(parent);
             }
           };
           return [
             (imports, body, hasTLA) => {
-              var module = { imports, body, hasTLA, status: 0, pending: 0, parents: [] };
+              var module = { imports, body, hasTLA, status: 0, pending: 0, parents: [], gathered: 0 };
               return (parent = importer) => evaluate(module, parent);
             },
             (...wrappers) => {
               var waiter = { hasTLA: 1, status: 2, pending: 0, parents: [] };
               waiter.root = waiter;
-              for (var wrapper of wrappers)
-                wrapper(waiter);
+              var outerStack = stack, outerImporter = importer;
+              stack = [];
+              importer = undefined;
+              try {
+                for (var wrapper of wrappers)
+                  wrapper(waiter);
+              } catch (error) {
+                waiter.status = 3;
+                waiter.error = [error];
+                throw error;
+              } finally {
+                stack = outerStack;
+                importer = outerImporter;
+              }
               if (waiter.pending) {
                 waiter.order = order++;
                 return new Promise((resolve, reject) => {
@@ -257,7 +278,7 @@ describe("bundler", () => {
 
         // AsyncEntryPoint.ts
         async function AsyncEntryPoint() {
-          await Promise.resolve().then(() => __esmWait(init_BaseElement));
+          await (async () => __esmWait(init_BaseElement))();
           console.log("Launching AsyncEntryPoint", BaseElement());
         }
 
@@ -265,7 +286,7 @@ describe("bundler", () => {
         await Promise.resolve();
         AsyncEntryPoint();
 
-        //# debugId=CE956F18322D9F5D64756E2164756E21
+        //# debugId=39B97342E6261B4F64756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);
@@ -597,6 +618,67 @@ describe("bundler", () => {
     format: "esm",
     run: { stdout: "true 1\ntrue fails.js" },
   });
+  // m1.js waits for m2.js, so m2.js cannot wait for m1.js, nor for m4.js, which is in a cycle with it.
+  // Node stops here from source ("unsettled top-level await"). Bun runs it.
+  itBundled("bundler/import() of a file that imports the import cycle of the importer", {
+    files: {
+      "/entry.js": `import("./m1.js").then(() => console.log("entry"));`,
+      "/m1.js": /* js */ `
+        import "./m4.js";
+        console.log("m1 starts");
+        await import("./m2.js");
+        console.log("m1 ends");
+      `,
+      "/m2.js": `import "./m4.js"; console.log("m2");`,
+      "/m4.js": `import "./m1.js"; console.log("m4");`,
+    },
+    format: "esm",
+    run: { stdout: "m4\nm1 starts\nm2\nm1 ends\nentry" },
+  });
+  // When t.js is done, u1.js goes on first, and z.js waits for its turn. entry.js, which prints after
+  // u1.js, asks for z.js in between.
+  itBundled("bundler/a file waits for an async wrapper that is ready and has not run", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./first.js";
+        import "./u1.js";
+        import "./z.js";
+        console.log("entry");
+        export const later = () => import("./t.js");
+      `,
+      "/first.js": `queueMicrotask(() => import("./z.js"));`,
+      "/u1.js": `import "./t.js"; console.log("u1");`,
+      "/z.js": `import "./t.js"; console.log("z");`,
+      "/t.js": `console.log("t starts"); await new Promise(resolve => setImmediate(resolve)); console.log("t ends");`,
+    },
+    format: "esm",
+    target: "bun",
+    run: { stdout: "t starts\nt ends\nu1\nz\nentry" },
+  });
+  // page.js waits for a.js and b.js at once. a.js has started when b.js throws, and ends after that.
+  itBundled("bundler/an async wrapper ends after the file that waited for it has failed", {
+    files: {
+      "/run.js": /* js */ `
+        process.on("unhandledRejection", error => console.log("unhandled", error.message));
+        import("./page.js")
+          .catch(error => console.log("caught", error.message))
+          .then(() => new Promise(resolve => setImmediate(resolve)))
+          .then(() => console.log("done"));
+      `,
+      "/page.js": `import "./a.js"; import "./b.js"; console.log("page");`,
+      "/other.js": `import "./b.js"; import "./a.js";`,
+      "/a.js": `console.log("a starts"); await new Promise(resolve => setImmediate(resolve)); console.log("a ends");`,
+      "/b.js": `import "./boom.js"; import "./t.js"; console.log("b");`,
+      "/t.js": `await 0;`,
+      "/boom.js": `throw new Error("boom");`,
+    },
+    entryPoints: ["/run.js", "/other.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    target: "bun",
+    run: { file: "/out/run.js", stdout: "a starts\ncaught boom\na ends\ndone" },
+  });
   // A __commonJS wrapper returns module.exports at once, so it cannot wait for what it imports.
   itBundled("bundler/a CommonJS file cannot import a file that reaches a top-level await", {
     files: {
@@ -615,5 +697,17 @@ describe("bundler", () => {
         'This import is not allowed in a CommonJS module because the imported file "mid.js" depends on a top-level await',
       ],
     },
+  });
+  // Nothing prints for an import that tree shaking drops.
+  itBundled("bundler/a CommonJS file can import an async file that tree shaking drops", {
+    files: {
+      "/entry.js": `import c from "./c.js"; console.log(c.v);`,
+      "/c.js": `import { unused } from "pure"; module.exports = { v: 1 };`,
+      "/node_modules/pure/package.json": `{ "name": "pure", "main": "index.js", "sideEffects": false }`,
+      "/node_modules/pure/index.js": `import { t } from "./t.js"; export const unused = t;`,
+      "/node_modules/pure/t.js": `export const t = await 1;`,
+    },
+    format: "esm",
+    run: { stdout: "1" },
   });
 });

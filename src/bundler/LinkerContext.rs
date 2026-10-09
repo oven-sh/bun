@@ -952,7 +952,6 @@ impl<'a> LinkerContext<'a> {
         }
 
         scan_imports_and_exports(self)?;
-        self.validate_async_imports_of_commonjs_files();
 
         // Stop now if there were errors
         if self.log().has_errors() {
@@ -966,6 +965,10 @@ impl<'a> LinkerContext<'a> {
         self.tree_shaking_and_code_splitting()?;
         resolve_chunk_order_conflicts(self)?;
         find_wrappers_behind_imports(self)?;
+        self.validate_async_imports_of_commonjs_files();
+        if self.log().has_errors() {
+            return Err(LinkError::BuildFailed);
+        }
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
             self.check_for_memory_corruption();
@@ -2265,18 +2268,24 @@ impl<'a> LinkerContext<'a> {
         let flags = self.graph.meta.items_flags();
         let tla_keywords = self.parse_graph().ast.items_top_level_await_keyword();
         let input_files = self.parse_graph().input_files.items_source();
+        let mut import_record_indices: Vec<u32> = Vec::new();
         for source_index in self.graph.reachable_files.iter() {
             let id = source_index.get() as usize;
-            if flags[id].wrap != WrapKind::Cjs || !flags[id].is_async_or_has_async_dependency {
+            if flags[id].wrap != WrapKind::Cjs
+                || !flags[id].is_async_or_has_async_dependency
+                || !self.graph.files_live.is_set(id)
+            {
                 continue;
             }
-            for record in self.graph.ast.items_import_records()[id].as_slice() {
-                if record.kind != ImportKind::Stmt
-                    || !record.source_index.is_valid()
-                    || !flags[record.source_index.get() as usize].is_async_or_has_async_dependency
-                {
-                    continue;
+            import_record_indices.clear();
+            self.for_each_async_wrapper_call(source_index.get(), |import_record_index, _| {
+                if import_record_indices.last() != Some(&import_record_index) {
+                    import_record_indices.push(import_record_index);
                 }
+            });
+            for &import_record_index in &import_record_indices {
+                let record = &self.graph.ast.items_import_records()[id].as_slice()
+                    [import_record_index as usize];
                 let other = record.source_index.get() as usize;
                 self.log_disjoint().add_range_error_fmt(
                     Some(&input_files[id]),
@@ -2444,21 +2453,32 @@ impl<'a> LinkerContext<'a> {
 
     /// The async wrappers that the `import` statements of a file call, in order.
     pub(crate) fn async_wrappers_called_by(&self, source_index: crate::IndexInt) -> Vec<Ref> {
+        let wrapper_refs = self.graph.ast.items_wrapper_ref();
+        let mut wrappers: Vec<Ref> = Vec::new();
+        self.for_each_async_wrapper_call(source_index, |_, wrapper| {
+            if !wrappers.contains(&wrapper_refs[wrapper as usize]) {
+                wrappers.push(wrapper_refs[wrapper as usize]);
+            }
+        });
+        wrappers
+    }
+
+    /// `each(import record, file)` for every call of an async wrapper that the file prints for an `import`.
+    fn for_each_async_wrapper_call(
+        &self,
+        source_index: crate::IndexInt,
+        mut each: impl FnMut(u32, crate::IndexInt),
+    ) {
         let flags = self.graph.meta.items_flags();
         let wrapper_refs = self.graph.ast.items_wrapper_ref();
         let records = self.graph.ast.items_import_records()[source_index as usize].as_slice();
         let parts_live = &self.graph.parts_live[source_index as usize];
-        let mut wrappers: Vec<Ref> = Vec::new();
-        let mut add = |other: crate::IndexInt| {
+        let is_async_wrapper = |other: crate::IndexInt| {
             let other = other as usize;
-            if flags[other].wrap == WrapKind::Esm
+            flags[other].wrap == WrapKind::Esm
                 && flags[other].is_async_or_has_async_dependency
                 && self.graph.files_live.is_set(other)
                 && wrapper_refs[other].is_valid()
-                && !wrappers.contains(&wrapper_refs[other])
-            {
-                wrappers.push(wrapper_refs[other]);
-            }
         };
         for (part_index, part) in self.graph.ast.items_parts()[source_index as usize]
             .as_slice()
@@ -2476,17 +2496,19 @@ impl<'a> LinkerContext<'a> {
                 {
                     continue;
                 }
-                match self
+                let target = [record.source_index.get()];
+                let called: &[crate::IndexInt] = self
                     .graph
                     .wrappers_behind_import
                     .get(&(source_index, import_record_index))
-                {
-                    Some(behind) => behind.iter().copied().for_each(&mut add),
-                    None => add(record.source_index.get()),
+                    .map_or(&target, |behind| behind);
+                for &other in called {
+                    if is_async_wrapper(other) {
+                        each(import_record_index, other);
+                    }
                 }
             }
         }
-        wrappers
     }
 
     /// Whether the `import` has such wrappers (`find_wrappers_behind_imports`).

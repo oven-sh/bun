@@ -352,7 +352,10 @@ var __esmEvaluator = /* @__PURE__ */ (() => {
     importer;
 
   var executeAsync = module => {
-    module.body().then(
+    module.executing = 1;
+    var promise = module.body();
+    module.executing = 0;
+    promise.then(
       () => {
         if (module.status == 3) return;
         module.order = -1;
@@ -368,12 +371,15 @@ var __esmEvaluator = /* @__PURE__ */ (() => {
     );
   };
 
+  // `gathered`: a parent can register later, while the module waits for its turn in `execute`.
   var gather = (module, ready) => {
-    for (var parent of module.parents)
+    while (module.gathered < module.parents.length) {
+      var parent = module.parents[module.gathered++];
       if (!ready.includes(parent) && !parent.root.error && !--parent.pending) {
         ready.push(parent);
         if (!parent.hasTLA) gather(parent, ready);
       }
+    }
   };
 
   var execute = (ready, i) => {
@@ -393,6 +399,7 @@ var __esmEvaluator = /* @__PURE__ */ (() => {
           module.body();
           module.order = -1;
           module.status = 3;
+          gather(module, ready);
         } catch (error) {
           reject(module, error);
         }
@@ -412,6 +419,7 @@ var __esmEvaluator = /* @__PURE__ */ (() => {
     var parent = importer;
     module.status = 1;
     module.index = module.ancestor = index++;
+    module.stack = stack;
     stack.push(module);
     importer = module;
     module.imports();
@@ -447,9 +455,13 @@ var __esmEvaluator = /* @__PURE__ */ (() => {
     }
     if (!parent) return;
     var required = module;
-    if (module.status == 1) parent.ancestor = Math.min(parent.ancestor, module.ancestor);
-    else if ((required = module.root).error) throw required.error[0];
-    if (required.order >= 0) {
+    if (module.status == 1) {
+      // An `import()` in a body that is still running led here, and the module is above that body.
+      if (module.stack != stack) return;
+      parent.ancestor = Math.min(parent.ancestor, module.ancestor);
+    } else if ((required = module.root).error) throw required.error[0];
+    // The same, and the module is that body. It may be waiting for the `import()`.
+    if (required.order >= 0 && !required.executing) {
       parent.pending++;
       required.parents.push(parent);
     }
@@ -457,13 +469,27 @@ var __esmEvaluator = /* @__PURE__ */ (() => {
 
   return [
     (imports, body, hasTLA) => {
-      var module = { imports, body, hasTLA, status: 0, pending: 0, parents: [] };
+      var module = { imports, body, hasTLA, status: 0, pending: 0, parents: [], gathered: 0 };
       return (parent = importer) => evaluate(module, parent);
     },
     (...wrappers) => {
       var waiter = { hasTLA: 1, status: 2, pending: 0, parents: [] };
       waiter.root = waiter;
-      for (var wrapper of wrappers) wrapper(waiter);
+      var outerStack = stack,
+        outerImporter = importer;
+      stack = [];
+      importer = undefined;
+      try {
+        for (var wrapper of wrappers) wrapper(waiter);
+      } catch (error) {
+        // The modules that have started have it as a parent.
+        waiter.status = 3;
+        waiter.error = [error];
+        throw error;
+      } finally {
+        stack = outerStack;
+        importer = outerImporter;
+      }
       if (waiter.pending) {
         waiter.order = order++;
         return new Promise((resolve, reject) => {

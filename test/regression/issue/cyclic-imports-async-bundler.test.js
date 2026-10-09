@@ -94,7 +94,10 @@ test("cyclic imports with async dependencies should generate async wrappers", as
     "var __esmEvaluator = /* @__PURE__ */ (() => {
       var stack = [], index = 0, order = 0, importer;
       var executeAsync = (module) => {
-        module.body().then(() => {
+        module.executing = 1;
+        var promise = module.body();
+        module.executing = 0;
+        promise.then(() => {
           if (module.status == 3)
             return;
           module.order = -1;
@@ -105,12 +108,14 @@ test("cyclic imports with async dependencies should generate async wrappers", as
         }, (error) => reject(module, error));
       };
       var gather = (module, ready) => {
-        for (var parent of module.parents)
+        while (module.gathered < module.parents.length) {
+          var parent = module.parents[module.gathered++];
           if (!ready.includes(parent) && !parent.root.error && !--parent.pending) {
             ready.push(parent);
             if (!parent.hasTLA)
               gather(parent, ready);
           }
+        }
       };
       var execute = (ready, i) => {
         for (;i < ready.length; i++) {
@@ -130,6 +135,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
               module.body();
               module.order = -1;
               module.status = 3;
+              gather(module, ready);
             } catch (error) {
               reject(module, error);
             }
@@ -150,6 +156,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
         var parent = importer;
         module.status = 1;
         module.index = module.ancestor = index++;
+        module.stack = stack;
         stack.push(module);
         importer = module;
         module.imports();
@@ -188,25 +195,39 @@ test("cyclic imports with async dependencies should generate async wrappers", as
         if (!parent)
           return;
         var required = module;
-        if (module.status == 1)
+        if (module.status == 1) {
+          if (module.stack != stack)
+            return;
           parent.ancestor = Math.min(parent.ancestor, module.ancestor);
-        else if ((required = module.root).error)
+        } else if ((required = module.root).error)
           throw required.error[0];
-        if (required.order >= 0) {
+        if (required.order >= 0 && !required.executing) {
           parent.pending++;
           required.parents.push(parent);
         }
       };
       return [
         (imports, body, hasTLA) => {
-          var module = { imports, body, hasTLA, status: 0, pending: 0, parents: [] };
+          var module = { imports, body, hasTLA, status: 0, pending: 0, parents: [], gathered: 0 };
           return (parent = importer) => evaluate(module, parent);
         },
         (...wrappers) => {
           var waiter = { hasTLA: 1, status: 2, pending: 0, parents: [] };
           waiter.root = waiter;
-          for (var wrapper of wrappers)
-            wrapper(waiter);
+          var outerStack = stack, outerImporter = importer;
+          stack = [];
+          importer = undefined;
+          try {
+            for (var wrapper of wrappers)
+              wrapper(waiter);
+          } catch (error) {
+            waiter.status = 3;
+            waiter.error = [error];
+            throw error;
+          } finally {
+            stack = outerStack;
+            importer = outerImporter;
+          }
           if (waiter.pending) {
             waiter.order = order++;
             return new Promise((resolve, reject) => {
@@ -273,7 +294,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
 
     // src/RecursiveDependencies/AsyncEntryPoint.ts
     async function AsyncEntryPoint() {
-      await Promise.resolve().then(() => __esmWait(init_BaseElement));
+      await (async () => __esmWait(init_BaseElement))();
       console.log("Launching AsyncEntryPoint", BaseElement());
     }
 
@@ -281,7 +302,7 @@ test("cyclic imports with async dependencies should generate async wrappers", as
     await Promise.resolve();
     AsyncEntryPoint();
 
-    //# debugId=690E697483DE0A6064756E2164756E21
+    //# debugId=398E057A1DA3A34464756E2164756E21
     //# sourceMappingURL=entryBuild.js.map
     "
   `);

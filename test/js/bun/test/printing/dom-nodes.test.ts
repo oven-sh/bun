@@ -119,10 +119,10 @@ describe("matcher messages", () => {
     expect(messageOf(() => expect(button()).toBeNull())).toBe(
       'expect(received).toBeNull()\n\nReceived: <button class="b a" id="x">go</button>\n',
     );
-    expect(messageOf(() => expect(button()).toBe(1))).toBe(
+    expect(messageOf(() => expect(button()).toBe<unknown>(1))).toBe(
       'expect(received).toBe(expected)\n\nExpected: 1\nReceived: <button class="b a" id="x">go</button>\n',
     );
-    expect(messageOf(() => expect(1).toBe(button()))).toBe(
+    expect(messageOf(() => expect(1).toBe<unknown>(button()))).toBe(
       'expect(received).toBe(expected)\n\nExpected: <button class="b a" id="x">go</button>\nReceived: 1\n',
     );
   });
@@ -245,7 +245,7 @@ describe("matcher messages", () => {
 
   test("halves the depth, then the width, until it is under 10,000 characters", () => {
     const filler = Buffer.alloc(200, "x").toString();
-    const rows = (count: number, li: object, span: object) =>
+    const rows = (count: number, li: Record<string, unknown>, span: Record<string, unknown>) =>
       h("ul", {}, ...Array.from({ length: count }, () => h("li", li, h("a", {}, h("span", span, "label")))));
     expect(utils.stringify(rows(10, {}, { class: filler }))).toBe(
       `<ul>${repeat(`<li><a><span class="${filler}">label</span></a></li>`, 10)}</ul>`,
@@ -292,7 +292,7 @@ describe("matcher messages", () => {
 
 describe("diffs", () => {
   test("a node is indented markup", () => {
-    expect(messageOf(() => expect(button()).toEqual({ a: 1 }))).toBe(`expect(received).toEqual(expected)
+    expect(messageOf(() => expect(button()).toEqual<unknown>({ a: 1 }))).toBe(`expect(received).toEqual(expected)
 
 - {
 -   "a": 1,
@@ -377,7 +377,7 @@ describe("snapshots", () => {
         t
       </DocumentFragment>
     `);
-    expect(messageOf(() => expect(h("div", {}, text(""))).toEqual(1))).toContain("+ <div>\n+   \n+ </div>\n");
+    expect(messageOf(() => expect(h("div", {}, text(""))).toEqual<unknown>(1))).toContain("+ <div>\n+   \n+ </div>\n");
   });
 
   test("only < and > are escaped, and line ends are \\n", () => {
@@ -480,7 +480,7 @@ describe("snapshots", () => {
   });
 
   test("a collection that is an array or a Proxy", () => {
-    expect(new (class NodeList extends Array {})(h("i"), h("b"))).toMatchInlineSnapshot(`
+    expect(new (class NodeList extends Array<unknown> {})(h("i"), h("b"))).toMatchInlineSnapshot(`
       NodeList [
         <i />,
         <b />,
@@ -569,7 +569,7 @@ describe("snapshots", () => {
   });
 
   test("indentation does not stop growing", () => {
-    const lines = messageOf(() => expect(nested(40)).toEqual(1)).split("\n");
+    const lines = messageOf(() => expect(nested(40)).toEqual<unknown>(1)).split("\n");
     expect(lines).toContain(`+ ${repeat(" ", 80)}<i />`);
     expect(lines).toContain(`+ ${repeat(" ", 78)}</div>`);
   });
@@ -699,7 +699,7 @@ describe("what is a node", () => {
         "0": 1,
       }
     `);
-    expect(new (class HTMLCollections extends Array {})(1, 2)).toMatchInlineSnapshot(`
+    expect(new (class HTMLCollections extends Array<unknown> {})(1, 2)).toMatchInlineSnapshot(`
       [
         1,
         2,
@@ -725,13 +725,13 @@ describe("objects that misbehave", () => {
   test.each(["nodeType", "constructor", "tagName", "hasAttribute"])("a %s that throws is not a node", key => {
     const node = thrower(key, elementOf(class Foo extends Node {}, key === "hasAttribute" ? "DIV" : "X-FOO"));
     expect(messageOf(() => expect(node).toBeNull())).toStartWith("expect(received).toBeNull()\n\nReceived: Foo {\n");
-    expect(messageOf(() => expect(node).toEqual(1))).toContain("+ Foo {\n");
+    expect(messageOf(() => expect(node).toEqual<unknown>(1))).toContain("+ Foo {\n");
   });
 
   test("inside a node, it is an error", () => {
     const parent = () => h("div", {}, thrower("nodeType", h("i")));
     expect(() => expect(parent()).toBeNull()).toThrow("nodeType was read");
-    expect(() => expect(parent()).toEqual(1)).toThrow("nodeType was read");
+    expect(() => expect(parent()).toEqual<unknown>(1)).toThrow("nodeType was read");
   });
 
   test("a hasAttribute() that throws is not a node", () => {
@@ -764,7 +764,7 @@ describe("objects that misbehave", () => {
   test.each(["attributes", "childNodes"])("%s that throws is the error", key => {
     expect(() => expect(thrower(key, button())).toBeNull()).toThrow(`${key} was read`);
     expect(() => expect(thrower(key, button())).toMatchInlineSnapshot()).toThrow(`${key} was read`);
-    expect(() => expect(thrower(key, button())).toEqual(1)).toThrow(`${key} was read`);
+    expect(() => expect(thrower(key, button())).toEqual<unknown>(1)).toThrow(`${key} was read`);
   });
 
   test("an iterator that throws", () => {
@@ -775,7 +775,7 @@ describe("objects that misbehave", () => {
     };
     expect(() => expect(attributes).toMatchInlineSnapshot()).toThrow("the iterator threw");
     expect(() =>
-      expect(thrower("name", new Attr("a", "1")) && new NamedNodeMap([thrower("name", {})])).toEqual(1),
+      expect(thrower("name", new Attr("a", "1")) && new NamedNodeMap([thrower("name", {})])).toEqual<unknown>(1),
     ).toThrow("name was read");
   });
 
@@ -783,12 +783,12 @@ describe("objects that misbehave", () => {
     const node = h("div");
     Object.defineProperty(node, "childNodes", { value: [node] });
     expect(utils.stringify(node)).toBe(`${repeat("<div>", 10)}<div … />${repeat("</div>", 10)}`);
-    expect(() => expect(node).toEqual(1)).toThrow(RangeError);
+    expect(() => expect(node).toEqual<unknown>(1)).toThrow(RangeError);
 
     const list = new NodeList([]);
     list[0] = list;
     expect(utils.stringify(list)).toBe(`${repeat("[", 10)}[NodeList]${repeat("]", 10)}`);
-    expect(() => expect(list).toEqual(1)).toThrow(RangeError);
+    expect(() => expect(list).toEqual<unknown>(1)).toThrow(RangeError);
   });
 
   test("a length that is not the number of items", () => {
@@ -851,7 +851,7 @@ describe("equality", () => {
 
   test("what it returns counts as a boolean", () => {
     const returning = (returned: unknown) => Object.assign(h("i"), { isEqualNode: () => returned });
-    for (const truthy of [1, "yes", {}]) expect(returning(truthy)).toEqual(h("b"));
+    for (const truthy of [1, "yes", {}]) expect(returning(truthy)).toEqual<Node>(h("b"));
     for (const falsy of [0, "", null, undefined]) expect(returning(falsy)).not.toEqual(h("i"));
   });
 
@@ -879,7 +879,7 @@ describe("equality", () => {
       },
     });
     const [proxy, other] = [new Proxy(new Proxy(node, {}), {}), new Proxy(h("select"), {})];
-    expect(proxy).toEqual(other);
+    expect(proxy).toEqual<Node>(other);
     expect(seen).toEqual([expect.anything(), expect.anything()]);
     expect(seen[0]).toBe(proxy);
     expect(seen[1]).toBe(other);
@@ -898,7 +898,7 @@ describe("equality", () => {
     expect(tagged()).not.toEqual(h("i"));
     expect(new Proxy({ ownerDocument }, {})).not.toEqual(new Proxy(tagged(), {}));
     // The same: by their properties.
-    expect(h("i")).toEqual({ ownerDocument });
+    expect(h("i")).toEqual<object>({ ownerDocument });
     expect({ ownerDocument }).toEqual(h("i"));
     expect(h("i")).not.toEqual({ ownerDocument: 1 });
   });

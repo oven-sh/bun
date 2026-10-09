@@ -324,7 +324,7 @@ describe("SQLite URL Parsing Matrix", () => {
         return this.#url.protocol;
       }
     }
-    const foreignURL = (input: string) => new ForeignURL(input) as URL;
+    const foreignURL = (input: string) => new ForeignURL(input) as unknown as URL;
 
     test.each([
       ["new SQL(url)", (url: URL) => new SQL(url)],

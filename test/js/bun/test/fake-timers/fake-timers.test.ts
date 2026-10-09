@@ -1525,7 +1525,7 @@ describe("a global with a getter", () => {
         new Error("useFakeTimers() and useRealTimers() cannot be called by the getter of a global that they replace."),
       ]);
       expect(vi.isFakeTimers()).toBe(true);
-      expect(Object.getOwnPropertyDescriptor(globalThis, "clearTimeout")!.value).toBeFunction();
+      (expect(Object.getOwnPropertyDescriptor(globalThis, "clearTimeout")!.value) as any).toBeFunction();
       const fired = vi.fn();
       clearTimeout(setTimeout(fired, 1));
       setTimeout(fired, 1);

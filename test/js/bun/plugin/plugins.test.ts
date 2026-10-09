@@ -1779,7 +1779,7 @@ describe.concurrent("onLoad that declines", () => {
     return { stdout: stdout.trim().split("\n"), stderr, exitCode };
   }
 
-  const settled = [
+  const settled: [name: string, callback: string][] = [
     ["undefined", "() => undefined"],
     ["null", "() => null"],
     ["nothing", "() => {}"],
@@ -1787,7 +1787,7 @@ describe.concurrent("onLoad that declines", () => {
     ["a promise fulfilled with null", "() => Promise.resolve(null)"],
     ["the promise of an async function that does not await", "async () => {}"],
   ];
-  const pending = [
+  const pending: [name: string, callback: string][] = [
     ["a promise that is pending, then fulfilled with undefined", "async () => { await 0; }"],
     ["a promise that is pending, then fulfilled with null", "async () => { await Bun.sleep(1); return null; }"],
   ];

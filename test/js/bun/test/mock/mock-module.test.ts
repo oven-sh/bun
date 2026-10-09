@@ -1417,8 +1417,8 @@ describe.concurrent("factories", () => {
       if (++calls === 1) throw new Error("factory failed");
       return { calls };
     });
-    await expect(import("mock-module-factory-fails-once")).rejects.toThrow("factory failed");
-    expect((await import("mock-module-factory-fails-once")).calls).toBe(2);
+    await expect(import("mock-module-factory-fails-once" as string)).rejects.toThrow("factory failed");
+    expect((await import("mock-module-factory-fails-once" as string)).calls).toBe(2);
   });
 
   test("a pending factory promise that resolves to a non-object fails the import", async () => {
@@ -1426,7 +1426,7 @@ describe.concurrent("factories", () => {
       await Promise.resolve();
       return 42;
     });
-    await expect(import("mock-module-resolves-to-non-object")).rejects.toThrow(
+    await expect(import("mock-module-resolves-to-non-object" as string)).rejects.toThrow(
       "mock(module, fn) requires a function that returns an object",
     );
   });
@@ -1435,7 +1435,7 @@ describe.concurrent("factories", () => {
     const order: string[] = [];
     mock.module("mock-module-factory-order-import", () => (order.push("import factory"), {}));
     mock.module("mock-module-factory-order-require", () => (order.push("require factory"), {}));
-    const imported = import("mock-module-factory-order-import");
+    const imported = import("mock-module-factory-order-import" as string);
     order.push("import() returned");
     require("mock-module-factory-order-require");
     order.push("require() returned");

@@ -872,7 +872,7 @@ test("css module: a composes chain too deep for the stack is an error", async ()
   expect(steps.length).toBeGreaterThan(1);
   expect(steps).toEqual([
     // `.a`, and `.c0` to `.c<depth>`.
-    ...steps.slice(0, -1).map(([depth]) => [depth, depth + 2]),
+    ...steps.slice(0, -1).map(([depth]): [number, number] => [depth, depth + 2]),
     [steps.at(-1)![0], "RangeError: Maximum call stack size exceeded."],
   ]);
 });

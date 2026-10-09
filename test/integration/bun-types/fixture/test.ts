@@ -13,6 +13,7 @@ import {
   type Mock,
   spyOn,
   test,
+  type TestOptions,
   vi,
   xdescribe,
   xit,
@@ -543,6 +544,40 @@ extended.each([[1, "a"]] as const)("test.extend", (n, s) => {
   expectType<1>(n);
   expectType<"a">(s);
 });
+extended("options before the function", 1000, async ({ port }) => expectType<number>(port));
+extended("options after the function", async ({ port }) => expectType<number>(port), 1000);
+extended.for([1])("options before the function", 1000, async (row, { port }) => expectType<number>(row + port));
+extended.each([[1, "a"]])("options before the function", { timeout: 1000 }, (n, s) => {
+  expectType<number>(n);
+  expectType<string>(s);
+});
+// A row that is an array is spread, whether or not it is a tuple
+extended.each([] as readonly (readonly string[])[])("test.extend", (...args) => {
+  expectType<readonly string[]>(args);
+});
+extended.each([1, 2])("test.extend", async row => expectType<1 | 2>(row));
+extended.each`
+  a    | b
+  ${1} | ${2}
+`("$a $b", async ({ a, b }) => expectType<any>(a + b));
+// `Parameters<>` reads (label, fn, options?), as for `test`
+expectType<Parameters<typeof extended>[2]>().is<number | TestOptions | undefined>();
+expectType<Parameters<typeof extended.skip>[2]>().is<number | TestOptions | undefined>();
+expectType<Parameters<ReturnType<typeof extended.each>>[2]>().is<number | TestOptions | undefined>();
+// Options that are `any` do not take the type of the parameters away
+extended("options that are any", async ({ port }) => expectType<number>(port), {} as any);
+extended.skip("options that are any", async ({ port }) => expectType<number>(port), {} as any);
+extended.each([[1, "a"]])("options that are any", async (n, s) => expectType<string>(n + s), {} as any);
+test("options that are any", done => void expectType<(err?: unknown) => void>(done), {} as any);
+test.skip("options that are any", done => void expectType<(err?: unknown) => void>(done), {} as any);
+test.each([[1, "a"]])("options that are any", (n, s) => void expectType<string>(n + s), {} as any);
+test.each([1, 2])("options that are any", n => void expectType<number>(n), {} as any);
+extended.skip("only a label");
+extended.for([1]).skip("only a label");
+// @ts-expect-error
+extended("only a label");
+// @ts-expect-error
+extended.only("only a label");
 extended.beforeEach(({ port }) => {
   expectType<number>(port);
   return () => {};

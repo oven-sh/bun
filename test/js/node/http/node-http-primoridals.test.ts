@@ -186,7 +186,7 @@ test("a URL of another implementation is a URL", async () => {
 
 test("does not read URL from globalThis", async () => {
   const { URL } = globalThis;
-  globalThis.URL = class {} as typeof URL;
+  globalThis.URL = class {} as unknown as typeof URL;
   try {
     await withEchoServer(async (http, origin) => {
       const [response] = await once(http.get(origin + "/path?query"), "response");

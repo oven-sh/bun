@@ -375,6 +375,7 @@ test("basic unchanging inline snapshot", () => {
 test("own non-enumerable properties are not printed", () => {
   class Wrapper {
     visible = 1;
+    // @ts-expect-error not a unique symbol
     [Symbol("visibleSymbol")] = 2;
     constructor() {
       Object.defineProperty(this, Symbol("impl"), { value: { hidden: true } });
@@ -503,7 +504,7 @@ describe("an own accessor prints as what its getter returns", () => {
 
   test("in a diff", () => {
     expect(
-      messageOf(() => expect(value()).toEqual({}))
+      messageOf(() => expect(value()).toEqual<object>({}))
         ?.split("\n")
         .filter(line => line.startsWith("+ ")),
     ).toEqual([
@@ -622,13 +623,13 @@ Received: Instance {
         },
       }
     `);
-    expect(messageOf(() => expect(throws()).toEqual({}))).toBe(
+    expect(messageOf(() => expect(throws()).toEqual<object>({}))).toBe(
       'expect(received).toEqual(expected)\n\n- {}\n+ {\n+   "after": 2,\n+   "before": 1,\n+   "nested": {\n+     "a": [native code],\n+     "b": 2,\n+   },\n+ }\n\n- Expected  - 1\n+ Received  + 8\n',
     );
     const printed = "{\n  before: 1,\n  nested: {\n    a: [Getter],\n    b: 2,\n  },\n  after: 2,\n}";
     expect(messageOf(() => expect(throws()).toBeNull())).toBe(`expect(received).toBeNull()\n\nReceived: ${printed}\n`);
     expect(messageOf(() => expect(throws(), "with a label").toBeNull())).toBe(`with a label\n\nReceived: ${printed}\n`);
-    expect(messageOf(() => expect(1).toBe(throws()))).toBe(
+    expect(messageOf(() => expect(1).toBe<unknown>(throws()))).toBe(
       `expect(received).toBe(expected)\n\nExpected: ${printed}\nReceived: 1\n`,
     );
   });
@@ -2969,7 +2970,7 @@ describe.concurrent("what script hands to the printer of snapshots", () => {
     timeoutOfCycles,
   );
 
-  test.each([{}, { REALLOCATE: "1" }])(
+  test.each<Record<string, string>>([{}, { REALLOCATE: "1" }])(
     "the `refs` that a serializer gives to `printer` are kept, whatever becomes of its array %j",
     async env => {
       const { log, stderr, exitCode } = await logOf(

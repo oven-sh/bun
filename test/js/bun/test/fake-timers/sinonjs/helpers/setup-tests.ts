@@ -1,4 +1,4 @@
-import { vi, expect, type FakeableAPI } from "bun:test";
+import { vi, expect } from "bun:test";
 import { promisify } from "util";
 
 let active = false;
@@ -6,7 +6,7 @@ export class FakeTimers {
   static [key: string]: any;
   [key: string]: any;
   private constructor() {}
-  static install(opts: { now?: number | Date; toFake?: FakeableAPI[]; [key: string]: any } = {}) {
+  static install(opts: { now?: number | Date; [key: string]: any } = {}) {
     if (active) {
       vi.useRealTimers();
     }

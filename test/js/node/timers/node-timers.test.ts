@@ -411,7 +411,7 @@ it("_onTimeout is the callback inside AsyncLocalStorage.run()", () => {
   const callback = () => {};
   const timer = new AsyncLocalStorage().run(1, () => setTimeout(callback, 100_000, 1, 2));
   try {
-    expect(timer._onTimeout).toBe(callback);
+    expect((timer as any)._onTimeout).toBe(callback);
   } finally {
     clearTimeout(timer);
   }

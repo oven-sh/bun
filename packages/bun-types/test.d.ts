@@ -973,6 +973,16 @@ declare module "bun:test" {
    * @category Testing
    */
   export interface Test<T extends ReadonlyArray<unknown>> {
+    // First, or `options` that are `any` are taken for the `fn` of the next overload. `Parameters<>` reads the last one.
+    (
+      label: string,
+      fn: (
+        ...args: __internal.IsTuple<T> extends true
+          ? [...table: __internal.Flatten<T>, done: (err?: unknown) => void]
+          : T
+      ) => void | Promise<unknown>,
+      options: number | TestOptions,
+    ): void;
     /**
      * Runs a test, with the options before the test function.
      *
@@ -1311,23 +1321,35 @@ declare module "bun:test" {
     fn: (context: Context, suite: TestSuite) => unknown | Promise<unknown>,
     options?: HookOptions,
   ) => void;
+  type TestOfRows<Row extends ReadonlyArray<unknown>> = {
+    // First, or `options` that are `any` are taken for the `fn` of the next overload. `Parameters<>` reads the last one.
+    (label: string, fn: (...args: Row) => void | Promise<unknown>, options: number | TestOptions): void;
+    (label: string, options: number | TestOptions, fn: (...args: Row) => void | Promise<unknown>): void;
+    (label: string, fn: (...args: Row) => void | Promise<unknown>, options?: number | TestOptions): void;
+  };
 
   /**
    * A `test` whose callbacks receive the {@link TestContext} instead of a `done` callback.
    */
   export interface TestWithContext<Context, Row extends ReadonlyArray<unknown> = []> {
+    // First, or `options` that are `any` are taken for the `fn` of the next overload. `Parameters<>` reads the last one.
+    (
+      label: string,
+      fn: (...args: [...Row, context: Context & TestContext]) => void | Promise<unknown>,
+      options: number | TestOptions,
+    ): void;
+    (
+      label: string,
+      options: number | TestOptions,
+      fn: (...args: [...Row, context: Context & TestContext]) => void | Promise<unknown>,
+    ): void;
     (
       label: string,
       fn: (...args: [...Row, context: Context & TestContext]) => void | Promise<unknown>,
       options?: number | TestOptions,
     ): void;
-    (
-      label: string,
-      options: TestOptions,
-      fn: (...args: [...Row, context: Context & TestContext]) => void | Promise<unknown>,
-    ): void;
     only: TestWithContext<Context, Row>;
-    skip: TestWithContext<Context, Row>;
+    skip: ((label: string) => void) & TestWithContext<Context, Row>;
     todo: ((label: string) => void) & TestWithContext<Context, Row>;
     failing: TestWithContext<Context, Row>;
     fails: TestWithContext<Context, Row>;
@@ -1342,12 +1364,10 @@ declare module "bun:test" {
     concurrentIf(condition: boolean): TestWithContext<Context, Row>;
     serialIf(condition: boolean): TestWithContext<Context, Row>;
     /** The rows fill the parameters: the callback does not get the context. */
-    each<T extends Readonly<[unknown, ...unknown[]]>>(
-      table: readonly T[],
-    ): (label: string, fn: (...args: T) => void | Promise<unknown>, options?: number | TestOptions) => void;
-    each<const T>(
-      table: readonly T[],
-    ): (label: string, fn: (row: T) => void | Promise<unknown>, options?: number | TestOptions) => void;
+    each<T extends Readonly<[unknown, ...unknown[]]>>(table: readonly T[]): TestOfRows<T>;
+    each<T extends readonly unknown[]>(table: readonly T[]): TestOfRows<T>;
+    each<const T>(table: readonly T[]): TestOfRows<[row: T]>;
+    each(headings: TemplateStringsArray, ...values: any[]): TestOfRows<[row: any]>;
     for<const T>(table: readonly T[]): TestWithContext<Context, [row: T]>;
     for(headings: TemplateStringsArray, ...values: any[]): TestWithContext<Context, [row: any]>;
     extend: ExtendTest<Context>;

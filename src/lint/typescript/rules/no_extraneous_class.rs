@@ -13,9 +13,45 @@ const ONLY_CONSTRUCTOR: Message = Message::new("onlyConstructor", "Unexpected cl
 const ONLY_STATIC: Message = Message::new("onlyStatic", "Unexpected class with only static properties.");
 
 impl NoExtraneousClass {
+    /// For oxlint a constructor, a static block and an index signature are not static, and a class has only a
+    /// constructor if that is its only member. It points at the name, of a class expression too, and at an empty class
+    /// from `class` on.
+    fn check_as_oxlint<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        let members = class.members();
+        let whole = Span::new(class.keyword_span().start, class.estree_span().end);
+        let name = class.name().map_or(whole, |it| it.span());
+        let (place, message, is_allowed) = match members.first() {
+            None => (whole, EMPTY, self.allow_empty),
+            Some(only) if members.len() == 1 && only.is_constructor() => {
+                if only.func().is_some_and(|it| it.params().iter().any(Param::is_parameter_property)) {
+                    return;
+                }
+                (name, ONLY_CONSTRUCTOR, self.allow_constructor_only)
+            }
+            Some(_) => {
+                let is_static = |it: Member| {
+                    !matches!(it.kind(), MemberKind::StaticBlock | MemberKind::IndexSignature)
+                        && !it.is_constructor()
+                        && it.is_static()
+                        && !it.flags().contains(Flags::ABSTRACT)
+                };
+                if !members.iter().all(is_static) {
+                    return;
+                }
+                (name, ONLY_STATIC, self.allow_static_only)
+            }
+        };
+        if !is_allowed {
+            cx.report(place, message);
+        }
+    }
+
     fn check<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
         if class.extends().is_some() || self.allow_with_decorator && class.decorators().next().is_some() {
             return;
+        }
+        if cx.language().is_oxlint {
+            return self.check_as_oxlint(class, cx);
         }
 
         let members = class.members();

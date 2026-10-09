@@ -1136,12 +1136,13 @@ setInterval(() => {}, 1e6);
 
 // The entry point has a watch of its own, which a delete takes away. The reloader then takes a
 // directory event that names the entry as its reload. It compared the folder of the event with
-// the folder of the entry by the hash of one spelling.
+// the folder of the entry by the hash of one spelling. Only inotify names the entry: kqueue does
+// not reload an entry point that is deleted and then created again.
 for (const [spelling, lookup] of [
   ["without a trailing separator", "../app/missing.js"],
   ["through a symlink", "../applink/missing.js"],
 ]) {
-  it.skipIf(isWindows)(
+  it.skipIf(!isLinux)(
     `--hot reloads a recreated entry point whose folder was first watched ${spelling}`,
     async () => {
       using dir = tempDir("hot-entry-folder-spelling", {

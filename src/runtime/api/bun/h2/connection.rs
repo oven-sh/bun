@@ -1921,8 +1921,7 @@ impl Connection {
         }
     }
 
-    /// Emit `headers` as a HEADERS frame, splitting into CONTINUATION frames when the block
-    /// exceeds the peer's max frame size (§4.3/§6.10), and advance the send-side stream state.
+    /// Emit `headers` as HEADERS + CONTINUATION frames (§4.3/§6.10) and advance the stream state.
     pub(crate) fn send_header_block(
         &mut self,
         sink: &impl Sink,
@@ -2059,8 +2058,7 @@ impl Connection {
         }
     }
 
-    /// Server-side: emit a PUSH_PROMISE on `parent_id` reserving `promised_id`, carrying the
-    /// promised request `headers` (RFC 9113 §6.6).
+    /// Server-side: emit a PUSH_PROMISE on `parent_id` that reserves `promised_id` (RFC 9113 §6.6).
     pub(crate) fn send_push_promise(
         &mut self,
         sink: &impl Sink,

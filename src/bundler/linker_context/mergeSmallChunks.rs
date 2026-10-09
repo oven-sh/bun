@@ -889,6 +889,11 @@ impl EntryLoadGraph {
         })
     }
 
+    /// Whether a live split `require()` loads an entry of `key`.
+    pub(crate) fn is_required(&self, key: &AutoBitSet) -> bool {
+        self.required_sync.has_intersection(key)
+    }
+
     /// `key` minus each guaranteed entry none of whose
     /// importers a root reaches through `import()`s without passing through the
     /// key; such an importer ran after some entry of the key, so that entry's

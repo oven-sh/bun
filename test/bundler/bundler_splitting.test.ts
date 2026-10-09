@@ -2592,6 +2592,45 @@ describe("bundler", () => {
     run: { file: "/out/m0.js", stdout: "four\nfive\nsix\nm1 5\nm0" },
   });
 
+  // f.js requires d.js at load, which runs t2.js and t1.js ahead of the imports of a.js. The imports of a chunk
+  // are not ranked by that, so the files stay in one chunk.
+  itBundled("splitting/SharedFilesInTwoOrdersRequireAtLoad", {
+    files: {
+      "/a.js": `import "./f.js"; import "./t1.js"; import "./t2.js"; console.log("a");`,
+      "/b.js": `import "./t1.js"; import "./t2.js"; console.log("b");`,
+      "/f.js": `const { d } = require("./d.js"); export const f = d;`,
+      "/d.js": `import "./t2.js"; import "./t1.js"; export const d = 1;`,
+      "/t1.js": `console.log("t1", globalThis.P);`,
+      "/t2.js": `globalThis.P = "P"; console.log("t2");`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/a.js", stdout: "t2\nt1 P\na" },
+  });
+
+  // lazy.js loads after x.js or y.js, so q.js folds into the chunk of p.js. The rule applies to the chunk
+  // that the fold leaves.
+  itBundled("splitting/SharedFilesInTwoOrdersAfterFold", {
+    files: {
+      "/x.js": `import "./p.js"; import "./q.js"; console.log("x"); export const later = () => import("./lazy.js");`,
+      "/y.js": `import "./q.js"; import "./p.js"; console.log("y"); export const later = () => import("./lazy.js");`,
+      "/lazy.js": `import "./q.js"; console.log("lazy");`,
+      "/p.js": `console.log("p");`,
+      "/q.js": `console.log("q");`,
+    },
+    entryPoints: ["/x.js", "/y.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/x.js", stdout: "p\nq\nx" },
+      { file: "/out/y.js", stdout: "q\np\ny" },
+    ],
+  });
+
   // main.js has run p.js and q.js by the time page.js loads, so the order of page.js does not count: one chunk.
   itBundled("splitting/SharedFilesInTwoOrdersAlreadyLoaded", {
     files: {

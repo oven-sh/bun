@@ -81,6 +81,10 @@ pub(crate) fn split_chunks_by_evaluation_order(c: &LinkerContext) -> crate::Resu
             Some(load_graph) => load_graph,
             None => load_graph.insert(EntryLoadGraph::new(c)?),
         };
+        // The imports of a chunk are not ranked by what a split `require()` runs (`reached_chunks_in_order`).
+        if load_graph.is_required(&file_entry_bits[source_index as usize]) {
+            continue;
+        }
         let load_class = load_graph.load_class(&file_entry_bits[source_index as usize])?;
         let Some(reference_entry_id) = load_class.find_first_set() else {
             continue;
@@ -172,13 +176,6 @@ pub(crate) fn split_chunks_by_evaluation_order(c: &LinkerContext) -> crate::Resu
         entries_to_compare.set_union(&group.load_class);
     }
 
-    let mut entry_id_of_file: Vec<u32> = vec![NONE; files_len];
-    for (entry_id, &source_index) in c.graph.entry_points.items_source_index().iter().enumerate() {
-        let slot = &mut entry_id_of_file[source_index as usize];
-        if *slot == NONE {
-            *slot = entry_id as u32;
-        }
-    }
     let mut orders: Vec<EvaluationOrder> = Vec::new();
     let mut entry_ids = entries_to_compare.iterator::<true, true>();
     while let Some(entry_id) = entry_ids.next() {
@@ -188,12 +185,10 @@ pub(crate) fn split_chunks_by_evaluation_order(c: &LinkerContext) -> crate::Resu
         });
     }
     c.worker_pool().each_ptr(
-        (c, is_tracked.as_slice(), entry_id_of_file.as_slice()),
-        |&(c, is_tracked, entry_id_of_file): &(&LinkerContext, &[bool], &[u32]),
-         order: *mut EvaluationOrder,
-         _: usize| {
+        (c, is_tracked.as_slice()),
+        |&(c, is_tracked): &(&LinkerContext, &[bool]), order: *mut EvaluationOrder, _: usize| {
             // SAFETY: `each_ptr` hands each task a distinct `*mut EvaluationOrder`.
-            unsafe { &mut *order }.compute(c, is_tracked, entry_id_of_file);
+            unsafe { &mut *order }.compute(c, is_tracked);
         },
         &mut orders,
     );
@@ -331,50 +326,38 @@ struct EvaluationOrder {
 }
 
 impl EvaluationOrder {
-    fn compute(&mut self, c: &LinkerContext, is_tracked: &[bool], entry_id_of_file: &[u32]) {
+    /// Does not follow a split `require()`: no tracked file is loaded by one.
+    fn compute(&mut self, c: &LinkerContext, is_tracked: &[bool]) {
         #[derive(Clone, Copy)]
         enum Frame {
-            /// `loader`: the entry point whose load runs the file. A split `require()` that runs at load changes it.
-            Enter {
-                source_index: IndexInt,
-                loader: u32,
-            },
+            Enter(IndexInt),
             Leave(IndexInt),
         }
         let entry_bits = c.graph.files.items_entry_bits();
         let mut seen = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
-        let mut stack: Vec<Frame> = vec![Frame::Enter {
-            source_index: c.graph.entry_points.items_source_index()[self.entry_id as usize],
-            loader: self.entry_id,
-        }];
+        let mut stack: Vec<Frame> = vec![Frame::Enter(
+            c.graph.entry_points.items_source_index()[self.entry_id as usize],
+        )];
         while let Some(frame) = stack.pop() {
-            let (source_index, loader) = match frame {
+            let source_index = match frame {
                 Frame::Leave(source_index) => {
                     self.files.push(source_index);
                     continue;
                 }
-                Frame::Enter {
-                    source_index,
-                    loader,
-                } => (source_index, loader),
+                Frame::Enter(source_index) => source_index,
             };
             let id = source_index as usize;
             if seen.is_set(id) {
                 continue;
             }
             seen.set(id);
-            let runs = c.graph.files_live.is_set(id) && entry_bits[id].is_set(loader as usize);
+            let runs =
+                c.graph.files_live.is_set(id) && entry_bits[id].is_set(self.entry_id as usize);
             let mark = stack.len();
-            for_each_edge(c, source_index, runs, |_, edge| match edge {
-                Edge::Import(other) => stack.push(Frame::Enter {
-                    source_index: other,
-                    loader,
-                }),
-                Edge::LoadNow(other) => stack.push(Frame::Enter {
-                    source_index: other,
-                    loader: entry_id_of_file[other as usize],
-                }),
-                Edge::LoadLater(_) => {}
+            for_each_edge(c, source_index, runs, |_, edge| {
+                if let Edge::Import(other) = edge {
+                    stack.push(Frame::Enter(other));
+                }
             });
             if runs && is_tracked[id] {
                 stack.push(Frame::Leave(source_index));

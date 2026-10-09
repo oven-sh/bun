@@ -390,6 +390,87 @@ test("expect.extend with numeric index keys does not crash", () => {
   expect(typeof expect[1073741820]).toBe("function");
 });
 
+describe("the message of a matcher that fails is thrown as it is", () => {
+  expect.extend({
+    _toFailWith(received, result) {
+      return { pass: false, ...result };
+    },
+    _toPassWith(received, result) {
+      return { pass: true, ...result };
+    },
+    async _toFailLaterWith(received, result) {
+      return { pass: false, ...result };
+    },
+    _toFailWithItsHint() {
+      const options = { isNot: this.isNot, promise: this.promise };
+      return { pass: this.isNot, message: () => this.utils.matcherHint("_toFailWithItsHint", "it", "", options) };
+    },
+  });
+  const messageOf = async fn => {
+    try {
+      await fn();
+    } catch (error) {
+      return Bun.stripANSI(error.message);
+    }
+  };
+  const message = () => "line 1\nline 2\n";
+
+  test("with and without modifiers", async () => {
+    expect([
+      await messageOf(() => expect(1)._toFailWith({ message })),
+      await messageOf(() => expect(1).not._toPassWith({ message })),
+      await messageOf(() => expect(Promise.resolve(1)).resolves._toFailWith({ message })),
+      await messageOf(() => expect(Promise.reject(1)).rejects._toFailWith({ message })),
+      await messageOf(() => expect(Promise.resolve(1)).resolves.not._toPassWith({ message })),
+      await messageOf(() => expect(1)._toFailLaterWith({ message })),
+    ]).toEqual(Array(6).fill("line 1\nline 2\n"));
+  });
+
+  test("the matcher says what was called", async () => {
+    expect([
+      await messageOf(() => expect(1)._toFailWithItsHint()),
+      await messageOf(() => expect(1).not._toFailWithItsHint()),
+      await messageOf(() => expect(Promise.resolve(1)).resolves._toFailWithItsHint()),
+      await messageOf(() => expect(Promise.reject(1)).rejects.not._toFailWithItsHint()),
+    ]).toEqual([
+      "expect(it)._toFailWithItsHint()",
+      "expect(it).not._toFailWithItsHint()",
+      "expect(it).resolves._toFailWithItsHint()",
+      "expect(it).rejects.not._toFailWithItsHint()",
+    ]);
+  });
+
+  test.skipIf(!isBun)("under the label of expect(value, label)", async () => {
+    expect(await messageOf(() => expect(1, "the label")._toFailWith({ message }))).toBe(
+      "the label\n\nline 1\nline 2\n",
+    );
+  });
+
+  test("no message", async () => {
+    for (const result of [{}, { message: undefined }, { message: () => undefined }, { message: () => "" }]) {
+      expect(await messageOf(() => expect(1)._toFailWith(result))).toBe("No message was specified for this matcher.");
+    }
+  });
+
+  test("other messages", async () => {
+    expect(await messageOf(() => expect(1)._toFailWith({ message: () => 5 }))).toBe("5");
+    const thrown = new Error("from message()");
+    expect(() =>
+      expect(1)._toFailWith({
+        message() {
+          throw thrown;
+        },
+      }),
+    ).toThrow(thrown);
+  });
+
+  test("an asymmetric matcher that fails is printed by the matcher around it", async () => {
+    expect(await messageOf(() => expect({ a: 1 }).toEqual({ a: expect._toFailWith({ message }) }))).toStartWith(
+      "expect(received).toEqual(expected)",
+    );
+  });
+});
+
 describe("MatcherContext", () => {
   describe("utils", () => {
     test("RECEIVED_COLOR is a function", () => {
@@ -551,6 +632,147 @@ describe("MatcherContext", () => {
         "[object Object]",
         "1,x",
         "a b 1",
+      ]);
+    });
+
+    // What jest-matcher-utils 30.5.1 returns where there are no lines to show.
+    test.each([
+      [[1, 1], null],
+      [[1, 2], null],
+      [[NaN, NaN], null],
+      [[0, -0], null],
+      [[1n, 2n], null],
+      [[true, false], null],
+      [[expect.any(Number), 1], null],
+      [[], "Compared values have no visual difference."],
+      [["a", "a"], "Compared values have no visual difference."],
+      [["", ""], "Compared values have no visual difference."],
+      [[null, null], "Compared values have no visual difference."],
+      [[{ a: 1 }, { a: 1 }], "Compared values have no visual difference."],
+      [[[1], [1]], "Compared values have no visual difference."],
+      [[1, 1n], "  Comparing two different types of values. Expected number but received bigint."],
+      [["1", 1], "  Comparing two different types of values. Expected string but received number."],
+      [[1], "  Comparing two different types of values. Expected number but received undefined."],
+      [[null, undefined], "  Comparing two different types of values. Expected null but received undefined."],
+      [[null, {}], "  Comparing two different types of values. Expected null but received object."],
+      [[{}, []], "  Comparing two different types of values. Expected object but received array."],
+      [[new Map(), new Set()], "  Comparing two different types of values. Expected map but received set."],
+      [[/a/, {}], "  Comparing two different types of values. Expected regexp but received object."],
+      [[new Date(0), {}], "  Comparing two different types of values. Expected date but received object."],
+      [[() => {}, {}], "  Comparing two different types of values. Expected function but received object."],
+      [[Symbol(), {}], "  Comparing two different types of values. Expected symbol but received object."],
+      [[new String("a"), "a"], "  Comparing two different types of values. Expected object but received string."],
+    ])("diff(...%p)", (args, text) => {
+      const diff = utils.diff(...args);
+      expect(diff && Bun.stripANSI(diff)).toBe(text);
+    });
+
+    test("diff marks the lines that differ", () => {
+      const marked = (...args) =>
+        Bun.stripANSI(utils.diff(...args))
+          .split("\n")
+          .filter(line => /^[-+]/.test(line));
+      const counts = (expected, received) => [`- Expected  - ${expected}`, `+ Received  + ${received}`];
+      // Strings are text: no quotes, line by line.
+      expect(marked("a\nb\nc", "a\nx\nc")).toEqual(["- b", "+ x", ...counts(1, 1)]);
+      expect(marked({ a: 1, b: 2 }, { a: 1, b: 3 })).toEqual(['-   "b": 2,', '+   "b": 3,', ...counts(1, 1)]);
+      expect(marked([1, 2, 3], [1, 3])).toEqual(["-   2,", ...counts(1, 0)]);
+      expect(marked(new Map([["a", 1]]), new Map([["a", 2]]))).toEqual([
+        '-   "a" => 1,',
+        '+   "a" => 2,',
+        ...counts(1, 1),
+      ]);
+      expect(marked({ a: 1 }, { a: 2 }, { expand: false, contextLines: 0 })).toEqual([
+        '-   "a": 1,',
+        '+   "a": 2,',
+        ...counts(1, 1),
+      ]);
+      expect(Bun.stripANSI(utils.diff("color: blue;", "color: red;"))).toBe(
+        "Expected: color: blue;\nReceived: color: red;",
+      );
+      expect(Bun.stripANSI(utils.diff(new Error("a"), new Error("b")))).toBe(
+        "Expected: [Error: a]\nReceived: [Error: b]",
+      );
+      expect(Bun.stripANSI(utils.diff(Symbol("a"), Symbol("b")))).toBe("Expected: Symbol(a)\nReceived: Symbol(b)");
+    });
+
+    test("diff reports what a value throws while it is printed", () => {
+      const thrown = new Error("from the trap");
+      const value = new Proxy(
+        {},
+        {
+          ownKeys() {
+            throw thrown;
+          },
+        },
+      );
+      expect(() => utils.diff(value, {})).toThrow(thrown);
+      expect(() => utils.diff({}, value)).toThrow(thrown);
+    });
+
+    // What jest-matcher-utils 30.5.1 returns for the same arguments.
+    test.each([
+      [undefined, "Received has value: <undefined>"],
+      [null, "Received has value: <object>"],
+      [[1], "Received has type:  array\nReceived has value: <object>"],
+      [true, "Received has type:  boolean\nReceived has value: <boolean>"],
+      [() => {}, "Received has type:  function\nReceived has value: <function>"],
+      [1, "Received has type:  number\nReceived has value: <number>"],
+      ["s", "Received has type:  string\nReceived has value: <string>"],
+      [1n, "Received has type:  bigint\nReceived has value: <bigint>"],
+      [{ a: 1 }, "Received has type:  object\nReceived has value: <object>"],
+      [/a/, "Received has type:  regexp\nReceived has value: <object>"],
+      [new Map(), "Received has type:  map\nReceived has value: <object>"],
+      [new Set(), "Received has type:  set\nReceived has value: <object>"],
+      [new Date(0), "Received has type:  date\nReceived has value: <object>"],
+      [Symbol("s"), "Received has type:  symbol\nReceived has value: <symbol>"],
+      [new Error("e"), "Received has type:  object\nReceived has value: <object>"],
+      [Object.create(null), "Received has type:  object\nReceived has value: <object>"],
+    ])("printWithType(%p)", (value, text) => {
+      expect(utils.printWithType("Received", value, printed => `<${typeof printed}>`)).toBe(text);
+    });
+
+    test("printWithType converts and checks its arguments", () => {
+      expect(utils.printWithType(5, 1, String)).toBe("5 has type:  number\n5 has value: 1");
+      expect(utils.printWithType("N", 1, () => 7)).toBe("N has type:  number\nN has value: 7");
+      expect(Bun.stripANSI(utils.printWithType("Received", "s", utils.printReceived))).toBe(
+        'Received has type:  string\nReceived has value: "s"',
+      );
+      for (const args of [[], ["N", 1], ["N", 1, 5]]) {
+        expect(() => utils.printWithType(...args)).toThrow(
+          new TypeError("printWithType: the third argument (print) must be a function"),
+        );
+      }
+      const thrown = new Error("from print");
+      expect(() =>
+        utils.printWithType("N", 1, () => {
+          throw thrown;
+        }),
+      ).toThrow(thrown);
+    });
+
+    test.each(["stringify", "printExpected", "printReceived"])("%s prints an error without its stack", name => {
+      class CustomError extends Error {
+        name = "CustomError";
+      }
+      expect(
+        [
+          new Error("a"),
+          new TypeError("b"),
+          new CustomError("c"),
+          new Error(""),
+          new Error("l1\nl2"),
+          Object.assign(new Error("d"), { code: 1 }),
+          new Error("e", { cause: new Error("f") }),
+        ].map(error => Bun.stripANSI(utils[name](error))),
+      ).toEqual([
+        "[Error: a]",
+        "[TypeError: b]",
+        "[CustomError: c]",
+        "[Error]",
+        "[Error: l1\nl2]",
+        "[Error: d]",
+        "[Error: e]",
       ]);
     });
 

@@ -1624,17 +1624,17 @@ describe.concurrent("options", () => {
 });
 
 test.concurrent("test.fails passes whatever it is that fails", async () => {
-  const file = (module: string) => `
+  const file = (module: string, modifier: string) => `
     import { test as base, describe, beforeEach, afterEach } from "${module}";
     import { onTestFinished } from "vitest";
-    describe("beforeEach", () => { beforeEach(() => { throw new Error("beforeEach"); }); base.failing("test", () => {}); });
-    describe("afterEach", () => { afterEach(() => { throw new Error("afterEach"); }); base.failing("test", () => {}); });
-    describe("hook timeout", () => { beforeEach(async () => { await new Promise(() => {}); }, 20); base.failing("test", () => {}); });
+    describe("beforeEach", () => { beforeEach(() => { throw new Error("beforeEach"); }); base.${modifier}("test", () => {}); });
+    describe("afterEach", () => { afterEach(() => { throw new Error("afterEach"); }); base.${modifier}("test", () => {}); });
+    describe("hook timeout", () => { beforeEach(async () => { await new Promise(() => {}); }, 20); base.${modifier}("test", () => {}); });
   `;
-  const [vitest, bun] = await Promise.all([
+  const [vitest, bun, vitestFailing, bunFailing] = await Promise.all([
     runTests({
       "a.test.js": `
-        ${file("vitest")}
+        ${file("vitest", "fails")}
         const test = base.extend({
           setup: async ({}, use) => { throw new Error("fixture"); },
           teardown: async ({}, use) => { await use(1); throw new Error("fixture teardown"); },
@@ -1646,7 +1646,9 @@ test.concurrent("test.fails passes whatever it is that fails", async () => {
         base.fails("nothing", () => {});
       `,
     }),
-    runTests({ "a.test.js": file("bun:test") }),
+    runTests({ "a.test.js": file("bun:test", "fails") }),
+    runTests({ "a.test.js": file("vitest", "failing") }),
+    runTests({ "a.test.js": file("bun:test", "failing") }),
   ]);
   expect({ results: vitest.results, errors: vitest.errors, exitCode: vitest.exitCode }).toEqual({
     results: [
@@ -1663,8 +1665,93 @@ test.concurrent("test.fails passes whatever it is that fails", async () => {
     exitCode: 1,
   });
   expect({ results: bun.results, errors: bun.errors, exitCode: bun.exitCode }).toEqual({
-    results: ["(fail) beforeEach > test", "(fail) afterEach > test", "(fail) hook timeout > test"],
-    errors: ["error: beforeEach", "error: afterEach"],
+    results: ["(pass) beforeEach > test", "(pass) afterEach > test", "(pass) hook timeout > test"],
+    errors: [],
+    exitCode: 0,
+  });
+  // Jest's modifier keeps Jest's rule, whichever module `test` is from.
+  for (const failing of [vitestFailing, bunFailing]) {
+    expect({ results: failing.results, errors: failing.errors, exitCode: failing.exitCode }).toEqual({
+      results: ["(fail) beforeEach > test", "(fail) afterEach > test", "(fail) hook timeout > test"],
+      errors: ["error: beforeEach", "error: afterEach"],
+      exitCode: 1,
+    });
+  }
+});
+
+test.concurrent("test.fails: what the hooks see, retries, repeats and inheritance", async () => {
+  const { log, results, exitCode } = await runTests({
+    "a.test.js": `
+      import { test, describe, expect, afterEach, onTestFinished, onTestFailed } from "vitest";
+      const runs = {};
+      const failsOn = (name, ...attempts) => () => {
+        runs[name] = (runs[name] ?? 0) + 1;
+        if (attempts.includes(runs[name])) throw new Error("expected");
+      };
+      describe("state", () => {
+        afterEach(({ task }) => console.log(task.name + ":", task.fails, task.result.state));
+        test.fails("throws", () => { onTestFailed(({ task }) => console.log("onTestFailed", task.result.errors.length)); throw new Error("expected"); });
+        test.fails("does not throw", () => { onTestFailed(() => console.log("unreachable")); });
+        test.fails("time limit", { timeout: 1 }, ({ signal }) => new Promise(resolve => signal.addEventListener("abort", resolve)));
+        test.fails("skips itself", ({ skip }) => { expect.assertions(1); skip(); });
+        test("skips itself, without the modifier", ({ skip }) => { expect.assertions(1); skip(); });
+      });
+      test.fails("retry: fails the second time", { retry: 1 }, () => {
+        onTestFinished(() => console.log("finished"));
+        onTestFailed(() => console.log("failed"));
+        failsOn("retry", 2)();
+      });
+      test.fails("each repeat has all the retries", { retry: 1, repeats: 1 }, failsOn("both", 2, 4));
+      test("each repeat has all the retries, without the modifier", { retry: 1, repeats: 1 }, failsOn("plain", 1, 3));
+      describe("inherited", { fails: true }, () => {
+        test("throws", () => { throw new Error("expected"); });
+        test("does not throw", () => {});
+        test("fails: false", { fails: false }, () => {});
+        describe("nested", () => { test("time limit", { timeout: 1 }, () => new Promise(() => {})); });
+      });
+      describe("fails: false", { fails: false }, () => { test.fails("test.fails wins", () => { throw new Error("expected"); }); });
+      test.fails("fails: false wins", { fails: false }, () => {});
+      describe.concurrent("concurrent", () => {
+        test.fails("throws", async () => { await 1; throw new Error("expected"); });
+        test.fails("assertions", async ({ expect }) => { await 1; expect.assertions(1); });
+        test.fails("does not throw", async () => { await 1; });
+      });
+      test("runs", () => console.log(JSON.stringify(runs)));
+    `,
+  });
+  expect({ log, results, exitCode }).toEqual({
+    log: [
+      "throws: true fail",
+      "onTestFailed 1",
+      "does not throw: true pass",
+      "time limit: true fail",
+      "skips itself: true skip",
+      "skips itself, without the modifier: undefined skip",
+      "finished",
+      "finished",
+      "failed",
+      `{"retry":2,"both":4,"plain":4}`,
+    ],
+    results: [
+      "(pass) state > throws",
+      "(fail) state > does not throw",
+      "(pass) state > time limit",
+      "(skip) state > skips itself",
+      "(skip) state > skips itself, without the modifier",
+      "(pass) retry: fails the second time (attempt 2)",
+      "(pass) each repeat has all the retries (attempt 2) (run 2)",
+      "(pass) each repeat has all the retries, without the modifier (attempt 2) (run 2)",
+      "(pass) inherited > throws",
+      "(fail) inherited > does not throw",
+      "(pass) inherited > fails: false",
+      "(pass) inherited > nested > time limit",
+      "(pass) fails: false > test.fails wins",
+      "(pass) fails: false wins",
+      "(pass) concurrent > throws",
+      "(pass) concurrent > assertions",
+      "(fail) concurrent > does not throw",
+      "(pass) runs",
+    ],
     exitCode: 1,
   });
 });
@@ -1897,7 +1984,7 @@ describe.concurrent("test.extend()", () => {
         test("twice", ({ twice }) => console.log("twice: the test ran", twice));
         test("notAsync", ({ notAsync }) => console.log("notAsync: the test ran", notAsync));
         test("notAwaited", ({ notAwaited }) => console.log("notAwaited: the test ran", notAwaited));
-        test("the test throws", ({ ok }) => { throw new Error("in the test"); });
+        test("the test throws", ({ ok }) => { Bun.gc(true); throw new Error("in the test"); });
         test("parameter", (context) => console.log("unreachable"));
         test("rest", ({ ...rest }) => console.log("unreachable"));
         test.for([1])("for parameter", (row, context) => console.log("unreachable"));
@@ -1983,7 +2070,7 @@ describe.concurrent("test.extend()", () => {
       ],
       exitCode: 1,
     });
-    // Reported where the test was registered.
+    // Reported where the test was registered, also when the code there has been collected since.
     expect(stderr).toContain("a.test.js:28:9");
   });
 
@@ -2090,17 +2177,19 @@ describe.concurrent("test.extend()", () => {
           "shared.js": `
             import { test as base } from "vitest";
             export const test = base.extend({
-              perFile: [async ({}, use) => { console.log("setup"); await use({ uses: 0 }); console.log("teardown"); }, { scope: "file" }],
-              failing: [async ({}, use) => { console.log("failing setup"); throw new Error("no"); }, { scope: "file" }],
+              perFile: [async ({}, use) => { console.log(file, "setup"); await use({ uses: 0 }); console.log(file, "teardown"); }, { scope: "file" }],
+              failing: [async ({}, use) => { console.log(file, "failing setup"); throw new Error("no"); }, { scope: "file" }],
             });
           `,
           "a.test.js": `
             import { test } from "./shared.js";
+            globalThis.file = "a";
             test("one", ({ perFile }) => console.log("a one", ++perFile.uses));
             test("two", ({ perFile }) => console.log("a two", ++perFile.uses));
           `,
           "b.test.js": `
             import { test } from "./shared.js";
+            globalThis.file = "b";
             test("one", ({ perFile }) => console.log("b one", ++perFile.uses));
             test.fails("fails once", ({ failing }) => console.log("unreachable"));
             test.fails("fails again", ({ failing }) => console.log("unreachable"));
@@ -2108,11 +2197,12 @@ describe.concurrent("test.extend()", () => {
         },
         args,
       );
-      const a = ["setup", "a one 1", "a two 2", "teardown"];
-      const b = ["setup", "b one 1", "failing setup", "teardown"];
-      // --parallel prints what a file wrote to stderr, in one piece, and the files in either order.
+      const a = ["a setup", "a one 1", "a two 2", "a teardown"];
+      const b = ["b setup", "b one 1", "b failing setup", "b teardown"];
+      // --parallel prints what the files wrote to stderr, test by test: files that run at the same time take turns.
       const log = (stdout + stderr).split("\n").filter(line => [...a, ...b].includes(line));
-      expect(log[1] === a[1] ? log : [...log.slice(4), ...log.slice(0, 4)]).toEqual([...a, ...b]);
+      const takeTurns = args.includes("--parallel=2");
+      expect(takeTurns ? log.toSorted((x, y) => x.charCodeAt(0) - y.charCodeAt(0)) : log).toEqual([...a, ...b]);
       expect(exitCode).toBe(0);
     });
   }
@@ -2495,7 +2585,7 @@ describe.concurrent("resolution", () => {
       `,
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "missing.mjs"],
+      cmd: [bunExe(), "--no-install", "missing.mjs"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",

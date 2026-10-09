@@ -27,7 +27,7 @@ describe.concurrent("socket", () => {
     const data = jest.fn();
     const connectError = jest.fn(() => {});
     {
-      expect(
+      await expect(
         async () =>
           await Bun.connect({
             fd: getMaxFD() + 1024,

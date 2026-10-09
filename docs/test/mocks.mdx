@@ -335,7 +335,7 @@ Outside a factory, `await vi.importActual("./math")` and `jest.requireActual("./
 
 This also works when the mocked module is part of an import cycle: the modules that import it get the mock, and the original is evaluated before the factory is called.
 
-While a factory runs, what it loads with `import()`, `require()` or `vi.importActual()` gets the original of the module being mocked instead of waiting for the mock.
+While a factory runs, what it loads with `import()`, `require()` or `vi.importActual()` gets the original of the module being mocked instead of waiting for the mock. Those instances belong to the factory: the rest of the program loads the same modules again and gets the mock.
 
 ### Getters and Missing Exports
 
@@ -623,7 +623,7 @@ For module mocks, `vi` has `mock`, `doMock`, `unmock`, `doUnmock`, `importActual
 These differences from Vitest remain:
 
 - A module that was imported before it is mocked is updated in place: its existing exports change, exports that only the mock has are not added, and getters are read once.
-- In an import cycle, every module that imports the mocked module gets the mock. In Vitest, one that is first loaded while the factory loads the original gets the original.
+- Every module that imports the mocked module gets the mock. In Vitest, one that is first loaded while the factory runs gets the original, and keeps it.
 - A factory that is given the original is called after the original is evaluated, not before.
 - `export * from` a module whose factory is given the original re-exports the names of the original.
 

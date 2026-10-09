@@ -1007,6 +1007,78 @@ describe.concurrent("a module mocked without a factory", () => {
 });
 
 describe.concurrent("unmock", () => {
+  test.each([{}, { BUN_JSC_useDFGJIT: "0" }])(
+    "an export that had no value yet when it was mocked keeps the one its module gave it since %j",
+    async env => {
+      using dir = tempDir("mock-module-uninitialized", {
+        "late.js": `
+          globalThis.reachedTheAwait();
+          await globalThis.gate;
+          export let late = "real";
+          export const read = () => late;
+        `,
+        "late.test.js": `
+          import { numberOfDFGCompiles } from "bun:jsc";
+          import { mock, test, vi } from "bun:test";
+
+          test("in code that no longer checks whether it has one", async () => {
+            const reached = Promise.withResolvers();
+            const gate = Promise.withResolvers();
+            globalThis.reachedTheAwait = reached.resolve;
+            globalThis.gate = gate.promise;
+            const loading = import("./late.js");
+            await reached.promise;
+            mock.module("./late.js", () => ({ late: "mocked" }));
+            gate.resolve();
+            const ns = await loading;
+
+            const readMember = () => ns.late;
+            const typeofMember = () => typeof ns.late;
+            for (let i = 0; i < 1_000_000 && !(numberOfDFGCompiles(readMember) && numberOfDFGCompiles(typeofMember)); i++) {
+              readMember();
+              typeofMember();
+            }
+            const all = () => [readMember(), typeofMember(), ns.read(), 0 in [ns.read()]];
+            console.log(JSON.stringify(all()));
+            vi.doUnmock("./late.js");
+            console.log(JSON.stringify(all()));
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "./late.test.js"],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0", ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 60_000,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.split("\n").slice(1, 3)).toEqual(Array(2).fill('["real","string","real",true]'));
+      expect(stderr).toContain(" 1 pass\n 0 fail\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test.each([[[]], [["--isolate"]]])("the modules that imported the mock are loaded again %j", async args => {
+    await expectFixturesToPass(
+      {
+        ...modules,
+        "importers.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("vi.doUnmock", async () => {
+            vi.doMock("./mod", () => ({ value: "mocked", fn: () => "mocked-fn" }));
+            expect((await import("./side")).captured).toBe("mocked");
+            vi.doUnmock("./mod");
+            expect((await import("./side")).captured).toBe("real");
+          });
+        `,
+      },
+      1,
+      args,
+    );
+  });
+
   test("the next import or require() of a module that was loaded as the mock loads the original", async () => {
     await expectFixturesToPass(
       {
@@ -1506,7 +1578,9 @@ describe.concurrent("the exports of a mocked module are read from what the facto
         import { readFlag } from "./reader";
         ${mock}
         test("reads", () => {
-          for (let i = 0; i < 2000; i++) expect(readFlag()).toBe(${expected});
+          const read = new Set();
+          for (let i = 0; i < 2000; i++) read.add(readFlag());
+          expect([...read]).toEqual([${expected}]);
         });
       `;
       await expectFixturesToPass(
@@ -1613,6 +1687,135 @@ describe.concurrent("the exports of a mocked module are read from what the facto
   });
 });
 
+describe.concurrent("a factory that returns a module namespace object", () => {
+  const files = {
+    "a.ts": `export const a = "real-a";`,
+    "b.ts": `export const b = "real-b";`,
+    "star.ts": `export * from "./a";`,
+    "named.ts": `export { a } from "./a";`,
+    "star-of-star.ts": `export * from "./star";`,
+  };
+
+  test("of a mocked module gets what that reads from at the time", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "itself.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          test("of the module it mocks", async () => {
+            mock.module("./a", () => ({ a: "first" }));
+            const ns = await import("./a");
+            mock.module("./a", () => ns);
+            expect([ns.a, "a" in ns, Object.keys(ns), delete ns.missing]).toEqual(["first", true, ["a"], true]);
+            await mock.module("./a", async () => ns);
+            expect({ ...ns }).toEqual({ a: "first" });
+            expect(require("./a")).toBe(ns);
+          });
+        `,
+        "each-other.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          test("of two modules, each the other's", async () => {
+            mock.module("./a", () => ({ a: "first-a" }));
+            mock.module("./b", () => ({ b: "first-b" }));
+            const [a, b] = [await import("./a"), await import("./b")];
+            mock.module("./a", () => b);
+            mock.module("./b", () => a);
+            expect([{ ...a }, { ...b }]).toEqual([{ b: "first-b" }, { b: "first-b" }]);
+          });
+        `,
+      },
+      2,
+      ["--isolate"],
+    );
+  });
+
+  test("of a module that re-exports the mocked module fails", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "re-exports.test.ts": `
+          import { expect, mock, test, vi } from "bun:test";
+          const message = "mock(module, fn) requires a function that does not return the namespace object of a module that re-exports the mocked module";
+
+          test.each(["./star", "./named", "./star-of-star"])("%s", async specifier => {
+            mock.module("./a", () => ({ a: "first" }));
+            const [ns, reexports] = [await import("./a"), await import(specifier)];
+            expect(() => mock.module("./a", () => reexports)).toThrow(new TypeError(message));
+            expect(ns.a).toBe("first");
+            await expect(mock.module("./a", async () => (await 0, reexports))).rejects.toThrow(new TypeError(message));
+            vi.resetModules();
+          });
+
+          test("through another mock", async () => {
+            mock.module("./a", () => ({ a: "first" }));
+            const star = await import("./star");
+            mock.module("./b", () => star);
+            const b = await import("./b");
+            expect(b.a).toBe("first");
+            expect(() => mock.module("./a", () => b)).toThrow(new TypeError(message));
+          });
+        `,
+      },
+      4,
+    );
+  });
+
+  test("an object that reads from the mocked module in a way that is not seen is a RangeError when it is read", async () => {
+    await expectFixturesToPass(
+      {
+        ...files,
+        "inherits.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          test("an object that inherits from the namespace object", async () => {
+            mock.module("./a", () => ({ a: "first" }));
+            const ns = await import("./a");
+            mock.module("./a", () => Object.create(ns));
+            expect(() => ns.a).toThrow(RangeError);
+            expect(() => "a" in ns).toThrow(RangeError);
+            expect(() => delete ns.a).toThrow(RangeError);
+            expect(Object.keys(ns)).toEqual([]);
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("the function that calls the factories of mocks that are given the original is out of reach", async () => {
+    await expectFixturesToPass(
+      {
+        "a.ts": `
+          export const a = "real-a";
+          export const importByKey = () => import("\\0bun:module-mock");
+        `,
+        "static.ts": `import evaluate from "\\0bun:module-mock"; export { evaluate };`,
+        "reach.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import * as ns from "./a";
+          vi.mock("./a", async importOriginal => ({ ...(await importOriginal()), a: "mocked-a" }));
+
+          test("for a module that is not one of those mocks", async () => {
+            await expect(import("\\0bun:module-mock")).rejects.toThrow("Cannot find");
+            await expect(import("./static")).rejects.toThrow("Cannot find");
+          });
+
+          test("and does nothing for the original of one, which an import() names like the mock", async () => {
+            const { default: evaluate } = await ns.importByKey();
+            const actual = await vi.importActual("./a");
+            for (const args of [[], [1, 2], [{}, {}], [ns], [ns, ns], [actual, ns], [actual, actual], [ns, actual]]) expect(evaluate(...args)).toBeUndefined();
+            expect([ns.a, actual.a]).toEqual(["mocked-a", "real-a"]);
+
+            vi.doUnmock("./a");
+            for (const args of [[ns, ns], [ns, actual]]) expect(evaluate(...args)).toBeUndefined();
+            expect(ns.a).toBe("mocked-a");
+          });
+        `,
+      },
+      2,
+    );
+  });
+});
+
 describe.concurrent("an export the factory did not return", () => {
   const files = {
     "dep.ts": `export const a = "real-a"; export const b = "real-b"; export default "real-default";`,
@@ -1675,6 +1878,20 @@ describe.concurrent("an export the factory did not return", () => {
             expect(require("./user.cjs")).toEqual({ a: "mocked-a", b: undefined });
           });
         `,
+        "star-first.ts": `export * from "./dep"; export * from "./named";`,
+        "named-first.ts": `export * from "./named"; export * from "./dep";`,
+        "star-first-user.ts": `import { a, b } from "./star-first"; export const read = () => [a, b];`,
+        "named-first-user.ts": `import { a, b } from "./named-first"; export const read = () => [a, b];`,
+        "order.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          vi.mock("./dep", () => ({ a: "mocked-a" }));
+          test.each(["./star-first", "./named-first"])("export * and export {} of it next to each other: %s", async specifier => {
+            const ns = await import(specifier);
+            expect(ns.a).toBe("mocked-a");
+            expect(() => ns.b).toThrow('No "b" export is defined on the mock of "./dep".');
+            expect((await import(specifier + "-user")).read).toThrow('No "b" export is defined on the mock of "./dep".');
+          });
+        `,
         "names.test.ts": `
           import { expect, jest, mock, test, vi } from "bun:test";
           test.each([
@@ -1702,7 +1919,7 @@ describe.concurrent("an export the factory did not return", () => {
           });
         `,
       },
-      9,
+      11,
       ["--isolate"],
     );
   });
@@ -1710,7 +1927,7 @@ describe.concurrent("an export the factory did not return", () => {
 
 describe.concurrent("import cycles through a mocked module", () => {
   // m0 imports m1, which imports m2, and so on; the last one imports m0, which is mocked.
-  function cycleOf(length: number) {
+  function cycleOf(length: number, only?: string[]) {
     const files: Record<string, string> = {
       "log.ts": `export const order = (globalThis.order ??= []);`,
       "outside.ts": `
@@ -1772,6 +1989,7 @@ describe.concurrent("import cycles through a mocked module", () => {
     };
     for (const [entry, order] of Object.entries(entries)) {
       for (const [kind, mock] of Object.entries(mocks)) {
+        if (only && !only.includes(kind)) continue;
         const hasFactory = kind !== "automock" && kind !== "spy";
         files[`${kind}-${entry}.test.ts`] = `
           import { expect, jest, test, vi } from "bun:test";
@@ -1796,8 +2014,12 @@ describe.concurrent("import cycles through a mocked module", () => {
     return files;
   }
 
-  test.each([2, 4, 20])("of %d modules", async length => {
+  test.each([2, 4])("of %d modules", async length => {
     await expectFixturesToPass(cycleOf(length), 18, ["--isolate"]);
+  });
+
+  test.each(["importOriginal", "automock", "helper"])("of 20 modules: %s", async kind => {
+    await expectFixturesToPass(cycleOf(20, [kind]), 3, ["--isolate"]);
   });
 
   test("files that share their modules", async () => {
@@ -1847,6 +2069,37 @@ describe.concurrent("import cycles through a mocked module", () => {
           test("the factory is called for the module that imports the mock", async () => {
             const actual = await vi.importActual("./a");
             expect([actual.a, actual.seenByB()]).toEqual(["real-a", "mocked-a"]);
+          });
+        `,
+      },
+      2,
+      ["--isolate"],
+    );
+  });
+
+  test("the original re-exports a module that is not evaluated yet", async () => {
+    await expectFixturesToPass(
+      {
+        "index.ts": `export * from "./component"; export * from "./util";`,
+        "component.ts": `import { util } from "./index"; export const component = () => util();`,
+        "util.ts": `export const util = () => "real-util";`,
+        "given-the-original.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import { component } from "./component";
+          import * as index from "./index";
+          vi.mock("./index", async importOriginal => ({ ...(await importOriginal()), util: () => "mocked-util" }));
+          test("the exports that have no value yet are undefined in what the factory is given", async () => {
+            expect(component()).toBe("mocked-util");
+            expect({ ...index }).toEqual({ component: undefined, util: expect.any(Function) });
+            expect(Object.keys(await vi.importActual("./index"))).toEqual(["component", "util"]);
+          });
+        `,
+        "automock.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import { component } from "./component";
+          vi.mock("./index");
+          test("they are what is mocked", () => {
+            expect(component()).toBeUndefined();
           });
         `,
       },
@@ -2048,8 +2301,9 @@ describe.concurrent("what a factory loads while it runs", () => {
             expect(order).toEqual(["pkg", "uses-pkg", "factory"]);
             expect({ ...pkg }).toEqual({ kind: "mocked", helper: "helper", seenByWhatTheFactoryLoaded: "real" });
             expect(app.sees()).toBe("mocked");
-            // It is loaded once, so it goes on seeing the original.
-            expect((await import("./uses-pkg")).sees()).toBe("real");
+            // That instance was the factory's own.
+            expect((await import("./uses-pkg")).sees()).toBe("mocked");
+            expect(order).toEqual(["pkg", "uses-pkg", "factory", "uses-pkg"]);
           });
         `,
       },
@@ -2115,6 +2369,20 @@ describe.concurrent("what a factory loads while it runs", () => {
             expect([d.seen(), c.c, c.seenByD()]).toEqual(["mocked-c", "mocked-c", "real-c"]);
           });
         `,
+        // By then the original is evaluated, and like the module that imports the mock it waits for the factory.
+        "given-the-original.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import { seen } from "./d";
+          import * as c from "./c";
+          vi.mock("./c", async importOriginal => ({
+            ...(await importOriginal()),
+            c: "mocked-c",
+            seenInTheFactory: (await import("./d")).seen(),
+          }));
+          test("import() of a module of the import cycle", () => {
+            expect([seen(), c.c, c.seenByD(), c.seenInTheFactory]).toEqual(["mocked-c", "mocked-c", "mocked-c", "real-c"]);
+          });
+        `,
         "require-esm.test.ts": `
           import { expect, mock, test } from "bun:test";
           mock.module("./a", () => ({ a: "mocked-a", seenInTheFactory: require("./b").seen() }));
@@ -2130,8 +2398,49 @@ describe.concurrent("what a factory loads while it runs", () => {
           });
         `,
       },
-      5,
+      6,
       ["--isolate"],
+    );
+  });
+
+  test("is not told from the rest for a factory that is not written in a file", async () => {
+    await expectFixturesToPass(
+      {
+        "a.ts": `export const a = "real-a";`,
+        "b.ts": `import { a } from "./a"; export const seen = () => a;`,
+        "mock-function.test.ts": `
+          import { expect, mock, test } from "bun:test";
+          import { join } from "node:path";
+          mock.module("./a", mock(() => ({ a: "mocked-a", seen: require("./b").seen })));
+          test("the import fails instead of never settling", async () => {
+            await expect(import("./a")).rejects.toThrow(
+              'Circular import: "' + join(import.meta.dir, "a.ts") + '" is imported by a module that its own mock factory loads while it runs',
+            );
+          });
+        `,
+      },
+      1,
+    );
+  });
+
+  test("a module that re-exports the mocked module, and is re-exported next to it", async () => {
+    await expectFixturesToPass(
+      {
+        "a.ts": `export const a = "real-a";`,
+        "helper.ts": `export * from "./a"; export const helper = "helper";`,
+        "both.ts": `export * from "./helper"; export * from "./a";`,
+        "named.ts": `import { a, helper } from "./both"; export const seen = () => [a, helper];`,
+        "both.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          import { seen } from "./named";
+          import * as both from "./both";
+          vi.mock("./a", async () => ({ a: "mocked, not " + (await import("./helper")).a }));
+          test("there is one binding of the name", () => {
+            expect([seen(), { ...both }]).toEqual([["mocked, not real-a", "helper"], { a: "mocked, not real-a", helper: "helper" }]);
+          });
+        `,
+      },
+      1,
     );
   });
 

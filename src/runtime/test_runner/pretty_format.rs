@@ -2328,7 +2328,7 @@ impl<'a> Formatter<'a> {
                         parent: value,
                     };
 
-                    let result = value.for_each_property_ordered(
+                    let result = value.for_each_property_ordered_calling_getters(
                         global,
                         (&raw mut iter).cast::<c_void>(),
                         PropertyIterator::<W, ENABLE_ANSI_COLORS>::for_each,

@@ -8,21 +8,30 @@
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/JSMapIterator.h>
 #include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/JSSetInlines.h>
-#include <JavaScriptCore/JSSetIterator.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
 namespace Bun {
 
 using namespace JSC;
 
-static JSMap* ensureOriginals(VM& vm, Zig::GlobalObject* globalObject, WriteBarrier<Unknown>& slot)
+static JSMap* ensureMap(VM& vm, Zig::GlobalObject* globalObject, WriteBarrier<Unknown>& slot)
 {
-    if (JSValue originals = slot.get())
-        return uncheckedDowncast<JSMap>(originals);
-    auto* originals = JSMap::create(vm, globalObject->mapStructure());
-    slot.set(vm, globalObject, originals);
-    return originals;
+    if (JSValue map = slot.get())
+        return uncheckedDowncast<JSMap>(map);
+    auto* map = JSMap::create(vm, globalObject->mapStructure());
+    slot.set(vm, globalObject, map);
+    return map;
+}
+
+// JSC inlines these whole, kilobytes each, into every caller.
+static NEVER_INLINE bool hasOriginal(JSGlobalObject* globalObject, JSMap* originals, JSValue key)
+{
+    return originals->has(globalObject, key);
+}
+
+static NEVER_INLINE Identifier propertyKeyOf(JSGlobalObject* globalObject, JSValue value)
+{
+    return value.toPropertyKey(globalObject);
 }
 
 using RestoreOriginal = void (*)(JSGlobalObject*, JSObject* target, JSValue key, JSValue original);
@@ -49,7 +58,7 @@ static void restoreGlobal(JSGlobalObject* globalObject, JSObject* target, JSValu
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto name = key.toPropertyKey(globalObject);
+    auto name = propertyKeyOf(globalObject, key);
     RETURN_IF_EXCEPTION(scope, );
     if (original.isUndefined()) {
         scope.release();
@@ -76,14 +85,14 @@ JSC_DEFINE_HOST_FUNCTION(jsViStubGlobal, (JSGlobalObject * lexicalGlobalObject, 
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto name = callFrame->argument(0).toPropertyKey(globalObject);
+    auto name = propertyKeyOf(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
     JSValue value = callFrame->argument(1);
 
     JSObject* target = globalObject->globalThis();
-    JSMap* originals = ensureOriginals(vm, globalObject, globalObject->mockModule.stubbedGlobals);
+    JSMap* originals = ensureMap(vm, globalObject, globalObject->mockModule.stubbedGlobals);
     JSValue key = identifierToJSValue(vm, name);
-    bool isRemembered = originals->has(globalObject, key);
+    bool isRemembered = hasOriginal(globalObject, originals, key);
     RETURN_IF_EXCEPTION(scope, {});
     if (!isRemembered) {
         JSValue original = jsUndefined();
@@ -96,7 +105,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViStubGlobal, (JSGlobalObject * lexicalGlobalObject, 
             object->setPrototypeDirect(vm, jsNull());
             original = object;
         }
-        originals->set(globalObject, key, original);
+        JSC__JSMap__set(originals, globalObject, JSValue::encode(key), JSValue::encode(original));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -131,7 +140,7 @@ static void setEnv(JSGlobalObject* globalObject, JSObject* env, JSValue key, JSV
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto name = key.toPropertyKey(globalObject);
+    auto name = propertyKeyOf(globalObject, key);
     RETURN_IF_EXCEPTION(scope, );
     scope.release();
     if (valueOrUndefined.isUndefined()) {
@@ -174,14 +183,14 @@ JSC_DEFINE_HOST_FUNCTION(jsViStubEnv, (JSGlobalObject * lexicalGlobalObject, Cal
 
     JSObject* env = processEnv(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    JSMap* originals = ensureOriginals(vm, globalObject, globalObject->mockModule.stubbedEnvs);
+    JSMap* originals = ensureMap(vm, globalObject, globalObject->mockModule.stubbedEnvs);
     JSValue nameString = jsString(vm, name);
 #if OS(WINDOWS)
     JSValue key = jsString(vm, name.convertToUppercaseWithoutLocale());
 #else
     JSValue key = nameString;
 #endif
-    bool isRemembered = originals->has(globalObject, key);
+    bool isRemembered = hasOriginal(globalObject, originals, key);
     RETURN_IF_EXCEPTION(scope, {});
     if (!isRemembered) {
         JSValue original = jsUndefined();
@@ -193,7 +202,7 @@ JSC_DEFINE_HOST_FUNCTION(jsViStubEnv, (JSGlobalObject * lexicalGlobalObject, Cal
             original = slot.getValue(globalObject, propertyName);
             RETURN_IF_EXCEPTION(scope, {});
         }
-        originals->set(globalObject, key, original);
+        JSC__JSMap__set(originals, globalObject, JSValue::encode(key), JSValue::encode(original));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -219,13 +228,13 @@ static JSPromise* pendingDynamicImport(Zig::GlobalObject* globalObject)
     JSValue dynamicImports = globalObject->mockModule.dynamicImports.get();
     if (!dynamicImports)
         return nullptr;
-    auto* imports = uncheckedDowncast<JSSet>(dynamicImports);
-    auto* iterator = JSSetIterator::create(vm, globalObject->setIteratorStructure(), imports, IterationKind::Keys);
+    auto* imports = uncheckedDowncast<JSMap>(dynamicImports);
+    auto* iterator = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), imports, IterationKind::Keys);
     JSPromise* pending = nullptr;
-    while (JSValue import = iterator->nextWithAdvance(vm)) {
+    while (JSValue import = iterator->nextWithAdvance(vm).key) {
         auto* promise = uncheckedDowncast<JSPromise>(import);
         if (promise->status() != JSPromise::Status::Pending) {
-            imports->remove(globalObject, import);
+            JSC__JSMap__remove(imports, globalObject, JSValue::encode(import));
             RETURN_IF_EXCEPTION(scope, nullptr);
         } else if (!pending)
             pending = promise;
@@ -238,16 +247,13 @@ void didStartDynamicImport(Zig::GlobalObject* globalObject, JSPromise* import)
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto& dynamicImports = globalObject->mockModule.dynamicImports;
-    if (!dynamicImports)
-        dynamicImports.set(vm, globalObject, JSSet::create(vm, globalObject->setStructure()));
-    auto* imports = uncheckedDowncast<JSSet>(dynamicImports.get());
+    JSMap* imports = ensureMap(vm, globalObject, globalObject->mockModule.dynamicImports);
     // Sweeping only at powers of two keeps the cost of a sweep proportional to what was added since the last one.
     if (uint32_t size = imports->size(); size >= 16 && hasOneBitSet(size)) {
         pendingDynamicImport(globalObject);
         RETURN_IF_EXCEPTION(scope, );
     }
-    RELEASE_AND_RETURN(scope, imports->add(globalObject, import));
+    RELEASE_AND_RETURN(scope, JSC__JSMap__set(imports, globalObject, JSValue::encode(import), JSValue::encode(jsUndefined())));
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsViFulfillUnlessImporting);

@@ -59,6 +59,7 @@ devTest("import.meta.glob follows a directory that nothing is imported from", {
     `,
     "modules/a.ts": `throw new Error("not imported");`,
     "modules/nested/b.ts": `throw new Error("not imported");`,
+    "modules/nothing/here/.gitkeep": "",
     "empty/.gitkeep": "",
     "routes/empty.ts": `
       export default function () {
@@ -80,5 +81,18 @@ devTest("import.meta.glob follows a directory that nothing is imported from", {
     await dev.fetch("/empty").equals("[]");
     await dev.write("empty/first.ts", "");
     await dev.fetch("/empty").equals("[../empty/first.ts]");
+
+    // Directories that hold no match yet.
+    await dev.write("modules/nothing/here/e.ts", "");
+    await dev
+      .fetch("/")
+      .equals("../modules/c.ts,../modules/nested/b.ts,../modules/nested/d.ts,../modules/nothing/here/e.ts");
+    await dev.mkdir("modules/later");
+    await dev.write("modules/later/f.ts", "");
+    await dev
+      .fetch("/")
+      .equals(
+        "../modules/c.ts,../modules/later/f.ts,../modules/nested/b.ts,../modules/nested/d.ts,../modules/nothing/here/e.ts",
+      );
   },
 });

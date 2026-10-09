@@ -214,14 +214,23 @@ describe.concurrent("import.meta.glob", () => {
   });
 
   test.each([
-    [`"./${"a/".repeat(5000)}*.ts"`, "The glob pattern is too long for a path"],
-    [`"./*.ts", { base: "./${"a/".repeat(5000)}" }`, 'The "import.meta.glob" option "base" is too long for a path'],
+    [`"./${"a/".repeat(60_000)}*.ts"`, "The glob pattern is too long for a path"],
+    [`"./*.ts", { base: "./${"a/".repeat(60_000)}" }`, 'The "import.meta.glob" option "base" is too long for a path'],
   ])("text that is too long for a path", async (args, message) => {
     const { stdout, stderr, exitCode } = await runEntry(`console.log(import.meta.glob(${args}));`);
     expect({ stdout, stderr: stderr.split("\n").filter(line => line.startsWith("error")), exitCode }).toEqual({
       stdout: "",
       stderr: ["error: " + message],
       exitCode: 1,
+    });
+  });
+
+  // Vite looks in the whole file system.
+  test("a pattern that starts with ** is looked for in the project", async () => {
+    expect(await runEntry(`console.log(JSON.stringify(Object.keys(import.meta.glob("**/[dq].ts"))));`)).toEqual({
+      stdout: `["/src/[id]/(group)/{x}/q.ts","/src/dir/sub/d.ts"]`,
+      stderr: "",
+      exitCode: 0,
     });
   });
 

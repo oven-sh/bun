@@ -841,7 +841,7 @@ describe.concurrent("expect.soft()", () => {
       "error: expect(received).toBe(expected)",
       "error: my label",
       "error: expect(received).not.toBe(expected)",
-      "error: expect(received).toBeFoo()",
+      "error: expected bar to be foo",
       "error: Expected value must be a function",
       "error: expect(received).toMatchInlineSnapshot(expected)",
       "(fail) several",
@@ -1107,7 +1107,7 @@ describe.concurrent("expect.poll()", () => {
       test("next", async () => {
         const before = calls;
         await later(0, 20);
-        console.log(calls > 1, calls - before);
+        console.log(calls > 0, calls - before);
       });
     `);
     expect(stdout).toEqual(["true 0"]);

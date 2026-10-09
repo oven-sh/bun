@@ -81,7 +81,7 @@ describe.concurrent("hoisting", () => {
     ).toEqual([["load side", "mocked"]]);
   });
 
-  // What babel-jest does with each.
+  // Whether babel-jest hoists each.
   test.each([
     [`jest.mock("./mod", () => ({ value: "mocked" })).mock("./other", () => ({ other: "mocked" }))`, true],
     [
@@ -110,11 +110,12 @@ describe.concurrent("hoisting", () => {
           import { value } from "./mod";
           import { other } from "./other";
           ${chain};
-          events.push(value, other);
+          (globalThis.events ??= []).push(value, other);
           ${print}
         `,
       }),
-    ).toEqual([isHoisted ? ["mocked", "mocked"] : ["load mod", "load other", "real", "other"]]);
+      // A mock that is not hoisted replaces the exports of the modules, which were loaded.
+    ).toEqual([isHoisted ? ["mocked", "mocked"] : ["load mod", "load other", "mocked", "mocked"]]);
   });
 
   test.each([

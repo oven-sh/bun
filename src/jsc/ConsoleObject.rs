@@ -1618,6 +1618,8 @@ pub mod formatter {
         /// Set for `bun:test` matcher messages. True when it printed `value`, a DOM node or collection.
         pub dom_printer:
             Option<fn(&mut Formatter<'_>, &mut dyn bun_io::Write, JSValue) -> JsResult<bool>>,
+        /// Set for `bun:test` matcher messages. An own accessor prints as what its getter returns.
+        pub call_own_getters: bool,
     }
 
     impl<'a> Formatter<'a> {
@@ -1650,6 +1652,7 @@ pub mod formatter {
                 error_display_level: ErrorDisplayLevel::Full,
                 format_buffer_as_text: false,
                 dom_printer: None,
+                call_own_getters: false,
             }
         }
 
@@ -1687,6 +1690,7 @@ pub mod formatter {
                 error_display_level: self.error_display_level,
                 format_buffer_as_text: self.format_buffer_as_text,
                 dom_printer: self.dom_printer,
+                call_own_getters: self.call_own_getters,
             }
         }
 
@@ -5403,6 +5407,7 @@ pub mod formatter {
                 return self.print_object_depth_exceeded::<C>(writer_, value);
             }
             let ordered_properties = self.ordered_properties;
+            let call_own_getters = self.call_own_getters;
             let global_this = self.global_this;
             let mut iter = PropertyIteratorCtx::<C> {
                 formatter: self,
@@ -5415,6 +5420,12 @@ pub mod formatter {
 
             if ordered_properties {
                 value.for_each_property_ordered(
+                    global_this,
+                    (&raw mut iter).cast::<c_void>(),
+                    PropertyIteratorCtx::<C>::for_each,
+                )?;
+            } else if call_own_getters {
+                value.for_each_property_calling_own_getters(
                     global_this,
                     (&raw mut iter).cast::<c_void>(),
                     PropertyIteratorCtx::<C>::for_each,

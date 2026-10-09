@@ -34,6 +34,7 @@
 #include "BunPlugin.h"
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
+#include "headers.h"
 
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsNow);
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsSetSystemTime);
@@ -1938,6 +1939,12 @@ struct Automocker {
     void mockMembers(JSObject* original, JSObject* replacement, AutomockKind);
 };
 
+// JSC inlines objectPrototypeToString whole, 5 KB, into every caller.
+NEVER_INLINE JSString* objectPrototypeToStringOutOfLine(JSGlobalObject* globalObject, JSValue value)
+{
+    return JSC::objectPrototypeToString(globalObject, value);
+}
+
 AutomockKind Automocker::kindOf(JSValue value)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -1954,7 +1961,7 @@ AutomockKind Automocker::kindOf(JSValue value)
         return AutomockKind::Array;
 
     // Symbol.toStringTag counts: a Map, a Date, a Promise or a tagged class instance is kept as it is.
-    JSString* tag = JSC::objectPrototypeToString(globalObject, value);
+    JSString* tag = objectPrototypeToStringOutOfLine(globalObject, value);
     RETURN_IF_EXCEPTION(scope, AutomockKind::Keep);
     auto tagView = tag->view(globalObject);
     RETURN_IF_EXCEPTION(scope, AutomockKind::Keep);
@@ -2033,7 +2040,7 @@ JSValue Automocker::replacementFor(JSValue value, AutomockRole role)
     }
     }
 
-    replacements->set(globalObject, value, replacement);
+    JSC__JSMap__set(replacements, globalObject, JSValue::encode(value), JSValue::encode(replacement));
     RETURN_IF_EXCEPTION(scope, {});
 
     if (kind != AutomockKind::Array || spy) {

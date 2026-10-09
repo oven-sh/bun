@@ -40,6 +40,7 @@ extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const EncodedSlice* name, EncodedSlice* value);
 extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
+extern "C" bool isBunTest;
 
 namespace Bun {
 
@@ -140,7 +141,7 @@ static void setNativeEnvValue(JSGlobalObject* globalObject, const String& name, 
 static void applyTZFromString(JSGlobalObject*, const String&);
 static void applyTLSRejectFromString(JSGlobalObject*, const String&);
 static void applyVerboseFetchFromString(JSGlobalObject*, const String&);
-static bool shouldApplyTZSideEffect(JSGlobalObject*);
+static void applyTZDeleted(JSGlobalObject*);
 
 // TZ side effect for put() and jsProcessEnvCoerceForWrite, so delete-then-set
 // (which drops the CustomAccessor) still updates the process timezone like
@@ -333,10 +334,7 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
     // the CustomAccessor and existing Dates keep the old offset. put() handles re-set.
     auto* uid = propertyName.publicName();
     if (uid && WTF::equal(uid, "TZ"_s)) {
-        if (shouldApplyTZSideEffect(globalObject)) {
-            WTF::setTimeZoneOverride(String());
-            resetDateCachesAfterTimeZoneChange(vm);
-        }
+        applyTZDeleted(globalObject);
         auto* clientData = WebCore::clientData(vm);
         DeletePropertySlot dataSlot;
         Base::deleteProperty(cell, globalObject, clientData->builtinNames().dataPrivateName(), dataSlot);
@@ -508,10 +506,7 @@ JSC_DEFINE_HOST_FUNCTION(jsProcessEnvResetForDelete, (JSGlobalObject * globalObj
     auto keyView = asString(key)->view(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (WTF::equal(keyView, "TZ"_s)) {
-        if (shouldApplyTZSideEffect(globalObject)) {
-            WTF::setTimeZoneOverride(String());
-            resetDateCachesAfterTimeZoneChange(vm);
-        }
+        applyTZDeleted(globalObject);
     } else if (WTF::equal(keyView, "NODE_TLS_REJECT_UNAUTHORIZED"_s)) {
         applyTLSRejectFromString(globalObject, String());
     }
@@ -693,6 +688,11 @@ static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
     if (value.length() < 32 && WTF::setTimeZoneOverride(value))
         resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
 }
+// Without TZ, `bun test` runs in UTC.
+static void applyTZDeleted(JSGlobalObject* globalObject)
+{
+    applyTZFromString(globalObject, isBunTest ? String("Etc/UTC"_s) : String());
+}
 static void applyTLSRejectFromString(JSGlobalObject*, const String& value)
 {
     /* Node only treats the exact string "0" as disabling verification. */
@@ -789,9 +789,8 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
     // existing Date instances keep the deleted zone's offset.
     String key(uid);
     String normalizedKey = SharedEnvStore::normalizeKey(key);
-    if (normalizedKey == "TZ"_s && shouldApplyTZSideEffect(globalObject)) {
-        WTF::setTimeZoneOverride(String());
-        resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
+    if (normalizedKey == "TZ"_s) {
+        applyTZDeleted(globalObject);
     } else if (normalizedKey == "NODE_TLS_REJECT_UNAUTHORIZED"_s) {
         applyTLSRejectFromString(globalObject, String());
     } else if (isProxyEnvVarName(JSC::getVM(globalObject), normalizedKey)) {

@@ -2501,17 +2501,6 @@ describe.concurrent("a test file that can never finish loading", () => {
         worker.unref();
         worker.onmessage = event => resolve(event.data);
       })`,
-      "unref'd fs.watch": `await (async () => {
-        const fs = require("node:fs");
-        const watcher = fs.watch(import.meta.dir, { persistent: false });
-        const changed = new Promise(resolve => watcher.once("change", () => resolve("ok")));
-        fs.writeFileSync(import.meta.dir + "/changed.txt", "");
-        try {
-          return await changed;
-        } finally {
-          watcher.close();
-        }
-      })()`,
       "file": `(await Bun.file(import.meta.path).text()) && "ok"`,
       "transpiling a big module on another thread": `(await import("./big.ts")).ok`,
     }),
@@ -2526,6 +2515,37 @@ describe.concurrent("a test file that can never finish loading", () => {
       "big.ts": `export const ok = "ok";\n` + Buffer.alloc(bigLine.length * 4_000, bigLine).toString(),
     });
     expect({ errors, counts, exitCode }).toEqual({ errors: [], counts: [" 1 pass", " 0 fail"], exitCode: 0 });
+  });
+
+  // On macOS a watcher misses what changes before its event stream has started, so the directory changes until the run ends.
+  // It is changed from here: whatever did that in the test file would be one more thing to wait for.
+  test("is not one that waits for: unref'd fs.watch", async () => {
+    using dir = tempDir("bun-test-waits", {
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        import { watch } from "node:fs";
+        const watcher = watch(import.meta.dir, { persistent: false });
+        const result = await new Promise(resolve => watcher.once("change", () => resolve("ok")));
+        watcher.close();
+        test("result", () => expect(result).toBe("ok"));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const stderr = proc.stderr.text();
+    let writes = 0;
+    do {
+      writeFileSync(join(String(dir), "changed.txt"), String(writes++));
+    } while ((await Promise.race([proc.exited, Bun.sleep(10)])) === undefined);
+    expect({ counts: (await stderr).match(/^ \d+ (pass|fail)$/gm), exitCode: await proc.exited }).toEqual({
+      counts: [" 1 pass", " 0 fail"],
+      exitCode: 0,
+    });
   });
 
   // Where there is no pidfd_open(), a thread waits for the children instead of the event loop.

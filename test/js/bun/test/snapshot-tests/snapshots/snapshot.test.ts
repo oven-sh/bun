@@ -392,7 +392,14 @@ test("own non-enumerable properties are not printed", () => {
       {},
     ]
   `);
-  expect(() => expect(new Wrapper()).toEqual({ visible: 2 })).toThrow(`expect(received).toEqual(expected)
+  const messageOf = (fn: () => void) => {
+    try {
+      fn();
+    } catch (error) {
+      return Bun.stripANSI((error as Error).message);
+    }
+  };
+  expect(messageOf(() => expect(new Wrapper()).toEqual({ visible: 2 }))).toBe(`expect(received).toEqual(expected)
 
 - {
 -   "visible": 2,
@@ -404,13 +411,219 @@ test("own non-enumerable properties are not printed", () => {
 - Expected  - 2
 + Received  + 3
 `);
-  expect(() => expect(new Wrapper()).toBeNull()).toThrow(`expect(received).toBeNull()
+  expect(messageOf(() => expect(new Wrapper()).toBeNull())).toBe(`expect(received).toBeNull()
 
 Received: Wrapper {
   visible: 1,
   [Symbol(visibleSymbol)]: 2,
 }
 `);
+});
+
+describe("an own accessor prints as what its getter returns", () => {
+  const messageOf = (fn: () => void) => {
+    try {
+      fn();
+    } catch (error) {
+      return Bun.stripANSI((error as Error).message);
+    }
+  };
+  const symbol = Symbol("symbol");
+  const value = () => {
+    const self = {
+      get number() {
+        return 1;
+      },
+      get object() {
+        return { list: [1, 2] };
+      },
+      get both() {
+        return "both";
+      },
+      set both(_) {},
+      set setter(_: unknown) {},
+      get self() {
+        return self;
+      },
+      get [symbol]() {
+        return "symbol";
+      },
+      nested: [
+        {
+          get inner() {
+            return undefined;
+          },
+        },
+      ],
+    };
+    return self;
+  };
+
+  test("in a snapshot", () => {
+    expect(value()).toMatchInlineSnapshot(`
+      {
+        "both": "both",
+        "nested": [
+          {
+            "inner": undefined,
+          },
+        ],
+        "number": 1,
+        "object": {
+          "list": [
+            1,
+            2,
+          ],
+        },
+        "self": [Circular],
+        "setter": undefined,
+        [Symbol(symbol)]: "symbol",
+      }
+    `);
+    expect(
+      new Map([
+        [
+          "key",
+          {
+            get a() {
+              return 1;
+            },
+          },
+        ],
+      ]),
+    ).toMatchInlineSnapshot(`
+      Map {
+        "key" => {
+          "a": 1,
+        },
+      }
+    `);
+  });
+
+  test("in a diff", () => {
+    expect(
+      messageOf(() => expect(value()).toEqual({}))
+        ?.split("\n")
+        .filter(line => line.startsWith("+ ")),
+    ).toEqual([
+      "+ {",
+      '+   "both": "both",',
+      '+   "nested": [',
+      "+     {",
+      '+       "inner": undefined,',
+      "+     },",
+      "+   ],",
+      '+   "number": 1,',
+      '+   "object": {',
+      '+     "list": [',
+      "+       1,",
+      "+       2,",
+      "+     ],",
+      "+   },",
+      '+   "self": [Circular],',
+      '+   "setter": undefined,',
+      '+   [Symbol(symbol)]: "symbol",',
+      "+ }",
+      "+ Received  + 18",
+    ]);
+  });
+
+  test("in the message of a matcher", () => {
+    expect(messageOf(() => expect(value()).toBeNull())).toBe(`expect(received).toBeNull()
+
+Received: {
+  number: 1,
+  object: {
+    list: [ 1, 2 ],
+  },
+  both: "both",
+  setter: undefined,
+  self: [Circular],
+  nested: [
+    {
+      inner: undefined,
+    }
+  ],
+  [Symbol(symbol)]: "symbol",
+}
+`);
+  });
+
+  test("once", () => {
+    let calls = 0;
+    const counted = {
+      get a() {
+        return ++calls;
+      },
+    };
+    expect(counted).toMatchInlineSnapshot(`
+      {
+        "a": 1,
+      }
+    `);
+    expect(messageOf(() => expect(counted).toBeNull())).toContain("a: 2,");
+    expect(calls).toBe(2);
+  });
+
+  test("not the accessors of its class, and not those that are not enumerable", () => {
+    const read: string[] = [];
+    class Instance {
+      own = 1;
+      constructor() {
+        Object.defineProperty(this, "hidden", { get: () => read.push("hidden") });
+      }
+      get inherited() {
+        return read.push("inherited");
+      }
+    }
+    expect(new Instance()).toMatchInlineSnapshot(`
+      Instance {
+        "own": 1,
+      }
+    `);
+    expect(messageOf(() => expect(new Instance()).toBeNull())).toBe(`expect(received).toBeNull()
+
+Received: Instance {
+  own: 1,
+  inherited: [Getter],
+}
+`);
+    expect(read).toEqual([]);
+  });
+
+  test("what the getter throws is the error", () => {
+    const thrown = new Error("from the getter");
+    const throws = () => ({
+      before: 1,
+      nested: {
+        get a() {
+          throw thrown;
+        },
+      },
+      after: 2,
+    });
+    expect(() => expect(throws()).toMatchInlineSnapshot()).toThrow(thrown);
+    expect(() => expect(throws()).toMatchSnapshot()).toThrow(thrown);
+    expect(() => expect(throws()).toEqual({})).toThrow(thrown);
+    expect(() => expect(throws()).toBeNull()).toThrow(thrown);
+    expect(() => expect(throws(), "with a label").toBeNull()).toThrow(thrown);
+    expect(() => expect(1).toBe(throws())).toThrow(thrown);
+  });
+
+  test("console.log() and Bun.inspect() do not call it", () => {
+    expect(
+      Bun.inspect({
+        get a() {
+          throw new Error("the getter was called");
+        },
+        set b(_: unknown) {},
+        get c() {
+          return 1;
+        },
+        set c(_) {},
+      }),
+    ).toBe("{\n  a: [Getter],\n  b: [Setter],\n  c: [Getter/Setter],\n}");
+  });
 });
 
 class InlineSnapshotTester {

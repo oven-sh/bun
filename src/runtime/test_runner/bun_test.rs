@@ -1835,7 +1835,10 @@ pub(crate) enum ScopeMode {
     Normal,
     Skip,
     Todo,
+    /// Jest's `test.failing`: the callback of the test has to throw.
     Failing,
+    /// vitest's `test.fails`: something has to fail, see `ExecutionSequence::flip_fails`.
+    Fails,
     FilteredOut,
 }
 
@@ -1847,6 +1850,7 @@ impl ScopeMode {
             Self::Skip => "skip",
             Self::Todo => "todo",
             Self::Failing => "failing",
+            Self::Fails => "fails",
             Self::FilteredOut => "filtered_out",
         }
     }
@@ -2185,9 +2189,7 @@ impl ExecutionEntry {
                 .test_entry
                 .is_some_and(|p| core::ptr::eq(p.as_ptr().cast_const(), self));
             let has_done_parameter = self.calling == Calling::Jest { done: true };
-            sequence.result = if sequence.is_vitest_fails() {
-                Execution::Result::Pass
-            } else if is_test_entry {
+            sequence.result = if is_test_entry {
                 if has_done_parameter {
                     Execution::Result::FailBecauseTimeoutWithDoneCallback
                 } else {

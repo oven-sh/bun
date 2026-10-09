@@ -88,6 +88,10 @@ public:
             // The file the factory is written in, and the modules that have been imported from there, or from one of them, since.
             String file;
             WTF::UncheckedKeyHashSet<String> importChain;
+            // Those with a query, without it: that is how a dynamic import names its importer.
+            WTF::UncheckedKeyHashSet<String> importChainWithoutQuery;
+            // Those that import the mocked module, or one that waits for it, and were given the original or a copy instead.
+            Vector<String> givenTheOriginal;
         };
         // The module mocks whose factory has been called and has not settled.
         Vector<RunningModuleMock> runningModuleMocks = {};
@@ -163,6 +167,8 @@ JSC::JSValue runModuleMock(Zig::GlobalObject*, JSC::JSValue moduleMock, bool syn
 // What the factory made: the exports, or a CommonJS module that has them as `module.exports`. Null until it settled.
 JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock);
 JSC::SourceCode sourceCodeOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key);
+// Whether the module `key` is one that sourceCodeOfModuleMock() wrote, which names what it imports by key: NUL, then the key.
+bool moduleMockImportsByKey(Zig::GlobalObject*, const String& key);
 // What a factory that is running loads gets the original of the module being mocked, and its own copy of a module that waits for the mock.
 String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 // The object a module mock's factory returned, if the export `name` is read from it. Null otherwise.

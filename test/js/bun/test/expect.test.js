@@ -6,6 +6,7 @@
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/expect.test.js`
  */
 
+import { stripVTControlCharacters } from "node:util";
 // import these functions typed with the bun:test types,
 // so this test can also be used to detect issues with the "bun:test" type definitions
 import test_interop from "./test-interop.js";
@@ -39,7 +40,7 @@ describe("expect()", () => {
       try {
         await asyncFn();
       } catch (e) {
-        throw new Error(/** @type {any} */ (e).message);
+        throw new Error(stripVTControlCharacters(/** @type {any} */ (e).message));
       }
     });
   };

@@ -476,15 +476,15 @@ pub trait ComposesGraph {
 }
 
 /// Follows `composes` to find what a CSS module exports for each of its locals.
-pub struct ComposesVisitor<'a, G> {
-    graph: &'a G,
+pub struct ComposesVisitor<'a> {
+    graph: &'a dyn ComposesGraph,
     visited: ArrayHashMap<Ref, ()>,
     names: Vec<ExportedName<'a>>,
     stack_check: StackCheck,
 }
 
-impl<'a, G: ComposesGraph> ComposesVisitor<'a, G> {
-    pub fn new(graph: &'a G) -> Self {
+impl<'a> ComposesVisitor<'a> {
+    pub fn new(graph: &'a dyn ComposesGraph) -> Self {
         Self {
             graph,
             visited: ArrayHashMap::new(),

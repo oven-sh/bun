@@ -60,7 +60,7 @@ public:
     JSC::WriteBarrier<JSC::Unknown> stubbedEnvs;
     JSC::WriteBarrier<JSC::Unknown> stubbedGlobals;
 
-    // A JSSet of what `didStartDynamicImport` was given, less the settled ones that were swept
+    // A JSMap whose keys are what `didStartDynamicImport` was given, less the settled ones that were swept
     JSC::WriteBarrier<JSC::Unknown> dynamicImports;
 
     // Called by GlobalObject::visitChildren

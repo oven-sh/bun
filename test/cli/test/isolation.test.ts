@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir, tls } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -1362,41 +1362,44 @@ test.concurrent("--isolate: cached SourceProvider's module_info rebuilds correct
   expect(exitCode).toBe(0);
 });
 
-// JSC keeps the unlinked code of 2,000 sources unless it is given room for more.
-test.concurrent(
-  "--isolate: code is generated once for the modules every file loads, however many there are",
-  async () => {
-    const count = 2200;
-    const files: Record<string, string> = { "all.js": "" };
-    for (let i = 0; i < count; i++) {
-      files[`modules/${i}.js`] = `export const v${i} = ${i};\n`;
-      files["all.js"] += `import "./modules/${i}.js";\n`;
-    }
-    for (const name of ["a", "b", "c"]) {
-      files[`${name}.test.js`] = `
+// JSC keeps the unlinked code of 2,000 sources unless it is given room for more. It also keeps no more than was added in
+// the 10 s before it prunes, and a debug or ASAN build can take longer than that to load one of these files.
+test
+  .skipIf(isDebug || isASAN)
+  .concurrent(
+    "--isolate: code is generated once for the modules every file loads, however many there are",
+    async () => {
+      const count = 2200;
+      const files: Record<string, string> = { "all.js": "" };
+      for (let i = 0; i < count; i++) {
+        files[`modules/${i}.js`] = `export const v${i} = ${i};\n`;
+        files["all.js"] += `import "./modules/${i}.js";\n`;
+      }
+      for (const name of ["a", "b", "c"]) {
+        files[`${name}.test.js`] = `
       import "./all.js";
       import { writeSync } from "node:fs";
       writeSync(2, "<loaded>\\n");
       test("${name}", () => {});
     `;
-    }
-    using dir = tempDir("isolate-code-cache", files);
-    const { stderr, exitCode } = await runTests(
-      String(dir),
-      ["--isolate"],
-      ["./a.test.js", "./b.test.js", "./c.test.js"],
-      {
-        ...bunEnv,
-        BUN_JSC_reportBytecodeCompileTimes: "1",
-      },
-    );
-    const [a, , c] = stderr.split("<loaded>\n").map(part => part.match(/^Compiled #/gm)?.length ?? 0);
-    expect(a).toBeGreaterThanOrEqual(count);
-    expect(c).toBeLessThan(count / 10);
-    expect(stderr).toContain("3 pass");
-    expect(exitCode).toBe(0);
-  },
-);
+      }
+      using dir = tempDir("isolate-code-cache", files);
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        ["--isolate"],
+        ["./a.test.js", "./b.test.js", "./c.test.js"],
+        {
+          ...bunEnv,
+          BUN_JSC_reportBytecodeCompileTimes: "1",
+        },
+      );
+      const [a, , c] = stderr.split("<loaded>\n").map(part => part.match(/^Compiled #/gm)?.length ?? 0);
+      expect(a).toBeGreaterThanOrEqual(count);
+      expect(c).toBeLessThan(count / 10);
+      expect(stderr).toContain("3 pass");
+      expect(exitCode).toBe(0);
+    },
+  );
 
 test.concurrent(
   "--isolate: cached module_info handles `import * as ns; export { ns }` as a Namespace export",

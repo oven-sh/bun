@@ -291,6 +291,7 @@ pub(crate) mod expect {
         let mut f = Formatter::new(global);
         f.quote_strings = true;
         f.dom_printer = Some(super::dom_format::print_in_message);
+        f.call_own_getters = true;
         f
     }
 
@@ -434,6 +435,7 @@ pub(crate) mod expect {
         fn with_quote_strings(mut self, b: bool) -> Self {
             self.quote_strings = b;
             self.dom_printer = Some(super::dom_format::print_in_message);
+            self.call_own_getters = true;
             self
         }
     }

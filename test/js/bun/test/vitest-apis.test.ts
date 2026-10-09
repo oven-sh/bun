@@ -28,7 +28,7 @@ function messageOf(fn: () => unknown): string {
 }
 
 describe("modifiers", () => {
-  test.concurrent("test.fails inverts the result like test.failing", async () => {
+  test.concurrent("test.fails inverts the result", async () => {
     const { results, stderr, exitCode } = await runTests({
       "fails.test.ts": `
         import { expect, it, test } from "bun:test";
@@ -55,6 +55,151 @@ describe("modifiers", () => {
     ]);
     expect(stderr).toContain("this test is marked as failing but it passed.");
     expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("test.fails passes whatever it is that fails, test.failing when the test throws", async () => {
+    const file = (modifier: string) => `
+      import { afterEach, beforeEach, describe, expect, onTestFinished, test } from "bun:test";
+      const marked = test.${modifier};
+      const never = () => new Promise(() => {});
+      marked("the test throws", () => { throw new Error("hidden"); });
+      marked("nothing", () => {});
+      marked("the time limit", never, 1);
+      marked("too few assertions", () => { expect.assertions(2); expect(1).toBe(1); });
+      marked("as many assertions as announced", () => { expect.assertions(1); expect(1).toBe(1); });
+      marked("no assertion", () => { expect.hasAssertions(); });
+      marked("a soft assertion", () => { expect.soft("hidden").toBe(2); });
+      marked("a matcher that is not awaited", () => { expect(new Promise(resolve => setImmediate(resolve, "hidden"))).resolves.toBe(2); });
+      marked("onTestFinished", () => { onTestFinished(() => { throw new Error("shown for failing"); }); });
+      describe("beforeEach", () => {
+        beforeEach(() => { throw new Error("shown for failing"); });
+        afterEach(() => console.log("afterEach ran"));
+        marked("test", () => console.log("unreachable"));
+      });
+      describe("afterEach", () => {
+        afterEach(() => { throw new Error("shown for failing"); });
+        marked("test", () => {});
+      });
+      describe("the time limit of beforeEach", () => { beforeEach(never, 1); marked("test", () => console.log("unreachable")); });
+      describe("the time limit of afterEach", () => { afterEach(never, 1); marked("test", () => {}); });
+      test("the next test", () => {});
+    `;
+    const [fails, failing] = await Promise.all([
+      runTests({ "a.test.ts": file("fails") }),
+      runTests({ "a.test.ts": file("failing") }),
+    ]);
+    const errors = (stderr: string) => stderr.split("\n").filter(line => /hidden|shown|\^ |^\w*Error:/.test(line));
+    expect({ ...fails, stdout: fails.stdout.split("\n").slice(1), stderr: errors(fails.stderr) }).toEqual({
+      results: [
+        "(pass) the test throws",
+        "(fail) nothing",
+        "(pass) the time limit",
+        "(pass) too few assertions",
+        "(fail) as many assertions as announced",
+        "(pass) no assertion",
+        "(pass) a soft assertion",
+        "(pass) a matcher that is not awaited",
+        "(pass) onTestFinished",
+        "(pass) beforeEach > test",
+        "(pass) afterEach > test",
+        "(pass) the time limit of beforeEach > test",
+        "(pass) the time limit of afterEach > test",
+        "(pass) the next test",
+      ],
+      stdout: ["afterEach ran", ""],
+      stderr: Array(2).fill(
+        "  ^ this test is marked as failing but it passed. Remove `.fails` if tested behavior now works",
+      ),
+      exitCode: 1,
+    });
+    expect(failing.results).toEqual([
+      "(pass) the test throws",
+      "(fail) nothing",
+      "(fail) the time limit",
+      "(fail) too few assertions",
+      "(fail) as many assertions as announced",
+      "(fail) no assertion",
+      "(pass) a soft assertion",
+      "(pass) a matcher that is not awaited",
+      "(fail) onTestFinished",
+      "(fail) beforeEach > test",
+      "(fail) afterEach > test",
+      "(fail) the time limit of beforeEach > test",
+      "(fail) the time limit of afterEach > test",
+      "(pass) the next test",
+    ]);
+    expect(errors(failing.stderr).filter(line => line.startsWith("error: "))).toEqual(
+      Array(3).fill("error: shown for failing"),
+    );
+  });
+
+  test.concurrent("test.fails: an attempt in which nothing fails is retried, and ends the repeats", async () => {
+    const { results, stdout, exitCode } = await runTests({
+      "a.test.ts": `
+        import { afterAll, test } from "bun:test";
+        const runs = {};
+        const failsOn = (name, ...attempts) => () => {
+          runs[name] = (runs[name] ?? 0) + 1;
+          if (attempts.includes(runs[name])) throw new Error("expected");
+        };
+        test.fails("retry: fails at once", failsOn("a", 1), { retry: 2 });
+        test.fails("retry: fails the second time", failsOn("b", 2), { retry: 2 });
+        test.fails("retry: never fails", failsOn("c"), { retry: 2 });
+        test.fails("repeats: always fails", failsOn("d", 1, 2, 3), { repeats: 2 });
+        test.fails("repeats: does not fail the second time", failsOn("e", 1, 3), { repeats: 2 });
+        afterAll(() => console.log(JSON.stringify(runs)));
+      `,
+    });
+    expect({ results, stdout: stdout.split("\n")[1], exitCode }).toEqual({
+      results: [
+        "(pass) retry: fails at once",
+        "(pass) retry: fails the second time (attempt 2)",
+        "(fail) retry: never fails (attempt 3)",
+        "(pass) repeats: always fails (run 3)",
+        "(fail) repeats: does not fail the second time (run 2)",
+      ],
+      stdout: `{"a":1,"b":2,"c":3,"d":3,"e":2}`,
+      exitCode: 1,
+    });
+  });
+
+  describe.each([[[]], [["--parallel=2"]]])("test.fails in the JUnit report %j", args => {
+    test.concurrent("a failure that is expected is not reported, and one that is missing is", async () => {
+      using dir = tempDir("vitest-apis-junit", {
+        "a.test.ts": `
+          import { beforeEach, describe, expect, test } from "bun:test";
+          test.fails("throws", () => { throw new Error("hidden"); });
+          test.fails("time limit", () => new Promise(() => {}), 1);
+          test.fails("assertions", () => { expect.assertions(1); });
+          describe("hook", () => { beforeEach(() => { throw new Error("hidden"); }); test.fails("test", () => {}); });
+          test.fails("nothing fails", () => {});
+          test.failing("nothing throws", () => {});
+        `,
+        "b.test.ts": `import { test } from "bun:test"; test("another file", () => {});`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--reporter=junit", "--reporter-outfile=junit.xml", ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const cases = (await Bun.file(`${dir}/junit.xml`).text())
+        .split("<testcase ")
+        .slice(1)
+        .map(testcase => [/^name="([^"]*)"/.exec(testcase)![1], /<failure[^>]*>/.exec(testcase)?.[0]]);
+      expect(cases.filter(([name]) => name !== "another file")).toEqual([
+        ["throws", undefined],
+        ["time limit", undefined],
+        ["assertions", undefined],
+        ["test", undefined],
+        ["nothing fails", `<failure message="test marked with .fails() did not fail" type="AssertionError"/>`],
+        ["nothing throws", `<failure message="test marked with .failing() did not throw" type="AssertionError"/>`],
+      ]);
+      expect(stderr).not.toContain("hidden");
+      expect(exitCode).toBe(1);
+    });
   });
 
   test.concurrent("runIf runs when the condition is truthy and skips otherwise", async () => {
@@ -488,7 +633,16 @@ test("this.equals and the functions of this.utils do not need a receiver", () =>
     strings: [printed, printed, printed],
     colors: ["text", "text"],
     matcherHint: "expect(received).toUseDetachedFunctions(expected)",
-    ownFunctions: ["EXPECTED_COLOR", "RECEIVED_COLOR", "matcherHint", "printExpected", "printReceived", "stringify"],
+    ownFunctions: [
+      "EXPECTED_COLOR",
+      "RECEIVED_COLOR",
+      "diff",
+      "matcherHint",
+      "printExpected",
+      "printReceived",
+      "printWithType",
+      "stringify",
+    ],
   });
 });
 

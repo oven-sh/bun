@@ -182,8 +182,8 @@ describe.each([
       expect(document).toEqual(document);
     });
 
+    const other = createWindow().document.createElement("div");
     test("nodes of two windows", () => {
-      const other = createWindow().document.createElement("div");
       other.innerHTML = `<p class="a" id="i">x<b>y</b></p><p class="b" id="i">x<b>y</b></p>`;
       expect(a()).toEqual(other.firstChild);
       expect(a()).not.toEqual(other.lastChild);

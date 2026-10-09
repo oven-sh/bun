@@ -394,9 +394,6 @@ pub struct TestIsolationState {
     /// The synthetic allocation limit at startup, restored after every file.
     /// `setSyntheticAllocationLimitForTesting` lowers it process-wide.
     pub synthetic_allocation_limit: Option<usize>,
-    /// How many entries JSC's `CodeCache` has been given room for: twice the
-    /// modules of the file that loaded the most so far. 0 until it is raised.
-    pub(crate) code_cache_entries: usize,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -5243,11 +5240,16 @@ impl VirtualMachine {
                     // SAFETY: thread-local heap allocation; sole `&mut` on the JS
                     // thread for the duration of the bust below.
                     let buf = unsafe { &mut *specifier_cache_resolver_buf() }.as_mut_slice();
+                    let mut busted_as_spelled = false;
                     let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
                         if let Some(dir) = bun_paths::dirname(normalized_specifier) {
                             if dir.len() > buf.len() {
                                 return Err(crate::CrateError::ModuleNotFound);
                             }
+                            // `load_as_file` caches the listing under the slashes of the specifier.
+                            busted_as_spelled = self.transpiler.resolver.bust_dir_cache(
+                                bun_paths::string_paths::without_trailing_slash_windows_path(dir),
+                            );
                             // Normalized without trailing slash.
                             bun_paths::string_paths::normalize_slashes_only(
                                 buf,
@@ -5283,7 +5285,8 @@ impl VirtualMachine {
                     // Only re-query if we previously had something cached.
                     if self.transpiler.resolver.bust_dir_cache(
                         bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
-                    ) {
+                    ) || busted_as_spelled
+                    {
                         continue;
                     }
                     return Err(crate::CrateError::ModuleNotFound);
@@ -6009,7 +6012,6 @@ impl VirtualMachine {
         let new_global: *mut JSGlobalObject = JSGlobalObject::create_for_test_isolation(
             JSGlobalObject::opaque_ref(old_global),
             self.console.cast(),
-            &mut self.test_isolation_state.code_cache_entries,
         );
         self.global = new_global;
         VMHolder::set_cached_global_object(Some(new_global));

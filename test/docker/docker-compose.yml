@@ -220,7 +220,8 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD-SHELL", "pgrep squid > /dev/null"]
+      # The process exists before it listens.
+      test: ["CMD", "bash", "-c", "</dev/tcp/127.0.0.1/3128"]
       interval: 5s
       timeout: 5s
       retries: 30

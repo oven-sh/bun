@@ -2511,6 +2511,28 @@ impl JSValue {
         JSC__JSValue__forEachProperty(self, global, ctx, callback);
         scope.return_if_exception()
     }
+    /// [`for_each_property`](Self::for_each_property) for `bun:test`: an own accessor gives what its
+    /// getter returns, and what the getter throws is the error.
+    #[inline(always)]
+    pub(crate) fn for_each_property_calling_own_getters(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: ForEachPropertyCallback,
+    ) -> JsResult<()> {
+        unsafe extern "C" {
+            // safe: same contract as `JSC__JSValue__forEachProperty` above.
+            safe fn JSC__JSValue__forEachPropertyCallingOwnGetters(
+                this: JSValue,
+                global: &JSGlobalObject,
+                ctx: *mut c_void,
+                callback: ForEachPropertyCallback,
+            );
+        }
+        crate::top_scope!(scope, global);
+        JSC__JSValue__forEachPropertyCallingOwnGetters(self, global, ctx, callback);
+        scope.return_if_exception()
+    }
     /// `JSValue.forEachPropertyNonIndexed` — like
     /// [`for_each_property`](Self::for_each_property) but skips array-index
     /// keys.
@@ -2538,7 +2560,7 @@ impl JSValue {
     /// stable enumeration order (used by `console.log` with
     /// `ordered_properties`).
     #[inline(always)]
-    pub fn for_each_property_ordered(
+    pub(crate) fn for_each_property_ordered(
         self,
         global: &JSGlobalObject,
         ctx: *mut c_void,
@@ -2560,6 +2582,28 @@ impl JSValue {
         // SAFETY: `scope` was init'd above and is destroyed exactly once.
         unsafe { crate::TopExceptionScope::destroy(scope) };
         result
+    }
+    /// [`for_each_property_ordered`](Self::for_each_property_ordered) for `bun:test`: an accessor
+    /// gives what its getter returns, and what the getter throws is the error.
+    #[inline(always)]
+    pub fn for_each_property_ordered_calling_getters(
+        self,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: ForEachPropertyCallback,
+    ) -> JsResult<()> {
+        unsafe extern "C" {
+            // safe: same contract as `JSC__JSValue__forEachProperty` above.
+            safe fn JSC__JSValue__forEachPropertyOrderedCallingGetters(
+                this: JSValue,
+                global: &JSGlobalObject,
+                ctx: *mut c_void,
+                callback: ForEachPropertyCallback,
+            );
+        }
+        crate::top_scope!(scope, global);
+        JSC__JSValue__forEachPropertyOrderedCallingGetters(self, global, ctx, callback);
+        scope.return_if_exception()
     }
     /// `JSValue.isBuffer` — `instanceof Buffer` check via
     /// the C++ `JSBuffer__isBuffer` shim. Accepts any JSValue; the C++ side

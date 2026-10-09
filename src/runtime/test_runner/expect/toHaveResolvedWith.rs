@@ -39,7 +39,7 @@ fn throw_mismatch(
     this: &PostMatchGuard<'_>,
     global: &JSGlobalObject,
     signature: &'static str,
-    label: impl fmt::Display,
+    label: fmt::Arguments<'_>,
     expected: JSValue,
     received: JSValue,
 ) -> JsResult<JSValue> {
@@ -191,7 +191,7 @@ impl Expect {
         }
 
         if calls_count == 1 && resolved_count == 1 {
-            return throw_mismatch(&this, global, signature, "", expected, last_resolved);
+            return throw_mismatch(&this, global, signature, format_args!(""), expected, last_resolved);
         }
 
         let mut list_fmt = super::make_formatter(global);

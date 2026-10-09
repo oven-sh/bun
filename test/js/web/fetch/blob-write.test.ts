@@ -23,7 +23,7 @@ test("Bun.write() throws for a data-backed blob destination", () => {
 
 test("Bun.file(path).write() does not throw", async () => {
   const file = Bun.file(path.join(tempDirWithFiles("bun-write", { a: "Hello, world!" }), "a"));
-  expect(() => file.write(new Blob(["Hello, world!!"]))).not.toThrow();
+  await expect(() => file.write(new Blob(["Hello, world!!"]))).not.toThrow();
   expect(await file.text()).toBe("Hello, world!!");
 });
 

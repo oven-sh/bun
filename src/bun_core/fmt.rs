@@ -2977,9 +2977,11 @@ pub struct TrimmedPrecisionFormatter<const PRECISION: usize> {
 
 impl<const PRECISION: usize> Display for TrimmedPrecisionFormatter<PRECISION> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let whole = self.num.trunc();
+        let scale = 10f64.powi(PRECISION as i32);
+        let num = (self.num * scale).round() / scale;
+        let whole = num.trunc();
         write!(f, "{}", whole)?;
-        let rem = self.num - whole;
+        let rem = num - whole;
         if rem != 0.0 {
             // buf size = "0." + PRECISION digits
             // Const-generic array length arithmetic is unstable, so use a small

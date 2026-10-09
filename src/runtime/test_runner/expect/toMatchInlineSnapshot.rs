@@ -2,6 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::throw;
 use super::Expect;
+use super::Received;
 
 pub(crate) fn to_match_inline_snapshot(
     this: &Expect,
@@ -84,7 +85,7 @@ pub(crate) fn to_match_inline_snapshot(
         &**this,
         global,
         frame,
-        value,
+        Received::Value(value),
         property_matchers,
         expected_slice,
         "toMatchInlineSnapshot",

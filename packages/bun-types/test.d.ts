@@ -987,8 +987,11 @@ declare module "bun:test" {
      */
     failing: Test<T>;
     /**
-     * Marks this test as failing.
-     * @alias failing
+     * Marks this test as failing, like Vitest's `test.fails`.
+     *
+     * The test passes if anything about it fails: its callback, a `beforeEach`
+     * or `afterEach` hook, the timeout, or `expect.assertions()`.
+     * {@link test.failing} only accepts an error from the callback.
      */
     fails: Test<T>;
     /**
@@ -2859,6 +2862,16 @@ declare module "bun:test" {
       stringify(value: unknown): string;
       printReceived(value: unknown): string;
       printExpected(value: unknown): string;
+      /**
+       * The lines that differ between two values, or between two strings.
+       *
+       * `null` for two numbers, two bigints, two booleans, and an asymmetric matcher.
+       *
+       * @param options accepted for compatibility with Jest, and ignored
+       */
+      diff(expected: unknown, received: unknown, options?: object): string | null;
+      /** `name` with the type of `value`, and `name` with what `print` makes of `value`, on two lines. */
+      printWithType<T>(name: string, value: T, print: (value: T) => string): string;
       /** Colors text like an expected value. The text is not quoted. */
       EXPECTED_COLOR(...text: unknown[]): string;
       /** Colors text like a received value. The text is not quoted. */

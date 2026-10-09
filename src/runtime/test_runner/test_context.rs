@@ -19,6 +19,7 @@ use super::bun_test::{
 };
 use super::execution::{ExecutionSequence, Result as ExecutionResult};
 use super::expect::Expect;
+use super::expect::expect_deferred::ExpectDeferred;
 use super::jest::FileColumns as _;
 use super::scope_functions::{CallbackMode, FunctionKind, ParseArgumentsCfg, parse_arguments};
 use super::test_context_parameter::ContextParameter;
@@ -248,7 +249,7 @@ impl TestContext {
         if let Some(parent) = test.base.parent.filter(|&parent| parent != root) {
             task.put(global, b"suite", suite_task(global, buntest, parent)?);
         }
-        if test.base.mode == ScopeMode::Failing {
+        if test.base.mode == ScopeMode::Fails {
             task.put(global, b"fails", JSValue::TRUE);
         }
         if test.base.concurrent {
@@ -432,8 +433,8 @@ fn mode(base: &BaseScope) -> &'static str {
     match base.mode {
         ScopeMode::Skip | ScopeMode::FilteredOut => "skip",
         ScopeMode::Todo => "todo",
-        ScopeMode::Normal | ScopeMode::Failing if base.only == Only::Yes => "only",
-        ScopeMode::Normal | ScopeMode::Failing => "run",
+        ScopeMode::Normal | ScopeMode::Failing | ScopeMode::Fails if base.only == Only::Yes => "only",
+        ScopeMode::Normal | ScopeMode::Failing | ScopeMode::Fails => "run",
     }
 }
 
@@ -445,8 +446,11 @@ fn file_path(buntest: &BunTest) -> &'static [u8] {
     unsafe { reporter.as_ref() }.jest.files.items_source()[buntest.file_id as usize].path.text
 }
 
-fn file_name(buntest: &BunTest) -> &'static [u8] {
-    resolve_path::relative(FileSystem::instance().top_level_dir, file_path(buntest))
+/// As in vitest, with `/` on every platform.
+fn file_name(buntest: &BunTest) -> Vec<u8> {
+    let mut name = resolve_path::relative(FileSystem::instance().top_level_dir, file_path(buntest)).to_vec();
+    resolve_path::platform_to_posix_in_place::<u8>(&mut name);
+    name
 }
 
 /// `fullTestName`: the names of the describe blocks around `base` and its own; `fullName`: the file's before them.
@@ -465,7 +469,8 @@ fn put_full_names(
     }
     names.reverse();
     task.put(global, b"fullTestName", bun_string_jsc::create_utf8_for_js(global, &names.join(&b" > "[..]))?);
-    names.insert(0, file_name(buntest));
+    let file_name = file_name(buntest);
+    names.insert(0, &file_name);
     task.put(global, b"fullName", bun_string_jsc::create_utf8_for_js(global, &names.join(&b" > "[..]))?);
     Ok(())
 }
@@ -492,7 +497,7 @@ pub(crate) fn suite_task(
     task.put(global, b"mode", ascii(global, mode(base))?);
     task.put(global, b"meta", JSValue::create_empty_object_with_null_prototype(global));
     if scope == root {
-        let name = bun_string_jsc::create_utf8_for_js(global, file_name(buntest))?;
+        let name = bun_string_jsc::create_utf8_for_js(global, &file_name(buntest))?;
         task.put(global, b"name", name);
         task.put(global, b"fullName", name);
         task.put(global, b"filepath", bun_string_jsc::create_utf8_for_js(global, file_path(buntest))?);
@@ -555,6 +560,7 @@ pub(crate) fn rejecting(global: &JSGlobalObject, error: JSValue) -> JsResult<JSV
         error,
         &BunString::static_(""),
         0.0,
-        &[],
+        // Not read: with it, `error` still has its stack frames when it is reported.
+        &[ExpectDeferred::capture_call_site(global)],
     )
 }

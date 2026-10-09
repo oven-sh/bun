@@ -2264,7 +2264,8 @@ describe.concurrent("onResolve is asked about a specifier with no extension and 
   it("and import.meta.resolve() of a path answers what it does without plugins when onResolve declines", async () => {
     const source = `
       Bun.plugin({ name: "declines", setup(build) { build.onResolve({ filter: /.*/ }, ({ path }) => { console.log("onResolve", path); }); } });
-      for (const specifier of ["./not-there", "../not-there.js", "/not/there", "file:///not/there.js"])
+      // (On Windows the URL of a file has a drive.)
+      for (const specifier of ["./not-there", "../not-there.js", "/not/there", new URL("/not/there.js", import.meta.url).href])
         console.log(import.meta.resolve(specifier).replace(Bun.pathToFileURL(import.meta.dir).href, "file://<dir>"));
     `;
     expect(await run({ "src/entry.mjs": source }, ["src/entry.mjs"])).toEqual({
@@ -2276,7 +2277,7 @@ describe.concurrent("onResolve is asked about a specifier with no extension and 
         "onResolve /not/there",
         expect.stringMatching(/^file:\/\/\/(\w:\/)?not\/there$/),
         expect.stringMatching(/^onResolve (\w:)?[\\/]not[\\/]there\.js$/),
-        "file:///not/there.js",
+        expect.stringMatching(/^file:\/\/\/(\w:\/)?not\/there\.js$/),
       ],
       stderr: "",
       exitCode: 0,
@@ -2649,6 +2650,36 @@ describe.concurrent("a macro called in a file that is not the entry point", () =
     const { stderr, exitCode } = await run(tests, ["test", "--preload", "./plugin.ts", ...flags]);
     expect(stderr).toContain(" 2 pass\n 0 fail\n");
     expect(exitCode).toBe(0);
+  });
+
+  // Each file of a chain is handed to another thread when the one before it is loaded, which is when the macro of another chain starts.
+  it("in files that other threads transpile while a macro runs", async () => {
+    const chains = Array.from({ length: 10 }, (_, chain) => chain);
+    const links = Array.from({ length: 4 }, (_, link) => link);
+    const extra = {
+      "slow-macro.ts": `export function macro() { for (const end = performance.now() + 1; performance.now() < end; ); return 1; }`,
+      "entry.ts": `
+        ${chains.map(chain => `import chain${chain} from "./chain-${chain}-0.ts";`).join("\n")}
+        console.log([${chains.map(chain => `chain${chain}`)}].join());
+      `,
+      ...Object.fromEntries(
+        chains.flatMap(chain =>
+          links.map(link => [
+            `chain-${chain}-${link}.ts`,
+            `
+              import { macro } from "./slow-macro.ts" with { type: "macro" };
+              ${link + 1 < links.length ? `import rest from "./chain-${chain}-${link + 1}.ts";` : `const rest = 0;`}
+              export default macro() + rest;
+            `,
+          ]),
+        ),
+      ),
+    };
+    expect(await run(extra, ["--preload", "./plugin.ts", "entry.ts"])).toEqual({
+      stdout: chains.map(() => links.length).join() + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   it("is an error, said once, when macros are disabled", async () => {

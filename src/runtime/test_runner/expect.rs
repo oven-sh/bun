@@ -19,6 +19,7 @@ use super::diff_format::DiffFormatter;
 use self::expect_deferred::ExpectDeferred;
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
+use super::snapshot::{Format as SnapshotFormat, Outcome as SnapshotOutcome};
 use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
 use crate::expect_throw as throw;
 
@@ -680,21 +681,11 @@ impl Expect {
         }
     }
 
-    pub(crate) fn get_snapshot_name(&self, hint: &[u8]) -> crate::Result<Vec<u8>> {
-        let parent = self.parent.as_ref().ok_or(crate::Error::NoTest)?;
-        let buntest_strong = parent.bun_test().ok_or(crate::Error::TestNotActive)?;
-        let buntest = buntest_strong.get();
-        let execution_entry = parent
-            .phase
-            .entry(buntest)
-            .ok_or(crate::Error::SnapshotInConcurrentGroup)?;
-
-        let mut name = super::expect::get_state::full_test_name(execution_entry);
-        if !hint.is_empty() {
-            name.extend_from_slice(b": ");
-            name.extend_from_slice(hint);
-        }
-        Ok(name)
+    /// Whether the test that is running was registered through "vitest".
+    pub(crate) fn is_in_vitest_test(&self, buntest: &mut bun_test::BunTest) -> bool {
+        let sequence = self.parent.as_ref().and_then(|parent| parent.phase.sequence(buntest));
+        // SAFETY: `buntest` owns the entries of its sequences.
+        sequence.and_then(|sequence| sequence.test_entry).is_some_and(|test| unsafe { test.as_ref() }.calling.is_vitest())
     }
 
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
@@ -819,12 +810,19 @@ impl Expect {
         signature: &'static str,
         args: fmt::Arguments<'_>,
     ) -> JsResult<JSValue> {
-        Err(if self.custom_label.is_empty() {
-            global_this.throw(format_args!("{signature}{args}"))
+        use core::fmt::Write as _;
+        let mut message = String::new();
+        let rendered = if self.custom_label.is_empty() {
+            write!(message, "{signature}{args}")
         } else {
             // custom_label is user-supplied; emit verbatim.
-            global_this.throw(format_args!("{}{args}", self.custom_label))
-        })
+            write!(message, "{}{args}", self.custom_label)
+        };
+        // As in Jest, what a value throws while it is printed (a getter, a Proxy trap) is the error.
+        if rendered.is_err() && global_this.has_exception() {
+            return Err(JsError::Thrown);
+        }
+        Err(global_this.throw(format_args!("{message}")))
     }
 
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
@@ -910,6 +908,14 @@ impl Expect {
     }
 }
 
+/// What a snapshot matcher is given.
+#[derive(Copy, Clone)]
+pub(crate) enum Received {
+    Value(JSValue),
+    /// `toThrowErrorMatching*Snapshot()`: what the function threw, or the promise was rejected with.
+    Thrown(JSValue),
+}
+
 pub(crate) struct TrimResult<'a> {
     pub(crate) trimmed: &'a [u8],
     pub(crate) start_indent: Option<&'a [u8]>,
@@ -987,23 +993,45 @@ impl Expect {
         ))
     }
 
-    pub(crate) fn fn_to_err_string_or_undefined(
-        &self,
-        global_this: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<Option<JSValue>> {
-        let (err_value, _) = self.get_value_as_to_throw(global_this, value)?;
-
-        let Some(mut err_value_res) = err_value else { return Ok(None) };
-        if err_value_res.is_any_error() {
-            let message: JSValue = err_value_res
-                .get_truthy(global_this, "message")?
-                .unwrap_or(JSValue::UNDEFINED);
-            err_value_res = message;
-        } else {
-            err_value_res = JSValue::UNDEFINED;
+    /// What a snapshot of `received` holds in a file of `format`.
+    fn value_to_snapshot(global_this: &JSGlobalObject, received: Received, format: SnapshotFormat) -> JsResult<JSValue> {
+        let thrown = match received {
+            Received::Value(value) => return Ok(value),
+            Received::Thrown(thrown) => thrown,
+        };
+        match format {
+            SnapshotFormat::Vitest => Ok(thrown),
+            SnapshotFormat::Bun if !thrown.is_any_error() => Ok(JSValue::UNDEFINED),
+            SnapshotFormat::Bun => Ok(thrown.get_truthy(global_this, "message")?.unwrap_or(JSValue::UNDEFINED)),
+            SnapshotFormat::Jest => Self::message_with_causes(global_this, thrown),
         }
-        Ok(Some(err_value_res))
+    }
+
+    /// jest-snapshot `_toThrowErrorMatchingSnapshot`
+    #[cold]
+    fn message_with_causes(global_this: &JSGlobalObject, thrown: JSValue) -> JsResult<JSValue> {
+        if !thrown.is_object() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let message = thrown.get(global_this, "message")?.unwrap_or(JSValue::UNDEFINED);
+        let mut cause = thrown.get(global_this, "cause")?;
+        if cause.is_none() {
+            return Ok(message);
+        }
+        let mut text = message.to_bun_string(global_this)?.to_owned_slice();
+        while let Some(error) = cause {
+            let line = if error.is_any_error() {
+                error.get(global_this, "message")?.unwrap_or(JSValue::UNDEFINED)
+            } else if error.is_string() {
+                error
+            } else {
+                break;
+            };
+            text.extend_from_slice(b"\nCause: ");
+            text.extend_from_slice(&line.to_bun_string(global_this)?.to_owned_slice());
+            cause = if error.is_object() { error.get(global_this, "cause")? } else { None };
+        }
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, &text)
     }
 
     pub(crate) fn trim_leading_whitespace_for_inline_snapshot<'a>(
@@ -1107,7 +1135,7 @@ impl Expect {
         &self,
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
-        value: JSValue,
+        received: Received,
         property_matchers: Option<JSValue>,
         result: Option<&[u8]>,
         fn_name: &'static str,
@@ -1118,19 +1146,19 @@ impl Expect {
             let signature = Self::get_signature(fn_name, "", false);
             return throw!(this, global_this, signature, "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n");
         };
-        match runner.snapshots.add_count(this, b"") {
-            Ok(_) => {}
-            Err(crate::Error::Alloc(bun_alloc::AllocError)) => return Err(JsError::OutOfMemory),
-            Err(crate::Error::NoTest) => {}
-            Err(crate::Error::SnapshotInConcurrentGroup) => {}
-            Err(crate::Error::TestNotActive) => {}
-            Err(_) => {}
+        let file_format = runner.snapshots.format_of(this).unwrap_or(SnapshotFormat::Bun);
+        if let Err(crate::Error::Alloc(bun_alloc::AllocError)) = runner.snapshots.add_count(this, file_format, b"") {
+            return Err(JsError::OutOfMemory);
         }
 
         let update = runner.snapshots.update_snapshots;
         let needs_write;
 
+        // An inline snapshot does not say who wrote it: the runner that the test is written for, as far as that tells.
+        let is_vitest = this.bun_test().is_some_and(|buntest| this.is_in_vitest_test(buntest.get()));
+        let format = if is_vitest { SnapshotFormat::Vitest } else { SnapshotFormat::Bun };
         let mut pretty_value: Vec<u8> = Vec::new();
+        let value = Self::value_to_snapshot(global_this, received, format)?;
         this.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name)?;
 
         let mut start_indent: Option<Box<[u8]>> = None;
@@ -1139,7 +1167,7 @@ impl Expect {
             let mut buf = vec![0u8; saved_value.len()];
             let trim_res = Self::trim_leading_whitespace_for_inline_snapshot(saved_value, &mut buf);
 
-            if strings::eql_long(&pretty_value, trim_res.trimmed, true) {
+            if format.matches(trim_res.trimmed, &pretty_value) {
                 runner.snapshots.passed += 1;
                 return Ok(JSValue::UNDEFINED);
             } else if update {
@@ -1147,6 +1175,9 @@ impl Expect {
                 needs_write = true;
                 start_indent = trim_res.start_indent.map(Box::<[u8]>::from);
                 end_indent = trim_res.end_indent.map(Box::<[u8]>::from);
+            } else if this.matches_in_another_format(global_this, received, format, trim_res.trimmed)? {
+                runner.snapshots.passed += 1;
+                return Ok(JSValue::UNDEFINED);
             } else {
                 runner.snapshots.failed += 1;
                 let signature = Self::get_signature(fn_name, "<green>expected<r>", false);
@@ -1211,12 +1242,34 @@ impl Expect {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// Whether `saved` is what another runner than that of `tried` writes for `received`.
+    #[cold]
+    fn matches_in_another_format(
+        &self,
+        global_this: &JSGlobalObject,
+        received: Received,
+        tried: SnapshotFormat,
+        saved: &[u8],
+    ) -> JsResult<bool> {
+        for format in [SnapshotFormat::Bun, SnapshotFormat::Jest, SnapshotFormat::Vitest] {
+            if format == tried {
+                continue;
+            }
+            let mut printed: Vec<u8> = Vec::new();
+            Self::value_to_snapshot(global_this, received, format)?.jest_snapshot_pretty_format(&mut printed, global_this)?;
+            if format.matches(saved, &printed) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub(crate) fn match_and_fmt_snapshot(
         &self,
         global_this: &JSGlobalObject,
         value: JSValue,
         property_matchers: Option<JSValue>,
-        pretty_value: &mut impl bun_io::Write,
+        pretty_value: &mut Vec<u8>,
         fn_name: &'static str,
     ) -> JsResult<()> {
         if let Some(_prop_matchers) = property_matchers {
@@ -1245,84 +1298,77 @@ impl Expect {
     pub(crate) fn snapshot(
         &self,
         global_this: &JSGlobalObject,
-        value: JSValue,
+        received: Received,
         property_matchers: Option<JSValue>,
         hint: &[u8],
         fn_name: &'static str,
     ) -> JsResult<JSValue> {
-        let this = self;
-        let mut pretty_value: Vec<u8> = Vec::new();
-        this.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name)?;
-
         let runner = Jest::runner().expect("unreachable");
-        let existing_value = match runner.snapshots.get_or_put(this, &pretty_value, hint) {
-            Ok(v) => v,
-            Err(err) => {
-                let Some(buntest_strong) = this.bun_test() else {
-                    return Err(global_this.throw(format_args!("Snapshot matchers cannot be used outside of a test")));
-                };
-                let buntest = buntest_strong.get();
-                // MultiArrayList::get requires MultiArrayElement (derive pending); use column accessor.
-                let test_file_path = runner.files.items_source()[buntest.file_id as usize].path.text;
-                let test_file_path = bstr::BStr::new(test_file_path);
-                return Err(match err {
-                    crate::Error::FailedToOpenSnapshotFile => {
-                        global_this.throw(format_args!("Failed to open snapshot file for test file: {test_file_path}"))
-                    }
-                    crate::Error::FailedToMakeSnapshotDirectory => {
-                        global_this.throw(format_args!("Failed to make snapshot directory for test file: {test_file_path}"))
-                    }
-                    crate::Error::FailedToWriteSnapshotFile => {
-                        global_this.throw(format_args!("Failed write to snapshot file: {test_file_path}"))
-                    }
-                    crate::Error::SyntaxError | crate::Error::ParseError => {
-                        global_this.throw(format_args!("Failed to parse snapshot file for: {test_file_path}"))
-                    }
-                    crate::Error::SnapshotCreationNotAllowedInCI => {
-                        let snapshot_name = runner.snapshots.last_error_snapshot_name.take();
-                        if let Some(name) = snapshot_name {
-                            global_this.throw(format_args!(
-                                "Snapshot creation is disabled in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nSnapshot name: \"{}\"\nReceived: {}",
-                                bstr::BStr::new(&name),
-                                bstr::BStr::new(&pretty_value),
-                            ))
-                        } else {
-                            global_this.throw(format_args!(
-                                "Snapshot creation is disabled in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nReceived: {}",
-                                bstr::BStr::new(&pretty_value),
-                            ))
-                        }
-                    }
-                    crate::Error::SnapshotInConcurrentGroup => {
-                        global_this.throw(format_args!("Snapshot matchers are not supported in concurrent tests"))
-                    }
-                    crate::Error::TestNotActive => {
-                        global_this.throw(format_args!("Snapshot matchers are not supported after the test has finished executing"))
-                    }
-                    _ => {
-                        let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(false);
-                        global_this.throw(format_args!("Failed to snapshot value: {}", value.to_fmt(&mut formatter)))
-                    }
-                });
-            }
+        let mut pretty_value: Vec<u8> = Vec::new();
+        let format = match runner.snapshots.format_of(self) {
+            Ok(format) => format,
+            Err(err) => return Err(self.throw_snapshot_error(global_this, &err, &pretty_value)),
         };
+        let value = Self::value_to_snapshot(global_this, received, format)?;
+        self.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name)?;
 
-        if let Some(saved_value) = existing_value {
-            // clone to owned to release the &mut borrow on runner.snapshots
-            // before mutating passed/failed counters below.
-            let saved_value: Vec<u8> = saved_value.to_vec();
-            if strings::eql_long(&pretty_value, &saved_value, true) {
-                runner.snapshots.passed += 1;
-                return Ok(JSValue::UNDEFINED);
+        match runner.snapshots.match_or_write(self, &pretty_value, hint) {
+            Ok(SnapshotOutcome::Passed | SnapshotOutcome::Written) => Ok(JSValue::UNDEFINED),
+            Ok(SnapshotOutcome::Mismatch { saved }) => {
+                let signature = Self::get_signature(fn_name, "<green>expected<r>", false);
+                let diff_format = DiffFormatter::from_strings(&pretty_value, &saved, false);
+                throw!(self, global_this, signature, "\n\n{}\n", diff_format)
             }
-
-            runner.snapshots.failed += 1;
-            let signature = Self::get_signature(fn_name, "<green>expected<r>", false);
-            let diff_format = DiffFormatter::from_strings(&pretty_value, &saved_value, false);
-            return throw!(self, global_this, signature, "\n\n{}\n", diff_format);
+            Err(err) => Err(self.throw_snapshot_error(global_this, &err, &pretty_value)),
         }
+    }
 
-        Ok(JSValue::UNDEFINED)
+    #[cold]
+    fn throw_snapshot_error(&self, global_this: &JSGlobalObject, err: &crate::Error, pretty_value: &[u8]) -> JsError {
+        let runner = Jest::runner().expect("unreachable");
+        let Some(buntest_strong) = self.bun_test() else {
+            return global_this.throw(format_args!("Snapshot matchers cannot be used outside of a test"));
+        };
+        let buntest = buntest_strong.get();
+        // MultiArrayList::get requires MultiArrayElement (derive pending); use column accessor.
+        let test_file_path = runner.files.items_source()[buntest.file_id as usize].path.text;
+        let test_file_path = bstr::BStr::new(test_file_path);
+        match err {
+            crate::Error::FailedToOpenSnapshotFile => {
+                global_this.throw(format_args!("Failed to open snapshot file for test file: {test_file_path}"))
+            }
+            crate::Error::FailedToMakeSnapshotDirectory => {
+                global_this.throw(format_args!("Failed to make snapshot directory for test file: {test_file_path}"))
+            }
+            crate::Error::FailedToWriteSnapshotFile => {
+                global_this.throw(format_args!("Failed write to snapshot file: {test_file_path}"))
+            }
+            crate::Error::SyntaxError | crate::Error::ParseError => {
+                global_this.throw(format_args!("Failed to parse snapshot file for: {test_file_path}"))
+            }
+            crate::Error::SnapshotCreationNotAllowedInCI => {
+                let snapshot_name = runner.snapshots.last_error_snapshot_name.take();
+                if let Some(name) = snapshot_name {
+                    global_this.throw(format_args!(
+                        "Snapshot creation is disabled in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nSnapshot name: \"{}\"\nReceived: {}",
+                        bstr::BStr::new(&name),
+                        bstr::BStr::new(pretty_value),
+                    ))
+                } else {
+                    global_this.throw(format_args!(
+                        "Snapshot creation is disabled in CI environments unless --update-snapshots is used\nTo override, set the environment variable CI=false.\n\nReceived: {}",
+                        bstr::BStr::new(pretty_value),
+                    ))
+                }
+            }
+            crate::Error::SnapshotInConcurrentGroup => {
+                global_this.throw(format_args!("Snapshot matchers are not supported in concurrent tests"))
+            }
+            crate::Error::TestNotActive => {
+                global_this.throw(format_args!("Snapshot matchers are not supported after the test has finished executing"))
+            }
+            _ => global_this.throw(format_args!("Failed to snapshot value: {}", bstr::BStr::new(pretty_value))),
+        }
     }
 
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen; static getter has no `&self`.
@@ -1515,6 +1561,7 @@ impl Expect {
     /// `user`: with the left value, tells this use of the matcher from the others in the same `expect()` matcher call.
     pub(crate) fn execute_custom_matcher(
         global_this: &JSGlobalObject,
+        custom_label: &bun_core::String,
         matcher_name: &bun_core::String,
         matcher_fn: JSValue,
         user: JSValue,
@@ -1582,30 +1629,22 @@ impl Expect {
         if pass || silent { return Ok(pass); }
 
         // handle failure
-        let message_text: bun_core::String = if message.is_undefined() {
-            bun_core::String::static_("No message was specified for this matcher.")
-        } else if message.is_string() {
+        if message.is_callable() {
+            // Pass the global object itself as `this`.
+            message = message.call_with_global_this(global_this, &[])?;
+        }
+        let message_text: bun_core::String = if message.to_boolean() {
             message.to_bun_string(global_this)?
         } else {
-            debug_assert!(message.is_callable()); // checked above
-
-            // Pass the global object itself as `this`.
-            let message_result = message.call_with_global_this(global_this, &[])?;
-            bun_core::String::from_js(message_result, global_this)?
+            bun_core::String::static_("No message was specified for this matcher.")
         };
 
-        let matcher_params = CustomMatcherParamsFormatter {
-            colors: Output::enable_ansi_colors_stderr(),
-            matcher_fn,
-        };
-        Err(Self::throw_pretty_matcher_error(
-            global_this,
-            &bun_core::String::EMPTY,
-            matcher_name,
-            matcher_params,
-            Flags::default(),
-            format_args!("{}", message_text),
-        ))
+        // As in Jest and vitest, the message is all there is: most matchers start it with `this.utils.matcherHint()`.
+        Err(if custom_label.is_empty() {
+            global_this.throw(format_args!("{message_text}"))
+        } else {
+            global_this.throw(format_args!("{custom_label}\n\n{message_text}"))
+        })
     }
 
     /// Function that is run for either `expect.myMatcher()` call or `expect().myMatcher` call,
@@ -1686,7 +1725,7 @@ impl Expect {
             matcher_args.push(*arg);
         }
 
-        let _ = Self::execute_custom_matcher(global_this, &matcher_name, matcher_fn, matcher_fn, &matcher_args, expect.flags.get(), false)?;
+        let _ = Self::execute_custom_matcher(global_this, &expect.custom_label, &matcher_name, matcher_fn, matcher_fn, &matcher_args, expect.flags.get(), false)?;
 
         Ok(this_value)
     }
@@ -2698,7 +2737,7 @@ impl ExpectCustomAsymmetricMatcher {
             matcher_args.push(captured_args.get_index(global_this, i as u32)?);
         }
 
-        Expect::execute_custom_matcher(global_this, &matcher_name, matcher_fn, this_value, &matcher_args, this.flags, true)
+        Expect::execute_custom_matcher(global_this, &bun_core::String::EMPTY, &matcher_name, matcher_fn, this_value, &matcher_args, this.flags, true)
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue
@@ -2873,6 +2912,10 @@ plain_host_fn!(print_received_shim, ExpectMatcherUtils::print_received);
 plain_host_fn!(expected_color_shim, ExpectMatcherUtils::expected_color);
 plain_host_fn!(received_color_shim, ExpectMatcherUtils::received_color);
 plain_host_fn!(matcher_hint_shim, ExpectMatcherUtils::matcher_hint);
+plain_host_fn!(print_with_type_shim, ExpectMatcherUtils::print_with_type);
+plain_host_fn!(diff_shim, ExpectMatcherUtils::diff);
+
+const NO_VISUAL_DIFFERENCE: &[u8] = b"Compared values have no visual difference.";
 
 /// The colors of jest-matcher-utils: `DIM_COLOR`, `EXPECTED_COLOR` and `RECEIVED_COLOR`.
 #[derive(Clone, Copy)]
@@ -2926,6 +2969,8 @@ impl ExpectMatcherUtils {
                 ("EXPECTED_COLOR", expected_color_shim, 1),
                 ("RECEIVED_COLOR", received_color_shim, 1),
                 ("matcherHint", matcher_hint_shim, 1),
+                ("printWithType", print_with_type_shim, 3),
+                ("diff", diff_shim, 2),
             ],
         )
     }
@@ -2948,8 +2993,15 @@ impl ExpectMatcherUtils {
             }
         }
 
-        let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
-        formatter.format_value::<false>(value, &mut mutable_string)?;
+        if value.is_error() {
+            // As in Jest: a matcher's message is no place for the source frame and the stack.
+            let _ = mutable_string.write_all(b"[");
+            let _ = mutable_string.write_all(value.to_bun_string(global_this)?.to_utf8().slice());
+            let _ = mutable_string.write_all(b"]");
+        } else {
+            let mut formatter = ConsoleObject::Formatter::new(global_this).with_quote_strings(true);
+            formatter.format_value::<false>(value, &mut mutable_string)?;
+        }
 
         if color_or_null.is_some() {
             if Output::enable_ansi_colors_stderr() {
@@ -2998,6 +3050,98 @@ impl ExpectMatcherUtils {
 
     fn received_color(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         Self::color_text(global_this, callframe, HintColor::Received)
+    }
+
+    /// `getType` of @jest/get-type: how failure messages name the type of a value.
+    fn type_name(value: JSValue) -> &'static str {
+        if value.is_undefined() {
+            "undefined"
+        } else if value.is_null() {
+            "null"
+        } else if value.is_array() {
+            "array"
+        } else if value.is_boolean() {
+            "boolean"
+        } else if value.is_callable() {
+            "function"
+        } else if value.is_number() {
+            "number"
+        } else if value.is_string_literal() {
+            "string"
+        } else if value.is_big_int() {
+            "bigint"
+        } else if value.is_symbol() {
+            "symbol"
+        } else {
+            match value.js_type() {
+                bun_jsc::JSType::RegExpObject => "regexp",
+                bun_jsc::JSType::Map => "map",
+                bun_jsc::JSType::Set => "set",
+                bun_jsc::JSType::JSDate => "date",
+                _ => "object",
+            }
+        }
+    }
+
+    /// `printWithType` of jest-matcher-utils.
+    fn print_with_type(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let [name, value, print] = callframe.arguments_as_array::<3>();
+        let name = name.to_bun_string(global_this)?;
+        if !print.is_callable() {
+            return Err(global_this.throw_type_error(format_args!("printWithType: the third argument (print) must be a function")));
+        }
+        let printed = print.call(global_this, JSValue::UNDEFINED, &[value])?.to_bun_string(global_this)?;
+        let text = if value.is_undefined_or_null() {
+            format!("{name} has value: {printed}")
+        } else {
+            format!("{name} has type:  {}\n{name} has value: {printed}", Self::type_name(value))
+        };
+        bun_string_jsc::create_utf8_for_js(global_this, text.as_bytes())
+    }
+
+    /// `diff` of jest-matcher-utils. `null` where a diff would say no more than the two values do.
+    fn diff(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let [expected, received] = callframe.arguments_as_array::<2>();
+        if (expected.is_number() && received.is_number())
+            || (expected.is_big_int() && received.is_big_int())
+            || (expected.is_boolean() && received.is_boolean())
+        {
+            return Ok(JSValue::NULL);
+        }
+        let mut out: Vec<u8> = Vec::new();
+        if expected.is_same_value(received, global_this)? {
+            HintColor::Dim.paint(&mut out, NO_VISUAL_DIFFERENCE);
+            return bun_string_jsc::create_utf8_for_js(global_this, &out);
+        }
+        if Expect::is_asymmetric_matcher(expected) {
+            return Ok(JSValue::NULL);
+        }
+        let (expected_type, received_type) = (Self::type_name(expected), Self::type_name(received));
+        if expected_type != received_type {
+            out.extend_from_slice(b"  Comparing two different types of values. Expected ");
+            HintColor::Expected.paint(&mut out, expected_type.as_bytes());
+            out.extend_from_slice(b" but received ");
+            HintColor::Received.paint(&mut out, received_type.as_bytes());
+            out.push(b'.');
+            return bun_string_jsc::create_utf8_for_js(global_this, &out);
+        }
+
+        if expected_type != "string" {
+            return Self::diff_text(global_this, &DiffFormatter::new(global_this, received, expected, false)?);
+        }
+        // Two strings are text to compare line by line, not values to quote.
+        let (expected, received) = (expected.to_bun_string(global_this)?, received.to_bun_string(global_this)?);
+        let (expected, received) = (expected.to_utf8(), received.to_utf8());
+        Self::diff_text(global_this, &DiffFormatter::from_strings(received.slice(), expected.slice(), false))
+    }
+
+    fn diff_text(global_this: &JSGlobalObject, formatter: &DiffFormatter<'_>) -> JsResult<JSValue> {
+        if formatter.received_string == formatter.expected_string {
+            let mut out: Vec<u8> = Vec::new();
+            HintColor::Dim.paint(&mut out, NO_VISUAL_DIFFERENCE);
+            return bun_string_jsc::create_utf8_for_js(global_this, &out);
+        }
+        bun_string_jsc::create_utf8_for_js(global_this, format!("{formatter}").as_bytes())
     }
 
     /// `label` through the color function that `option_name` of `matcherHint` gave, if any.

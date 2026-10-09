@@ -4,6 +4,7 @@
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/JSCast.h"
 #include "headers-handwritten.h"
+#include "headers.h"
 #include "helpers.h"
 #include "ZigGlobalObject.h"
 
@@ -156,7 +157,7 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
 
     auto* requireMap = global->requireMap();
     RETURN_IF_EXCEPTION(scope, {});
-    requireMap->remove(globalObject, moduleIdValue);
+    JSC__JSMap__remove(requireMap, globalObject, JSValue::encode(moduleIdValue));
     RETURN_IF_EXCEPTION(scope, {});
 
     if (moduleIdValue.isString()) {
@@ -568,7 +569,7 @@ static void findLoadedCommonJSModule(Zig::GlobalObject* globalObject, JSC::JSStr
     loaded.commonJSModule = nullptr;
     loaded.staleCommonJSEntry = false;
 
-    JSValue entryValue = globalObject->requireMap()->get(globalObject, specifierString);
+    JSValue entryValue = JSValue::decode(JSC__JSMap__get(globalObject->requireMap(), globalObject, JSValue::encode(specifierString)));
     RETURN_IF_EXCEPTION(scope, );
     if (entryValue) {
         loaded.commonJSModule = dynamicDowncast<Bun::JSCommonJSModule>(entryValue);
@@ -695,7 +696,7 @@ static Bun::JSCommonJSModule* loadedCommonJSModule(Zig::GlobalObject* globalObje
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue entry = globalObject->requireMap()->get(globalObject, jsString(vm, key));
+    JSValue entry = JSValue::decode(JSC__JSMap__get(globalObject->requireMap(), globalObject, JSValue::encode(jsString(vm, key))));
     RETURN_IF_EXCEPTION(scope, nullptr);
     auto* commonJSModule = dynamicDowncast<Bun::JSCommonJSModule>(entry);
     if (!commonJSModule)
@@ -715,6 +716,35 @@ static JSObject* objectWithExports(Zig::GlobalObject* globalObject, const Vector
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
     return object;
+}
+
+// In an import cycle a module can re-export from one that is not evaluated yet. Spreading it would throw: those exports are undefined in a copy.
+static JSObject* withoutUninitializedExports(Zig::GlobalObject* globalObject, JSObject* moduleNamespace)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    moduleNamespace->methodTable()->getOwnPropertyNames(moduleNamespace, globalObject, properties, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    Vector<JSC::Identifier, 4> names;
+    MarkedArgumentBuffer values;
+    bool isInitialized = true;
+    for (auto& name : properties) {
+        JSValue value = moduleNamespace->get(globalObject, name);
+        if (scope.exception()) [[unlikely]] {
+            if (!scope.tryClearException())
+                return nullptr;
+            isInitialized = false;
+            value = jsUndefined();
+        }
+        names.append(name);
+        values.append(value);
+    }
+    if (isInitialized)
+        return moduleNamespace;
+    RELEASE_AND_RETURN(scope, objectWithExports(globalObject, names, values));
 }
 
 static JSObject* esmExportsOfCommonJSExports(Zig::GlobalObject* globalObject, JSValue exports)
@@ -779,12 +809,11 @@ static BunPlugin::OnLoad::RunningModuleMock* findRunningModuleMock(Zig::GlobalOb
     return nullptr;
 }
 
-// A dynamic import names its importer without the query.
 static void addToImportChain(BunPlugin::OnLoad::RunningModuleMock& running, const String& key)
 {
     running.importChain.add(key);
     if (size_t query = key.find('?'); query != notFound)
-        running.importChain.add(key.left(query));
+        running.importChainWithoutQuery.add(key.left(query));
 }
 
 // The module the exports of a mock without a factory function are made from.
@@ -814,10 +843,11 @@ static JSC::JSPromise* importOriginalModule(Zig::GlobalObject* globalObject, JSM
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSObject* exports = mock->originalNamespace.get();
-    if (!exports) {
+    if (exports)
+        exports = withoutUninitializedExports(globalObject, exports);
+    else
         exports = esmExportsBeforePatches(globalObject, mock);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-    }
+    RETURN_IF_EXCEPTION(scope, nullptr);
     if (!exports && mock->originalCommonJSExports) {
         exports = esmExportsOfCommonJSExports(globalObject, mock->originalCommonJSExports.get());
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -864,7 +894,7 @@ static JSValue requireOriginalModule(Zig::GlobalObject* globalObject, JSModuleMo
         auto* commonJSModule = loadedCommonJSModule(globalObject, key);
         RETURN_IF_EXCEPTION(scope, {});
         if (!commonJSModule)
-            return moduleNamespace;
+            RELEASE_AND_RETURN(scope, withoutUninitializedExports(globalObject, moduleNamespace));
         RELEASE_AND_RETURN(scope, commonJSModule->exportsObject());
     }
 
@@ -893,8 +923,9 @@ static JSValue mockExportsOfLoadedModule(Zig::GlobalObject* globalObject, const 
     if (commonJSModule) {
         isCommonJS = true;
         exports = commonJSModule->exportsObject();
-        RETURN_IF_EXCEPTION(scope, {});
-    }
+    } else if (JSObject* object = moduleNamespace.getObject())
+        exports = withoutUninitializedExports(globalObject, object);
+    RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, Bun::mockObject(globalObject, exports, spy));
 }
 
@@ -937,7 +968,6 @@ static JSC::JSPromise* thenWithContext(Zig::GlobalObject* globalObject, JSC::JSP
     return derived;
 }
 
-// May be called with `error` still being thrown.
 static void addHoistingNote(JSC::VM& vm, JSValue error)
 {
     auto* instance = dynamicDowncast<JSC::ErrorInstance>(error);
@@ -1008,18 +1038,66 @@ JSValue JSModuleMock::callFactory(Zig::GlobalObject* globalObject, bool synchron
     return thenWithContext(globalObject, loading, jsFunctionModuleMockDidLoadOriginal, nullptr, this);
 }
 
+static void evictModulesAndTheirImporters(Zig::GlobalObject*, Vector<String>&& modules);
+
+// What was given the original is the factory's own: whatever imports it from now on loads it again, and gets the mock.
 static void didStopRunning(Zig::GlobalObject* globalObject, JSModuleMock* mock)
 {
-    globalObject->onLoadPlugins.runningModuleMocks.removeFirstMatching([&](auto& running) { return running.mock.get() == mock; });
+    auto& runningModuleMocks = globalObject->onLoadPlugins.runningModuleMocks;
+    size_t index = runningModuleMocks.findIf([&](auto& running) { return running.mock.get() == mock; });
+    if (index == notFound)
+        return;
+    Vector<String> givenTheOriginal = WTF::move(runningModuleMocks[index].givenTheOriginal);
+    runningModuleMocks.removeAt(index);
+    evictModulesAndTheirImporters(globalObject, WTF::move(givenTheOriginal));
 }
 
 void JSModuleMock::didFail(Zig::GlobalObject* globalObject, JSValue error)
 {
-    didStopRunning(globalObject, this);
     state = State::NotCalled;
     result.clear();
     if (isHoisted())
         addHoistingNote(globalObject->vm(), error);
+    didStopRunning(globalObject, this);
+}
+
+// Whether reading an export of `object` can end in reading one of the module `key` with no script in between.
+static bool readsExportsOfModule(JSC::JSGlobalObject* globalObject, JSObject* object, const String& key, UncheckedKeyHashSet<JSObject*>& seen)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* moduleNamespace = dynamicDowncast<JSC::JSModuleNamespaceObject>(object);
+    if (!moduleNamespace || !seen.add(moduleNamespace).isNewEntry)
+        return false;
+
+    Vector<JSC::AbstractModuleRecord*> records;
+    if (moduleNamespace->moduleRecord()->hasLiveExports())
+        records.append(moduleNamespace->moduleRecord());
+    else {
+        JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        moduleNamespace->methodTable()->getOwnPropertyNames(moduleNamespace, globalObject, names, DontEnumPropertiesMode::Include);
+        RETURN_IF_EXCEPTION(scope, false);
+        for (auto& name : names) {
+            auto resolution = moduleNamespace->moduleRecord()->resolveExport(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (resolution.isLiveExport(vm) && !records.contains(resolution.moduleRecord))
+                records.append(resolution.moduleRecord);
+        }
+    }
+
+    for (auto* record : records) {
+        if (record->moduleKey().string() == key)
+            return true;
+        JSObject* source = record->liveExportsSource();
+        if (auto* mock = source ? dynamicDowncast<JSModuleMock>(source) : nullptr)
+            source = mock->exports.get();
+        bool reads = source && readsExportsOfModule(globalObject, source, key, seen);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (reads)
+            return true;
+    }
+    return false;
 }
 
 void JSModuleMock::settle(Zig::GlobalObject* globalObject, JSValue value)
@@ -1040,10 +1118,29 @@ void JSModuleMock::settle(Zig::GlobalObject* globalObject, JSValue value)
         RETURN_IF_EXCEPTION(scope, );
     }
 
-    didStopRunning(globalObject, this);
+    // The namespace object of a mocked module stands for what it reads from now: that of this module would read from itself.
+    while (auto* moduleNamespace = dynamicDowncast<JSC::JSModuleNamespaceObject>(esmExports)) {
+        JSObject* source = moduleNamespace->moduleRecord()->hasLiveExports() ? moduleNamespace->moduleRecord()->liveExportsSource() : nullptr;
+        if (auto* mock = source ? dynamicDowncast<JSModuleMock>(source) : nullptr)
+            source = mock->exports.get();
+        if (!source)
+            break;
+        esmExports = source;
+    }
+    String key = specifier->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    UncheckedKeyHashSet<JSObject*> seen;
+    bool readsItself = readsExportsOfModule(globalObject, esmExports, key, seen);
+    RETURN_IF_EXCEPTION(scope, );
+    if (readsItself) {
+        JSC::throwTypeError(globalObject, scope, "mock(module, fn) requires a function that does not return the namespace object of a module that re-exports the mocked module"_s);
+        return;
+    }
+
     state = State::Settled;
     result.set(vm, this, object);
     exports.set(vm, this, esmExports);
+    RELEASE_AND_RETURN(scope, didStopRunning(globalObject, this));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockFactoryDidFulfill, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
@@ -1054,8 +1151,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockFactoryDidFulfill, (JSC::JSGlobalOb
     auto* mock = uncheckedDowncast<JSModuleMock>(callframe->argument(1));
     mock->settle(globalObject, callframe->argument(0));
     if (auto* exception = scope.exception()) [[unlikely]] {
-        if (!vm.isTerminationException(exception))
+        if (scope.tryClearException()) {
             mock->didFail(globalObject, exception->value());
+            RETURN_IF_EXCEPTION(scope, {});
+            scope.throwException(globalObject, exception);
+        }
         return {};
     }
     return JSValue::encode(mock);
@@ -1066,6 +1166,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockFactoryDidReject, (JSC::JSGlobalObj
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     uncheckedDowncast<JSModuleMock>(callframe->argument(1))->didFail(defaultGlobalObject(lexicalGlobalObject), callframe->argument(0));
+    RETURN_IF_EXCEPTION(scope, {});
     scope.throwException(lexicalGlobalObject, callframe->argument(0));
     return {};
 }
@@ -1100,7 +1201,7 @@ JSObject* JSModuleMock::run(Zig::GlobalObject* globalObject, bool synchronous, J
     }
 
     state = State::Running;
-    globalObject->onLoadPlugins.runningModuleMocks.append(BunPlugin::OnLoad::RunningModuleMock { JSC::Strong<JSC::JSObject> { vm, this }, fileOfFunction(factory.get()), {} });
+    globalObject->onLoadPlugins.runningModuleMocks.append(BunPlugin::OnLoad::RunningModuleMock { JSC::Strong<JSC::JSObject> { vm, this }, fileOfFunction(factory.get()), {}, {}, {} });
 
     JSValue value = callFactory(globalObject, synchronous, dependency);
     if (!scope.exception()) [[likely]] {
@@ -1124,8 +1225,11 @@ JSObject* JSModuleMock::run(Zig::GlobalObject* globalObject, bool synchronous, J
     if (!scope.exception()) [[likely]]
         settle(globalObject, value);
     if (auto* exception = scope.exception()) [[unlikely]] {
-        if (!vm.isTerminationException(exception))
+        if (scope.tryClearException()) {
             didFail(globalObject, exception->value());
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            scope.throwException(globalObject, exception);
+        }
         return nullptr;
     }
     return this;
@@ -1133,7 +1237,16 @@ JSObject* JSModuleMock::run(Zig::GlobalObject* globalObject, bool synchronous, J
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRunModuleMockLater, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
-    return JSValue::encode(uncheckedDowncast<JSModuleMock>(callframe->argument(1))->run(defaultGlobalObject(lexicalGlobalObject), false));
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSValue mock = callframe->argument(1);
+
+    // Once all that is being fetched has been, it is known which modules wait for the mock (isWaitingForModule).
+    for (auto& entry : globalObject->moduleLoader()->moduleMap().values()) {
+        if (entry->record() || entry->status() > JSC::ModuleRegistryEntry::Status::Fetching || registeredModuleMock(globalObject, entry->key().string()))
+            continue;
+        return JSValue::encode(thenWithContext(globalObject, entry->ensureModulePromise(globalObject), jsFunctionRunModuleMockLater, jsFunctionRunModuleMockLater, mock));
+    }
+    return JSValue::encode(uncheckedDowncast<JSModuleMock>(mock)->run(globalObject, false));
 }
 
 static ASCIILiteral nameOfModuleMockFunction(ModuleMockFunction function)
@@ -1183,7 +1296,19 @@ bool JSModuleMock::getOwnPropertySlot(JSObject* object, JSC::JSGlobalObject* glo
     String written = mock->writtenSpecifier->value(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
     auto function = nameOfModuleMockFunction(mock->function);
-    scope.throwException(globalObject, JSC::createError(globalObject, makeString("No \""_s, StringView(propertyName.uid()), "\" export is defined on the mock of \""_s, written, "\". Did you forget to return it from the "_s, function, "() factory?\nTo keep the exports of the original module, spread them:\n\n"_s, function, "(\""_s, written, "\", async importOriginal => ({\n  ...(await importOriginal()),\n}));\n"_s)));
+    StringBuilder message;
+    message.append("No \""_s);
+    message.append(StringView(propertyName.uid()));
+    message.append("\" export is defined on the mock of \""_s);
+    message.append(written);
+    message.append("\". Did you forget to return it from the "_s);
+    message.append(function);
+    message.append("() factory?\nTo keep the exports of the original module, spread them:\n\n"_s);
+    message.append(function);
+    message.append("(\""_s);
+    message.append(written);
+    message.append("\", async importOriginal => ({\n  ...(await importOriginal()),\n}));\n"_s);
+    scope.throwException(globalObject, JSC::createError(globalObject, message.toString()));
     return false;
 }
 
@@ -1281,7 +1406,7 @@ static void addRequirer(Zig::GlobalObject* globalObject, ModuleImporters& import
     auto* imported = importedValue ? dynamicDowncast<Bun::JSCommonJSModule>(importedValue) : nullptr;
     if (!imported || !importer->filename().isString() || !imported->filename().isString())
         return;
-    JSValue registered = globalObject->requireMap()->get(globalObject, imported->filename());
+    JSValue registered = JSValue::decode(JSC__JSMap__get(globalObject->requireMap(), globalObject, JSValue::encode(imported->filename())));
     RETURN_IF_EXCEPTION(scope, );
     if (registered != imported)
         return;
@@ -1370,9 +1495,14 @@ static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Modul
 
     for (auto& key : keys) {
         loader->removeEntry(JSC::Identifier::fromString(vm, key));
-        requireMap->remove(globalObject, jsString(vm, key));
+        JSC__JSMap__remove(requireMap, globalObject, JSValue::encode(jsString(vm, key)));
         RETURN_IF_EXCEPTION(scope, );
     }
+}
+
+static void evictModulesAndTheirImporters(Zig::GlobalObject* globalObject, Vector<String>&& modules)
+{
+    evictModulesAndTheirImporters(globalObject, ModulesToEvict { WTF::move(modules), {} });
 }
 
 static void unmockModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, const String& specifier, ModulesToEvict& evict)
@@ -1398,16 +1528,21 @@ static void unmockModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, co
                     RETURN_IF_EXCEPTION(scope, );
                     continue;
                 }
+                // A variable that has a value never goes back to having none: optimized code does not check again.
+                // A module initializes its own. An export of a builtin that is made on first use is made now.
                 ExportVariable variable = findExportVariable(globalObject, loaded.esmNamespace, name);
                 RETURN_IF_EXCEPTION(scope, );
-                if (!variable.record)
+                if (!variable.record || !variable.record->inherits<JSC::SyntheticModuleRecord>())
                     continue;
-                variable.record->moduleEnvironment()->variableAt(variable.offset).clear();
-                // Whoever was linked to the export while it was mocked reads the variable, which nothing would fill.
-                if (auto* synthetic = dynamicDowncast<JSC::SyntheticModuleRecord>(variable.record)) {
-                    synthetic->materializeLazyExport(globalObject, variable.localName);
-                    RETURN_IF_EXCEPTION(scope, );
-                }
+                BunString builtinKey = Bun::toString(variable.record->moduleKey().string());
+                JSValue builtin = Bun::resolveAndFetchBuiltinModule(globalObject, &builtinKey);
+                RETURN_IF_EXCEPTION(scope, );
+                if (!builtin || !builtin.isObject())
+                    continue;
+                original = builtin.getObject()->get(globalObject, variable.localName);
+                RETURN_IF_EXCEPTION(scope, );
+                loaded.esmNamespace->overrideExportValue(globalObject, name, original);
+                RETURN_IF_EXCEPTION(scope, );
             }
         }
     }
@@ -1425,7 +1560,7 @@ static void unmockModule(Zig::GlobalObject* globalObject, JSModuleMock* mock, co
 
     evict.patchedModules.append(specifier);
     if (!mock->originalCommonJSExports) {
-        globalObject->requireMap()->remove(globalObject, mock->specifier.get());
+        JSC__JSMap__remove(globalObject->requireMap(), globalObject, JSValue::encode(mock->specifier.get()));
         RETURN_IF_EXCEPTION(scope, );
     } else if (!mock->originalExports)
         globalObject->moduleLoader()->removeEntry(JSC::Identifier::fromString(vm, specifier));
@@ -1705,7 +1840,7 @@ static JSC::EncodedJSValue mockModule(JSC::JSGlobalObject* lexicalGlobalObject, 
     }
 
     if (loaded.staleCommonJSEntry) {
-        globalObject->requireMap()->remove(globalObject, specifierString);
+        JSC__JSMap__remove(globalObject->requireMap(), globalObject, JSValue::encode(specifierString));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -1944,7 +2079,7 @@ static JSC::EncodedJSValue resetModules(JSC::JSGlobalObject* lexicalGlobalObject
     requireMap->clear(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     for (size_t i = 0; i < addons.size(); i += 2) {
-        requireMap->set(globalObject, addons.at(i), addons.at(i + 1));
+        JSC__JSMap__set(requireMap, globalObject, JSValue::encode(addons.at(i)), JSValue::encode(addons.at(i + 1)));
         RETURN_IF_EXCEPTION(scope, {});
     }
 
@@ -2073,13 +2208,15 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSMock__undoModuleMocksOfTestFile(Zig::G
 {
     auto& plugins = globalObject->onLoadPlugins;
     plugins.testFile++;
-    plugins.runningModuleMocks.clear();
+    auto neverSettled = std::exchange(plugins.runningModuleMocks, {});
     if (!plugins.virtualModules || !JSMock__testFilesShareModules(globalObject))
         return;
 
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     ModulesToEvict evict;
+    for (auto& running : neverSettled)
+        evict.modules.appendVector(running.givenTheOriginal);
 
     MarkedArgumentBuffer mocks;
     for (auto& value : plugins.virtualModules->values()) {
@@ -2125,9 +2262,7 @@ static void forgetModuleThatFailedToEvaluate(Zig::GlobalObject* globalObject, JS
     auto* entry = globalObject->moduleLoader()->registryEntry(record->moduleKey());
     if (!entry || entry->record() != record)
         return;
-    ModulesToEvict evict;
-    evict.modules.append(record->moduleKey().string());
-    evictModulesAndTheirImporters(globalObject, WTF::move(evict));
+    evictModulesAndTheirImporters(globalObject, Vector<String> { record->moduleKey().string() });
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionModuleMockDidEvaluate, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
@@ -2160,15 +2295,22 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEvaluateModuleMock, (JSC::JSGlobalObject * le
     JSC::AbstractModuleRecord* record = moduleNamespace->moduleRecord();
     String specifier = record->moduleKey().string();
 
+    const String& dependencyKey = dependency->moduleRecord()->moduleKey().string();
+    bool isOriginal = dependencyKey == originalModuleKey(specifier);
+
     JSModuleMock* mock = registeredModuleMock(globalObject, specifier);
     if (!mock) {
-        record->setLiveExportsSource(vm, dependency);
+        // Not mocked any more.
+        UncheckedKeyHashSet<JSObject*> seen;
+        bool readsItself = record->liveExportsSource() || readsExportsOfModule(globalObject, dependency, specifier, seen);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!readsItself)
+            record->setLiveExportsSource(vm, dependency);
         return JSValue::encode(jsUndefined());
     }
 
     // A later mock of the module may be made from another one than this module imported.
-    const String& dependencyKey = dependency->moduleRecord()->moduleKey().string();
-    if (dependencyKey == originalModuleKey(specifier))
+    if (isOriginal)
         mock->originalNamespace.set(vm, mock, dependency);
     String wanted = dependencyKeyOfModuleMock(globalObject, mock);
     RETURN_IF_EXCEPTION(scope, {});
@@ -2536,7 +2678,7 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
     };
 
     if (isBunTest && !Zig::JSMock__isInPreload(globalObject))
-        globalObject->onLoadPlugins.testFileOfModule.set(specifier->toWTFString(BunString::ZeroCopy), globalObject->onLoadPlugins.testFile);
+        globalObject->onLoadPlugins.testFileOfModule.set(specifier->toWTFString(), globalObject->onLoadPlugins.testFile);
 
     if (!globalObject->onLoadPlugins.hasVirtualModules()) {
         return fallback();
@@ -2684,22 +2826,35 @@ JSC::SourceCode sourceCodeOfModuleMock(Zig::GlobalObject* globalObject, JSC::JSO
     return JSC::SourceCode(WTF::move(provider));
 }
 
+bool moduleMockImportsByKey(Zig::GlobalObject* globalObject, const String& key)
+{
+    auto* mock = Zig::registeredModuleMock(globalObject, key);
+    return mock && mock->importsOriginal;
+}
+
 String keyOfImportWhileModuleMocksRun(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
 {
     for (auto& running : globalObject->onLoadPlugins.runningModuleMocks) {
-        if (importer != running.file && !running.importChain.contains(importer))
+        bool isInChain = running.importChain.contains(importer);
+        if (!isInChain && importer != running.file && !running.importChainWithoutQuery.contains(importer))
             continue;
         String mocked = uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())->specifier->tryGetValue().data;
+        String instead = key == mocked ? Zig::originalModuleKey(key) : key;
         Vector<String> unfinished;
-        if (key == mocked || (isESM && Zig::isWaitingForModule(globalObject, key, mocked, unfinished))) {
-            String original = Zig::originalModuleKey(key);
-            Zig::addToImportChain(running, original);
-            return original;
-        }
-        if (!isESM)
-            unfinished.append(key);
+        if (isESM) {
+            while (Zig::isWaitingForModule(globalObject, instead, mocked, unfinished)) {
+                instead = Zig::originalModuleKey(instead);
+                unfinished.clear();
+            }
+        } else
+            unfinished.append(instead);
         for (auto& module : unfinished)
             Zig::addToImportChain(running, module);
+        if (instead != key) {
+            if (isInChain && !importer.contains("?actual"_s) && !importer.contains("&actual"_s))
+                running.givenTheOriginal.append(importer);
+            return instead;
+        }
     }
     return key;
 }

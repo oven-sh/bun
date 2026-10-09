@@ -39,6 +39,8 @@ struct Pattern {
     /// Absolute. Empty when `glob` applies to the whole path.
     dir: Vec<u8>,
     glob: Vec<u8>,
+    /// Every segment is a plain name, and `glob` is the last one.
+    is_name: bool,
 }
 
 /// The files that one call matched, and how to look for them again.
@@ -47,8 +49,15 @@ pub struct ImportMetaGlobScan {
     exhaustive: bool,
     /// It never matches.
     importer: Box<[u8]>,
+    found: Found,
+}
+
+#[derive(Default, PartialEq, Eq)]
+struct Found {
     /// Absolute, in the order of the keys.
     files: Vec<Vec<u8>>,
+    /// Where a file that appears could match.
+    directories: Vec<Box<[u8]>>,
 }
 
 /// What the parser makes an object of.
@@ -62,6 +71,24 @@ struct Expansion<'a> {
     path_loc: Loc,
     /// Each key with its import path.
     entries: Vec<(&'a [u8], &'a [u8])>,
+}
+
+impl Expansion<'_> {
+    /// The arguments of `import(path)`.
+    fn import_call(&self, path: &[u8], loc: Loc) -> (Expr, TransposeState) {
+        let mut state = TransposeState {
+            loc,
+            ..Default::default()
+        };
+        if let Some((loader, r#type)) = self.loader {
+            state.import_loader = Some(loader);
+            state.import_options = object_of(
+                b"with",
+                object_of(b"type", Expr::init(E::String::init(r#type), loc)),
+            );
+        }
+        (Expr::init(E::String::init(path), self.path_loc), state)
+    }
 }
 
 fn is_node_modules(name: &[u8]) -> bool {
@@ -105,6 +132,7 @@ fn append_query_component(out: &mut Vec<u8>, text: &[u8], is_key: bool) {
 fn join(dir: &[u8], path: &[u8]) -> Option<Vec<u8>> {
     let mut buf = path_buffer_pool::get();
     resolve_path::join_abs_string_buf_checked::<platform::Auto>(dir, &mut buf[..], &[path])
+        .filter(|joined| joined.len() < bun_paths::MAX_PATH_BYTES)
         .map(<[u8]>::to_vec)
 }
 
@@ -135,26 +163,51 @@ impl Pattern {
             |char| char == b'/',
         );
 
-        let mut plain = 0;
-        while let Some(end) = strings::index_of_char_usize(&normalized[plain..], b'/') {
-            let segment = &normalized[plain..plain + end];
-            if bun_glob::detect_glob_syntax(segment) || strings::contains_char(segment, b'\\') {
-                break;
+        // On Windows the walker takes a backslash for a separator, so plain names are unescaped here.
+        let mut names = Vec::with_capacity(normalized.len());
+        let mut rest = normalized;
+        loop {
+            let (segment, after) = match strings::split_once_char(rest, b'/') {
+                Some((segment, after)) => (segment, Some(after)),
+                None => (rest, None),
+            };
+            if bun_glob::detect_glob_syntax(segment) {
+                return Some(Pattern {
+                    negated,
+                    dir: join(dir, &names)?,
+                    glob: rest.to_vec(),
+                    is_name: false,
+                });
             }
-            plain += end + 1;
+            let name_start = names.len();
+            let mut bytes = segment.iter();
+            while let Some(byte) = bytes.next() {
+                names.push(*if *byte == b'\\' {
+                    bytes.next().unwrap_or(byte)
+                } else {
+                    byte
+                });
+            }
+            let Some(after) = after else {
+                return Some(Pattern {
+                    negated,
+                    dir: join(dir, &names[..name_start])?,
+                    glob: names[name_start..].to_vec(),
+                    is_name: true,
+                });
+            };
+            names.push(b'/');
+            rest = after;
         }
-
-        Some(Pattern {
-            negated,
-            dir: join(dir, &normalized[..plain])?,
-            glob: normalized[plain..].to_vec(),
-        })
     }
 
     fn matches(&self, file: &[u8]) -> bool {
         let Some(path) = path_below(&self.dir, file) else {
             return false;
         };
+        if self.is_name {
+            return path == self.glob;
+        }
         let path = with_posix_separators(path);
         bun_glob::r#match(&self.glob, strings::trim_leading_char(&path, b'/')).matches()
     }
@@ -162,8 +215,9 @@ impl Pattern {
 
 impl ImportMetaGlobScan {
     /// An error is a message for the user.
-    fn find_files(&self) -> Result<Vec<Vec<u8>>, String> {
+    fn find(&self) -> Result<Found, String> {
         let mut files = Vec::<Vec<u8>>::new();
+        let mut directories = Vec::<Box<[u8]>>::new();
         // "node_modules" is skipped below the directory that all the patterns share.
         let mut shared_dir: Option<&[u8]> = None;
         for pattern in self.patterns.iter().filter(|pattern| !pattern.negated) {
@@ -172,6 +226,23 @@ impl ImportMetaGlobScan {
                 shared = bun_paths::dirname(shared).unwrap_or_default();
             }
             shared_dir = Some(shared);
+
+            if pattern.is_name {
+                let mut buf = path_buffer_pool::get();
+                if let Some(file) = join(&pattern.dir, &pattern.glob)
+                    && matches!(
+                        bun_sys::exists_at_type(
+                            bun_sys::Fd::cwd(),
+                            resolve_path::z(&file, &mut buf)
+                        ),
+                        Ok(bun_sys::ExistsAtType::File)
+                    )
+                {
+                    files.push(file);
+                }
+                directories.push(pattern.dir.as_slice().into());
+                continue;
+            }
 
             let walked = BunGlobWalker::init_with_cwd(
                 &pattern.glob,
@@ -184,12 +255,16 @@ impl ImportMetaGlobScan {
                 (!self.exhaustive).then_some(is_node_modules as fn(&[u8]) -> bool),
             )
             .and_then(|walker| match walker {
-                Ok(mut walker) => Ok(walker.walk()?.map(|()| walker)),
+                Ok(mut walker) => {
+                    walker.visited_directories = Some(Vec::new());
+                    Ok(walker.walk()?.map(|()| walker))
+                }
                 Err(err) => Ok(Err(err)),
             });
             match walked {
-                Ok(Ok(walker)) => {
-                    files.extend(walker.matched_paths.keys().iter().map(|file| file.to_vec()))
+                Ok(Ok(mut walker)) => {
+                    files.extend(walker.matched_paths.keys().iter().map(|file| file.to_vec()));
+                    directories.extend(walker.visited_directories.take().unwrap_or_default());
                 }
                 Ok(Err(err))
                     if matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {}
@@ -217,30 +292,18 @@ impl ImportMetaGlobScan {
         });
         files.sort_by_cached_key(|file| with_posix_separators(file));
         files.dedup();
-        Ok(files)
-    }
-
-    /// Where a file that appears or disappears can change the result. A directory below a
-    /// wildcard is only here once a file in it matches.
-    pub fn directories(&self) -> Vec<&[u8]> {
-        let mut directories: Vec<&[u8]> = self
-            .patterns
-            .iter()
-            .filter(|pattern| !pattern.negated)
-            .map(|pattern| pattern.dir.as_slice())
-            .chain(
-                self.files
-                    .iter()
-                    .filter_map(|file| bun_paths::dirname(file)),
-            )
-            .collect();
         directories.sort_unstable();
         directories.dedup();
-        directories
+        Ok(Found { files, directories })
+    }
+
+    /// Where a file or a directory that appears or disappears can change what is found.
+    pub fn directories(&self) -> &[Box<[u8]>] {
+        &self.found.directories
     }
 
     pub fn has_changed(&self) -> bool {
-        !self.find_files().is_ok_and(|files| files == self.files)
+        !self.find().is_ok_and(|found| found == self.found)
     }
 }
 
@@ -359,7 +422,7 @@ impl<'a> Arguments<'a, '_> {
             patterns: Vec::with_capacity(globs.len()),
             exhaustive: options.exhaustive,
             importer: source.path.text.into(),
-            files: Vec::new(),
+            found: Found::default(),
         };
         for &(glob, glob_loc) in &globs {
             let (negated, glob) = match glob {
@@ -376,6 +439,7 @@ impl<'a> Arguments<'a, '_> {
                         negated,
                         dir: Vec::new(),
                         glob: glob.to_vec(),
+                        is_name: false,
                     })
                 } else {
                     Pattern::new(negated, root, glob)
@@ -403,16 +467,16 @@ impl<'a> Arguments<'a, '_> {
             scan.patterns.push(pattern);
         }
 
-        scan.files = match scan.find_files() {
-            Ok(files) => files,
+        scan.found = match scan.find() {
+            Ok(found) => found,
             Err(message) => {
                 self.error(path_loc, format_args!("{message}"));
                 return None;
             }
         };
 
-        expansion.entries.reserve(scan.files.len());
-        for file in &scan.files {
+        expansion.entries.reserve(scan.found.files.len());
+        for file in &scan.found.files {
             let import_path = match importer_dir {
                 Some(dir) => relative(dir, file),
                 None => with_posix_separators(file),
@@ -793,18 +857,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
             return self.import_meta_glob_static_import(expansion, path, loc);
         }
 
-        let mut state = TransposeState {
-            loc,
-            ..Default::default()
-        };
-        if let Some((loader, r#type)) = expansion.loader {
-            state.import_loader = Some(loader);
-            state.import_options = object_of(
-                b"with",
-                object_of(b"type", Expr::init(E::String::init(r#type), loc)),
-            );
-        }
-        let specifier = Expr::init(E::String::init(path), expansion.path_loc);
+        let (specifier, state) = expansion.import_call(path, loc);
         let mut value = self.transpose_import(specifier, &state);
         if !expansion.import.is_empty() {
             // The bundler drops the exports that no use of the `import()` observes.

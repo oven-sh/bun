@@ -783,7 +783,7 @@ impl JunitReporter {
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
-            R::FailBecauseFailingTestPassed => {
+            R::FailBecauseFailingTestPassed | R::FailBecauseFailsTestPassed => {
                 if !self.suite_stack.is_empty() {
                     let last = self.suite_stack.len() - 1;
                     self.suite_stack[last].metrics.failures += 1;
@@ -792,7 +792,12 @@ impl JunitReporter {
                 self.contents.extend_from_slice(indent);
                 let _ = writeln!(
                     &mut self.contents,
-                    "  <failure message=\"test marked with .failing() did not throw\" type=\"AssertionError\"/>"
+                    "  <failure message=\"test marked with {}\" type=\"AssertionError\"/>",
+                    if status == R::FailBecauseFailsTestPassed {
+                        ".fails() did not fail"
+                    } else {
+                        ".failing() did not throw"
+                    }
                 );
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
@@ -1177,11 +1182,12 @@ impl CommandLineReporter {
             match status {
                 R::Pending | R::Pass | R::Skip | R::SkippedBecauseLabel | R::Todo | R::Fail => {}
 
-                R::FailBecauseFailingTestPassed => {
+                R::FailBecauseFailingTestPassed | R::FailBecauseFailsTestPassed => {
                     let _ = bun_core::write_pretty!(
                         writer,
                         colors,
-                        "  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n"
+                        "  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.{s}` if tested behavior now works<r>\n",
+                        test_entry.base.mode.tag_name()
                     );
                 }
                 R::FailBecauseTodoPassed => {
@@ -1415,6 +1421,7 @@ impl CommandLineReporter {
 
             R::Fail
             | R::FailBecauseFailingTestPassed
+            | R::FailBecauseFailsTestPassed
             | R::FailBecauseTodoPassed
             | R::FailBecauseExpectedHasAssertions
             | R::FailBecauseExpectedAssertionCount

@@ -51,7 +51,7 @@ console.log(JSON.stringify({
       exitCode: 0,
       signalCode: null,
     });
-    expect(parsed.length).toBeGreaterThan(540_000_000);
+    expect(parsed.length).toBe(540_000_000);
   },
   300_000,
 );

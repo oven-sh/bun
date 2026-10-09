@@ -1,7 +1,7 @@
 use core::ffi::c_ulong;
 use std::io::Write as _;
 
-use bun_collections::{HashMap, StringHashMap};
+use bun_collections::{StringArrayHashMap, StringHashMap};
 use bun_core::output as bun_output;
 use bun_core::printer as js_printer;
 use crate::Error;
@@ -9,10 +9,11 @@ use bun_core::{ZStr, strings};
 use bun_js_parser::{self as js_parser, lexer as js_lexer};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::{self};
-use bun_wyhash::hash;
 
+use super::bun_test::ExecutionEntry;
 use super::diff_format::DiffFormatter;
 use super::expect::Expect;
+use super::expect::get_state::full_test_name;
 use super::jest::{FileColumns as _, Jest};
 use bun_collections::index_sort;
 
@@ -21,6 +22,63 @@ type FileId = super::jest::FileId;
 
 bun_core::declare_scope!(inline_snapshot, visible);
 
+/// The conventions of the tool that wrote a snapshot file. Its first line names the tool, and the file keeps them.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Format {
+    Bun,
+    Jest,
+    Vitest,
+}
+
+impl Format {
+    fn of_file(contents: &[u8]) -> Format {
+        let first_line = &contents[..strings::index_of_char_usize(contents, b'\n').unwrap_or(contents.len())];
+        if first_line.starts_with(b"// Vitest Snapshot v") {
+            Format::Vitest
+        } else if first_line.starts_with(b"// Jest Snapshot v") && !strings::contains(first_line, b"//bun.sh/") {
+            Format::Jest
+        } else {
+            Format::Bun
+        }
+    }
+
+    fn header(self) -> &'static [u8] {
+        match self {
+            Format::Bun => b"// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n",
+            Format::Jest => b"// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing\n",
+            Format::Vitest => b"// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html\n",
+        }
+    }
+
+    /// Between the names of the `describe` blocks and of the test.
+    fn name_separator(self) -> &'static [u8] {
+        if self == Format::Vitest { b" > " } else { b" " }
+    }
+
+    fn hint_separator(self) -> &'static [u8] {
+        if self == Format::Vitest { b" > " } else { b": " }
+    }
+
+    pub(crate) fn matches(self, saved: &[u8], received: &[u8]) -> bool {
+        match self {
+            Format::Vitest => saved.trim_ascii() == received.trim_ascii(),
+            Format::Bun | Format::Jest => saved == received,
+        }
+    }
+}
+
+struct Entry {
+    value: Box<[u8]>,
+    /// A snapshot matcher asked for it in this run.
+    checked: bool,
+}
+
+pub(crate) enum Outcome {
+    Passed,
+    Written,
+    Mismatch { saved: Box<[u8]> },
+}
+
 pub(crate) struct Snapshots {
     pub(crate) update_snapshots: bool,
     pub(crate) total: usize,
@@ -28,10 +86,9 @@ pub(crate) struct Snapshots {
     pub(crate) passed: usize,
     pub(crate) failed: usize,
 
+    /// The text of a file in Bun's format, which new entries are appended to.
     file_buf: Vec<u8>,
-    // LIFETIMES.tsv said `HashMap<usize, String>`; overridden per §Strings (data is bytes) → Box<[u8]>.
-    // Key is u64 to match `bun.hash`'s return type (avoids a narrowing cast).
-    values: HashMap<u64, Box<[u8]>>,
+    values: StringArrayHashMap<Entry>,
     counts: StringHashMap<usize>,
     _current_file: Option<File>,
     /// Directory whose `__snapshots__/` was last created (or found existing);
@@ -45,8 +102,6 @@ pub(crate) struct Snapshots {
 pub(crate) use bun_collections::ArrayHashMap as IndexMap;
 
 impl Snapshots {
-    const FILE_HEADER: &'static [u8] = b"// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
-
     #[cfg(windows)]
     const SNAPSHOTS_DIR_NAME: &'static [u8] = b"__snapshots__\\";
     #[cfg(not(windows))]
@@ -60,7 +115,7 @@ impl Snapshots {
             passed: 0,
             failed: 0,
             file_buf: Vec::new(),
-            values: HashMap::new(),
+            values: StringArrayHashMap::new(),
             counts: StringHashMap::new(),
             _current_file: None,
             snapshot_dir_path: None,
@@ -104,7 +159,96 @@ impl InlineSnapshotToWrite {
 
 pub(crate) struct File {
     pub(crate) id: FileId,
-    pub(crate) file: bun_sys::File,
+    format: Format,
+    /// Open while entries may be appended: Bun's format, from the first snapshot matcher on.
+    file: Option<bun_sys::File>,
+    /// What `values` holds is not what the file holds. Jest's and Vitest's formats, which are written as a whole.
+    dirty: bool,
+}
+
+/// `path` of the snapshot file of a test file, and how much of it is the directory.
+fn snapshot_file_path(file_id: FileId, buf: &mut [u8]) -> (&'static [u8], usize, usize) {
+    // `Jest::runner()` would alias the `&mut Snapshots` of every caller, a field of the runner.
+    // SAFETY: the runner is set before any `Snapshots` method runs; only its `.files` is read.
+    let test_file_source = unsafe {
+        let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
+        &(*p).files.items_source()[file_id as usize]
+    };
+    let name = test_file_source.path.name();
+    let dir_path = name.dir_with_trailing_slash();
+    let mut pos = 0usize;
+    for part in [dir_path, Snapshots::SNAPSHOTS_DIR_NAME] {
+        buf[pos..pos + part.len()].copy_from_slice(part);
+        pos += part.len();
+    }
+    let dir_len = pos;
+    for part in [name.filename, b".snap", b"\0"] {
+        buf[pos..pos + part.len()].copy_from_slice(part);
+        pos += part.len();
+    }
+    (dir_path, dir_len, pos - 1)
+}
+
+/// natural-compare, which Jest and Vitest sort the keys of a file with.
+fn natural_compare(a: &[u16], b: &[u16]) -> core::cmp::Ordering {
+    fn code(text: &[u16], at: usize) -> u32 {
+        let unit = u32::from(text.get(at).copied().unwrap_or(0));
+        match unit {
+            45 => 65,
+            46..=47 => unit - 1,
+            48..=57 => unit + 18,
+            58..=64 => unit - 11,
+            65..=90 => unit + 11,
+            91..=96 => unit - 37,
+            97..=122 => unit + 5,
+            123..=127 => unit - 63,
+            _ => unit,
+        }
+    }
+    const DIGITS: core::ops::RangeInclusive<u32> = 66..=75;
+    fn number(text: &[u16], first_digit: usize) -> (f64, usize) {
+        let mut end = first_digit + 1;
+        while DIGITS.contains(&code(text, end)) {
+            end += 1;
+        }
+        let digits: Vec<u8> = text[first_digit..end].iter().map(|unit| *unit as u8).collect();
+        (bun_core::str_utf8(&digits).and_then(|digits| digits.parse().ok()).unwrap_or(0.0), end)
+    }
+
+    let (mut at_a, mut at_b) = (0, 0);
+    loop {
+        let (code_a, code_b) = (code(a, at_a), code(b, at_b));
+        let is_number = |code: u32| DIGITS.contains(&code) && code != *DIGITS.start();
+        let order = if is_number(code_a) && is_number(code_b) {
+            let (number_a, number_b);
+            (number_a, at_a) = number(a, at_a);
+            (number_b, at_b) = number(b, at_b);
+            number_a.total_cmp(&number_b)
+        } else {
+            at_a += 1;
+            at_b += 1;
+            code_a.cmp(&code_b)
+        };
+        if order.is_ne() || code_b == 0 {
+            return order;
+        }
+    }
+}
+
+/// jest-snapshot `printBacktickString`
+fn write_backtick_string(out: &mut Vec<u8>, text: &[u8]) {
+    out.push(b'`');
+    let mut rest = text;
+    while let Some(i) = strings::index_of_any(rest, b"`\\$") {
+        out.extend_from_slice(&rest[..i]);
+        if rest[i] != b'$' || rest.get(i + 1) == Some(&b'{') {
+            out.push(b'\\');
+        }
+        out.push(rest[i]);
+        rest = &rest[i + 1..];
+    }
+    out.extend_from_slice(rest);
+    out.push(b'`');
 }
 
 impl Snapshots {
@@ -116,9 +260,10 @@ impl Snapshots {
         }
     }
 
-    pub(crate) fn add_count(&mut self, expect: &Expect, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
+    /// The name the snapshots of the running test have in a file of `format`, and which of them this one is.
+    pub(crate) fn add_count(&mut self, expect: &Expect, format: Format, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
         self.total += 1;
-        let snapshot_name = expect.get_snapshot_name(hint)?;
+        let snapshot_name = Self::name_of(expect, format, hint)?;
         // bun_collections::StringHashMap::get_or_put can't hand out `key_ptr`, so return the
         // owned `snapshot_name` (same bytes as the interned key) instead.
         let gop = self
@@ -134,97 +279,129 @@ impl Snapshots {
         Ok((snapshot_name, count))
     }
 
-    pub(crate) fn get_or_put(
+    fn name_of(expect: &Expect, format: Format, hint: &[u8]) -> Result<Vec<u8>, Error> {
+        let parent = expect.parent.as_ref().ok_or(Error::NoTest)?;
+        let buntest_strong = parent.bun_test().ok_or(Error::TestNotActive)?;
+        let buntest = buntest_strong.get();
+        let active = core::ptr::NonNull::from(parent.phase.entry(buntest).ok_or(Error::SnapshotInConcurrentGroup)?);
+        let test = parent.phase.sequence(buntest).and_then(|sequence| sequence.test_entry);
+        // SAFETY: `buntest_strong` owns the entries of its sequences.
+        let entry: &ExecutionEntry = unsafe { test.filter(|_| format != Format::Bun).unwrap_or(active).as_ref() };
+        let mut name = full_test_name(entry, format.name_separator());
+        if !hint.is_empty() {
+            name.extend_from_slice(format.hint_separator());
+            name.extend_from_slice(hint);
+        }
+        if format == Format::Jest && strings::index_of_any(&name, b"\r\n").is_some() {
+            name = name.iter().fold(Vec::with_capacity(name.len() + 8), |mut escaped, byte| {
+                match byte {
+                    b'\r' => escaped.extend_from_slice(b"\\r"),
+                    b'\n' => escaped.extend_from_slice(b"\\n"),
+                    _ => escaped.push(*byte),
+                }
+                escaped
+            });
+        }
+        Ok(name)
+    }
+
+    /// The format of the snapshot file of the running test. Reads the file, and creates nothing.
+    pub(crate) fn format_of(&mut self, expect: &Expect) -> Result<Format, Error> {
+        let buntest_strong = expect.bun_test().ok_or(Error::SnapshotFailed)?;
+        let buntest = buntest_strong.get();
+        let file_id = buntest.file_id;
+        if let Some(file) = self._current_file.as_ref().filter(|file| file.id == file_id) {
+            return Ok(file.format);
+        }
+        self.write_snapshot_file()?;
+
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let (_, _, len) = snapshot_file_path(file_id, path_buf.0.as_mut_slice());
+        let path = &path_buf.0[..len];
+        let contents = match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
+            Ok(contents) => contents,
+            Err(err) if err.get_errno() == bun_sys::Errno::ENOENT => Vec::new(),
+            Err(_) => return Err(Error::FailedToOpenSnapshotFile),
+        };
+        let format = if !contents.is_empty() {
+            Format::of_file(&contents)
+        } else if expect.is_in_vitest_test(buntest) {
+            Format::Vitest
+        } else {
+            Format::Bun
+        };
+
+        if contents.is_empty() || (self.update_snapshots && format == Format::Bun) {
+            self.file_buf.extend_from_slice(format.header());
+        } else {
+            self.file_buf = contents;
+            self.parse_file(path)?;
+        }
+        if format != Format::Bun {
+            self.file_buf = Vec::new();
+        }
+        self._current_file = Some(File { id: file_id, format, file: None, dirty: false });
+        Ok(format)
+    }
+
+    /// Compares `received` with the snapshot of the running test that it is the next one of, or saves it.
+    pub(crate) fn match_or_write(
         &mut self,
         expect: &Expect,
-        target_value: &[u8],
+        received: &[u8],
         hint: &[u8],
-    ) -> Result<Option<&[u8]>, Error> {
-        let buntest_strong = expect
-            .bun_test()
-            .ok_or(crate::Error::SnapshotFailed)?;
-        let bun_test = buntest_strong.get();
-        match self.get_snapshot_file(bun_test.file_id)? {
-            bun_sys::Result::Ok(()) => {}
-            bun_sys::Result::Err(err) => {
+    ) -> Result<Outcome, Error> {
+        let format = self.format_of(expect)?;
+        if format == Format::Bun {
+            if let bun_sys::Result::Err(err) = self.open_to_append() {
                 // `bun_sys::Tag` is a newtype-struct with assoc consts (lowercase),
                 // not an enum — match arms require structural-eq; use if-chain instead.
                 return Err(if err.syscall == bun_sys::Tag::mkdir {
-                    crate::Error::FailedToMakeSnapshotDirectory
+                    Error::FailedToMakeSnapshotDirectory
                 } else if err.syscall == bun_sys::Tag::open {
-                    crate::Error::FailedToOpenSnapshotFile
+                    Error::FailedToOpenSnapshotFile
                 } else {
-                    crate::Error::SnapshotFailed
+                    Error::SnapshotFailed
                 });
             }
         }
 
-        let (name, counter) = self.add_count(expect, hint)?;
-
+        let (mut key, counter) = self.add_count(expect, format, hint)?;
         let mut counter_string_buf = [0u8; 32];
-        let counter_string = bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter);
+        key.push(b' ');
+        key.extend_from_slice(bun_core::fmt::int_as_bytes(&mut counter_string_buf, counter));
 
-        let mut name_with_counter: Vec<u8> =
-            Vec::with_capacity(name.len() + 1 + counter_string.len());
-        name_with_counter.extend_from_slice(&name);
-        name_with_counter.push(b' ');
-        name_with_counter.extend_from_slice(counter_string);
-
-        let name_hash: u64 = hash(&name_with_counter);
-        // reshaped for borrowck — `get` then early-return borrows `*self.values`
-        // immutably for the whole fn body (NLL limitation with returned borrows), preventing
-        // the later `insert`. Probe with `contains_key` first; re-lookup on hit.
-        if self.values.contains_key(&name_hash) {
-            return Ok(Some(&**self.values.get(&name_hash).unwrap()));
-        }
-
-        // doesn't exist. append to file bytes and add to hashmap.
-        // Prevent snapshot creation in CI environments unless --update-snapshots is used
-        if crate::cli::ci_info::is_ci() {
-            if !self.update_snapshots {
-                // Store the snapshot name for error reporting
-                self.last_error_snapshot_name = Some(name_with_counter.into_boxed_slice());
-                return Err(crate::Error::SnapshotCreationNotAllowedInCI);
+        if let Some(entry) = self.values.get_mut(&key) {
+            entry.checked = true;
+            if format.matches(&entry.value, received) {
+                self.passed += 1;
+                return Ok(Outcome::Passed);
             }
+            if !self.update_snapshots {
+                self.failed += 1;
+                return Ok(Outcome::Mismatch { saved: entry.value.clone() });
+            }
+        } else if crate::cli::ci_info::is_ci() && !self.update_snapshots {
+            self.last_error_snapshot_name = Some(key.into_boxed_slice());
+            return Err(Error::SnapshotCreationNotAllowedInCI);
         }
 
-        let estimated_length = b"\nexports[`".len()
-            + name_with_counter.len()
-            + b"`] = `".len()
-            + target_value.len()
-            + b"`;\n".len();
-        self.file_buf.reserve(estimated_length + 10);
-        write!(
-            self.file_buf,
-            "\nexports[`{}`] = `{}`;\n",
-            strings::format_escapes(
-                &name_with_counter,
-                strings::QuoteEscapeFormatFlags {
-                    quote_char: b'`',
-                    ..Default::default()
-                }
-            ),
-            strings::format_escapes(
-                target_value,
-                strings::QuoteEscapeFormatFlags {
-                    quote_char: b'`',
-                    ..Default::default()
-                }
-            ),
-        )
-        .map_err(|_| crate::Error::WriteError)?;
-
+        if format == Format::Bun {
+            let escape = |text| {
+                strings::format_escapes(text, strings::QuoteEscapeFormatFlags { quote_char: b'`', ..Default::default() })
+            };
+            self.file_buf.reserve(key.len() + received.len() + 32);
+            write!(self.file_buf, "\nexports[`{}`] = `{}`;\n", escape(&key), escape(received))
+                .map_err(|_| Error::WriteError)?;
+        } else if let Some(file) = self._current_file.as_mut() {
+            file.dirty = true;
+        }
         self.added += 1;
-        self.values
-            .insert(name_hash, Box::<[u8]>::from(target_value));
-        Ok(None)
+        self.values.insert(&key, Entry { value: Box::<[u8]>::from(received), checked: true });
+        Ok(Outcome::Written)
     }
 
-    pub(crate) fn parse_file(&mut self, file: &File) -> Result<(), Error> {
-        if self.file_buf.is_empty() {
-            return Ok(());
-        }
-
+    fn parse_file(&mut self, snapshot_file_path: &[u8]) -> Result<(), Error> {
         // SAFETY: VM is thread-local singleton installed before any test runs; lives for the
         // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
         let vm = VirtualMachine::get().as_mut();
@@ -236,40 +413,7 @@ impl Snapshots {
         let arena = bun_alloc::Arena::new();
         let mut temp_log = bun_ast::Log::init();
 
-        // do NOT call `Jest::runner()` here — it hands out an exclusive ref to the global TestRunner,
-        // and `self: &mut Snapshots` is a live borrow of that same TestRunner's `.snapshots`
-        // field. Retagging the whole TestRunner would invalidate `self` under Stacked Borrows.
-        // Project the disjoint `.files` sibling through the raw `RUNNER` pointer instead.
-        // SAFETY: single-threaded JS VM; RUNNER is set before any Snapshots method runs
-        // (Snapshots is a field of TestRunner). Raw-pointer place projection touches only
-        // `.files` bytes, disjoint from `&mut self`.
-        let test_file_source = unsafe {
-            let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
-            &(*p).files.items_source()[file.id as usize]
-        };
-        let name = test_file_source.path.name();
-        let test_filename = name.filename;
-        let dir_path = name.dir_with_trailing_slash();
-
-        let mut snapshot_file_path_buf = bun_paths::path_buffer_pool::get();
-        let buf = snapshot_file_path_buf.0.as_mut_slice();
-        let mut pos = 0usize;
-        buf[pos..pos + dir_path.len()].copy_from_slice(dir_path);
-        pos += dir_path.len();
-        buf[pos..pos + Self::SNAPSHOTS_DIR_NAME.len()].copy_from_slice(Self::SNAPSHOTS_DIR_NAME);
-        pos += Self::SNAPSHOTS_DIR_NAME.len();
-        buf[pos..pos + test_filename.len()].copy_from_slice(test_filename);
-        pos += test_filename.len();
-        buf[pos..pos + b".snap".len()].copy_from_slice(b".snap");
-        pos += b".snap".len();
-        buf[pos] = 0;
-        // SAFETY: buf[pos] == 0 written above
-        let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
-
-        let source = bun_ast::Source::init_path_string(
-            snapshot_file_path.as_bytes(),
-            self.file_buf.as_slice(),
-        );
+        let source = bun_ast::Source::init_path_string(snapshot_file_path, self.file_buf.as_slice());
 
         let parser = js_parser::Parser::init(
             opts,
@@ -323,10 +467,10 @@ impl Snapshots {
                                             {
                                                 let key = index.slice(&arena);
                                                 let value = value_string.slice(&arena);
-                                                let value_clone: Box<[u8]> =
-                                                    Box::<[u8]>::from(value);
-                                                let name_hash: u64 = hash(key);
-                                                self.values.insert(name_hash, value_clone);
+                                                self.values.insert(
+                                                    key,
+                                                    Entry { value: Box::<[u8]>::from(value), checked: false },
+                                                );
                                             }
                                         }
                                     }
@@ -345,18 +489,58 @@ impl Snapshots {
 
     pub(crate) fn write_snapshot_file(&mut self) -> Result<(), Error> {
         if let Some(file) = self._current_file.take() {
-            file.file
-                .write_all(&self.file_buf)
-                .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
-            let _ = file.file.close();
+            let result = if file.dirty { self.write_sorted(&file) } else { Ok(()) };
+            if let Some(file) = file.file {
+                file.write_all(&self.file_buf)
+                    .map_err(|_| crate::Error::FailedToWriteSnapshotFile)?;
+                let _ = file.close();
+            }
             self.file_buf.clear();
             self.file_buf.shrink_to_fit();
 
             self.values.clear();
 
             self.counts.clear();
+            result?;
         }
         Ok(())
+    }
+
+    /// jest-snapshot `saveSnapshotFile`
+    #[cold]
+    fn write_sorted(&self, file: &File) -> Result<(), Error> {
+        let mut path_buf = bun_paths::path_buffer_pool::get();
+        let (_, _, len) = snapshot_file_path(file.id, path_buf.0.as_mut_slice());
+        let path = ZStr::from_buf(&path_buf.0[..], len);
+        if self.values.is_empty() {
+            let _ = bun_sys::unlink(path);
+            return Ok(());
+        }
+
+        let keys: Vec<Vec<u16>> = self
+            .values
+            .keys()
+            .iter()
+            .map(|key| strings::to_utf16_alloc_for_real(key, false, false).unwrap_or_default())
+            .collect();
+        // Insertion, because the comparison is not known to be a total order, which `sort_by` may panic on.
+        let mut order: Vec<usize> = Vec::with_capacity(keys.len());
+        for i in 0..keys.len() {
+            let at = order.partition_point(|other| natural_compare(&keys[*other], &keys[i]).is_le());
+            order.insert(at, i);
+        }
+
+        let mut contents = file.format.header().to_vec();
+        for i in order {
+            contents.extend_from_slice(b"\nexports[");
+            write_backtick_string(&mut contents, &self.values.keys()[i]);
+            contents.extend_from_slice(b"] = ");
+            write_backtick_string(&mut contents, &self.values.values()[i].value);
+            contents.extend_from_slice(b";\n");
+        }
+        bun_sys::File::make_open(path.as_bytes(), bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC, 0o644)
+            .and_then(|file| file.write_all(&contents))
+            .map_err(|_| Error::FailedToWriteSnapshotFile)
     }
 
     pub(crate) fn add_inline_snapshot_to_write(
@@ -443,12 +627,9 @@ impl Snapshots {
                     continue;
                 }
             };
-            let file = File {
-                id: file_id,
-                file: bun_sys::File::from_fd(fd),
-            };
+            let file = bun_sys::File::from_fd(fd);
 
-            let file_text: Vec<u8> = file.file.read_to_end().map_err(Error::from)?;
+            let file_text: Vec<u8> = file.read_to_end().map_err(Error::from)?;
 
             let source =
                 bun_ast::Source::init_path_string(test_filename_z.as_bytes(), file_text.as_slice());
@@ -797,7 +978,7 @@ impl Snapshots {
             }
 
             // 4. write out result_text to the file
-            if let Err(e) = file.file.seek_to(0) {
+            if let Err(e) = file.seek_to(0) {
                 log.add_error_fmt(
                     &source,
                     bun_ast::Loc { start: 0 },
@@ -809,7 +990,7 @@ impl Snapshots {
                 continue;
             }
 
-            if let Err(e) = file.file.write_all(&result_text) {
+            if let Err(e) = file.write_all(&result_text) {
                 log.add_error_fmt(
                     &source,
                     bun_ast::Loc { start: 0 },
@@ -821,7 +1002,7 @@ impl Snapshots {
                 continue;
             }
             if result_text.len() < file_text.len() {
-                if bun_sys::ftruncate(file.file.handle, result_text.len() as i64).is_err() {
+                if bun_sys::ftruncate(file.handle, result_text.len() as i64).is_err() {
                     panic!("Failed to update inline snapshot: File was left in an invalid state");
                 }
             }
@@ -829,90 +1010,30 @@ impl Snapshots {
         Ok(success.get())
     }
 
-    fn get_snapshot_file(&mut self, file_id: FileId) -> Result<bun_sys::Result<()>, Error> {
-        if self._current_file.is_none() || self._current_file.as_ref().unwrap().id != file_id {
-            self.write_snapshot_file()?;
+    /// Bun's format: makes the directory and the file.
+    fn open_to_append(&mut self) -> bun_sys::Result<()> {
+        let Some(current) = self._current_file.as_mut().filter(|file| file.file.is_none()) else {
+            return Ok(());
+        };
+        let mut snapshot_file_path_buf = bun_paths::path_buffer_pool::get();
+        let buf = snapshot_file_path_buf.0.as_mut_slice();
+        let (dir_path, dir_len, len) = snapshot_file_path(current.id, buf);
 
-            // avoid `Jest::runner()` (aliases `&mut TestRunner` over live `&mut self`).
-            // SAFETY: see `parse_file` — raw-pointer projection to disjoint `.files` field.
-            let test_file_source = unsafe {
-                let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
-                &(*p).files.items_source()[file_id as usize]
-            };
-            let name = test_file_source.path.name();
-            let test_filename = name.filename;
-            let dir_path = name.dir_with_trailing_slash();
-
-            let mut snapshot_file_path_buf = bun_paths::path_buffer_pool::get();
-            let buf = snapshot_file_path_buf.0.as_mut_slice();
-            let mut pos = 0usize;
-            buf[pos..pos + dir_path.len()].copy_from_slice(dir_path);
-            pos += dir_path.len();
-            buf[pos..pos + Self::SNAPSHOTS_DIR_NAME.len()]
-                .copy_from_slice(Self::SNAPSHOTS_DIR_NAME);
-            pos += Self::SNAPSHOTS_DIR_NAME.len();
-
-            let cached_dir = self.snapshot_dir_path;
-            if cached_dir.is_none() || !strings::eql_long(dir_path, cached_dir.unwrap(), true) {
-                buf[pos] = 0;
-                // SAFETY: buf[pos] == 0 written above
-                let snapshot_dir_path = ZStr::from_buf(&buf[..], pos);
-                match bun_sys::mkdir(snapshot_dir_path, 0o777) {
-                    bun_sys::Result::Ok(()) => {
-                        self.snapshot_dir_path = Some(dir_path);
-                    }
-                    bun_sys::Result::Err(err) => match err.get_errno() {
-                        bun_sys::Errno::EEXIST => {
-                            self.snapshot_dir_path = Some(dir_path);
-                        }
-                        _ => return Ok(bun_sys::Result::Err(err)),
-                    },
-                }
+        if !self.snapshot_dir_path.is_some_and(|cached| strings::eql_long(dir_path, cached, true)) {
+            let after_dir = core::mem::replace(&mut buf[dir_len], 0);
+            match bun_sys::mkdir(ZStr::from_buf(&buf[..], dir_len), 0o777) {
+                Err(err) if err.get_errno() != bun_sys::Errno::EEXIST => return Err(err),
+                _ => self.snapshot_dir_path = Some(dir_path),
             }
-
-            buf[pos..pos + test_filename.len()].copy_from_slice(test_filename);
-            pos += test_filename.len();
-            buf[pos..pos + b".snap".len()].copy_from_slice(b".snap");
-            pos += b".snap".len();
-            buf[pos] = 0;
-            // SAFETY: buf[pos] == 0 written above
-            let snapshot_file_path = ZStr::from_buf(&buf[..], pos);
-
-            let mut flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
-            if self.update_snapshots {
-                flags |= bun_sys::O::TRUNC;
-            }
-            let fd = match bun_sys::open(snapshot_file_path, flags, 0o644) {
-                bun_sys::Result::Ok(fd) => fd,
-                bun_sys::Result::Err(err) => return Ok(bun_sys::Result::Err(err)),
-            };
-
-            let file = File {
-                id: file_id,
-                file: bun_sys::File::from_fd(fd),
-            };
-
-            if self.update_snapshots {
-                self.file_buf.extend_from_slice(Self::FILE_HEADER);
-            } else {
-                let length = file.file.get_end_pos().map_err(Error::from)?;
-                if length == 0 {
-                    self.file_buf.extend_from_slice(Self::FILE_HEADER);
-                } else {
-                    let mut tmp = vec![0u8; length];
-                    let _ = file.file.pread_all(&mut tmp, 0).map_err(Error::from)?;
-                    #[cfg(windows)]
-                    {
-                        file.file.seek_to(0).map_err(Error::from)?;
-                    }
-                    self.file_buf.extend_from_slice(&tmp);
-                }
-            }
-
-            self.parse_file(&file)?;
-            self._current_file = Some(file);
+            buf[dir_len] = after_dir;
         }
 
-        Ok(bun_sys::Result::Ok(()))
+        let mut flags: i32 = bun_sys::O::CREAT | bun_sys::O::RDWR;
+        if self.update_snapshots {
+            flags |= bun_sys::O::TRUNC;
+        }
+        let fd = bun_sys::open(ZStr::from_buf(&buf[..], len), flags, 0o644)?;
+        current.file = Some(bun_sys::File::from_fd(fd));
+        Ok(())
     }
 }

@@ -189,7 +189,7 @@ it("should call cancel() on ReadableStream when the Request is aborted", async (
       const request = fetch(server.url, { signal });
       await onIncomingRequest.promise;
       controller.abort();
-      expect(async () => await request).toThrow();
+      await expect(async () => await request).toThrow();
       // Delay for one run of the event loop.
       await Bun.sleep(1);
 

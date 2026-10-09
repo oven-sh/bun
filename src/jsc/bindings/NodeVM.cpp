@@ -29,6 +29,7 @@
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/SubspaceInlines.h"
 #include "wtf/GetPtr.h"
+#include "wtf/NoTailCalls.h"
 #include "wtf/PointerPreparations.h"
 #include "wtf/URL.h"
 #include "JavaScriptCore/TypedArrayInlines.h"
@@ -1109,8 +1110,61 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
     RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
 }
 
-// This is copy-pasted from JSC's ProxyObject.cpp
-static const ASCIILiteral s_proxyAlreadyRevokedErrorMessage { "Proxy has already been revoked. No more operations are allowed to be performed on it"_s };
+// [[Get]] that says whether the property exists. JSC's Proxy has every property; V8's has what its target has unless it has a `get` trap.
+static bool getPropertySlotOfContextifiedObject(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, PropertySlot& slot)
+{
+    NO_TAIL_CALLS();
+
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // A Proxy can be on the prototype chain of its own target.
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+        throwStackOverflowError(globalObject, scope);
+        return false;
+    }
+
+    while (true) {
+        if (auto* proxy = dynamicDowncast<ProxyObject>(object); proxy && !proxy->isRevoked() && !propertyName.isPrivateName()) {
+            JSObject* target = proxy->target();
+            JSObject* handler = asObject(proxy->handler());
+            CallData callData;
+            JSObject* getTrap = proxy->getHandlerTrap(globalObject, handler, callData, vm.propertyNames->get, ProxyObject::HandlerTrap::Get);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!getTrap)
+                RELEASE_AND_RETURN(scope, getPropertySlotOfContextifiedObject(globalObject, target, propertyName, slot));
+
+            // The rest of performProxyGet() in JSC's ProxyObject.cpp, which would read the trap from the handler a second time.
+            MarkedArgumentBuffer arguments;
+            arguments.append(target);
+            arguments.append(identifierToSafePublicJSValue(vm, Identifier::fromUid(vm, propertyName.uid())));
+            arguments.append(slot.thisValue());
+            ASSERT(!arguments.hasOverflowed());
+            JSValue trapResult = call(globalObject, getTrap, callData, handler, arguments);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (target->structure()->hasNonConfigurableReadOnlyOrGetterSetterProperties()) {
+                ProxyObject::validateGetTrapResult(globalObject, trapResult, target, propertyName);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+            unsigned ignoredAttributes = 0;
+            slot.setValue(proxy, ignoredAttributes, trapResult);
+            return true;
+        }
+
+        bool found = object->getOwnPropertySlotInline(globalObject, propertyName, slot);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (found)
+            return true;
+        if (isTypedArrayType(object->type()) && isCanonicalNumericIndexString(propertyName.uid()))
+            return false;
+
+        JSValue prototype = object->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!prototype.isObject())
+            return false;
+        object = asObject(prototype);
+    }
+}
 
 bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
@@ -1123,88 +1177,16 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
     JSValue thisValue = slot.thisValue() == thisObject ? thisObject->globalThis() : slot.thisValue();
 
     if (JSObject* contextifiedObject = thisObject->contextifiedObject()) {
-        slot.setThisValue(contextifiedObject);
-        // Unfortunately we must special case ProxyObjects. Why?
-        //
-        // When we run this:
-        //
-        // ```js
-        // vm.runInNewContext("String", new Proxy({}, {}))
-        // ```
-        //
-        // It always returns undefined (it should return the String constructor function).
-        //
-        // This is because JSC seems to always return true when calling
-        // `contextifiedObject->methodTable()->getOwnPropertySlot` for ProxyObjects, so
-        // we never fall through to call `Base::getOwnPropertySlot` to fetch it from the globalObject.
-        //
-        // This only happens when `slot.internalMethodType() == JSC::PropertySlot::InternalMethodType::Get`
-        // and there is no `get` trap set on the proxy object.
-        if (slot.internalMethodType() == JSC::PropertySlot::InternalMethodType::Get && contextifiedObject->type() == JSC::ProxyObjectType) {
-            JSC::ProxyObject* proxyObject = uncheckedDowncast<JSC::ProxyObject>(contextifiedObject);
-
-            if (proxyObject->isRevoked())
-                return throwTypeError(globalObject, scope, s_proxyAlreadyRevokedErrorMessage);
-
-            JSValue handlerValue = proxyObject->handler();
-            if (!handlerValue.isObject())
-                return throwTypeError(globalObject, scope, s_proxyAlreadyRevokedErrorMessage);
-            JSObject* handler = uncheckedDowncast<JSObject>(handlerValue);
-            CallData callData;
-            JSObject* getHandler = proxyObject->getHandlerTrap(globalObject, handler, callData, vm.propertyNames->get, ProxyObject::HandlerTrap::Get);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            // If there is a `get` trap, we don't need to our special handling
-            if (getHandler) {
-                bool result = contextifiedObject->methodTable()->getOwnPropertySlot(contextifiedObject, globalObject, propertyName, slot);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (result) {
-                    return true;
-                }
-                goto try_from_global;
-            }
-
-            // A lot of this is copy-pasted from JSC's `ProxyObject::getOwnPropertySlotCommon` function in
-            // ProxyObject.cpp, need to make sure we keep this in sync when we update JSC...
-
-            slot.disableCaching();
-            slot.setIsTaintedByOpaqueObject();
-
-            if (slot.isVMInquiry()) {
-                goto try_from_global;
-            }
-
-            JSValue receiver = slot.thisValue();
-
-            // We're going to have to look this up ourselves
-            PropertySlot target_slot(receiver, PropertySlot::InternalMethodType::Get);
-            JSObject* target = proxyObject->target();
-            bool hasProperty = target->getPropertySlot(globalObject, propertyName, target_slot);
-            EXCEPTION_ASSERT(!scope.exception() || !hasProperty);
-            if (hasProperty) {
-                unsigned ignoredAttributes = 0;
-                JSValue result = target_slot.getValue(globalObject, propertyName);
-                RETURN_IF_EXCEPTION(scope, {});
-                // If the lookup yields the sandbox itself, substitute the context's
-                // global proxy to keep identities consistent, like V8's contextify does.
-                if (result == contextifiedObject)
-                    result = thisObject->globalThis();
-                slot.setValue(proxyObject, ignoredAttributes, result);
-                RETURN_IF_EXCEPTION(scope, {});
-                return true;
-            }
-
-            goto try_from_global;
-        }
-
         if (slot.internalMethodType() == JSC::PropertySlot::InternalMethodType::Get) {
-            bool result = contextifiedObject->getPropertySlot(globalObject, propertyName, slot);
+            // Not `slot`: a Proxy taints the slot it fills, which tells JSC to ask [[HasProperty]] whether a variable exists.
+            PropertySlot contextifiedSlot(contextifiedObject, PropertySlot::InternalMethodType::Get);
+            bool result = getPropertySlotOfContextifiedObject(globalObject, contextifiedObject, propertyName, contextifiedSlot);
             RETURN_IF_EXCEPTION(scope, false);
             if (result) {
                 // Materialize the value (like V8's contextify GetterCallback) so that,
                 // when a lookup on the sandbox yields the sandbox object itself, we can
                 // substitute the context's global proxy to keep identities consistent.
-                JSValue value = slot.getValue(globalObject, propertyName);
+                JSValue value = contextifiedSlot.getValue(globalObject, propertyName);
                 RETURN_IF_EXCEPTION(scope, false);
                 if (value == contextifiedObject)
                     value = thisObject->globalThis();
@@ -1219,13 +1201,13 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
             // the sandbox's prototype chain remain readable through normal lookup
             // (InternalMethodType::Get above) but must not appear as own properties,
             // matching Node's contextify Query/Descriptor callbacks.
+            slot.setThisValue(contextifiedObject);
             bool result = contextifiedObject->methodTable()->getOwnPropertySlot(contextifiedObject, globalObject, propertyName, slot);
             RETURN_IF_EXCEPTION(scope, false);
             if (result) return true;
         }
     }
 
-try_from_global:
     slot.setThisValue(thisValue);
     RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(cell, globalObject, propertyName, slot));
 }

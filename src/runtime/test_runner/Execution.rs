@@ -293,12 +293,14 @@ impl ExecutionSequence {
         unsafe { &*context }.take_deferred(self.attempt_failed())
     }
 
-    /// vitest's `test.fails` passes if anything fails: a hook, a fixture, the number of assertions, the time limit.
-    pub(crate) fn is_vitest_fails(&self) -> bool {
-        // SAFETY: arena-owned entry
-        self.test_entry.map(|test| unsafe { test.as_ref() }).is_some_and(|test| {
-            test.calling.is_vitest() && test.base.mode == ScopeMode::Failing
-        })
+    /// vitest's `test.fails`: an attempt that has ended passes if anything in it failed, be it a hook, a fixture, the number of assertions or the time limit.
+    fn flip_fails(&mut self) {
+        if self.entry_mode() != ScopeMode::Fails || self.result == Result::Skip {
+            return;
+        }
+        self.check_expect_assertions();
+        self.expect_assertions = ExpectAssertions::NotSet;
+        self.result = if self.result.is_fail() { Result::Pass } else { Result::FailBecauseFailsTestPassed };
     }
 
     /// Fails a test that made another number of `expect()` calls than it announced.
@@ -314,12 +316,7 @@ impl ExecutionSequence {
                 return;
             }
         };
-        if self.is_vitest_fails() {
-            self.expect_assertions = ExpectAssertions::NotSet;
-            if self.result == Result::Pending {
-                self.result = Result::Pass;
-            }
-        } else if self.result.is_pass(PendingIs::PendingIsPass) {
+        if self.result.is_pass(PendingIs::PendingIsPass) && self.result != Result::Skip {
             self.result = failure;
         }
     }
@@ -340,6 +337,7 @@ pub enum Result {
     FailBecauseHookTimeout,
     FailBecauseHookTimeoutWithDoneCallback,
     FailBecauseFailingTestPassed,
+    FailBecauseFailsTestPassed,
     FailBecauseTodoPassed,
     FailBecauseExpectedHasAssertions,
     FailBecauseExpectedAssertionCount,
@@ -371,6 +369,7 @@ impl Result {
             | Result::FailBecauseHookTimeout
             | Result::FailBecauseHookTimeoutWithDoneCallback
             | Result::FailBecauseFailingTestPassed
+            | Result::FailBecauseFailsTestPassed
             | Result::FailBecauseTodoPassed
             | Result::FailBecauseExpectedHasAssertions
             | Result::FailBecauseExpectedAssertionCount => Basic::Fail,
@@ -686,6 +685,7 @@ impl Execution {
 
         if sequence.active_entry.is_none() {
             // just completed the sequence
+            sequence.flip_fails();
             let test_failed = sequence.result.is_fail();
             let test_passed = sequence.result.is_pass(PendingIs::PendingIsPass);
 
@@ -700,6 +700,8 @@ impl Execution {
             // Handle repeat logic: if test passed and we have repeats remaining, repeat it
             if test_passed && sequence.remaining_repeat_count > 0 && sequence.result != Result::Skip {
                 sequence.remaining_repeat_count -= 1;
+                // SAFETY: arena-owned entry
+                sequence.remaining_retry_count = sequence.test_entry.map_or(0, |test| unsafe { test.as_ref() }.retry_count);
                 Execution::discard_junit_failure(buntest);
                 Execution::reset_sequence(sequence);
                 return;
@@ -832,6 +834,7 @@ impl Execution {
                                 Result::Todo => S::Todo,
                                 Result::SkippedBecauseLabel => S::SkippedBecauseLabel,
                                 Result::FailBecauseFailingTestPassed => S::Fail,
+                                Result::FailBecauseFailsTestPassed => S::Fail,
                                 Result::FailBecauseTodoPassed => S::Fail,
                                 Result::FailBecauseExpectedHasAssertions => S::Fail,
                                 Result::FailBecauseExpectedAssertionCount => S::Fail,
@@ -925,7 +928,13 @@ impl Execution {
             // vitest reports a test that called `skip()` as skipped, whatever it throws.
             return HandleUncaughtExceptionResult::HideError;
         }
-        if sequence.active_entry != sequence.test_entry && !sequence.is_vitest_fails() {
+        if sequence.entry_mode() == ScopeMode::Fails {
+            if sequence.result == Result::Pending {
+                sequence.result = Result::Fail;
+            }
+            return HandleUncaughtExceptionResult::HideError;
+        }
+        if sequence.active_entry != sequence.test_entry {
             // executing hook
             if sequence.result == Result::Pending {
                 sequence.result = Result::Fail;

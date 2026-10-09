@@ -107,6 +107,7 @@ using namespace JSC;
     macro(internalRequire) \
     macro(isAbortSignal) \
     macro(isAbsolute) \
+    macro(isEqualNode) \
     macro(isUncloneable) \
     macro(isUntransferable) \
     macro(join) \
@@ -133,6 +134,8 @@ using namespace JSC;
     macro(mtimeMs) \
     macro(napiDlopenHandle) \
     macro(napiWrappedContents) \
+    macro(nodeName) \
+    macro(nodeType) \
     macro(normalize) \
     macro(onClose) \
     macro(onDrain) \

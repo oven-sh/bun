@@ -1450,12 +1450,16 @@ describe("useFakeTimers({ toFake, doNotFake })", () => {
     };
     const found: string[] = [];
     const realTimers: unknown[] = [];
+    // The timer of an AbortSignal that is collected is no longer counted, which would hide the one scheduled meanwhile.
+    const kept: unknown[] = [];
     for (const [name, schedule] of Object.entries(schedulers)) {
       const pending = vi.getTimerCount();
       const timer = schedule();
+      kept.push(timer);
       if (vi.getTimerCount() > pending) found.push(name);
       else realTimers.push(timer);
     }
+    kept.length = 0;
     vi.clearAllTimers();
     for (const timer of realTimers) {
       clearTimeout(timer as Timer);

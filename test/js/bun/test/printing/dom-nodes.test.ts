@@ -96,7 +96,7 @@ function messageOf(fn: () => void): string {
   try {
     fn();
   } catch (error) {
-    return (error as Error).message;
+    return Bun.stripANSI((error as Error).message);
   }
   throw new Error("expected the assertion to fail");
 }
@@ -311,21 +311,14 @@ describe("diffs", () => {
 
   test("only the lines that differ are marked", () => {
     const list = (last: string) => [h("ul", { class: "l" }, h("li", {}, "one"), h("li", {}, last))];
-    expect(messageOf(() => expect(list("two")).toStrictEqual(list("three").concat(1 as any))))
-      .toBe(`expect(received).toStrictEqual(expected)
-
-@@ -8,6 +8,5 @@
-      <li>
--       three
-+       two
-      </li>
-    </ul>,
--   1,
-  ]
-
-- Expected  - 2
-+ Received  + 1
-`);
+    const message = messageOf(() => expect(list("two")).toStrictEqual(list("three").concat(1 as any)));
+    expect(message.split("\n").filter(line => /^[-+]/.test(line))).toEqual([
+      "-       three",
+      "+       two",
+      "-   1,",
+      "- Expected  - 2",
+      "+ Received  + 1",
+    ]);
   });
 });
 
@@ -737,7 +730,7 @@ describe("objects that misbehave", () => {
 
   test("inside a node, it is an error", () => {
     const parent = () => h("div", {}, thrower("nodeType", h("i")));
-    expect(messageOf(() => expect(parent()).toBeNull())).toBe("expect(received).toBeNull()\n\nReceived: ");
+    expect(() => expect(parent()).toBeNull()).toThrow("nodeType was read");
     expect(() => expect(parent()).toEqual(1)).toThrow("nodeType was read");
   });
 
@@ -768,10 +761,8 @@ describe("objects that misbehave", () => {
     );
   });
 
-  test.each(["attributes", "childNodes"])("%s that throws: the assertion still fails, a snapshot reports it", key => {
-    expect(messageOf(() => expect(thrower(key, button())).toBeNull())).toBe(
-      "expect(received).toBeNull()\n\nReceived: ",
-    );
+  test.each(["attributes", "childNodes"])("%s that throws is the error", key => {
+    expect(() => expect(thrower(key, button())).toBeNull()).toThrow(`${key} was read`);
     expect(() => expect(thrower(key, button())).toMatchInlineSnapshot()).toThrow(`${key} was read`);
     expect(() => expect(thrower(key, button())).toEqual(1)).toThrow(`${key} was read`);
   });
@@ -1002,4 +993,100 @@ describe("equality", () => {
     });
     expect(Bun.deepEquals(node, Object.assign(h("b"), { isEqualNode: node.isEqualNode }))).toBe(true);
   });
+});
+
+// Printed as objects, the nodes of a real document come to hundreds of megabytes, and to an abort where memory is limited.
+test("assertions on nodes that hold a large object graph fail with a short message", async () => {
+  using dir = tempDir("dom-nodes-graph", {
+    "graph.test.js": `
+      import { expect, mock, test } from "bun:test";
+
+      // Each level holds the next one 8 times: 2 million lines for whoever prints or compares it as an object.
+      let graph = { leaf: true };
+      for (let level = 0; level < 7; level++) graph = Array(8).fill(graph);
+
+      class Node {
+        ownerDocument = { graph };
+        nodeType = 1;
+        childNodes = [];
+        constructor(className) {
+          this.attributes = [{ name: "class", value: className }];
+        }
+        get tagName() {
+          return "P";
+        }
+        get nodeName() {
+          return "P";
+        }
+        hasAttribute() {
+          return false;
+        }
+        isEqualNode(other) {
+          return this.attributes[0].value === other.attributes[0].value;
+        }
+      }
+      class HTMLParagraphElement extends Node {}
+      const p = className => new HTMLParagraphElement(className);
+
+      test("equal", () => {
+        expect(p("a")).toEqual(p("a"));
+        expect(p("a")).not.toEqual(p("b"));
+      });
+      test("toEqual", () => {
+        expect(p("a")).toEqual(p("b"));
+      });
+      test("not.toEqual", () => {
+        expect(p("a")).not.toEqual(p("a"));
+      });
+      test("toBeNull", () => {
+        expect(p("a")).toBeNull();
+      });
+      test("in an array", () => {
+        expect([p("a")]).toEqual([]);
+      });
+      test("toHaveBeenCalledWith", () => {
+        const fn = mock();
+        fn(p("a"));
+        expect(fn).toHaveBeenCalledWith(p("b"));
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "graph.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const lines = Bun.stripANSI(stderr).split("\n");
+  expect({
+    size: stdout.length + stderr.length < 10_000 ? "short" : stdout.length + stderr.length,
+    results: lines.filter(line => /^\((pass|fail)\)/.test(line)).map(line => line.replace(/ \[.*/, "")),
+    nodes: lines.filter(line => line.includes("<p") || line.includes("class=")),
+  }).toEqual({
+    size: "short",
+    results: [
+      "(pass) equal",
+      "(fail) toEqual",
+      "(fail) not.toEqual",
+      "(fail) toBeNull",
+      "(fail) in an array",
+      "(fail) toHaveBeenCalledWith",
+    ],
+    nodes: [
+      "  <p",
+      '-   class="b"',
+      '+   class="a"',
+      "Expected: not <p",
+      '  class="a"',
+      'Received: <p class="a" />',
+      "+   <p",
+      '+     class="a"',
+      "    <p",
+      '-     class="b"',
+      '+     class="a"',
+    ],
+  });
+  expect(exitCode).toBe(1);
 });

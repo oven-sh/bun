@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { totalmem } from "node:os";
+import * as pathNamespace from "node:path";
 import { join } from "node:path";
 import {
   compileFunction,
@@ -2109,6 +2110,254 @@ test.concurrent("the globalThis of a contextified context is not itself a contex
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const rejected = `ERR_INVALID_ARG_TYPE The "contextifiedObject" argument must be an vm.Context\n`;
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "false\n" + rejected + rejected, stderr: "", exitCode: 0 });
+});
+
+// Every expected value is what Node.js answers.
+describe.each([
+  ["is", (proxy: object) => proxy],
+  ["inherits from", (proxy: object) => Object.create(proxy)],
+])("a bare identifier when the contextified object %s a Proxy", (relation, contextified) => {
+  const notDefined = (name: string) =>
+    expect.objectContaining({ name: "ReferenceError", message: `${name} is not defined` });
+
+  test("a `get` trap answers for every name", () => {
+    const get = (_: object, key: string | symbol) => (key === "answered" ? 42 : undefined);
+    for (const handler of [{ get }, { get, has: () => false }, { get, has: () => true }]) {
+      for (const proxy of [new Proxy({}, handler), new Proxy(new Proxy({}, handler), {})]) {
+        const context = createContext(contextified(proxy));
+        for (const directive of ["", "'use strict';"]) {
+          expect(
+            runInContext(
+              `${directive} [answered, typeof answered, unanswered, typeof unanswered, typeof Array]`,
+              context,
+            ),
+          ).toEqual([42, "number", undefined, "undefined", "undefined"]);
+        }
+      }
+    }
+  });
+
+  test("without a `get` trap it has what its target has", () => {
+    for (const handler of [{}, { get: undefined }, { get: null as never }, { has: () => false }]) {
+      for (const target of [
+        { held: 1 },
+        Object.create({ held: 1 }),
+        new Proxy({ held: 1 }, handler),
+        Object.create(new Proxy({ held: 1 }, handler)),
+      ]) {
+        const context = createContext(contextified(new Proxy(target, handler)));
+        for (const directive of ["", "'use strict';"]) {
+          expect(
+            runInContext(`${directive} [held, typeof held, typeof absent, typeof Array, globalThis === this]`, context),
+          ).toEqual([1, "number", "undefined", "function", true]);
+          expect(() => runInContext(`${directive} absent`, context)).toThrow(notDefined("absent"));
+        }
+      }
+    }
+  });
+
+  test("calls, compound assignments, assignments and deletes", () => {
+    const target: Record<string, unknown> = { counter: 1, twice: (n: number) => n * 2 };
+    const proxy = new Proxy(target, {});
+    const sandbox = contextified(proxy);
+    const context = createContext(sandbox);
+    expect(
+      runInContext(
+        `var results = [twice(4), (function () { "use strict"; return twice(5); })()];
+        counter += 1;
+        results.push(counter);
+        counter++;
+        results.push(counter);
+        counter = 10;
+        results.push(counter);
+        created = 11;
+        results.push(created, delete created, delete counter);
+        results`,
+        context,
+      ),
+    ).toEqual([8, 10, 2, 3, 10, 11, true, true]);
+    expect(runInContext("[typeof created, counter]", context)).toEqual([typeof sandbox.created, sandbox.counter]);
+    expect(target.counter).toBe(sandbox === proxy ? 10 : 1);
+    // Strict code stores to what the contextified object has itself. For Node.js a Proxy has nothing itself.
+    if (sandbox !== proxy) {
+      expect(() => runInContext("'use strict'; counter = 5", context)).toThrow(notDefined("counter"));
+      expect(
+        runInContext("counter = 5; (function () { 'use strict'; counter += 1; counter++; })(); counter", context),
+      ).toBe(7);
+    }
+
+    for (const code of ["absent()", "absent += 1", "absent++", "'use strict'; absent = 1"])
+      expect(() => runInContext(code, context)).toThrow(notDefined("absent"));
+    expect("absent" in sandbox).toBe(false);
+
+    const everyName = createContext(contextified(new Proxy({}, { get: () => undefined })));
+    expect(() => runInContext("unanswered()", everyName)).toThrow(expect.objectContaining({ name: "TypeError" }));
+  });
+
+  test("getters and `get` traps see the contextified object", () => {
+    const receivers: unknown[] = [];
+    const behindGetter = contextified(
+      new Proxy(
+        {
+          get viaGetter() {
+            receivers.push(this);
+            return 1;
+          },
+        },
+        {},
+      ),
+    );
+    expect(runInContext("[viaGetter, typeof viaGetter]", createContext(behindGetter))).toEqual([1, "number"]);
+    expect(receivers.map(receiver => receiver === behindGetter)).toEqual([true, true]);
+
+    const traps: unknown[][] = [];
+    const behindTrap = contextified(
+      new Proxy(
+        {},
+        {
+          get(_, key, receiver) {
+            traps.push([key, receiver === behindTrap]);
+            return key === "itself" ? behindTrap : 2;
+          },
+        },
+      ),
+    );
+    const context = createContext(behindTrap);
+    expect(runInContext("[viaTrap, typeof viaTrap]", context)).toEqual([2, "number"]);
+    expect(traps).toEqual([
+      ["viaTrap", true],
+      ["viaTrap", true],
+    ]);
+    // The contextified object never gets into the context.
+    expect(runInContext("itself === this", context)).toBe(true);
+
+    const trapsRead: (string | symbol)[] = [];
+    const handler = new Proxy(
+      {},
+      {
+        get(_, trap) {
+          trapsRead.push(trap);
+          return trap === "get" ? () => 3 : undefined;
+        },
+      },
+    );
+    const behindHandler = createContext(contextified(new Proxy({}, handler)));
+    trapsRead.length = 0;
+    expect(runInContext("viaTrap", behindHandler)).toBe(3);
+    expect(trapsRead.filter(trap => trap === "get")).toEqual(["get"]);
+  });
+
+  test("a trap that throws or breaks an invariant, a revoked Proxy and a prototype cycle", () => {
+    const thrown = new RangeError("thrown by the trap");
+    const thrower = () => {
+      throw thrown;
+    };
+    const run = (code: string, proxy: object) => runInContext(code, createContext(contextified(proxy)));
+    const typeError = expect.objectContaining({ name: "TypeError" });
+
+    expect(() => run("typeof Array", new Proxy({ held: 1 }, { get: thrower }))).toThrow(thrown);
+    expect(run("[typeof Array, globalThis.held, this.held]", new Proxy({ held: 1 }, { has: thrower }))).toEqual([
+      "function",
+      1,
+      1,
+    ]);
+    expect(
+      run(
+        "[held, typeof held, typeof absent, typeof Array]",
+        new Proxy({ held: 1 }, { getOwnPropertyDescriptor: thrower }),
+      ),
+    ).toEqual([1, "number", "undefined", "function"]);
+
+    const frozen = Object.freeze({ Array: 1 });
+    expect(run("Array", new Proxy(frozen, { get: () => 1 }))).toBe(1);
+    expect(() => run("Array", new Proxy(frozen, { get: () => 2 }))).toThrow(typeError);
+
+    const { proxy: revoked, revoke } = Proxy.revocable({ held: 1 }, {});
+    revoke();
+    expect(() => run("typeof Array", revoked)).toThrow(typeError);
+
+    const target = { held: 1 };
+    const cycle = new Proxy(target, {});
+    Object.setPrototypeOf(target, cycle);
+    expect(run("[held, typeof held]", cycle)).toEqual([1, "number"]);
+    expect(() => run("typeof Array", cycle)).toThrow(expect.objectContaining({ name: "RangeError" }));
+  });
+
+  test.concurrent.each([
+    ["sloppy", ""],
+    ["strict", `"use strict";`],
+  ])("%s code reads the same in every tier", async (_, directive) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const vm = require("node:vm");
+        // One small loop each: a function that is large, or compiled again after a wrong guess, needs more iterations to get to the last tier.
+        const code = \`(function () {
+          ${directive}
+          function readsHeld() {
+            var count = 0;
+            for (var i = 0; i < 200000; i++) count += held;
+            return count;
+          }
+          function callsOne() {
+            var count = 0;
+            for (var i = 0; i < 200000; i++) if (i % 64 === 0) count += one();
+            return count;
+          }
+          function typeOfHeld() {
+            var count = 0;
+            for (var i = 0; i < 200000; i++) if (i % 64 === 0 && typeof held === "number") count++;
+            return count;
+          }
+          function typeOfAbsent() {
+            var count = 0;
+            for (var i = 0; i < 200000; i++) if (i % 64 === 0 && typeof absent === "undefined") count++;
+            return count;
+          }
+          function readsAbsent() {
+            var undefineds = 0, errors = 0;
+            for (var i = 0; i < 200000; i++) {
+              if (i % 1024 === 0) {
+                try {
+                  if (absent === void 0) undefineds++;
+                } catch (e) {
+                  if (e.name === "ReferenceError") errors++;
+                }
+              }
+            }
+            return undefineds + " undefined " + errors + " ReferenceError";
+          }
+          return [readsHeld(), callsOne(), typeOfHeld(), typeOfAbsent(), readsAbsent()];
+        })()\`;
+        for (const handler of [{}, { get: Reflect.get }]) {
+          const proxy = new Proxy({ held: 1, one: () => 1 }, handler);
+          console.log(vm.runInContext(code, vm.createContext(${relation === "is"} ? proxy : Object.create(proxy))).join());
+        }`,
+      ],
+      // The optimizing tiers take over at a fixed iteration instead of whenever their threads are done.
+      env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout:
+        "200000,3125,3125,3125,0 undefined 196 ReferenceError\n" +
+        "200000,3125,3125,3125,196 undefined 0 ReferenceError\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+test("a bare identifier when the contextified object inherits from a module namespace object", () => {
+  const context = createContext(Object.create(pathNamespace));
+  expect(runInContext("[typeof join, typeof absent, typeof Array]", context)).toEqual([
+    "function",
+    "undefined",
+    "function",
+  ]);
+  expect(runInContext("join", context)).toBe(pathNamespace.join);
 });
 
 describe("defineProperty errors use vm-realm global", () => {

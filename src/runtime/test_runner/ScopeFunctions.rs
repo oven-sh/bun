@@ -99,7 +99,7 @@ impl ScopeFunctions {
     }
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_fails(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"get .fails", "fails")
+        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Fails, ..Default::default() }, b"get .fails", "fails")
     }
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_concurrent(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -554,8 +554,8 @@ impl ScopeFunctions {
         }
 
         let mut base = self.cfg;
-        options.modifiers.apply(global, &mut base)?;
-        if callback.is_none() && matches!(base.self_mode, SelfMode::Normal | SelfMode::Failing) {
+        options.modifiers.apply(global, &mut base, options.inherited.fails.filter(|_| self.mode == Mode::Test))?;
+        if callback.is_none() && matches!(base.self_mode, SelfMode::Normal | SelfMode::Failing | SelfMode::Fails) {
             base.self_mode = SelfMode::Todo;
         }
         base.line_no = line_no;
@@ -706,7 +706,7 @@ impl ScopeFunctions {
     ) -> JsResult<JSValue> {
         let _g = group_log::begin();
 
-        if cfg.self_mode == SelfMode::Failing && self.mode == Mode::Describe {
+        if matches!(cfg.self_mode, SelfMode::Failing | SelfMode::Fails) && self.mode == Mode::Describe {
             return Err(global.throw(format_args!("Cannot {} on {}", bstr::BStr::new(name), self)));
         }
         if cfg.self_only {
@@ -733,7 +733,7 @@ impl ScopeFunctions {
 fn mode_precedence(mode: SelfMode) -> u8 {
     match mode {
         SelfMode::Normal => 0,
-        SelfMode::Failing => 1,
+        SelfMode::Failing | SelfMode::Fails => 1,
         SelfMode::Todo => 2,
         SelfMode::Skip | SelfMode::FilteredOut => 3,
     }
@@ -771,6 +771,7 @@ pub(crate) struct InheritedOptions {
     pub(crate) timeout: Option<u32>,
     pub(crate) retry: Option<u32>,
     pub(crate) repeats: Option<u32>,
+    pub(crate) fails: Option<bool>,
 }
 
 /// vitest: `test(name, { skip: true }, fn)` is `test.skip(name, fn)`, and `{ skip: false }` undoes `test.skip`.
@@ -779,16 +780,15 @@ pub(crate) struct ModifierOptions {
     only: Option<bool>,
     skip: Option<bool>,
     todo: Option<bool>,
-    fails: Option<bool>,
     concurrent: Option<bool>,
 }
 
 impl ModifierOptions {
-    fn apply(self, global: &JSGlobalObject, cfg: &mut BaseScopeCfg) -> JsResult<()> {
+    fn apply(self, global: &JSGlobalObject, cfg: &mut BaseScopeCfg, fails: Option<bool>) -> JsResult<()> {
         if let Some(concurrent) = self.concurrent {
             cfg.self_concurrent = if concurrent { SelfConcurrent::Yes } else { SelfConcurrent::No };
         }
-        if self.only.or(self.skip).or(self.todo).or(self.fails).is_none() {
+        if self.only.or(self.skip).or(self.todo).or(fails).is_none() {
             return Ok(());
         }
         if self.only == Some(true) {
@@ -800,7 +800,9 @@ impl ModifierOptions {
             SelfMode::Skip
         } else if !cfg.self_only && has(self.todo, SelfMode::Todo) {
             SelfMode::Todo
-        } else if has(self.fails, SelfMode::Failing) {
+        } else if has(fails, SelfMode::Fails) {
+            SelfMode::Fails
+        } else if cfg.self_mode == SelfMode::Failing {
             SelfMode::Failing
         } else {
             SelfMode::Normal
@@ -955,6 +957,8 @@ pub(crate) fn parse_arguments(
 
     let mut timeout_option: Option<f64> = None;
     let mut repeats_option: Option<u32> = None;
+    let mut fails_option: Option<bool> =
+        matches!(signature, Signature::ScopeFunctions(function) if function.cfg.self_mode == SelfMode::Fails).then_some(true);
 
     if options.is_number() {
         timeout_option = Some(options.as_number());
@@ -995,10 +999,10 @@ pub(crate) fn parse_arguments(
                 ("only", &mut modifiers.only),
                 ("skip", &mut modifiers.skip),
                 ("todo", &mut modifiers.todo),
-                ("fails", &mut modifiers.fails),
+                ("fails", &mut fails_option),
                 ("concurrent", &mut modifiers.concurrent),
             ] {
-                *modifier = options.get(global, name)?.map(JSValue::to_boolean);
+                *modifier = options.get(global, name)?.map(JSValue::to_boolean).or(*modifier);
             }
             if let Some(sequential) = options.get(global, "sequential")?
                 && sequential.to_boolean()
@@ -1026,6 +1030,7 @@ pub(crate) fn parse_arguments(
         timeout: timeout_option_ms.or(cfg.inherited.timeout),
         retry: result.options.retry.or(cfg.inherited.retry),
         repeats: repeats_option.or(cfg.inherited.repeats),
+        fails: fails_option.or(cfg.inherited.fails),
     };
     result.options.retry = result.options.inherited.retry;
     result.options.repeats = result.options.inherited.repeats.unwrap_or(0);

@@ -7,8 +7,8 @@ use super::super::jest::{FileColumns as _, Jest};
 use super::expect_matcher_utils_js as js;
 use super::{Expect, ExpectMatcherContext, ExpectMatcherUtils};
 
-/// The names of the enclosing `describe` blocks and of the test, joined as in a snapshot key.
-pub(crate) fn full_test_name(entry: &ExecutionEntry) -> Vec<u8> {
+/// The names of the enclosing `describe` blocks and of the test.
+pub(crate) fn full_test_name(entry: &ExecutionEntry, separator: &[u8]) -> Vec<u8> {
     let mut names: Vec<&[u8]> = vec![entry.base.name.as_deref().unwrap_or(b"(unnamed)")];
     let mut parent = entry.base.parent;
     while let Some(scope) = parent {
@@ -22,7 +22,7 @@ pub(crate) fn full_test_name(entry: &ExecutionEntry) -> Vec<u8> {
         parent = scope.base.parent;
     }
     names.reverse();
-    names.join(&b' ')
+    names.join(separator)
 }
 
 /// The test to read or write, if not the one that is running.
@@ -53,7 +53,9 @@ fn is_expecting_assertions(test: Test) -> JSValue {
 fn current_test_name(global: &JSGlobalObject, test: Test) -> JsResult<JSValue> {
     let name = with_sequence(test, |sequence| {
         // SAFETY: the `BunTest` kept alive by `with_sequence` owns the entry.
-        sequence.test_entry.map(|entry| full_test_name(unsafe { entry.as_ref() }))
+        sequence.test_entry.map(|entry| unsafe { entry.as_ref() }).map(|entry| {
+            full_test_name(entry, if entry.calling.is_vitest() { b" > " } else { b" " })
+        })
     });
     match name.flatten() {
         Some(name) => bun_string_jsc::create_utf8_for_js(global, &name),

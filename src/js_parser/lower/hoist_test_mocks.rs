@@ -81,7 +81,7 @@ impl<'a, const TS: bool, const SCAN: bool, const SEMA: bool> P<'a, TS, SCAN, SEM
             if is_chain && !matches!(dot.name.slice(), b"mock" | b"unmock") {
                 return None;
             }
-            let last_name = *last_name.get_or_insert(dot.name.slice());
+            let last_name = *last_name.get_or_insert_with(|| dot.name.slice());
             match dot.target.data {
                 ExprData::EIdentifier(id) => {
                     let api = self.mock_api(self.unvisited_top_level_symbol(id.ref_)?)?;

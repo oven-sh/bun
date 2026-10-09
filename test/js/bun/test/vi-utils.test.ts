@@ -333,7 +333,7 @@ describe.concurrent("vi.setConfig", () => {
       "a.test.ts": `
         import { test, vi } from "bun:test";
         vi.setConfig({ testTimeout: 10 });
-        test("a", () => {});
+        test("a", () => {}, 5000);
       `,
       "b.test.ts": `
         import { test } from "bun:test";

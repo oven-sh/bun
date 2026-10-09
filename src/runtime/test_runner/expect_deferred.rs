@@ -301,6 +301,11 @@ impl ExpectDeferred {
         Ok(Some(promise))
     }
 
+    /// A cell that keeps the code of the stack frames of here and now alive. An Error does not: a collection turns its stack into text.
+    pub(crate) fn capture_call_site(global: &JSGlobalObject) -> JSValue {
+        ExpectDeferred__captureCallSite(global)
+    }
+
     /// Where the matcher that is running again was called from.
     pub(crate) fn call_site(global: &JSGlobalObject, frame: &CallFrame) -> Option<CallerSrcLoc> {
         let call_site = js::call_site_get_cached(Self::running_again(global, frame.this())?)?;

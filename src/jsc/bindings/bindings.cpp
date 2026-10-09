@@ -706,9 +706,10 @@ static ALWAYS_INLINE bool mayBeDOMNode(JSGlobalObject* globalObject, JSObject* o
 }
 
 // `isDomNode` of Jest and vitest. No code of the value runs unless it has an `isEqualNode`.
-static bool isDOMNode(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* object, const Identifier& isEqualNodeName, JSValue& isEqualNode)
+static bool isDOMNode(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* object, JSValue& isEqualNode)
 {
     VM& vm = globalObject->vm();
+    auto& names = WebCore::builtinNames(vm);
     if (!mayBeDOMNode(globalObject, object))
         return false;
 
@@ -721,21 +722,21 @@ static bool isDOMNode(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
     {
         // The slot forbids entering the VM for as long as it lives.
         PropertySlot inquiry(target, PropertySlot::InternalMethodType::VMInquiry, &vm);
-        bool hasIsEqualNode = target->getPropertySlot(globalObject, isEqualNodeName, inquiry);
+        bool hasIsEqualNode = target->getPropertySlot(globalObject, names.isEqualNodePublicName(), inquiry);
         RETURN_IF_EXCEPTION(scope, false);
         if (!hasIsEqualNode)
             return false;
     }
 
-    JSValue nodeType = object->get(globalObject, Identifier::fromString(vm, "nodeType"_s));
+    JSValue nodeType = object->get(globalObject, names.nodeTypePublicName());
     RETURN_IF_EXCEPTION(scope, false);
     if (!nodeType.isNumber())
         return false;
-    JSValue nodeName = object->get(globalObject, Identifier::fromString(vm, "nodeName"_s));
+    JSValue nodeName = object->get(globalObject, names.nodeNamePublicName());
     RETURN_IF_EXCEPTION(scope, false);
     if (!nodeName.isString())
         return false;
-    isEqualNode = object->get(globalObject, isEqualNodeName);
+    isEqualNode = object->get(globalObject, names.isEqualNodePublicName());
     RETURN_IF_EXCEPTION(scope, false);
     return isEqualNode.isCallable();
 }
@@ -747,29 +748,31 @@ enum class DOMNodeComparison : uint8_t {
     Match,
 };
 
+namespace Bun {
+JSC::JSString* objectPrototypeToStringOutOfLine(JSC::JSGlobalObject*, JSC::JSValue);
+}
+
 // What `equals` of Jest and vitest does before it compares properties. nullopt: compare the properties.
 static NEVER_INLINE std::optional<bool> domNodesDequal(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* o1, JSObject* o2, DOMNodeComparison comparison)
 {
     VM& vm = globalObject->vm();
-    // Where no code has said `isEqualNode` yet, no object has one.
-    RefPtr<AtomStringImpl> isEqualNodeAtom = AtomStringImpl::lookUp("isEqualNode"_span8);
-    if (!isEqualNodeAtom)
+    // A property and the code that names it each hold the name. While only the table of names does, no object has an `isEqualNode`.
+    if (WebCore::builtinNames(vm).isEqualNodePublicName().impl()->hasOneRef())
         return std::nullopt;
-    const Identifier isEqualNodeName = Identifier::fromString(vm, isEqualNodeAtom.get());
     JSValue isEqualNode;
     JSValue isEqualNodeOfOther;
-    bool isNode1 = isDOMNode(globalObject, scope, o1, isEqualNodeName, isEqualNode);
+    bool isNode1 = isDOMNode(globalObject, scope, o1, isEqualNode);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     if (!isNode1 && o1->structureID() == o2->structureID() && o1->type() == FinalObjectType && !o1->structure()->hasPolyProto())
         return std::nullopt;
-    bool isNode2 = isDOMNode(globalObject, scope, o2, isEqualNodeName, isEqualNodeOfOther);
+    bool isNode2 = isDOMNode(globalObject, scope, o2, isEqualNodeOfOther);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     if (comparison == DOMNodeComparison::Match ? !(isNode1 && isNode2) : !(isNode1 || isNode2))
         return std::nullopt;
 
-    JSString* tag1 = objectPrototypeToString(globalObject, o1);
+    JSString* tag1 = Bun::objectPrototypeToStringOutOfLine(globalObject, o1);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
-    JSString* tag2 = objectPrototypeToString(globalObject, o2);
+    JSString* tag2 = Bun::objectPrototypeToStringOutOfLine(globalObject, o2);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     bool sameTag = tag1->equal(globalObject, tag2);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
@@ -5323,7 +5326,7 @@ void JSC__VM__notifyNeedShellTimeoutCheck(JSC::VM* arg0)
     (*arg0).notifyNeedShellTimeoutCheck();
 }
 
-void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue encodedValue)
+NEVER_INLINE void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue encodedValue)
 {
     JSC::VM& vm = *reinterpret_cast<JSC::VM*>(vm_);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -5551,7 +5554,8 @@ static bool endsPrototypeWalk(JSC::JSGlobalObject* globalObject, JSC::JSObject* 
         || (prototype->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(prototype)->target() != globalObject);
 }
 
-template<bool nonIndexedOnly>
+// callOwnGetters: an own accessor gives what its getter returns, and what the getter throws ends the walk.
+template<bool nonIndexedOnly, bool callOwnGetters = false>
 static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
@@ -5660,6 +5664,13 @@ restart:
             if (!propertyValue)
                 continue;
 
+            if constexpr (callOwnGetters) {
+                if (objectToUse == object && propertyValue.isGetterSetter()) {
+                    propertyValue = uncheckedDowncast<GetterSetter>(propertyValue)->callGetter(globalObject, object);
+                    RETURN_IF_EXCEPTION(scope, );
+                }
+            }
+
             anyHits = true;
             JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
 
@@ -5758,6 +5769,9 @@ restart:
                         RETURN_IF_EXCEPTION(scope, );
                         propertyValue = slot.getValue(globalObject, property);
                     }
+                } else if (callOwnGetters && iterating == object && slot.isAccessor()) {
+                    propertyValue = slot.getValue(globalObject, property);
+                    RETURN_IF_EXCEPTION(scope, );
                 } else if (slot.isAccessor()) {
                     // If we can't use getPureResult, let's at least say it was a [Getter]
                     if (!slot.isCacheableGetter()) {
@@ -5818,6 +5832,11 @@ extern "C" void JSC__JSValue__forEachPropertyNonIndexed(JSC::EncodedJSValue JSVa
     JSC__JSValue__forEachPropertyImpl<true>(JSValue0, globalObject, arg2, iter);
 }
 
+extern "C" void JSC__JSValue__forEachPropertyCallingOwnGetters(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+{
+    JSC__JSValue__forEachPropertyImpl<false, true>(JSValue0, globalObject, arg2, iter);
+}
+
 extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInUInt64Range(JSC::EncodedJSValue value, uint64_t max, uint64_t min)
 {
     JSValue jsValue = JSValue::decode(value);
@@ -5846,8 +5865,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     return high == JSBigInt::ComparisonResult::LessThan || high == JSBigInt::ComparisonResult::Equal;
 }
 
-[[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
-
+// callGetters: as for JSC__JSValue__forEachPropertyImpl. All the properties of this walk are own.
+template<bool callGetters>
+static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();
@@ -5889,7 +5909,12 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
 
         JSC::JSValue propertyValue = jsUndefined();
         if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-            propertyValue = slot.getPureResult();
+            if constexpr (callGetters) {
+                propertyValue = slot.getValue(globalObject, property);
+                RETURN_IF_EXCEPTION(scope, );
+            } else {
+                propertyValue = slot.getPureResult();
+            }
         } else {
             propertyValue = slot.getValue(globalObject, property);
         }
@@ -5907,6 +5932,16 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
         RETURN_IF_EXCEPTION(scope, );
     }
     properties.releaseData();
+}
+
+[[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+{
+    forEachPropertyOrderedImpl<false>(JSValue0, globalObject, arg2, iter);
+}
+
+extern "C" void JSC__JSValue__forEachPropertyOrderedCallingGetters(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+{
+    forEachPropertyOrderedImpl<true>(JSValue0, globalObject, arg2, iter);
 }
 
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isConstructor(JSC::EncodedJSValue JSValue0)

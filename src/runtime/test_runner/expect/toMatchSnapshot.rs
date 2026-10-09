@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
+use super::Received;
 use super::get_signature;
 use super::throw;
 
@@ -95,5 +96,5 @@ pub(crate) fn to_match_snapshot(
         "<green>properties<r><d>, <r>hint",
     )?;
 
-    Expect::snapshot(&**this, global, value, property_matchers, hint.slice(), "toMatchSnapshot")
+    Expect::snapshot(&**this, global, Received::Value(value), property_matchers, hint.slice(), "toMatchSnapshot")
 }

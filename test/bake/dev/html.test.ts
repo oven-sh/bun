@@ -476,3 +476,62 @@ devTest("replacing a file imported from outside the project root by rename hot-r
     }
   },
 });
+devTest("a file replaced by rename inside the project root keeps a file outside it watched", {
+  // This pins the inotify watcher. The Windows watcher does not watch files outside the project directory.
+  skip: ["win32", "darwin"],
+  files: {
+    "web/index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "web/index.ts": `
+      import { x } from "./x";
+      console.log(x);
+      import.meta.hot.accept();
+    `,
+    "web/x.ts": `
+      export const x = "x0";
+    `,
+    "outside/s.ts": `
+      console.log("s0");
+      import.meta.hot.accept();
+    `,
+  },
+  cwd: "web",
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("x0");
+
+    // For an import that does not resolve, the dev server keeps the watchlist
+    // index of the directory it waits on. It frees that index when the import
+    // resolves. A watch item that is evicted in between moves another item to
+    // its index.
+    const missing = ['index.ts:2:8: error: Could not resolve: "./missing"'];
+    const index = (comment: string) => `
+      import { x } from "./x";
+      import "./missing";
+      console.log(x);
+      import.meta.hot.accept();
+      // ${comment}
+    `;
+    await dev.write("web/index.ts", index("first"), { errors: missing });
+    const x = dev.join("web/x.ts");
+    const replaceX = async (value: string) => {
+      await using _batch = await dev.batchChanges({ errors: missing });
+      writeFileSync(x + ".next", `import "../outside/s";\nexport const x = "${value}";`);
+      renameSync(x + ".next", x);
+    };
+    await replaceX("x1");
+    await c.expectMessage("s0", "x1");
+    await replaceX("x2");
+    await c.expectMessage("x2");
+    await dev.write("web/missing.ts", `export {};`);
+    await c.expectMessage("x2");
+    await dev.write("web/index.ts", index("second"));
+    await c.expectMessage("x2");
+
+    for (const value of ["s1", "s2"]) {
+      await dev.write("outside/s.ts", `console.log("${value}");\nimport.meta.hot.accept();`);
+      await c.expectMessage(value);
+    }
+  },
+});

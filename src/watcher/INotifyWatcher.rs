@@ -3,14 +3,18 @@
 
 use core::ffi::c_int;
 use core::mem::{align_of, size_of};
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::time::Duration;
+use std::time::Instant;
 
-use bun_core::{ZStr, env_var, output as Output, strings};
+use bun_core::{ZStr, env_var, output as Output};
 use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self, Fd};
 use bun_threading::Futex;
 
-use crate::watcher_impl::{MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex, Watcher};
+use crate::watcher_impl::{
+    HashType, MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex, Watcher,
+};
 use bun_collections::index_sort;
 
 bun_core::declare_scope!(watcher, visible);
@@ -56,6 +60,10 @@ pub struct INotifyWatcher {
     pub(crate) watch_count: AtomicU32,
     /// nanoseconds
     pub(crate) coalesce_interval: isize,
+    /// Hashes of the file items whose path did not name a file to watch when their inode went away; see `rebind`.
+    pub(crate) stale: Vec<HashType>,
+    /// When the watcher thread rebinds the items in `stale` next, and how many times it has done so.
+    retry: Option<(Instant, u8)>,
 }
 
 impl Default for INotifyWatcher {
@@ -68,17 +76,40 @@ impl Default for INotifyWatcher {
             read_ptr: None,
             watch_count: AtomicU32::new(0),
             coalesce_interval: 100_000,
+            stale: Vec::new(),
+            retry: None,
         }
     }
 }
 
 pub(crate) type EventListIndex = c_int;
 
-/// IN_ATTRIB reports the link-count change of an inode that a rename replaces: see `file_was_replaced`.
 const WATCH_FILE_MASK: u32 = {
     use bun_sys::linux::IN;
-    IN::EXCL_UNLINK | IN::MOVE_SELF | IN::DELETE_SELF | IN::MOVED_TO | IN::MODIFY | IN::ATTRIB
+    IN::EXCL_UNLINK | IN::MOVE_SELF | IN::DELETE_SELF | IN::MOVED_TO | IN::MODIFY
 };
+
+/// The waits before the watcher looks again at a path that named nothing. A writer that removes a file and then creates it again is between the two steps: git for tens of microseconds, a shell for about a millisecond.
+const RETRY_AFTER: [Duration; 3] = [
+    Duration::from_millis(1),
+    Duration::from_millis(10),
+    Duration::from_millis(100),
+];
+
+/// The descriptor of a file item that has no kernel watch. inotify hands out positive ones, and -1 marks a queue overflow.
+const NO_WATCH: EventListIndex = -2;
+
+/// What the path of a file item names, compared with the watch the item holds.
+pub(crate) enum Bound {
+    /// The inode that the item watches.
+    Same,
+    /// Another inode. The item holds its watch now.
+    Other,
+    /// Nothing.
+    Gone,
+    /// A file that inotify did not accept.
+    Failed,
+}
 
 #[repr(C)]
 pub struct Event {
@@ -232,6 +263,31 @@ impl INotifyWatcher {
             'outer: loop {
                 Futex::wait_forever(&self.watch_count, 0);
 
+                if let Some((at, _)) = self.retry {
+                    let wait = at.saturating_duration_since(Instant::now());
+                    let mut fds = [system::pollfd {
+                        fd: self.fd.native(),
+                        events: (libc::POLLIN | libc::POLLERR) as _,
+                        revents: 0,
+                    }];
+                    let timespec = libc::timespec {
+                        tv_sec: wait.as_secs() as _,
+                        tv_nsec: wait.subsec_nanos() as _,
+                    };
+                    // SAFETY: fds and timespec are valid stack locals; sigmask is null.
+                    let ready = unsafe {
+                        system::ppoll(
+                            fds.as_mut_ptr(),
+                            fds.len(),
+                            &raw const timespec,
+                            core::ptr::null(),
+                        )
+                    };
+                    if ready == 0 {
+                        return Ok(&[]);
+                    }
+                }
+
                 // SAFETY: fd is a valid inotify fd; buffer is valid for eventlist_bytes.len() bytes.
                 let rc = unsafe {
                     system::read(
@@ -374,12 +430,10 @@ impl INotifyWatcher {
 /// Repeatedly called by the main watcher until the watcher is terminated.
 pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     use crate::watcher_impl::WatchItemColumns;
+    use bun_sys::linux::IN;
     let _flush = Output::flush_guard();
 
     let events = this.platform.read()?;
-    if events.is_empty() {
-        return Ok(());
-    }
 
     // reshaped for borrowck — copy raw event pointers to a local buffer so
     // `this.platform` borrow ends before we mutably borrow other `this` fields below.
@@ -387,6 +441,11 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     let mut events_buf: [*const Event; max_count] = [core::ptr::null(); max_count];
     events_buf[..events_len].copy_from_slice(events);
     let events = &events_buf[..events_len];
+
+    let mut event_id: usize = retry_stale(this)?;
+    if events.is_empty() {
+        return process_inotify_event_batch(this, event_id, &[]);
+    }
 
     // The snapshot is taken locked. `on_file_update` may evict watchlist entries via
     // `remove_at_index` + `flush_evictions` (the dir-event path appends *and*
@@ -405,7 +464,6 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             .extend_from_slice(this.watchlist.items_eventlist_index());
     }
 
-    let mut event_id: usize = 0;
     let mut events_processed: usize = 0;
 
     if events_processed < events.len() {
@@ -443,6 +501,41 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 }
             }
 
+            let lost = (event.mask & IN::DELETE_SELF) != 0;
+            if lost || (event.mask & IN::MOVE_SELF) != 0 {
+                let mut from: usize = 0;
+                while let Some((index, bound)) =
+                    rebind_next_holder(this, event.watch_descriptor, from, lost)
+                {
+                    from = index + 1;
+                    let op = match (bound, lost) {
+                        (Bound::Other, _) | (Bound::Failed, true) => Op::WRITE,
+                        (Bound::Gone, true) => continue,
+                        _ => watch_event_from_inotify_event(event, 0).op,
+                    };
+                    if event_id >= this.watch_events.len() {
+                        process_inotify_event_batch(
+                            this,
+                            event_id,
+                            &temp_name_list[..temp_name_off as usize],
+                        )?;
+                        event_id = 0;
+                        temp_name_off = 0;
+                    }
+                    this.watch_events[event_id] = WatchEvent {
+                        op,
+                        index: WatchItemIndex::try_from(index).unwrap(),
+                        ..Default::default()
+                    };
+                    this.watch_events[event_id].name_off = temp_name_off;
+                    event_id += 1;
+                }
+                if from != 0 {
+                    events_processed += 1;
+                    continue;
+                }
+            }
+
             let idx = match this
                 .eventlist_index_scratch
                 .iter()
@@ -454,16 +547,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                     continue;
                 }
             };
-            let mut watch_event = watch_event_from_inotify_event(event, idx);
-            if (event.mask & bun_sys::linux::IN::ATTRIB) != 0 {
-                if file_was_replaced(this, idx, event.watch_descriptor) {
-                    watch_event.op |= Op::DELETE;
-                } else if watch_event.op.is_empty() {
-                    events_processed += 1;
-                    continue;
-                }
-            }
-            this.watch_events[event_id] = watch_event;
+            this.watch_events[event_id] = watch_event_from_inotify_event(event, idx);
 
             // Safely handle event names with bounds checking
             if event.name_len > 0 && (temp_name_off as usize) < temp_name_list.len() {
@@ -536,36 +620,144 @@ fn process_inotify_event_batch(
     Ok(())
 }
 
-/// inotify returns another watch descriptor for the path of a watched file once that path names another inode.
-fn file_was_replaced(this: &Watcher, index: WatchItemIndex, wd: EventListIndex) -> bool {
+/// Rebinds the next file item at or after `from` that holds `wd`, for the watcher thread.
+fn rebind_next_holder(
+    this: &mut Watcher,
+    wd: EventListIndex,
+    from: usize,
+    lost: bool,
+) -> Option<(usize, Bound)> {
     use crate::watcher_impl::{WatchItemColumns, WatchItemKind};
-    let mut buf = bun_paths::path_buffer_pool::get();
-    let path = {
-        let _guard = this.mutex.lock_guard();
-        let i = usize::from(index);
-        // `index` is from this cycle's snapshot; an eviction since then can have moved another item there.
-        if this.watchlist.items_eventlist_index().get(i) != Some(&wd)
-            || this.watchlist.items_kind()[i] != WatchItemKind::File
-        {
-            return false;
-        }
-        let file_path: &[u8] = &this.watchlist.items_file_path()[i];
-        if file_path.len() >= buf.len() || strings::contains(file_path, b"node_modules") {
-            return false;
-        }
-        buf[..file_path.len()].copy_from_slice(file_path);
-        buf[file_path.len()] = 0;
-        ZStr::from_buf(&buf[..], file_path.len())
+    let _guard = this.mutex.lock_guard();
+    let index = {
+        let held = this.watchlist.items_eventlist_index();
+        let kinds = this.watchlist.items_kind();
+        (from..held.len()).find(|&i| held[i] == wd && kinds[i] == WatchItemKind::File)?
     };
-    // SAFETY: the inotify fd stays open until this thread stops it; `path` is NUL-terminated.
-    let now = unsafe {
-        bun_sys::linux::inotify_add_watch(
-            this.platform.fd.native(),
-            path.as_ptr(),
-            WATCH_FILE_MASK | bun_sys::linux::IN::MASK_ADD,
-        )
+    let bound = rebind(this, index, lost);
+    if let Some(snapshot) = this.eventlist_index_scratch.get_mut(index) {
+        *snapshot = this.watchlist.items_eventlist_index()[index];
+    }
+    if matches!(bound, Bound::Gone | Bound::Failed) {
+        this.platform.retry = Some((Instant::now() + RETRY_AFTER[0], 0));
+    }
+    Some((index, bound))
+}
+
+/// Rebinds the items in `stale` when that is due, and queues a write for each one whose path names a file now. Returns the number of queued events.
+fn retry_stale(this: &mut Watcher) -> bun_sys::Result<usize> {
+    let Some((at, tries)) = this.platform.retry else {
+        return Ok(0);
     };
-    now >= 0 && now != wd
+    if Instant::now() < at {
+        return Ok(0);
+    }
+    let mut event_id: usize = 0;
+    let mut next: usize = 0;
+    loop {
+        let rebound = {
+            let _guard = this.mutex.lock_guard();
+            let Some(&hash) = this.platform.stale.get(next) else {
+                break;
+            };
+            match this.index_of(hash) {
+                Some(index) => match rebind(this, index as usize, false) {
+                    Bound::Other => Some(index),
+                    Bound::Same => None,
+                    Bound::Gone | Bound::Failed => {
+                        next += 1;
+                        None
+                    }
+                },
+                None => {
+                    this.platform.stale.swap_remove(next);
+                    None
+                }
+            }
+        };
+        let Some(index) = rebound else {
+            continue;
+        };
+        if event_id >= this.watch_events.len() {
+            process_inotify_event_batch(this, event_id, &[])?;
+            event_id = 0;
+        }
+        this.watch_events[event_id] = WatchEvent {
+            op: Op::WRITE,
+            index: WatchItemIndex::try_from(index).unwrap(),
+            ..Default::default()
+        };
+        event_id += 1;
+    }
+    let tries = usize::from(tries) + 1;
+    this.platform.retry = if this.platform.stale.is_empty() || tries >= RETRY_AFTER.len() {
+        None
+    } else {
+        Some((Instant::now() + RETRY_AFTER[tries], tries as u8))
+    };
+    Ok(event_id)
+}
+
+/// Gives the file item at `index` the watch of the inode that its path names now. The caller holds `this.mutex`; `lost` says that the kernel removed the watch the item holds.
+pub(crate) fn rebind(this: &mut Watcher, index: usize, lost: bool) -> Bound {
+    use crate::watcher_impl::WatchItemColumns;
+    use bun_sys::linux::IN;
+    let held = this.watchlist.items_eventlist_index()[index];
+    let hash = this.watchlist.items_hash()[index];
+    let now = {
+        let path: &[u8] = &this.watchlist.items_file_path()[index];
+        let mut buf = bun_paths::path_buffer_pool::get();
+        buf[..path.len()].copy_from_slice(path);
+        buf[path.len()] = 0;
+        // SAFETY: the inotify fd is open while the watcher runs, and `buf` is NUL-terminated.
+        let wd = unsafe {
+            bun_sys::linux::inotify_add_watch(
+                this.platform.fd.native(),
+                buf.as_ptr().cast(),
+                WATCH_FILE_MASK | IN::MASK_ADD,
+            )
+        };
+        if wd >= 0 {
+            Ok(wd)
+        } else {
+            Err(
+                bun_sys::Error::from_code_int(bun_sys::last_errno(), bun_sys::Tag::watch)
+                    .with_path(path),
+            )
+        }
+    };
+    match now {
+        Ok(wd) => {
+            this.platform.stale.retain(|stale| *stale != hash);
+            if wd == held {
+                return Bound::Same;
+            }
+            this.watchlist
+                .items_mut::<"eventlist_index", EventListIndex>()[index] = wd;
+            if !lost && held != NO_WATCH && !this.watchlist.items_eventlist_index().contains(&held)
+            {
+                let _ = bun_sys::linux::inotify_rm_watch(this.platform.fd.native(), held);
+            }
+            Bound::Other
+        }
+        Err(err) => {
+            if lost {
+                this.watchlist
+                    .items_mut::<"eventlist_index", EventListIndex>()[index] = NO_WATCH;
+            }
+            if !this.platform.stale.contains(&hash) {
+                this.platform.stale.push(hash);
+            }
+            if matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) {
+                return Bound::Gone;
+            }
+            static WARNED: AtomicBool = AtomicBool::new(false);
+            if !WARNED.swap(true, Ordering::Relaxed) {
+                bun_core::warn!("Failed to watch a file again: {}\n", err);
+            }
+            Bound::Failed
+        }
+    }
 }
 
 fn watch_event_from_inotify_event(event: &Event, index: WatchItemIndex) -> WatchEvent {

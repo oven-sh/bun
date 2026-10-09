@@ -570,12 +570,29 @@ const watchCloexecFiles = {
   "main.ts": `import { x } from "./dep";\nconsole.log("started", x);\nsetInterval(() => {}, 1e6);\n`,
 };
 
+// The number of inotify watches `pid` holds.
+function inotifyWatches(pid: number): number {
+  let watches = 0;
+  for (const { fd, path } of openFds(pid)) {
+    if (path !== "anon_inode:inotify") continue;
+    try {
+      const fdinfo = readFileSync(`/proc/${pid}/fdinfo/${fd}`, "utf8");
+      watches += fdinfo.split("\n").filter(line => line.startsWith("inotify wd:")).length;
+    } catch {
+      // A --watch reload closes the fd with the process image it belonged to.
+    }
+  }
+  return watches;
+}
+
 // The numbered fds of `pid` under `cwd`, keyed by the path relative to it
 // ("/" is the directory itself). The watcher thread registers the entrypoint,
 // its import and their directory after the script starts, so this polls until
-// all three are open.
+// all three are registered. kqueue holds a descriptor for each. inotify holds
+// a descriptor for the directory and a watch for each.
 async function watchedFds(pid: number, cwd: string): Promise<Map<string, string[]>> {
   for (;;) {
+    const registered = isLinux ? inotifyWatches(pid) : undefined;
     const watched = new Map<string, string[]>();
     for (const { fd, path } of openFds(pid)) {
       if (!/^\d+$/.test(fd)) continue;
@@ -583,7 +600,7 @@ async function watchedFds(pid: number, cwd: string): Promise<Map<string, string[
       const rel = path.slice(cwd.length) || "/";
       watched.set(rel, [...(watched.get(rel) ?? []), fd]);
     }
-    if (watched.size >= 3) return watched;
+    if ((registered ?? watched.size) >= 3) return watched;
     await Bun.sleep(10);
   }
 }
@@ -621,8 +638,11 @@ it.skipIf(isWindows || (isMacOS && !Bun.which("lsof")))(
 
 // The flag itself. Linux hides the leak behind its close_range() sweep, so
 // this reads O_CLOEXEC from /proc for every fd the watcher holds instead of
-// counting fds across reloads.
-it.skipIf(!isLinux)("watcher opens the watched directory and files with O_CLOEXEC", async () => {
+// counting fds across reloads. inotify watches a file by its path: a
+// descriptor kept for it would keep alive the inode that a rename-save
+// replaces, and the kernel reports that inode as deleted only after the last
+// descriptor is closed.
+it.skipIf(!isLinux)("watcher opens the watched directory with O_CLOEXEC and keeps no watched file open", async () => {
   using dir = tempDir("watch-cloexec", watchCloexecFiles);
   const cwd = realpathSync(String(dir));
   watchee = spawn({
@@ -646,7 +666,5 @@ it.skipIf(!isLinux)("watcher opens the watched directory and files with O_CLOEXE
     });
   expect(Object.fromEntries([...watched].sort().map(([rel, fds]) => [rel, flagsOf(fds)]))).toEqual({
     "/": [O_CLOEXEC],
-    "/dep.ts": [O_CLOEXEC],
-    "/main.ts": [O_CLOEXEC],
   });
 });

@@ -6,7 +6,7 @@ use bun_core::Output;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
-    ConsoleObject, JSFunction, JSPropertyIterator, JSString,
+    ConsoleObject, JSFunction, JSPropertyIterator,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
 use bun_jsc::js_promise;
@@ -2870,7 +2870,37 @@ plain_host_fn!(equals_shim, ExpectMatcherContext::equals);
 plain_host_fn!(stringify_shim, ExpectMatcherUtils::stringify);
 plain_host_fn!(print_expected_shim, ExpectMatcherUtils::print_expected);
 plain_host_fn!(print_received_shim, ExpectMatcherUtils::print_received);
+plain_host_fn!(expected_color_shim, ExpectMatcherUtils::expected_color);
+plain_host_fn!(received_color_shim, ExpectMatcherUtils::received_color);
 plain_host_fn!(matcher_hint_shim, ExpectMatcherUtils::matcher_hint);
+
+/// The colors of jest-matcher-utils: `DIM_COLOR`, `EXPECTED_COLOR` and `RECEIVED_COLOR`.
+#[derive(Clone, Copy)]
+enum HintColor {
+    Dim,
+    Expected,
+    Received,
+}
+
+impl HintColor {
+    fn paint(self, out: &mut Vec<u8>, text: &[u8]) {
+        if text.is_empty() {
+            return;
+        }
+        if !Output::enable_ansi_colors_stderr() {
+            out.extend_from_slice(text);
+            return;
+        }
+        let open: &'static str = match self {
+            HintColor::Dim => bun_core::pretty_fmt!("<d>", true),
+            HintColor::Expected => bun_core::pretty_fmt!("<green>", true),
+            HintColor::Received => bun_core::pretty_fmt!("<red>", true),
+        };
+        out.extend_from_slice(open.as_bytes());
+        out.extend_from_slice(text);
+        out.extend_from_slice(bun_core::pretty_fmt!("<r>", true).as_bytes());
+    }
+}
 
 /// Reference: `MatcherUtils` in https://github.com/jestjs/jest/blob/main/packages/expect/src/types.ts
 ///
@@ -2893,8 +2923,8 @@ impl ExpectMatcherUtils {
                 ("stringify", stringify_shim, 1),
                 ("printExpected", print_expected_shim, 1),
                 ("printReceived", print_received_shim, 1),
-                ("EXPECTED_COLOR", print_expected_shim, 1),
-                ("RECEIVED_COLOR", print_received_shim, 1),
+                ("EXPECTED_COLOR", expected_color_shim, 1),
+                ("RECEIVED_COLOR", received_color_shim, 1),
                 ("matcherHint", matcher_hint_shim, 1),
             ],
         )
@@ -2948,84 +2978,142 @@ impl ExpectMatcherUtils {
         Self::print_value(global_this, value, Some("<red>"))
     }
 
+    /// As `chalk.green(...text)`: the arguments as strings, with a space between them.
+    fn color_text(global_this: &JSGlobalObject, callframe: &CallFrame, color: HintColor) -> JsResult<JSValue> {
+        let mut text: Vec<u8> = Vec::new();
+        for (i, argument) in callframe.arguments().iter().enumerate() {
+            if i > 0 {
+                text.push(b' ');
+            }
+            text.extend_from_slice(argument.to_bun_string(global_this)?.to_utf8().slice());
+        }
+        let mut out: Vec<u8> = Vec::new();
+        color.paint(&mut out, &text);
+        bun_string_jsc::create_utf8_for_js(global_this, &out)
+    }
+
+    fn expected_color(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        Self::color_text(global_this, callframe, HintColor::Expected)
+    }
+
+    fn received_color(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        Self::color_text(global_this, callframe, HintColor::Received)
+    }
+
+    /// `label` through the color function that `option_name` of `matcherHint` gave, if any.
+    fn paint_label(
+        global_this: &JSGlobalObject,
+        out: &mut Vec<u8>,
+        label: &bun_core::String,
+        default_color: HintColor,
+        option_name: &'static str,
+        color: Option<JSValue>,
+    ) -> JsResult<()> {
+        let Some(color) = color else {
+            default_color.paint(out, label.to_utf8().slice());
+            return Ok(());
+        };
+        if !color.is_callable() {
+            return Err(global_this.throw_type_error(format_args!("matcherHint: options.{option_name} must be a function")));
+        }
+        let painted = color.call(global_this, JSValue::UNDEFINED, &[label.to_js(global_this)?])?;
+        out.extend_from_slice(painted.to_bun_string(global_this)?.to_utf8().slice());
+        Ok(())
+    }
+
+    /// `matcherHint` of jest-matcher-utils: the labels are text, not values.
     fn matcher_hint(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
+        let argument = |i: usize| arguments.get(i).copied().filter(|value| !value.is_undefined());
+        let label = |value: Option<JSValue>, default: &'static str| match value {
+            Some(value) => value.to_bun_string(global_this),
+            None => Ok(bun_core::String::static_(default)),
+        };
 
-        if arguments.is_empty() || !arguments[0].is_string() {
+        let Some(matcher_name) = argument(0).filter(|name| name.is_string()) else {
             return Err(global_this.throw2(
                 "matcherHint: the first argument (matcher name) must be a string",
                 (),
             ));
+        };
+        let matcher_name = matcher_name.to_bun_string(global_this)?;
+        let received = label(argument(1), "received")?;
+        let expected = label(argument(2), "expected")?;
+        let options = argument(3).filter(|options| !options.is_null());
+        if options.is_some_and(|options| !options.is_object()) {
+            return Err(global_this.throw2(
+                "matcherHint: options must be an object (or undefined)",
+                (),
+            ));
         }
-        let matcher_name = arguments[0].to_bun_string(global_this)?;
+        let option = |name: &'static str| match options {
+            Some(options) => options.get(global_this, name),
+            None => Ok(None),
+        };
 
-        let received = if arguments.len() > 1 { arguments[1] } else { bun_core::String::static_("received").to_js(global_this)? };
-        let expected = if arguments.len() > 2 { arguments[2] } else { bun_core::String::static_("expected").to_js(global_this)? };
-        let options = if arguments.len() > 3 { arguments[3] } else { JSValue::UNDEFINED };
+        let comment = label(option("comment")?, "")?;
+        let expected_color = option("expectedColor")?;
+        let is_direct_expect_call = option("isDirectExpectCall")?.is_some_and(JSValue::to_boolean);
+        let is_not = option("isNot")?.is_some_and(JSValue::to_boolean);
+        let promise = label(option("promise")?, "")?;
+        let received_color = option("receivedColor")?;
+        let second_argument = label(option("secondArgument")?.filter(|second| second.to_boolean()), "")?;
+        let second_argument_color = option("secondArgumentColor")?;
 
-        let mut is_not = false;
-        let mut comment: Option<&JSString> = None; // TODO support
-        let mut promise: Option<&JSString> = None; // TODO support
-        let mut second_argument: Option<&JSString> = None; // TODO support
-        // TODO support "chalk" colors (they are actually functions like: (value: string) => string;)
-        //var second_argument_color: ?string = null;
-        //var expected_color: ?string = null;
-        //var received_color: ?string = null;
+        let mut hint: Vec<u8> = Vec::new();
+        // Adjacent dim text is painted in one piece.
+        let mut dim: Vec<u8> = b"expect".to_vec();
+        let paint_dim = |hint: &mut Vec<u8>, dim: &mut Vec<u8>, last: &[u8]| {
+            dim.extend_from_slice(last);
+            HintColor::Dim.paint(hint, dim);
+            dim.clear();
+        };
 
-        if !options.is_undefined_or_null() {
-            if !options.is_object() {
-                return Err(global_this.throw2(
-                    "matcherHint: options must be an object (or undefined)",
-                    (),
-                ));
-            }
-            if let Some(val) = options.get(global_this, "isNot")? {
-                is_not = val.to_boolean();
-            }
-            if let Some(val) = options.get(global_this, "comment")? {
-                comment = Some(val.to_js_string(global_this)?);
-            }
-            if let Some(val) = options.get(global_this, "promise")? {
-                promise = Some(val.to_js_string(global_this)?);
-            }
-            if let Some(val) = options.get(global_this, "secondArgument")? {
-                second_argument = Some(val.to_js_string(global_this)?);
-            }
+        if !is_direct_expect_call && !received.is_empty() {
+            paint_dim(&mut hint, &mut dim, b"(");
+            Self::paint_label(global_this, &mut hint, &received, HintColor::Received, "receivedColor", received_color)?;
+            dim.push(b')');
         }
-        let _ = (comment, promise, second_argument);
-
-        let diff_formatter = DiffFormatter::new(global_this, received, expected, is_not)?;
-
-        // Builds `getSignature("{f}", "<green>expected<r>", is_not) ++ "\n\n{f}\n"`
-        // and substitutes `(matcher_name, diff_formatter)` into the two `{f}`
-        // slots, then runs `Output.prettyFmt` over the *template* before
-        // substitution. `pretty_fmt!` rewrites only the `<tag>` markers in
-        // the static `RECEIVED`/`expected` literals — `matcher_name` and
-        // `diff_formatter` are spliced in afterwards (matches `throw_pretty`'s
-        // render-then-rewrite ordering, since Display output here contains no
-        // `<tag>` literals).
-        let colors = Output::enable_ansi_colors_stderr();
-        let head: &'static str = if colors {
-            bun_core::pretty_fmt!("<d>expect(<r><red>received<r><d>).<r>", true)
+        if !promise.is_empty() {
+            paint_dim(&mut hint, &mut dim, b".");
+            hint.extend_from_slice(promise.to_utf8().slice());
+        }
+        if is_not {
+            paint_dim(&mut hint, &mut dim, b".");
+            hint.extend_from_slice(b"not");
+        }
+        if matcher_name.index_of_ascii_char(b'.').is_some() {
+            // The old format: the name brings its own periods, as in ".not.toBeFoo".
+            dim.extend_from_slice(matcher_name.to_utf8().slice());
         } else {
-            bun_core::pretty_fmt!("<d>expect(<r><red>received<r><d>).<r>", false)
-        };
-        let not: &'static str = if is_not {
-            if colors {
-                bun_core::pretty_fmt!("not<d>.<r>", true)
-            } else {
-                bun_core::pretty_fmt!("not<d>.<r>", false)
+            paint_dim(&mut hint, &mut dim, b".");
+            hint.extend_from_slice(matcher_name.to_utf8().slice());
+        }
+        if expected.is_empty() {
+            dim.extend_from_slice(b"()");
+        } else {
+            paint_dim(&mut hint, &mut dim, b"(");
+            Self::paint_label(global_this, &mut hint, &expected, HintColor::Expected, "expectedColor", expected_color)?;
+            if !second_argument.is_empty() {
+                HintColor::Dim.paint(&mut hint, b", ");
+                Self::paint_label(
+                    global_this,
+                    &mut hint,
+                    &second_argument,
+                    HintColor::Expected,
+                    "secondArgumentColor",
+                    second_argument_color,
+                )?;
             }
-        } else {
-            ""
-        };
-        let expected_hint: &'static str = if colors {
-            bun_core::pretty_fmt!("<d>(<r><green>expected<r><d>)<r>", true)
-        } else {
-            bun_core::pretty_fmt!("<d>(<r><green>expected<r><d>)<r>", false)
-        };
-        let buf = format!("{head}{not}{matcher_name}{expected_hint}\n\n{diff_formatter}\n");
-        bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
+            dim.push(b')');
+        }
+        if !comment.is_empty() {
+            dim.extend_from_slice(b" // ");
+            dim.extend_from_slice(comment.to_utf8().slice());
+        }
+        HintColor::Dim.paint(&mut hint, &dim);
+
+        bun_string_jsc::create_utf8_for_js(global_this, &hint)
     }
 }
 

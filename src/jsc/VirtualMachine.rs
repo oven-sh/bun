@@ -394,6 +394,9 @@ pub struct TestIsolationState {
     /// The synthetic allocation limit at startup, restored after every file.
     /// `setSyntheticAllocationLimitForTesting` lowers it process-wide.
     pub synthetic_allocation_limit: Option<usize>,
+    /// How many entries JSC's `CodeCache` has been given room for: twice the
+    /// modules of the file that loaded the most so far. 0 until it is raised.
+    pub(crate) code_cache_entries: usize,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -6006,6 +6009,7 @@ impl VirtualMachine {
         let new_global: *mut JSGlobalObject = JSGlobalObject::create_for_test_isolation(
             JSGlobalObject::opaque_ref(old_global),
             self.console.cast(),
+            &mut self.test_isolation_state.code_cache_entries,
         );
         self.global = new_global;
         VMHolder::set_cached_global_object(Some(new_global));

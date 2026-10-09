@@ -83,7 +83,14 @@ public:
 
         VirtualModuleMap* _Nullable virtualModules = nullptr;
         bool mustDoExpensiveRelativeLookup = false;
-        bool isLookingForModuleMockCycle = false;
+        struct RunningModuleMock {
+            JSC::Strong<JSC::JSObject> mock;
+            // The file the factory is written in, and the modules that have been imported from there, or from one of them, since.
+            String file;
+            WTF::UncheckedKeyHashSet<String> importChain;
+        };
+        // The module mocks whose factory has been called and has not settled.
+        Vector<RunningModuleMock> runningModuleMocks = {};
         // Module mocks a preload made that the running test file replaced or removed. They are back for the next file.
         Vector<JSC::Strong<JSC::JSObject>> displacedPreloadModuleMocks = {};
         // Counts the test files that share this global object, from 1.
@@ -116,6 +123,7 @@ public:
             virtualModules = nullptr;
             mustDoExpensiveRelativeLookup = false;
             displacedPreloadModuleMocks.clear();
+            runningModuleMocks.clear();
         }
 
         ~OnLoad()
@@ -142,10 +150,24 @@ class GlobalObject;
 
 } // namespace Zig
 
+namespace JSC {
+class JSModuleNamespaceObject;
+class SourceCode;
+}
+
 namespace Bun {
 JSC::JSValue runVirtualModule(Zig::GlobalObject*, BunString* specifier, bool& wasModuleMock, Zig::BunPlugin::OnLoad::Matches& onLoad);
 JSC::JSValue findModuleMock(Zig::GlobalObject*, const BunString* specifier);
-// The exports of what runVirtualModule returned for a module mock, or a promise for them. Anything else is returned as it is.
+// What runVirtualModule returned for a module mock, once its factory settled, or a promise for it. Anything else is returned as it is.
+// Unless `synchronous`, a mock that imports its original is returned at once: the ES module it is loaded as calls the factory.
 JSC::JSValue runModuleMock(Zig::GlobalObject*, JSC::JSValue moduleMock, bool synchronous);
+// What the factory made: the exports, or a CommonJS module that has them as `module.exports`. Null until it settled.
+JSC::JSObject* resultOfModuleMock(JSC::JSObject* moduleMock);
+JSC::SourceCode sourceCodeOfModuleMock(Zig::GlobalObject*, JSC::JSObject* moduleMock, const String& key);
+// `importer` imports or requires the module `key` while runningModuleMocks is not empty. What a factory loads gets the
+// original of the module it mocks, and its own copy of a module that waits for the mock.
+String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
+// The object a module mock's factory returned, if the export `name` is read from it. Null otherwise.
+JSC::JSObject* objectHoldingExportOfModuleMock(JSC::JSGlobalObject*, JSC::JSModuleNamespaceObject*, const JSC::Identifier& name);
 JSC::Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 }

@@ -752,7 +752,7 @@ static NEVER_INLINE std::optional<bool> domNodesDequal(JSGlobalObject* globalObj
 {
     VM& vm = globalObject->vm();
     // Where no code has said `isEqualNode` yet, no object has one.
-    RefPtr<AtomStringImpl> isEqualNodeAtom = AtomStringImpl::lookUp("isEqualNode"_span);
+    RefPtr<AtomStringImpl> isEqualNodeAtom = AtomStringImpl::lookUp("isEqualNode"_span8);
     if (!isEqualNodeAtom)
         return std::nullopt;
     const Identifier isEqualNodeName = Identifier::fromString(vm, isEqualNodeAtom.get());

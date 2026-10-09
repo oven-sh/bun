@@ -420,50 +420,6 @@ static JSValue commonJSExportsOfObjectModule(Zig::GlobalObject* globalObject, JS
     return wasModuleMock ? object : JSValue();
 }
 
-// The exports of the ES module a module mock is loaded as. An accessor is not called until the export is first read.
-static JSC::SyntheticSourceProvider::LazySyntheticSourceGenerator generateModuleMockSourceCode(JSC::JSObject* object)
-{
-    gcProtectNullTolerant(object);
-    return [object](JSC::JSGlobalObject* globalObject,
-               JSC::Identifier moduleKey,
-               Vector<JSC::Identifier, 4>& exportNames,
-               JSC::MarkedArgumentBuffer& exportValues) -> JSC::JSObject* {
-        auto& vm = JSC::getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        JSC::EnsureStillAliveScope stillAlive(object);
-        gcUnprotectNullTolerant(object);
-
-        if (auto* mockedCommonJSModule = dynamicDowncast<JSCommonJSModule>(object)) {
-            scope.release();
-            mockedCommonJSModule->toSyntheticSource(globalObject, moduleKey, exportNames, exportValues);
-            return nullptr;
-        }
-
-        PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-        object->methodTable()->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-
-        bool hasLazyExports = false;
-        for (auto& name : properties) {
-            PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
-            bool hasOwn = object->methodTable()->getOwnPropertySlot(object, globalObject, name, slot);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-            if (!hasOwn)
-                continue;
-            exportNames.append(name);
-            if (slot.isAccessor()) {
-                exportValues.append(JSValue());
-                hasLazyExports = true;
-                continue;
-            }
-            JSValue value = slot.getValue(globalObject, name);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-            exportValues.append(value);
-        }
-        return hasLazyExports ? object : nullptr;
-    };
-}
-
 template<bool allowPromise>
 static JSValue handleVirtualModuleResult(
     Zig::GlobalObject* globalObject,
@@ -526,7 +482,7 @@ static JSValue handleVirtualModuleResult(
     case OnLoadResultTypeObject: {
         JSC::JSObject* object = onLoadResult.value.object.getObject();
         if (commonJSModule) {
-            JSValue exports = commonJSExportsOfObjectModule(globalObject, object, wasModuleMock);
+            JSValue exports = commonJSExportsOfObjectModule(globalObject, wasModuleMock ? Bun::resultOfModuleMock(object) : object, wasModuleMock);
             if (scope.exception()) [[unlikely]] {
                 return rejectOrResolve({});
             }
@@ -538,9 +494,9 @@ static JSValue handleVirtualModuleResult(
         }
 
         if (wasModuleMock) {
-            auto source = JSC::SourceCode(
-                JSC::SyntheticSourceProvider::createWithLazyExports(generateModuleMockSourceCode(object),
-                    JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
+            auto source = Bun::sourceCodeOfModuleMock(globalObject, object, specifier->toWTFString());
+            if (scope.exception()) [[unlikely]]
+                return rejectOrResolve({});
             RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));
         }
 
@@ -672,7 +628,7 @@ BuiltinModule fetchBuiltinModuleWithoutResolution(
                 JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifier->toWTFString(BunString::ZeroCopy), "\" is unsupported. use \"await import()\" instead."_s));
                 return {};
             }
-            exports = commonJSExportsOfObjectModule(globalObject, exports.getObject(), true);
+            exports = commonJSExportsOfObjectModule(globalObject, Bun::resultOfModuleMock(exports.getObject()), true);
             RETURN_IF_EXCEPTION(scope, {});
             return { Kind::Exports, exports };
         }

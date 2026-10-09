@@ -7,7 +7,7 @@
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/expect-extend.test.js`
  */
 
-import { withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, tempDir, withoutAggressiveGC } from "harness";
 import test_interop from "./test-interop.js";
 var { isBun, expect, describe, test, it } = await test_interop();
 
@@ -401,6 +401,211 @@ describe("MatcherContext", () => {
       });
 
       expect(123).toBeCustomColor(456);
+    });
+
+    /** @type {import("bun:test").MatcherContext["utils"]} */
+    let utils;
+    expect.extend({
+      _toGiveItsUtils() {
+        utils = this.utils;
+        return { pass: true };
+      },
+    });
+    expect()._toGiveItsUtils();
+    const inAngles = text => `<${text}>`;
+
+    // What jest-matcher-utils 30.5.1 returns for the same arguments.
+    test.each([
+      [["toX"], "expect(received).toX(expected)"],
+      [[".toX"], "expect(received).toX(expected)"],
+      [[".not.toX"], "expect(received).not.toX(expected)"],
+      [["toX", "element"], "expect(element).toX(expected)"],
+      [["toX", "element", ""], "expect(element).toX()"],
+      [[".toBeDisabled", "element", ""], "expect(element).toBeDisabled()"],
+      [[".not.toBeDisabled", "element", ""], "expect(element).not.toBeDisabled()"],
+      [["toX", "", ""], "expect.toX()"],
+      [["toX", "", "e"], "expect.toX(e)"],
+      [["toX", undefined, undefined], "expect(received).toX(expected)"],
+      [["toX", "r", "e", undefined], "expect(r).toX(e)"],
+      [["toX", "r", "e", {}], "expect(r).toX(e)"],
+      [["toX", undefined, undefined, { isNot: true }], "expect(received).not.toX(expected)"],
+      [["toX", undefined, undefined, { promise: "resolves" }], "expect(received).resolves.toX(expected)"],
+      [
+        ["toX", undefined, undefined, { promise: "rejects", isNot: true }],
+        "expect(received).rejects.not.toX(expected)",
+      ],
+      [["toX", undefined, undefined, { comment: "deep equality" }], "expect(received).toX(expected) // deep equality"],
+      [["toX", undefined, "", { comment: "c" }], "expect(received).toX() // c"],
+      [["toX", undefined, undefined, { secondArgument: "second" }], "expect(received).toX(expected, second)"],
+      [["toX", undefined, "", { secondArgument: "second" }], "expect(received).toX()"],
+      [["toX", undefined, undefined, { isDirectExpectCall: true }], "expect.toX(expected)"],
+      [["toX", "", undefined, { isDirectExpectCall: true, isNot: true }], "expect.not.toX(expected)"],
+      [[".toX", undefined, undefined, { isNot: true }], "expect(received).not.toX(expected)"],
+      [[".toX", undefined, undefined, { promise: "resolves" }], "expect(received).resolves.toX(expected)"],
+      [
+        [
+          "toX",
+          "r",
+          "e",
+          { expectedColor: inAngles, receivedColor: inAngles, secondArgument: "s", secondArgumentColor: inAngles },
+        ],
+        "expect(<r>).toX(<e>, <s>)",
+      ],
+      [["toX", "r", "e", { comment: "", promise: "", secondArgument: "" }], "expect(r).toX(e)"],
+      [["toX", "r", "e", { isNot: 1, comment: 5 }], "expect(r).not.toX(e) // 5"],
+      [["toX", 1, 2], "expect(1).toX(2)"],
+      [["toX", null, null], "expect(null).toX(null)"],
+      [["toX", "a.b", "c.d"], "expect(a.b).toX(c.d)"],
+      [["a.b.c"], "expect(received)a.b.c(expected)"],
+      [["toX", "multi\nline", "e"], "expect(multi\nline).toX(e)"],
+      [["", "r", "e"], "expect(r).(e)"],
+    ])("matcherHint(...%j)", (args, hint) => {
+      expect(Bun.stripANSI(utils.matcherHint(...args))).toBe(hint);
+    });
+
+    test("matcherHint reads each argument once, in order", () => {
+      const log = [];
+      const logged = name => ({
+        toString() {
+          log.push(name);
+          return name;
+        },
+      });
+      const options = new Proxy(
+        { comment: logged("comment"), promise: logged("promise"), secondArgument: logged("secondArgument") },
+        {
+          get(target, key) {
+            log.push(`options.${String(key)}`);
+            return target[key];
+          },
+        },
+      );
+      expect(Bun.stripANSI(utils.matcherHint("toX", logged("received"), logged("expected"), options))).toBe(
+        "expect(received).promise.toX(expected, secondArgument) // comment",
+      );
+      expect(log).toEqual([
+        "received",
+        "expected",
+        "options.comment",
+        "comment",
+        "options.expectedColor",
+        "options.isDirectExpectCall",
+        "options.isNot",
+        "options.promise",
+        "promise",
+        "options.receivedColor",
+        "options.secondArgument",
+        "secondArgument",
+        "options.secondArgumentColor",
+      ]);
+    });
+
+    test("matcherHint rejects what it cannot use", () => {
+      expect(() => utils.matcherHint()).toThrow("the first argument (matcher name) must be a string");
+      expect(() => utils.matcherHint(1)).toThrow("the first argument (matcher name) must be a string");
+      expect(() => utils.matcherHint("toX", "r", "e", 1)).toThrow("options must be an object (or undefined)");
+      for (const option of ["receivedColor", "expectedColor", "secondArgumentColor"]) {
+        expect(() => utils.matcherHint("toX", "r", "e", { secondArgument: "s", [option]: 1 })).toThrow(
+          new TypeError(`matcherHint: options.${option} must be a function`),
+        );
+      }
+      // As in Jest, a color that is not needed is not looked at.
+      expect(Bun.stripANSI(utils.matcherHint("toX", "", "", { receivedColor: 1, expectedColor: 1 }))).toBe(
+        "expect.toX()",
+      );
+      const thrown = new Error("from the color");
+      expect(() =>
+        utils.matcherHint("toX", "r", "e", {
+          receivedColor() {
+            throw thrown;
+          },
+        }),
+      ).toThrow(thrown);
+    });
+
+    test.each(["EXPECTED_COLOR", "RECEIVED_COLOR"])("%s colors text as it is", name => {
+      const color = (...args) => Bun.stripANSI(utils[name](...args));
+      expect([
+        color("text"),
+        color('"quoted"'),
+        color("a  \nb "),
+        color(""),
+        color(),
+        color(5),
+        color(true),
+        color(null),
+        color(undefined),
+        color({ a: "b" }),
+        color([1, "x"]),
+        color("a", "b", 1),
+      ]).toEqual([
+        "text",
+        '"quoted"',
+        "a  \nb ",
+        "",
+        "",
+        "5",
+        "true",
+        "null",
+        "undefined",
+        "[object Object]",
+        "1,x",
+        "a b 1",
+      ]);
+    });
+
+    test("colors", async () => {
+      using dir = tempDir("matcher-utils-colors", {
+        "colors.test.js": `
+          import { expect, test } from "bun:test";
+          test("colors", () => {
+            expect.extend({
+              _toPrintColors() {
+                const { matcherHint, EXPECTED_COLOR, RECEIVED_COLOR } = this.utils;
+                console.log(
+                  JSON.stringify([
+                    matcherHint("toX"),
+                    matcherHint(".toX", "element", ""),
+                    matcherHint("toX", "r", "e", { isNot: true, promise: "resolves", comment: "c", secondArgument: "s" }),
+                    EXPECTED_COLOR("a"),
+                    RECEIVED_COLOR("a"),
+                    EXPECTED_COLOR(""),
+                  ]),
+                );
+                return { pass: true };
+              },
+            });
+            expect()._toPrintColors();
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "colors.test.js"],
+        cwd: String(dir),
+        env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: undefined },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [dim, red, green, reset] = ["\x1b[2m", "\x1b[31m", "\x1b[32m", "\x1b[0m"];
+      expect({
+        printed: stdout
+          .split("\n")
+          .filter(line => line.startsWith("["))
+          .map(line => JSON.parse(line))[0],
+        stderr,
+      }).toEqual({
+        printed: [
+          `${dim}expect(${reset}${red}received${reset}${dim}).${reset}toX${dim}(${reset}${green}expected${reset}${dim})${reset}`,
+          `${dim}expect(${reset}${red}element${reset}${dim}).toX()${reset}`,
+          `${dim}expect(${reset}${red}r${reset}${dim}).${reset}resolves${dim}.${reset}not${dim}.${reset}toX${dim}(${reset}${green}e${reset}${dim}, ${reset}${green}s${reset}${dim}) // c${reset}`,
+          `${green}a${reset}`,
+          `${red}a${reset}`,
+          "",
+        ],
+        stderr: expect.any(String),
+      });
+      expect(exitCode).toBe(0);
     });
   });
 });

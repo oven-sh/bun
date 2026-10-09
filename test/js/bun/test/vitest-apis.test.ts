@@ -471,9 +471,8 @@ test("this.equals and the functions of this.utils do not need a receiver", () =>
         equals: [equals(received, expected), [[1]].some(item => equals(item, [1])), equals.call(undefined, 1, 2)],
         explicitTesters: equals(1, 2, [() => true]),
         sameFunction: [equals === this.equals, stringify === utils.stringify],
-        strings: [stringify, printExpected, printReceived, EXPECTED_COLOR, RECEIVED_COLOR].map(print =>
-          Bun.stripANSI(print({ a: "b" })),
-        ),
+        strings: [stringify, printExpected, printReceived].map(print => Bun.stripANSI(print({ a: "b" }))),
+        colors: [EXPECTED_COLOR, RECEIVED_COLOR].map(color => Bun.stripANSI(color("text"))),
         matcherHint: Bun.stripANSI(matcherHint("toUseDetachedFunctions")).split("\n")[0],
         ownFunctions: Object.keys(utils).sort(),
       };
@@ -486,7 +485,8 @@ test("this.equals and the functions of this.utils do not need a receiver", () =>
     equals: [true, true, false],
     explicitTesters: true,
     sameFunction: [true, true],
-    strings: [printed, printed, printed, printed, printed],
+    strings: [printed, printed, printed],
+    colors: ["text", "text"],
     matcherHint: "expect(received).toUseDetachedFunctions(expected)",
     ownFunctions: ["EXPECTED_COLOR", "RECEIVED_COLOR", "matcherHint", "printExpected", "printReceived", "stringify"],
   });

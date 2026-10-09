@@ -905,6 +905,7 @@ describe("equality", () => {
     expect(tagged()).not.toEqual({ ownerDocument });
     expect({ ownerDocument }).not.toEqual(tagged());
     expect(tagged()).not.toEqual(h("i"));
+    expect(new Proxy({ ownerDocument }, {})).not.toEqual(new Proxy(tagged(), {}));
     // The same: by their properties.
     expect(h("i")).toEqual({ ownerDocument });
     expect({ ownerDocument }).toEqual(h("i"));

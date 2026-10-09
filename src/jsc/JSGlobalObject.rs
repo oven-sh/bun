@@ -1364,8 +1364,9 @@ impl JSGlobalObject {
     pub(crate) fn create_for_test_isolation(
         old_global: &JSGlobalObject,
         console: *mut c_void,
+        code_cache_entries: &mut usize,
     ) -> *mut JSGlobalObject {
-        Zig__GlobalObject__createForTestIsolation(old_global, console)
+        Zig__GlobalObject__createForTestIsolation(old_global, console, code_cache_entries)
     }
 
     pub fn to_type_error(&self, code: JscError, args: Arguments<'_>) -> JSValue {
@@ -1637,6 +1638,7 @@ unsafe extern "C" {
     safe fn Zig__GlobalObject__createForTestIsolation(
         old_global: &JSGlobalObject,
         console: *mut c_void,
+        code_cache_entries: &mut usize,
     ) -> *mut JSGlobalObject;
 }
 

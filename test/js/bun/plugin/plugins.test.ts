@@ -731,6 +731,34 @@ it("import(...) without __esModule", async () => {
   expect(mod).toBe("world");
 });
 
+// Called by a bare name that is not a local variable, a native function is given the engine's own scope object as `this`.
+it("onLoad(), onResolve() and module() return the builder, and undefined when they are called by a bare name", () => {
+  let returned: unknown;
+  plugin({
+    name: "calls the functions of the builder by their names",
+    setup(builder) {
+      const { onLoad, onResolve, module } = builder;
+      const filter = { filter: /^$/, namespace: "called-by-a-bare-name" };
+      returned = [
+        [
+          builder.onLoad(filter, () => undefined) === builder,
+          builder.onResolve(filter, () => undefined) === builder,
+          builder.module("called-as-a-member", () => ({ exports: {}, loader: "object" })) === builder,
+        ],
+        (() => [
+          onLoad(filter, () => undefined),
+          onResolve(filter, () => undefined),
+          module("called-by-a-bare-name", () => ({ exports: {}, loader: "object" })),
+        ])(),
+      ];
+    },
+  });
+  expect(returned).toEqual([
+    [true, true, true],
+    [undefined, undefined, undefined],
+  ]);
+});
+
 it("recursion throws stack overflow", () => {
   expect(() => {
     require("recursion:recursion");
@@ -1647,6 +1675,54 @@ describe.concurrent("onResolve", () => {
     `;
     expect(await run("entry.cjs", source)).toEqual({
       stdout: ["before", "caught from onResolve"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("is asked once about each import of each module, however many modules wait for what it imports", async () => {
+    const graph: Record<string, string> = { "barrel.ts": "", "index.ts": "" };
+    for (let i = 0; i < 20; i++) {
+      graph[`leaf${i}.ts`] = (i ? `import "./leaf${i - 1}.ts";\n` : "") + `export const leaf${i} = ${i};\n`;
+      graph["barrel.ts"] += `export * from "./leaf${i}.ts";\n`;
+    }
+    for (let i = 0; i < 10; i++) {
+      graph[`user${i}.ts`] =
+        `import { leaf${i} } from "./barrel.ts";\n${i ? `import "./user${i - 1}.ts";\n` : ""}export const user${i} = leaf${i};\n`;
+      graph["index.ts"] += `export * from "./user${i}.ts";\n`;
+    }
+    graph["entry.ts"] = `
+      import { basename } from "node:path";
+      const asked: Record<string, number> = {};
+      Bun.plugin({
+        name: "counts",
+        setup(build) {
+          build.onResolve({ filter: /\\.ts$/ }, ({ importer, path }) => {
+            const edge = basename(importer) + " " + path;
+            asked[edge] = (asked[edge] ?? 0) + 1;
+          });
+        },
+      });
+      const loaded = await import("./index.ts");
+      console.log(JSON.stringify({
+        loaded: Object.keys(loaded).length,
+        edges: Object.keys(asked).length,
+        again: Object.entries(asked).filter(([, times]) => times > 1),
+      }));
+    `;
+    using dir = tempDir("plugin-onresolve-once-per-edge", graph);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ ...JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      loaded: 10,
+      edges: 69,
+      again: [],
       stderr: "",
       exitCode: 0,
     });

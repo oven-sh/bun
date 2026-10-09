@@ -2420,6 +2420,15 @@ static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* lexicalGlobalObject, JSC::
     if (object->type() == JSC::JSType::GlobalProxyType)
         object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
 
+    // An export of a module mock is a property of the object its factory returned.
+    while (auto* moduleNamespaceObject = dynamicDowncast<JSModuleNamespaceObject>(object)) {
+        JSObject* exports = Bun::objectHoldingExportOfModuleMock(globalObject, moduleNamespaceObject, propertyKey);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!exports)
+            break;
+        object = exports;
+    }
+
     JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::HasProperty);
     bool hasValue = object->getPropertySlot(globalObject, propertyKey, slot);
     RETURN_IF_EXCEPTION(scope, {});

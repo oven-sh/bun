@@ -15,6 +15,7 @@
 #include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/ClassInfo.h"
 #include "JavaScriptCore/CodeBlock.h"
+#include "JavaScriptCore/CodeCache.h"
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/DeferredWorkTimer.h"
 #include "JavaScriptCore/Error.h"
@@ -659,7 +660,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 // Create a fresh Zig::GlobalObject on the *same* JSC::VM as `oldGlobal`, then unprotect
 // the old one so GC can reclaim its module graph. Used by `bun test --isolate` to give
 // each test file a clean global without paying for a new JSC::VM.
-extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::GlobalObject* oldGlobal, void* console_client)
+extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::GlobalObject* oldGlobal, void* console_client, size_t* codeCacheEntries)
 {
     JSC::VM& vm = oldGlobal->vm();
     JSC::JSLockHolder locker(vm);
@@ -721,6 +722,13 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     // they would keep it (and everything it loaded) alive for the rest of the run.
     oldGlobal->onLoadPlugins.clear();
     oldGlobal->onResolvePlugins.clear();
+    // JSC's CodeCache has an entry for each module. With room for fewer than a file loads, every file evicts what the
+    // next one is about to ask for. An entry keeps 20 to 100 KB of unlinked and Baseline code, hence the ceiling.
+    size_t loadedModules = oldGlobal->moduleLoader()->moduleMap().size() + oldGlobal->requireMap()->size();
+    if (size_t entries = std::min<size_t>(2 * loadedModules, 16384); entries > *codeCacheEntries) {
+        *codeCacheEntries = entries;
+        vm.codeCache()->setWorkingSetMaxEntries(entries);
+    }
     // Drop the finished file's module registry and require.cache now rather than whenever the
     // old global happens to die. JSC's CodeCache and Bun's RuntimeTranspilerCache are VM/process
     // scoped and survive.
@@ -3599,8 +3607,14 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         RETURN_IF_EXCEPTION(scope, {});
     }
 
+    const bool moduleMocksRun = !globalObject->onLoadPlugins.runningModuleMocks.isEmpty();
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
+        // The ES module a module mock is loaded as names what it imports by key.
+        if (!keyString.isEmpty() && !keyString[0])
+            return Identifier::fromString(vm, keyString.substring(1));
         if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(keyString, referrerString)) {
+            if (moduleMocksRun) [[unlikely]]
+                return Identifier::fromString(vm, Bun::keyOfImportWhileModuleMocksRun(globalObject, resolvedString.value(), referrerString, true));
             return Identifier::fromString(vm, resolvedString.value());
         }
     } else {
@@ -3620,9 +3634,10 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     auto resolved = res.result.value.transferToWTFString();
     auto query = queryZ.transferToWTFString();
 
-    if (!query.isEmpty()) {
-        return Identifier::fromString(vm, makeString(resolved, query));
-    }
+    if (!query.isEmpty())
+        resolved = makeString(resolved, query);
+    if (moduleMocksRun) [[unlikely]]
+        resolved = Bun::keyOfImportWhileModuleMocksRun(globalObject, resolved, referrerString, true);
     return Identifier::fromString(vm, resolved);
 }
 

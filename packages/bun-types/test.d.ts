@@ -2854,10 +2854,20 @@ declare module "bun:test" {
       stringify(value: unknown): string;
       printReceived(value: unknown): string;
       printExpected(value: unknown): string;
+      /** Colors text like an expected value. The text is not quoted. */
+      EXPECTED_COLOR(...text: unknown[]): string;
+      /** Colors text like a received value. The text is not quoted. */
+      RECEIVED_COLOR(...text: unknown[]): string;
+      /**
+       * The first line of a failure message, such as `expect(received).toBeFoo(expected)`.
+       *
+       * @param received the text between the parentheses of `expect()`
+       * @param expected the text between the parentheses of the matcher, `""` for none
+       */
       matcherHint(
         matcherName: string,
-        received?: unknown,
-        expected?: unknown,
+        received?: string,
+        expected?: string,
         options?: {
           isNot?: boolean;
           promise?: string;

@@ -532,6 +532,33 @@ it("Bun.inspect.custom exists", () => {
   expect(Bun.inspect.custom).toBe(util.inspect.custom);
 });
 
+// Called by a bare name that is not a local variable, a native function is given the engine's own scope object as `this`.
+// These functions return a `this` that is not of their class as it is.
+it("[Bun.inspect.custom] of a built-in class returns undefined or throws when it is called by a bare name", () => {
+  const returned = {};
+  for (const name of Object.getOwnPropertyNames(globalThis)) {
+    const inspectCustom = globalThis[name]?.prototype?.[Bun.inspect.custom];
+    if (typeof inspectCustom !== "function") continue;
+    returned[name] = [[], [-1], [2, {}]].map(args => {
+      try {
+        return (() => inspectCustom(...args))();
+      } catch (error) {
+        return error.name;
+      }
+    });
+  }
+  expect(Object.keys(returned)).toContainValues([
+    "ReadableStream",
+    "WritableStream",
+    "URL",
+    "URLSearchParams",
+    "CryptoKey",
+  ]);
+  expect(Object.entries(returned).filter(([, results]) => results.some(result => typeof result === "object"))).toEqual(
+    [],
+  );
+});
+
 describe("Functions with names", () => {
   const closures = [
     () => function f() {},

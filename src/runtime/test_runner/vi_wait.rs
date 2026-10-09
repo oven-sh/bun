@@ -77,7 +77,11 @@ fn running_test_file(vm: &VirtualMachine) -> Option<u32> {
 }
 
 /// As `setTimeout`: a delay outside `1..=i32::MAX` is 1 ms.
-pub(crate) fn delay_ms(global: &JSGlobalObject, value: Option<JSValue>, default: u32) -> JsResult<u32> {
+pub(crate) fn delay_ms(
+    global: &JSGlobalObject,
+    value: Option<JSValue>,
+    default: u32,
+) -> JsResult<u32> {
     let Some(value) = value else {
         return Ok(default);
     };
@@ -134,7 +138,15 @@ impl ViWait {
         timeout_ms: u32,
         test: Option<RunningEntry>,
     ) -> JsResult<JSValue> {
-        Self::begin(global, frame, Kind::Poll, attempt, interval_ms, timeout_ms, test)
+        Self::begin(
+            global,
+            frame,
+            Kind::Poll,
+            attempt,
+            interval_ms,
+            timeout_ms,
+            test,
+        )
     }
 
     fn begin(
@@ -345,12 +357,15 @@ impl ViWait {
 
     fn time_out(&self, global: &JSGlobalObject, this_value: JSValue) -> JsResult<()> {
         let timeout_error = js::timeout_error_get_cached(this_value).unwrap_or(JSValue::UNDEFINED);
-        let Some(error) = js::last_error_get_cached(this_value).filter(|error| error.to_boolean()) else {
+        let Some(error) = js::last_error_get_cached(this_value).filter(|error| error.to_boolean())
+        else {
             return self.settle(global, this_value, Err(timeout_error));
         };
         if self.kind == Kind::Poll
             && error.is_object()
-            && error.get(global, "cause")?.is_none_or(JSValue::is_undefined_or_null)
+            && error
+                .get(global, "cause")?
+                .is_none_or(JSValue::is_undefined_or_null)
         {
             error.put(global, b"cause", timeout_error);
         }
@@ -363,7 +378,9 @@ impl ViWait {
         let Some(this_value) = self.root.get().as_ref().map(Strong::get) else {
             return Ok(());
         };
-        if self.test_file != running_test_file(vm) || self.test.as_ref().is_some_and(|test| !test.is_running()) {
+        if self.test_file != running_test_file(vm)
+            || self.test.as_ref().is_some_and(|test| !test.is_running())
+        {
             self.finish();
             return Ok(());
         }

@@ -1,7 +1,7 @@
 // Compares `bun lint` with oxlint on small projects, for the rules of plugins whose port in oxlint differs from the plugin: with a
 // configuration of oxlint, oxlint is what counts.
 //
-//   BUN_LINT="<bun-lint> cli" OXLINT_BIN=<oxlint 1.80> bun compare.ts [--record] [name..]
+//   BUN_LINT="<bun-lint> cli" OXLINT_BIN=<oxlint 1.80> OXLINT_TSGOLINT_PATH=<tsgolint 7.0.2001> bun compare.ts [--record] [name..]
 //
 // Without OXLINT_BIN, what oxlint reports is read from expected.json, which `--record` writes.
 
@@ -39,15 +39,17 @@ for (const project of projects) {
   if (names.length > 0 && !names.includes(project.name)) continue;
   const cwd = mkdtempSync(join(tmpdir(), "oxlint-"));
   try {
-    for (const [path, text] of Object.entries({ ".oxlintrc.json": JSON.stringify(project.config), ...project.files })) {
+    const tsconfig = project.typed ? { "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] } }) } : {};
+    const typed = project.typed ? ["--type-aware"] : [];
+    for (const [path, text] of Object.entries({ ".oxlintrc.json": JSON.stringify(project.config), ...tsconfig, ...project.files })) {
       mkdirSync(dirname(join(cwd, path)), { recursive: true });
       writeFileSync(join(cwd, path), text);
     }
-    if (oxlint) expected[project.name] = run(oxlint, [], cwd);
+    if (oxlint) expected[project.name] = run(oxlint, typed, cwd);
     const wanted = expected[project.name] ?? [];
     // With one thread, with fewer threads than files, and with as many as there are.
     for (const threads of project.name.startsWith("no-cycle/") ? ["--threads=1", "--threads=2", ""] : [""]) {
-      const actual = run(ours, [...oursArgs, ...(threads ? [threads] : [])], cwd);
+      const actual = run(ours, [...oursArgs, ...typed, ...(threads ? [threads] : [])], cwd);
       const missing = wanted.filter(it => !actual.includes(it));
       const extra = actual.filter(it => !wanted.includes(it));
       if (missing.length + extra.length > 0) {

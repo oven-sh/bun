@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import whatOxlintReports from "./oracle/plugins/oxlint/expected.json";
+import { projects } from "./oracle/plugins/oxlint/projects";
 
 const command = [bunExe(), "lint"];
 
@@ -855,6 +857,49 @@ describe.concurrent("bun lint", () => {
           ),
         );
         expect(exitCode).toBe(0);
+      });
+
+      // The projects of oracle/plugins/oxlint. expected.json is what oxlint 1.80.0 with tsgolint 7.0.2001 reports for them.
+      const found = (raw: string, names: string[]) => {
+        const byProject = Object.fromEntries(names.map((it): [string, Set<string>] => [it, new Set()]));
+        for (const it of JSON.parse(raw).diagnostics) {
+          // A syntax error.
+          if (!it.code) continue;
+          const name = names.find(name => it.filename.startsWith(name + "/"))!;
+          const { line, column } = it.labels[0].span;
+          byProject[name].add(`${it.filename.slice(name.length + 1)}:${line}:${column} ${it.code}`);
+        }
+        return Object.fromEntries(names.map(it => [it, [...byProject[it]].sort()]));
+      };
+      const expected = (names: string[]) =>
+        Object.fromEntries(
+          names.map(it => [it, [...new Set(whatOxlintReports[it as keyof typeof whatOxlintReports])]]),
+        );
+
+      test("the rules report what oxlint's report, where they report it", async () => {
+        const some = projects.filter(it => !it.typed && it.name !== "no-cycle/many-files");
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        for (const { name, config, files: texts } of some) {
+          files[`${name}/.oxlintrc.json`] = JSON.stringify(config);
+          for (const [path, text] of Object.entries(texts)) files[`${name}/${path}`] = text;
+        }
+        const names = some.map(it => it.name);
+        const { raw } = await lint(files, ["-f", "json"]);
+        expect(found(raw, names)).toEqual(expected(names));
+      });
+
+      test("the rules that need types report what tsgolint's report", async () => {
+        const some = projects.filter(it => it.typed);
+        const compilerOptions = { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] };
+        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+        for (const { name, config, files: texts } of some) {
+          files[`${name}/.oxlintrc.json`] = JSON.stringify(config);
+          files[`${name}/tsconfig.json`] = JSON.stringify({ compilerOptions });
+          for (const [path, text] of Object.entries(texts)) files[`${name}/${path}`] = text;
+        }
+        const names = some.map(it => it.name);
+        const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
+        expect(found(raw, names)).toEqual(expected(names));
       });
     });
 

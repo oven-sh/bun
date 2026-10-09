@@ -2963,6 +2963,8 @@ function advanceResponsePipeline(server, socket) {
   if (res[kNeedDrain] && !queued.ended && !hitBackpressure) {
     // With nothing left to send it comes here, like in _flush(): https://github.com/nodejs/node/blob/v26.3.0/lib/_http_outgoing.js#L1194-L1197
     if (res.writableLength === 0) emitDrainIfOwed(res);
+    // The cork buffer took a replayed write whole and the socket took only part of it: arm the drain callback.
+    else if (handle.bufferedAmount > 0) handle.onwritable = allowWritesToContinue.bind(res);
     else process.nextTick(emitDrainIfOwed, res);
   }
 }

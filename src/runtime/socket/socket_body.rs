@@ -310,6 +310,10 @@ pub(crate) struct NewSocket<const SSL: bool> {
     pub(crate) owned_ssl_ctx: JsCell<Option<boringssl_sys::OwnedSslCtx>>,
 
     pub(crate) flags: Cell<Flags>,
+    /// Counts the closes of the native sockets this wrapper has dispatched
+    /// for. A dispatcher that ran user JS compares it before it touches its
+    /// own handle again: a nested loop turn frees a closed `us_socket_t`.
+    pub(crate) close_epoch: Cell<u16>,
     pub(crate) ref_count: bun_ptr::RefCount<Self>,
     /// The callbacks this socket dispatches to: shared with its listener and
     /// sibling sockets (server), or with its own reconnects and TLS twin
@@ -1396,6 +1400,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.buffered_data_for_node_net
             .with_mut(|b| b.clear_and_free());
         self.detach_native_callback();
+        self.close_epoch.set(self.close_epoch.get().wrapping_add(1));
         old.close(uws::CloseCode::Failure);
         self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
         if self.flags.get().contains(Flags::IS_ACTIVE) {
@@ -1794,14 +1799,15 @@ impl<const SSL: bool> NewSocket<SSL> {
         if !this.has_handlers() || this.flags.get().contains(Flags::FINALIZING) {
             return Ok(());
         }
+        let first_report = !this.flags.get().contains(Flags::HANDSHAKE_COMPLETE);
         this.update_flags(|f| f.insert(Flags::HANDSHAKE_COMPLETE));
         this.socket.set(s);
         if this.socket.get().is_detached() {
             return Ok(());
         }
         // Keep the socket alive across the callbacks below (which re-enter JS)
-        // and across `reject_unauthorized_connection`, whose close may
-        // otherwise drop the last reference.
+        // and across the closes after them, which may otherwise drop the last
+        // reference.
         let _guard = RefPtr::from_this(this);
         let handlers = this.get_handlers();
         log!(
@@ -1935,13 +1941,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         let global = handlers.global_object;
         let this_value = this.get_this_value(&global);
 
+        let close_epoch = this.close_epoch.get();
+        let mut threw = false;
         let result: JSValue;
         // open callback only have 1 parameters and its the socket
         // you should use getAuthorizationError and authorized getter to get those values in this case
         if is_open {
             result = match callback.call(&global, this_value, &[this_value]) {
                 Ok(v) => v,
-                Err(err) => global.take_exception(err),
+                Err(err) => {
+                    threw = true;
+                    global.take_exception(err)
+                }
             };
 
             // only call onOpen once for clients
@@ -1970,12 +1981,26 @@ impl<const SSL: bool> NewSocket<SSL> {
                 &[this_value, JSValue::from(authorized), authorization_error],
             ) {
                 Ok(v) => v,
-                Err(err) => global.take_exception(err),
+                Err(err) => {
+                    threw = true;
+                    global.take_exception(err)
+                }
             };
         }
 
         let handled = match result.to_error() {
-            Some(err_value) => handlers.call_error_handler(this_value, &[this_value, err_value]),
+            Some(err_value) => {
+                let delivered = handlers.call_error_handler(this_value, &[this_value, err_value]);
+                // A socket whose `open` or `handshake` threw once its
+                // handshake completed is closed, as in `on_open`: before the
+                // scope's microtask checkpoint, whatever delivering the error
+                // left pending. A failed or repeated report admits nobody, and
+                // a `handshake` that returns the error it was handed did not throw.
+                if first_report && success == 1 && (threw || is_open) {
+                    this.refuse_connection(s, close_epoch);
+                }
+                delivered
+            }
             None => Ok(()),
         };
         drop(scope);
@@ -2035,6 +2060,34 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
         self.close_and_detach(uws::CloseCode::FastShutdown);
+    }
+
+    /// Closes the connection whose `open` or `handshake` callback threw, and
+    /// returns with its close dispatched. `socket` is `on_handshake`'s own
+    /// handle, because an `end()` in the callbacks detaches `self.socket` and
+    /// leaves the transport open. `close_epoch` is the value read before the
+    /// callbacks ran: once it has moved the handle is closed and may be freed.
+    /// Callers hold `on_handshake`'s ref guard.
+    fn refuse_connection(&self, socket: SocketHandler<SSL>, close_epoch: u16) {
+        if self.close_epoch.get() != close_epoch {
+            return;
+        }
+        self.buffered_data_for_node_net
+            .with_mut(|b| b.clear_and_free());
+        self.socket.set(SocketHandler::<SSL>::DETACHED);
+        self.detach_native_callback();
+        #[cfg(windows)]
+        if let uws::InternalSocket::Pipe(pipe) = socket.socket {
+            // SAFETY: `socket_from_named_pipe` made the handle from the live
+            // `WindowsNamedPipe` whose handshake this is.
+            unsafe { &*pipe.cast::<super::windows_named_pipe::WindowsNamedPipe>() }.refuse();
+            return;
+        }
+        socket.close(uws::CloseCode::FastShutdown);
+        // usockets parks a TLS close once behind ciphertext it already reported as written.
+        if self.close_epoch.get() == close_epoch {
+            socket.close(uws::CloseCode::FastShutdown);
+        }
     }
 
     /// The JS `Buffer` for an `on_session`/`on_keylog` payload. The
@@ -2178,6 +2231,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         reason: Option<*mut c_void>,
     ) -> JsResult<()> {
         jsc::mark_binding!();
+        this.close_epoch.set(this.close_epoch.get().wrapping_add(1));
         this.set_latest_session(ptr::null_mut());
         // A late close on a socket that already released its Handlers through
         // a path that did not route back through this dispatch - e.g. a
@@ -3606,6 +3660,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 cfg.and_then(|c| c.server_name_bytes().map(Box::<[u8]>::from)),
             ),
             flags: Cell::new(initial_flags),
+            close_epoch: Cell::new(0),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -3731,6 +3786,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // alive. active_connections=1 was already on raw_handlers from
             // `this`.
             flags: Cell::new(Flags::BYPASS_TLS | Flags::IS_ACTIVE | Flags::OWNED_PROTOS),
+            close_epoch: Cell::new(0),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -4808,6 +4864,7 @@ pub(crate) fn js_upgrade_duplex_to_tls(
             socket_config.and_then(|cfg| cfg.server_name_bytes().map(Box::<[u8]>::from)),
         ),
         flags: Cell::new(initial_flags),
+        close_epoch: Cell::new(0),
         this_value: JsCell::new(JsRef::empty()),
         poll_ref: JsCell::new(KeepAlive::init()),
         ref_pollref_on_connect: Cell::new(true),

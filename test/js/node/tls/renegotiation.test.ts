@@ -232,6 +232,40 @@ it("should not crash when socket is closed inside the renegotiation handshake ca
   });
 });
 
+it("a handshake() that throws on the report of a renegotiation keeps the session", async () => {
+  // Only the report that admits the peer refuses it when `handshake` throws.
+  // A renegotiation reports again on an established session: the throw reaches
+  // `error`, and the response the server sends next is still delivered.
+  const events: string[] = [];
+  const { promise: closed, resolve } = Promise.withResolvers<void>();
+  let handshakes = 0;
+  let response = "";
+  await Bun.connect({
+    hostname: url.hostname,
+    port: Number(url.port),
+    tls: { rejectUnauthorized: false },
+    socket: {
+      handshake(socket) {
+        events.push("handshake " + ++handshakes);
+        if (handshakes > 1) throw new Error("refused too late");
+        socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      },
+      data(_socket, chunk) {
+        response += chunk;
+      },
+      error(_socket, err) {
+        events.push("error: " + err.message);
+      },
+      close() {
+        resolve();
+      },
+    },
+  });
+  await closed;
+  expect(events).toEqual(["handshake 1", "handshake 2", "error: refused too late"]);
+  expect(response).toContain("Hello World");
+});
+
 const renegotiationCloseInHandshakeFixture = /* js */ `
 const { promise: done, resolve } = Promise.withResolvers();
 let handshakes = 0;

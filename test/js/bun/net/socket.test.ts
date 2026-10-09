@@ -9,12 +9,14 @@ import {
   bunRun,
   expectMaxObjectTypeCount,
   getMaxFD,
+  isASAN,
   isLinux,
   isWindows,
   libcPathForDlopen,
   tempDir,
   tls,
 } from "harness";
+import { constants as cryptoConstants } from "node:crypto";
 import { once } from "node:events";
 import net from "node:net";
 import { join } from "node:path";
@@ -4572,6 +4574,511 @@ describe("TLS handshake callback throw", () => {
       server.stop(true);
     }
   });
+
+  // One side refuses its peer by throwing from `open` or `handshake` once the
+  // handshake completed. `error` receives the throw, then the socket closes:
+  // `data` never runs for that peer and no write reaches it, neither from a
+  // microtask the callback queued nor from the raw half of an `upgradeTLS`
+  // pair. A peer that is answered anyway ends the connection itself, so a
+  // build that keeps the socket open fails the assertion instead of timing out.
+  describe.concurrent("closes the connection", () => {
+    type AnySocket = Socket<unknown>;
+    type Guard = "open" | "handshake";
+    type Door = { side: string; transport: string; guard: Guard; how: string };
+    type Log = { events: string[]; writes: number[]; received: string[] };
+
+    // More than a loopback connection buffers, so part of it stays queued as ciphertext.
+    const floodByte = 0x61;
+    let flood: Buffer | undefined;
+    const overfill = (socket: AnySocket) => socket.write((flood ??= Buffer.alloc(64 * 1024 * 1024, floodByte)));
+    // What the refusing side does besides the refusal. A graceful close waits
+    // for the peer's close_notify and a close behind queued ciphertext waits
+    // for it to drain: neither may leave the refused peer's socket open.
+    const ways: Record<string, { before?(socket: AnySocket): void; inError?(socket: AnySocket): void }> = {
+      "throws": {},
+      "returns the Error": {},
+      "ends the socket, then throws": { before: socket => socket.end() },
+      "throws, and error() ends the socket": { inError: socket => socket.end() },
+      "closes the socket, then throws": { before: socket => socket.close() },
+      "terminates the socket, then throws": { before: socket => socket.terminate() },
+      "overfills the send buffer, then throws": { before: overfill },
+      "overfills the send buffer, closes the socket, then throws": {
+        before: socket => {
+          overfill(socket);
+          socket.close();
+        },
+      },
+    };
+    // `close()` and `terminate()` with nothing queued run the `close` handler before they return.
+    const closesAtOnce = ["closes the socket, then throws", "terminates the socket, then throws"];
+
+    function refusing({ guard, how }: Door, log: Log, closed: () => void, rawHalf?: () => AnySocket): SocketHandler {
+      return {
+        [guard](socket: AnySocket) {
+          log.events.push(guard);
+          queueMicrotask(() => {
+            log.writes.push(socket.write("secret"));
+            if (rawHalf) log.writes.push(rawHalf().write("secret"));
+          });
+          ways[how].before?.(socket);
+          const refusal = new Error("peer refused");
+          if (how === "returns the Error") return refusal;
+          throw refusal;
+        },
+        data(socket) {
+          log.events.push("data");
+          socket.write("secret");
+        },
+        error(socket, err) {
+          log.events.push("error: " + err.message);
+          ways[how].inError?.(socket);
+        },
+        close() {
+          log.events.push("close");
+          closed();
+        },
+      };
+    }
+    function peer(log: Log, closed: () => void): SocketHandler {
+      return {
+        // With `tls` and no `handshake` handler, `open` runs once the handshake
+        // is done, and this write leaves with the end of it. A TLS 1.3 server
+        // and a TLS 1.2 client decrypt it in the read that ends their own
+        // handshake. The other two get it in a later read.
+        open(socket) {
+          socket.write("hello");
+        },
+        data(socket, chunk) {
+          if (chunk[0] !== floodByte) log.received.push(chunk.toString());
+          socket.end();
+        },
+        error() {},
+        close() {
+          closed();
+        },
+      };
+    }
+
+    const tlsDoors = ["Bun.listen", "Bun.connect", "upgradeTLS", "upgradeTLS({ isServer: true })"].flatMap(side =>
+      ["TLSv1.3", "TLSv1.2"].flatMap(transport =>
+        (["open", "handshake"] as const).map(guard => ({ side, transport, guard })),
+      ),
+    );
+    const doors: Door[] = [
+      // The rule as plain TCP has it.
+      { side: "Bun.listen", transport: "TCP", guard: "open", how: "throws" },
+      { side: "Bun.connect", transport: "TCP", guard: "open", how: "throws" },
+      ...tlsDoors.map(door => ({ ...door, how: "throws" })),
+      // An `open` that returns the Error is refused too, as over plain TCP.
+      { side: "Bun.connect", transport: "TLSv1.2", guard: "open", how: "returns the Error" },
+      // The doors where the peer's data arrives with the end of the handshake.
+      ...Object.keys(ways)
+        .filter(how => how !== "throws" && how !== "returns the Error")
+        .flatMap(how => [
+          { side: "Bun.listen", transport: "TLSv1.3", guard: "handshake" as const, how },
+          { side: "Bun.connect", transport: "TLSv1.2", guard: "open" as const, how },
+        ]),
+    ];
+    // A named pipe runs TLS in SSLWrapper, not in usockets.
+    const pipeDoors: Door[] = ["Bun.listen", "Bun.connect"].flatMap(side =>
+      (["open", "handshake"] as const).map(guard => ({ side, transport: "a TLS named pipe", guard, how: "throws" })),
+    );
+
+    async function refused(door: Door) {
+      const { side, transport, guard, how } = door;
+      const log: Log = { events: [], writes: [], received: [] };
+      const refuserClosed = Promise.withResolvers<void>();
+      const peerClosed = Promise.withResolvers<void>();
+      let rawHalf: AnySocket | undefined;
+      const upgrades = side.startsWith("upgradeTLS");
+      const refuser = refusing(door, log, refuserClosed.resolve, upgrades ? () => rawHalf! : undefined);
+      const other = peer(log, peerClosed.resolve);
+
+      const serverTLS = {
+        ...tls,
+        secureOptions: transport === "TLSv1.2" ? cryptoConstants.SSL_OP_NO_TLSv1_3 : undefined,
+      };
+      const clientTLS = { rejectUnauthorized: false };
+      // On Windows a pipe path stands in for the host and port.
+      type Address = { hostname: string; port: number };
+      const pipe = transport.endsWith("named pipe")
+        ? { unix: `\\\\.\\pipe\\bun-test-refused-${Bun.randomUUIDv7()}` }
+        : undefined;
+      let upgraded = false;
+      const upgradingServer: SocketHandler = {
+        data(socket, clientHello) {
+          // The raw half keeps these handlers and is shown the ciphertext too.
+          if (upgraded) return;
+          upgraded = true;
+          [rawHalf] = socket.upgradeTLS({
+            isServer: true,
+            initialData: clientHello,
+            tls: serverTLS,
+            socket: refuser,
+          } as any);
+        },
+      };
+
+      using listener = Bun.listen({
+        ...((pipe ?? { hostname: "127.0.0.1", port: 0 }) as Address),
+        tls: transport === "TCP" || side === "upgradeTLS({ isServer: true })" ? undefined : serverTLS,
+        socket: side === "Bun.listen" ? refuser : side === "upgradeTLS({ isServer: true })" ? upgradingServer : other,
+      });
+      const client = await Bun.connect({
+        ...((pipe ?? { hostname: "127.0.0.1", port: listener.port }) as Address),
+        tls: transport === "TCP" || side === "upgradeTLS" ? undefined : clientTLS,
+        socket: side === "Bun.connect" ? refuser : side === "upgradeTLS" ? { data() {} } : other,
+      });
+      if (side === "upgradeTLS") {
+        [rawHalf] = client.upgradeTLS({ tls: clientTLS, socket: refuser });
+      }
+      await Promise.all([refuserClosed.promise, peerClosed.promise]);
+
+      expect(log).toEqual({
+        events: closesAtOnce.includes(how)
+          ? [guard, "close", "error: peer refused"]
+          : [guard, "error: peer refused", "close"],
+        writes: upgrades ? [-1, -1] : [-1],
+        received: [],
+      });
+    }
+    it.each(doors)("$side over $transport: $guard() $how", refused);
+    it.skipIf(!isWindows).each(pipeDoors)("$side over $transport: $guard() $how", refused);
+
+    it("Bun.listen: a handshake() installed by listener.reload() throws", async () => {
+      const door: Door = { side: "Bun.listen", transport: "TLSv1.3", guard: "handshake", how: "throws" };
+      const log: Log = { events: [], writes: [], received: [] };
+      const refuserClosed = Promise.withResolvers<void>();
+      const peerClosed = Promise.withResolvers<void>();
+
+      using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: { data() {} } });
+      listener.reload({ socket: refusing(door, log, refuserClosed.resolve) });
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        tls: { rejectUnauthorized: false },
+        socket: peer(log, peerClosed.resolve),
+      });
+      await Promise.all([refuserClosed.promise, peerClosed.promise]);
+
+      expect(log).toEqual({ events: ["handshake", "error: peer refused", "close"], writes: [-1], received: [] });
+    });
+
+    it("Bun.connect: a handshake() installed by socket.reload() throws", async () => {
+      const door: Door = { side: "Bun.connect", transport: "TLSv1.3", guard: "handshake", how: "throws" };
+      const log: Log = { events: [], writes: [], received: [] };
+      const refuserClosed = Promise.withResolvers<void>();
+      const peerClosed = Promise.withResolvers<void>();
+
+      using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, tls, socket: peer(log, peerClosed.resolve) });
+      // connect() resolves when the TCP connection opens, before the handshake ends.
+      const client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        tls: { rejectUnauthorized: false },
+        socket: { data() {} },
+      });
+      client.reload({ socket: refusing(door, log, refuserClosed.resolve) });
+      await Promise.all([refuserClosed.promise, peerClosed.promise]);
+
+      expect(log).toEqual({ events: ["handshake", "error: peer refused", "close"], writes: [-1], received: [] });
+    });
+
+    // `handshake` is typed `void`. An arrow function that evaluates to the
+    // error it was handed did not throw: `error` still hears of it, as before,
+    // and the connection goes on.
+    it.each([
+      { side: "Bun.listen", code: "UNABLE_TO_GET_ISSUER_CERT" },
+      { side: "Bun.connect", code: "DEPTH_ZERO_SELF_SIGNED_CERT" },
+    ])(
+      "$side over TLS: a handshake() that returns the error it was handed keeps the connection",
+      async ({ side, code }) => {
+        const events: string[] = [];
+        const received: string[] = [];
+        const keeperClosed = Promise.withResolvers<void>();
+        const peerClosed = Promise.withResolvers<void>();
+        const keeper: SocketHandler = {
+          handshake: (_socket, _success, authorizationError) => authorizationError,
+          data(socket) {
+            events.push("data");
+            socket.write("answer");
+          },
+          error(_socket, err) {
+            events.push("error: " + (err as NodeJS.ErrnoException).code);
+          },
+          close() {
+            events.push("close");
+            keeperClosed.resolve();
+          },
+        };
+        const other: SocketHandler = {
+          handshake(socket) {
+            socket.write("hello");
+          },
+          data(socket, chunk) {
+            received.push(chunk.toString());
+            socket.end();
+          },
+          error() {},
+          close() {
+            peerClosed.resolve();
+          },
+        };
+
+        // Each side is handed a verification error that its own policy lets through.
+        using listener = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          tls: { ...tls, requestCert: true, rejectUnauthorized: false },
+          socket: side === "Bun.listen" ? keeper : other,
+        });
+        await Bun.connect({
+          hostname: "127.0.0.1",
+          port: listener.port,
+          tls: { rejectUnauthorized: false },
+          socket: side === "Bun.connect" ? keeper : other,
+        });
+        await Promise.all([keeperClosed.promise, peerClosed.promise]);
+
+        expect({ events, received }).toEqual({ events: ["error: " + code, "data", "close"], received: ["answer"] });
+      },
+    );
+
+    // The report of a handshake that did not complete admits nobody, so a throw
+    // from it changes nothing: the close that is under way keeps its own kind.
+    // Here the socket's own close fails the handshake, and the peer is plain
+    // TCP: it sees a reset for terminate() and a FIN for end() and close().
+    const closers = ["terminate", "end", "close"] as const;
+    it.each(closers.flatMap(closer => (["handshake", "open"] as const).map(guard => ({ closer, guard }))))(
+      "Bun.connect over TLS: $closer() before the handshake ends, $guard() throws",
+      async ({ closer, guard }) => {
+        const events: string[] = [];
+        const peerEvents: string[] = [];
+        const refuserClosed = Promise.withResolvers<void>();
+        const peerClosed = Promise.withResolvers<void>();
+        using listener = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            data() {},
+            end() {
+              peerEvents.push("end");
+            },
+            error() {},
+            close(_socket, err) {
+              peerEvents.push(err ? "close: " + (err as NodeJS.ErrnoException).code : "close");
+              peerClosed.resolve();
+            },
+          },
+        });
+        // connect() resolves when the TCP connection opens. The peer never answers, so the handshake cannot end.
+        const socket = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: listener.port,
+          tls: { rejectUnauthorized: false },
+          socket: {
+            [guard](_socket: AnySocket, success?: boolean) {
+              events.push(guard === "handshake" ? `handshake(${success})` : "open");
+              throw new Error("peer refused");
+            },
+            data() {},
+            error(_socket, err) {
+              events.push("error: " + err.message);
+            },
+            close() {
+              events.push("close");
+              refuserClosed.resolve();
+            },
+          },
+        });
+        socket[closer]();
+        const written = socket.write("secret");
+        await Promise.all([refuserClosed.promise, peerClosed.promise]);
+
+        expect({ events, written, peerEvents }).toEqual({
+          events: [guard === "handshake" ? "handshake(false)" : "open", "error: peer refused", "close"],
+          written: -1,
+          peerEvents: closer === "terminate" ? ["close: ECONNRESET"] : ["end", "close"],
+        });
+      },
+    );
+  });
+
+  // With no `error` handler the throw is an uncaught exception, and the
+  // socket is closed all the same. An 'uncaughtException' listener keeps the
+  // process. Without one it exits 1, so only data decrypted in the read
+  // that ended the handshake could still reach `data`.
+  describe.concurrent("with no error handler", () => {
+    const uncaughtDoors = [
+      { side: "Bun.listen", transport: "TLSv1.3", guard: "open", handler: "nothing" },
+      { side: "Bun.connect", transport: "TLSv1.2", guard: "handshake", handler: "nothing" },
+      { side: "Bun.listen", transport: "TLSv1.3", guard: "handshake", handler: "an uncaughtException listener" },
+    ];
+    it.each(uncaughtDoors)("$side over $transport with $handler for errors: $guard() throws", async door => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const { side, guard, handler } = JSON.parse(process.env.TEST_DOOR);
+          const listens = handler !== "nothing";
+          if (listens) process.on("uncaughtException", err => console.log("uncaught: " + err.message));
+          const refuser = {
+            [guard]() {
+              throw new Error("peer refused");
+            },
+            data(socket) {
+              console.log("data");
+              socket.write("secret");
+            },
+            close() {
+              if (listens) console.log("close");
+            },
+          };
+          const peer = {
+            // Written from the handshake callback: it leaves with the end of this side's handshake.
+            handshake(socket) {
+              socket.write("hello");
+            },
+            data(socket, chunk) {
+              console.log("peer received " + chunk);
+              socket.end();
+            },
+            error() {},
+            close() {
+              listener.stop();
+            },
+          };
+          const listener = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            tls: JSON.parse(process.env.TEST_TLS),
+            socket: side === "Bun.listen" ? refuser : peer,
+          });
+          await Bun.connect({
+            hostname: "127.0.0.1",
+            port: listener.port,
+            tls: { rejectUnauthorized: false },
+            socket: side === "Bun.connect" ? refuser : peer,
+          });
+          `,
+        ],
+        env: {
+          ...bunEnv,
+          TEST_TLS: JSON.stringify({
+            ...tls,
+            secureOptions: door.transport === "TLSv1.2" ? cryptoConstants.SSL_OP_NO_TLSv1_3 : undefined,
+          }),
+          TEST_DOOR: JSON.stringify(door),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const exits = door.handler === "nothing";
+      if (exits) expect(stderr).toContain("peer refused");
+      expect({ stdout, exitCode }).toEqual(
+        exits ? { stdout: "", exitCode: 1 } : { stdout: "uncaught: peer refused\nclose\n", exitCode: 0 },
+      );
+    });
+  });
+
+  // A handshake can be reported from inside a JS task, here the one that
+  // resumes SNI. A loop turn nested in that task frees closed sockets at
+  // once, so `handshake` can return to a dispatcher whose socket is gone:
+  // the dispatcher must not read it again.
+  it.skipIf(!isASAN)(
+    "a handshake() that spins the loop past the close of its socket, reported from a JS task",
+    async () => {
+      using dir = tempDir("socket-handshake-spin", { "entry.js": "export default 1;" });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+        import { constants } from "node:crypto";
+        const events = [];
+        const closed = Promise.withResolvers();
+        const done = Promise.withResolvers();
+        // The two sides share no cipher, so the handshake fails as soon as SNI resumes.
+        const tls12 = { secureOptions: constants.SSL_OP_NO_TLSv1_3 };
+        const listener = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          tls: { ...JSON.parse(process.env.TEST_TLS), ...tls12, ciphers: "ECDHE-RSA-AES256-GCM-SHA384" },
+          socket: {
+            serverName(_socket, name, handle) {
+              events.push("serverName " + name);
+              setImmediate(() => {
+                handle.resumeSNI(undefined, false);
+                events.push("task returned");
+                done.resolve();
+              });
+              return true;
+            },
+            handshake(_socket, success) {
+              events.push("handshake(" + success + ")");
+              // Bun.build() turns the event loop until an async plugin setup() settles.
+              Bun.build({
+                entrypoints: ["./entry.js"],
+                plugins: [
+                  {
+                    name: "spin",
+                    async setup() {
+                      await closed.promise;
+                      events.push("spun");
+                    },
+                  },
+                ],
+              }).catch(() => {});
+              throw new Error("peer refused");
+            },
+            data() {},
+            error(_socket, err) {
+              events.push("error: " + err.message);
+            },
+            close() {
+              events.push("close");
+              closed.resolve();
+            },
+          },
+        });
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: listener.port,
+          tls: { rejectUnauthorized: false, serverName: "x.test", ...tls12, ciphers: "ECDHE-RSA-AES128-GCM-SHA256" },
+          socket: { data() {}, error() {}, close() {} },
+        }).catch(() => {});
+        await done.promise;
+        console.log(JSON.stringify(events));
+        listener.stop(true);
+        `,
+        ],
+        env: {
+          ...bunEnv,
+          TEST_TLS: JSON.stringify(tls),
+          // Symbolizing the report of a debug binary takes longer than the test timeout.
+          ASAN_OPTIONS: ((bunEnv.ASAN_OPTIONS ?? "") + ":symbolize=0").replace(/^:/, ""),
+        },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify([
+          "serverName x.test",
+          "handshake(false)",
+          "close",
+          "spun",
+          "error: peer refused",
+          "task returned",
+        ]),
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
 });
 
 it("an unref'd Bun.listen() with no other references keeps accepting across GC", async () => {

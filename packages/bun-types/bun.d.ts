@@ -7248,6 +7248,10 @@ declare module "bun" {
     /**
      * Called when the socket connects. For TLS sockets with no `handshake`
      * handler, this is called only after the handshake completes.
+     *
+     * If this throws synchronously, `error` is called and then the socket is
+     * closed. A returned promise is not awaited, so an `async` function cannot
+     * refuse the peer this way.
      */
     open?(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>, error?: Error): void | Promise<void>;
@@ -7257,6 +7261,10 @@ declare module "bun" {
 
     /**
      * Called when the TLS handshake completes.
+     *
+     * If this throws synchronously once the handshake has completed, `error` is
+     * called and then the socket is closed. A returned promise is not awaited,
+     * so an `async` function cannot refuse the peer this way.
      * @param success Whether the server authorized the connection despite `authorizationError`
      * @param authorizationError The certificate authorization error, or `null` if there was none
      */

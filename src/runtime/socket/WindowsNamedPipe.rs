@@ -886,6 +886,21 @@ impl WindowsNamedPipe {
         self.with_writer(|w| w.end());
     }
 
+    /// `close` for a peer the owner refuses: the TLS wrapper runs its close
+    /// callback before this returns and dispatches nothing it decrypts later.
+    /// A plain pipe has no wrapper and closes as `close` does.
+    pub(crate) fn refuse(&self) {
+        if self.flags.get().is_closed() {
+            return;
+        }
+        let refused = self.with_wrapper(|w| {
+            let _ = w.shutdown(true);
+        });
+        if refused.is_none() {
+            self.close();
+        }
+    }
+
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__shutdown")]
     pub(crate) fn shutdown(&self) {
         let handled = self.with_wrapper(|w| {

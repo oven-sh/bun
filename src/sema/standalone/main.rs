@@ -113,6 +113,34 @@ fn run(args: &[String]) {
                     return;
                 };
                 let path = &files[i];
+                // --shared: the files that another program would not get as it parses and binds
+                // them itself (`SharedFile`), with and without their text.
+                if args.iter().any(|a| a == "--shared") {
+                    let (options, bind_options) = Default::default();
+                    let text = disk.read_source(path.as_bytes());
+                    for keeps_text in [true, false] {
+                        let arena = session.arena();
+                        let mut file = disk.parse(arena, path.as_bytes(), &text, &atoms, &options);
+                        if keeps_text {
+                            file.text = text.clone();
+                        }
+                        let bound = bun_sema::bind::bind(&file, bind_options, &atoms, arena);
+                        let shared = bun_sema::portable::SharedFile::new(&file, &bound, &atoms);
+                        let difference = bun_sema::program::difference_for_another_program(
+                            &shared,
+                            &disk,
+                            &options,
+                            bind_options,
+                            path.as_bytes(),
+                            &file,
+                        );
+                        if let Some(field) = difference {
+                            let line = format!("{path}: {field} (text kept: {keeps_text})\n");
+                            dumped.lock().push(line);
+                        }
+                    }
+                    return;
+                }
                 let file = bun_sema_standalone::parse(session.arena(), path, &text, &atoms, false);
                 // Only parses and lowers: the cost is measured with `/usr/bin/time -l`.
                 if args.iter().any(|a| a == "--quiet") {

@@ -527,6 +527,7 @@ pub enum ScopeKind {
     PropertyType(MemberId, FnId),
 }
 
+#[derive(Copy, Clone, Debug)]
 pub struct Scope {
     pub parent: ScopeId,
     pub kind: ScopeKind,
@@ -828,6 +829,7 @@ pub enum InferPosition {
 }
 
 /// `declareSymbolEx`, where `symbol.Flags&excludes != 0`: `symbol` refused `decl`.
+#[derive(Copy, Clone, Debug)]
 pub struct Redeclaration {
     pub symbol: SymbolId,
     /// `len(symbol.Declarations)` by then.
@@ -1313,6 +1315,48 @@ fn module_required_by(hir: &File, d: VarDeclId) -> Option<Atom> {
         return None;
     }
     required_specifier(hir, init)
+}
+
+/// `BoundIn::large_tables`
+pub(crate) fn large_table_places(
+    tables: &[(u32, u32)],
+    entries: &[(Atom, SymbolId)],
+) -> impl Iterator<Item = ((TableId, Atom), u32)> {
+    let large = (0..)
+        .zip(tables)
+        .filter(|it| it.1.1 as usize > BoundBuilder::SCANNED);
+    large.flat_map(|(id, &(start, len))| {
+        let names = &entries[start as usize..(start + len) as usize];
+        (start..)
+            .zip(names)
+            .map(move |(place, entry)| ((TableId(id), entry.0), place))
+    })
+}
+
+/// `BoundIn::nested_names`, at 8 bits per name.
+pub(crate) fn nested_names_of(
+    scopes: &[Scope],
+    tables: &[(u32, u32)],
+    entries: &[(Atom, SymbolId)],
+) -> Vec<u64> {
+    let is_nested = |s: &&Scope| s.symbol.is_none() && s.parent.is_some() && s.locals.is_some();
+    let nested = || {
+        scopes
+            .iter()
+            .filter(is_nested)
+            .map(|s| tables[s.locals.idx()])
+    };
+    let count: usize = nested().map(|(_, len)| len as usize).sum();
+    if count == 0 {
+        return Vec::new();
+    }
+    let mut filter = vec![0u64; (count / 8 + 1).next_power_of_two()];
+    let names = nested().flat_map(|(start, len)| &entries[start as usize..(start + len) as usize]);
+    for &(name, _) in names {
+        let (word, bit) = bit_of_nested_name(filter.len(), name);
+        filter[word] |= bit;
+    }
+    filter
 }
 
 /// The word index and the bit for `name` in a `nested_names` of `words` words.

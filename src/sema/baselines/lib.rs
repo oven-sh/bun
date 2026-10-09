@@ -456,6 +456,16 @@ impl Host for Virtual {
     fn is_case_sensitive(&self) -> bool {
         self.is_case_sensitive
     }
+    fn share_declaration_files(&self, _: u32, _: usize) {}
+    fn stays_loaded(&self) {}
+    fn shared_file(
+        &self,
+        _: &[u8],
+        _: &[u8],
+        _: u8,
+    ) -> Option<std::sync::Arc<std::sync::OnceLock<bun_sema::portable::SharedFile>>> {
+        None
+    }
     fn parse<'s>(
         &self,
         arena: &'s bun_sema::session::Arena,

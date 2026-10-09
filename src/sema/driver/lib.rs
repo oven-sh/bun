@@ -1666,6 +1666,15 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         return report;
     }
     let is_one = by_project.len() == 1;
+    if !is_one {
+        let mut options = Vec::new();
+        for (config, ..) in &by_project {
+            let project = (config.as_ref()).and_then(|it| projects.load(disk, request, it));
+            options.extend(project.map(|it| it.options.clone()));
+        }
+        // Each of them may load more, for its references.
+        disk.share_declaration_files(variants_of_several(options.iter()), usize::MAX / 2);
+    }
     let paths_of = |files: &'_ [Vec<u8>]| -> Vec<Vec<u8>> {
         let paths = files.iter().map(|it| to_path(it, is_case_sensitive));
         paths.map(Cow::into_owned).collect()
@@ -1692,6 +1701,17 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         sort_as_one_project(&mut report);
     }
     report
+}
+
+/// `Host::share_declaration_files`
+fn variants_of_several<'a>(options: impl Iterator<Item = &'a Options>) -> u32 {
+    let (mut of_one, mut of_several) = (0u32, 0u32);
+    for it in options {
+        let variant = 1 << bun_sema::program::variant_of_files(it);
+        of_several |= of_one & variant;
+        of_one |= variant;
+    }
+    of_several
 }
 
 /// Where the files are that a check is limited to.
@@ -2059,6 +2079,20 @@ impl Host for WithOutputs<'_> {
     fn scripts_of_page(&self, page: &[u8]) -> Vec<Vec<u8>> {
         self.disk.scripts_of_page(page)
     }
+    fn share_declaration_files(&self, variants: u32, programs: usize) {
+        self.disk.share_declaration_files(variants, programs);
+    }
+    fn stays_loaded(&self) {
+        self.disk.stays_loaded();
+    }
+    fn shared_file(
+        &self,
+        path: &[u8],
+        text: &[u8],
+        variant: u8,
+    ) -> Option<Arc<std::sync::OnceLock<bun_sema::portable::SharedFile>>> {
+        self.disk.shared_file(path, text, variant)
+    }
     fn parse<'s>(
         &self,
         arena: &'s Arena,
@@ -2210,6 +2244,9 @@ fn check_with_references(
         let referenced = references[index].iter();
         pending.extend(referenced.filter(|&&it| std::mem::replace(&mut is_left_out[it], false)));
     }
+    let loaded = || (0..count).filter(|&index| !is_left_out[index] && !roots[index].is_empty());
+    let variants = variants_of_several(loaded().map(|index| &projects[index].project.options));
+    host.share_declaration_files(variants, loaded().count());
     let is_read_by_a_program = |index: usize| {
         (0..count)
             .any(|by| !is_left_out[by] && !roots[by].is_empty() && references[by].contains(&index))
@@ -2691,6 +2728,7 @@ fn check_named_files(
     if is_outdated.is_some_and(|is_outdated| is_outdated()) {
         return report;
     }
+    host.stays_loaded();
     // In an arena, so that no destructor runs for them: the session frees what they refer to all
     // at once. `Program::release` frees the little that is on the regular heap.
     let files = session.arena().alloc(files);

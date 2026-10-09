@@ -1523,6 +1523,41 @@ c/index.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'
       }
     });
 
+    // The projects of one check share what they read. `tsc -b` shares it by path alone, so there `late` and `later`
+    // get the old file too, although it has written the new one by then, and the next `tsc -b` finds the new one in all.
+    test("an old declaration file on the disk is what a project before the one that emits it sees, and no other", async () => {
+      const compilerOptions = { ...options, outDir: "dist", rootDir: "src" };
+      const config = (references: { path: string }[]) =>
+        JSON.stringify({ compilerOptions, files: ["src/index.ts"], references });
+      const names = (path: string) =>
+        `import * as lib from "${path}";\nexport const names: never = null! as keyof typeof lib;\nexport const keys: never = null! as keyof lib.Shape;\n`;
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          files: [],
+          references: [{ path: "./early" }, { path: "./lib" }, { path: "./late" }, { path: "./later" }],
+        }),
+        "lib/tsconfig.json": config([]),
+        "lib/src/index.ts": `export const fresh = "fresh" as const;\nexport interface Shape { fresh: 1 }\n`,
+        "lib/dist/index.d.ts": `export declare const stale: "stale";\nexport interface Shape { stale: 1 }\n`,
+        "early/tsconfig.json": config([]),
+        "early/src/index.ts": names("../../lib/dist/index"),
+        "late/tsconfig.json": config([{ path: "../lib" }]),
+        "late/src/index.ts": names("../../lib/src/index"),
+        "later/tsconfig.json": config([]),
+        "later/src/index.ts": names("../../lib/dist/index"),
+      });
+      const expected = `early/src/index.ts(2,14): error TS2322: Type '"stale"' is not assignable to type 'never'.
+early/src/index.ts(3,14): error TS2322: Type '"stale"' is not assignable to type 'never'.
+late/src/index.ts(2,14): error TS2322: Type '"fresh"' is not assignable to type 'never'.
+late/src/index.ts(3,14): error TS2322: Type '"fresh"' is not assignable to type 'never'.
+later/src/index.ts(2,14): error TS2322: Type '"fresh"' is not assignable to type 'never'.
+later/src/index.ts(3,14): error TS2322: Type '"fresh"' is not assignable to type 'never'.`;
+      for (const threads of ["1", "8"]) {
+        const { stdout } = await check(dir, ["--threads", threads]);
+        expect(stdout).toBe(expected);
+      }
+    });
+
     test("checks every referenced project without a build", async () => {
       using dir = monorepo();
       const { stdout, stderr, exitCode } = await check(dir);

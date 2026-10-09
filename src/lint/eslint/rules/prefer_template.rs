@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 
@@ -321,6 +322,11 @@ impl PreferTemplate {
         {
             return;
         }
+        // oxlint says nothing about what is anywhere in another concatenation: `a + f("b" + c)`
+        let is_concatenation = |_, it: Node<'a>| it.as_expr().and_then(as_concatenation).map(|_| ());
+        if cx.language().is_oxlint && cx.state.find(e.into(), is_concatenation).is_some() {
+            return;
+        }
         cx.report(e, UNEXPECTED_STRING_CONCATENATION).fix(|fixer| {
             if has_octal_or_non_octal_decimal_escape_sequence(e) {
                 return None;
@@ -339,13 +345,15 @@ impl PreferTemplate {
 
 impl Rule for PreferTemplate {
     const META: Meta = Meta::eslint("prefer-template", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    /// That a node is in a concatenation.
+    type State<'a> = AncestorMemo<'a, ()>;
 
     fn new(_: &Options) -> Self {
         PreferTemplate
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> AncestorMemo<'a, ()> {
         on.exprs([ExprTag::Binary], Self::check);
+        AncestorMemo::default()
     }
 }

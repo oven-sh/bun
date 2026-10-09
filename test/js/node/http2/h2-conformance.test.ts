@@ -2167,6 +2167,9 @@ describe("stream-reset floods (CVE-2023-44487 rapid reset, CVE-2025-8671 MadeYou
   });
 });
 
+// The RST_STREAM of close(code) carries the given code, also when a listener of close(code)
+// destroys the stream. That is the result of node main (nodejs/node#66314, its test is
+// test/parallel/test-http2-close-aborted-destroy.js). node v26.3.0 writes no RST_STREAM there.
 describe("close(code) reset code", () => {
   // One connection per test carries three streams. Stream id -> the code given to close(code).
   const codeOf: Record<number, number> = { 1: ErrorCode.NO_ERROR, 3: ErrorCode.CANCEL, 5: ErrorCode.REFUSED_STREAM };
@@ -2269,39 +2272,96 @@ describe("close(code) reset code", () => {
     }
   }
 
-  describe("server stream", () => {
-    for (const [name, attach] of Object.entries(readers)) {
-      test(`close(code) under ${name}`, async () => {
-        const server = http2.createServer();
-        await withRawClient(server, async c => {
-          server.on("stream", stream => {
-            stream.on("error", () => {});
-            attach(stream);
-            stream.close(codeOf[stream.id!]);
-            ping(c, 0);
-          });
-          c.send(Buffer.concat(sids.map(upload)));
-          await resetsThenTwoPings(c);
-          expect(resetCodes(c.frames)).toEqual(theGivenCode);
+  /** stream.rstCode of each stream at its 'close' event, in the shape of resetCodes(). */
+  function rstCodesAtClose() {
+    const codes: Record<string, number[]> = {};
+    const closed: Promise<void>[] = [];
+    return {
+      watch(stream: http2.Http2Stream) {
+        const key = `close(${codeOf[stream.id!]})`;
+        const { promise, resolve } = Promise.withResolvers<void>();
+        stream.on("close", () => {
+          codes[key] = [stream.rstCode];
+          resolve();
         });
-      });
-    }
+        closed.push(promise);
+      },
+      async all() {
+        await Promise.all(closed);
+        return codes;
+      },
+    };
+  }
 
-    test("close(code) under pipeline(stream, sink, cb) after respond()", async () => {
+  /** An 'aborted' listener throws out of close(code). The close is complete, and a second close() changes nothing. */
+  function closeUnderThrowingListener(stream: http2.Http2Stream) {
+    stream.once("aborted", () => {
+      throw new Error("boom");
+    });
+    let thrown: unknown;
+    try {
+      stream.close(codeOf[stream.id!]);
+    } catch (err) {
+      thrown = (err as Error).message;
+    }
+    stream.close(ErrorCode.ENHANCE_YOUR_CALM);
+    return { thrown, closed: stream.closed, writableEnded: stream.writableEnded };
+  }
+  const closedInSpiteOfThrow = { thrown: "boom", closed: true, writableEnded: true };
+
+  const megabyte = Buffer.alloc(1024 * 1024, "a");
+
+  describe("server stream", () => {
+    /**
+     * Runs `handler` on each of the three uploads. Each reset on the wire and each rstCode at
+     * 'close' must be the code given to close(code).
+     */
+    async function expectTheGivenCodes(handler: (stream: http2.ServerHttp2Stream) => void) {
       const server = http2.createServer();
       await withRawClient(server, async c => {
-        server.on("stream", stream => {
+        const atClose = rstCodesAtClose();
+        server.on("stream", (stream: http2.ServerHttp2Stream) => {
           stream.on("error", () => {});
-          stream.respond({ ":status": 200 });
-          pipeline(stream, discard(), () => {});
-          stream.close(codeOf[stream.id!]);
+          atClose.watch(stream);
+          handler(stream);
           ping(c, 0);
         });
         c.send(Buffer.concat(sids.map(upload)));
         await resetsThenTwoPings(c);
         expect(resetCodes(c.frames)).toEqual(theGivenCode);
+        expect(await atClose.all()).toEqual(theGivenCode);
       });
-    });
+    }
+
+    for (const [name, attach] of Object.entries(readers)) {
+      test(`close(code) under ${name}`, async () => {
+        await expectTheGivenCodes(stream => {
+          attach(stream);
+          stream.close(codeOf[stream.id!]);
+        });
+      });
+    }
+
+    const states: Record<string, (stream: http2.ServerHttp2Stream) => void> = {
+      "after respond()": stream => stream.respond({ ":status": 200 }),
+      "with a write pending": stream => {
+        stream.respond({ ":status": 200 });
+        stream.write("x");
+      },
+      "with the writable ended": stream => {
+        stream.respond({ ":status": 200 });
+        stream.end("x");
+      },
+    };
+    for (const [state, prepare] of Object.entries(states)) {
+      test(`close(code) under pipeline(stream, sink, cb) ${state}`, async () => {
+        await expectTheGivenCodes(stream => {
+          prepare(stream);
+          pipeline(stream, discard(), () => {});
+          stream.close(codeOf[stream.id!]);
+        });
+      });
+    }
 
     // The session's transport is one side of a duplexPair(), not a socket. The other side is
     // piped to a TCP socket so that the raw client can drive it.
@@ -2324,6 +2384,130 @@ describe("close(code) reset code", () => {
         expect([...new Set(c.frames.filter(isReset(1)).map(f => f.payload.readUInt32BE(0)))]).toEqual([7]);
       });
     });
+
+    // When pipeline() destroyed the stream inside close(7), _destroy has queued the reset. A second
+    // call from close() would also count against maxSessionRejectedStreams.
+    test("close(7) under pipeline(stream, sink, cb) makes one rstStream call for each stream", async () => {
+      const server = http2.createServer();
+      await withRawClient(server, async c => {
+        const calls: number[] = [];
+        let counted: object | undefined;
+        server.on("stream", stream => {
+          stream.on("error", () => {});
+          const native = (
+            stream.session as unknown as Record<symbol, { rstStream(id: number, code: number): unknown }>
+          )[Symbol.for("::bunhttp2native::")];
+          if (counted !== native) {
+            counted = native;
+            const rstStream = native.rstStream;
+            native.rstStream = function (id, code) {
+              calls.push(id);
+              return rstStream.call(this, id, code);
+            };
+          }
+          pipeline(stream, discard(), () => {});
+          stream.close(ErrorCode.REFUSED_STREAM);
+          ping(c, 0);
+        });
+        c.send(Buffer.concat(sids.map(upload)));
+        await resetsThenTwoPings(c);
+        expect(calls).toEqual(sids);
+      });
+    });
+
+    test("close(code) when an 'aborted' listener throws: one reset with that code, then 'close'", async () => {
+      const afterThrow: unknown[] = [];
+      await expectTheGivenCodes(stream => {
+        afterThrow.push(closeUnderThrowingListener(stream));
+      });
+      expect(afterThrow).toEqual(sids.map(() => closedInSpiteOfThrow));
+    });
+
+    // close(0) ends the readable first, and that emits 'readable' for a stream that was read.
+    test("close(0) when a 'readable' listener throws: the close is complete", async () => {
+      const server = http2.createServer();
+      await withRawClient(server, async c => {
+        const seen: string[] = [];
+        const { promise: closed, resolve } = Promise.withResolvers<void>();
+        server.on("stream", stream => {
+          stream.on("error", () => {});
+          stream.on("close", () => {
+            seen.push("close:" + stream.rstCode);
+            resolve();
+          });
+          stream.once("readable", () => {
+            throw new Error("boom");
+          });
+          stream.read();
+          try {
+            stream.close(ErrorCode.NO_ERROR);
+          } catch (err) {
+            seen.push("threw:" + (err as Error).message, "aborted:" + stream.aborted);
+          }
+          ping(c, 0);
+        });
+        c.send(upload(1));
+        await resetsThenTwoPings(c, [1]);
+        expect([...new Set(c.frames.filter(isReset(1)).map(f => f.payload.readUInt32BE(0)))]).toEqual([0]);
+        await closed;
+        expect(seen).toEqual(["threw:boom", "aborted:true", "close:0"]);
+      });
+    });
+
+    // HEADERS and DATA with END_STREAM arrive in one read. close(2) in the handler has returned
+    // when that END_STREAM closes the stream, so the stream is destroyed at once, with no 'end'.
+    test("close(2) in the 'stream' handler with END_STREAM in the same read: no 'end'", async () => {
+      const server = http2.createServer();
+      await withRawClient(server, async c => {
+        const events: string[] = [];
+        const { promise: closed, resolve } = Promise.withResolvers<void>();
+        server.on("stream", stream => {
+          stream.on("error", err => events.push("error:" + (err as NodeJS.ErrnoException).code));
+          for (const name of ["aborted", "end"]) stream.on(name, () => events.push(name));
+          stream.on("close", () => {
+            events.push("close:" + stream.rstCode);
+            resolve();
+          });
+          stream.close(ErrorCode.INTERNAL_ERROR);
+        });
+        c.send(Buffer.concat([upload(1), encodeFrame(FrameType.DATA, 0x1, 1, Buffer.from("hello"))]));
+        await closed;
+        expect(events).toEqual(["aborted", "error:ERR_HTTP2_STREAM_ERROR", "close:2"]);
+      });
+    });
+
+    // The raw client never opens its window, so most of the body stays queued. The reset that
+    // drops it carries the code of close(), like the reset that node's close(0) sends at once.
+    const dropQueuedBody: Record<string, (stream: http2.ServerHttp2Stream) => void> = {
+      "end(1 MiB) then close(0) then destroy(err)": stream => {
+        stream.end(megabyte);
+        stream.close(ErrorCode.NO_ERROR);
+        stream.destroy(new Error("boom"));
+      },
+      "write(1 MiB) then close(0) with destroy(err) inside 'aborted'": stream => {
+        stream.write(megabyte);
+        stream.on("aborted", () => stream.destroy(new Error("boom")));
+        stream.close(ErrorCode.NO_ERROR);
+      },
+    };
+    for (const [name, act] of Object.entries(dropQueuedBody)) {
+      test(`${name} sends RST_STREAM(0)`, async () => {
+        const server = http2.createServer();
+        await withRawClient(server, async c => {
+          server.on("stream", (stream: http2.ServerHttp2Stream) => {
+            stream.on("error", () => {});
+            stream.respond({ ":status": 200 });
+            act(stream);
+            ping(c, 0);
+          });
+          c.send(upload(1));
+          await resetsThenTwoPings(c, [1]);
+          expect([...new Set(c.frames.filter(isReset(1)).map(f => f.payload.readUInt32BE(0)))]).toEqual([0]);
+        });
+      });
+    }
+
+    test.todo("close(7) on a request that is already complete sends RST_STREAM(7) (#33380)");
   });
 
   describe("client stream", () => {
@@ -2345,18 +2529,201 @@ describe("close(code) reset code", () => {
       return requests;
     }
 
+    /**
+     * Runs `handler` on each of three uploads. Each reset on the wire and each rstCode at 'close'
+     * must be the code given to close(code).
+     */
+    async function expectTheGivenCodes(handler: (req: http2.ClientHttp2Stream) => void) {
+      await withRawServer(async (client, raw) => {
+        const atClose = rstCodesAtClose();
+        for (const req of await openUploads(client, raw, sids.length)) {
+          atClose.watch(req);
+          handler(req);
+          ping(raw, 0);
+        }
+        await resetsThenTwoPings(raw);
+        expect(resetCodes(raw.frames)).toEqual(theGivenCode);
+        expect(await atClose.all()).toEqual(theGivenCode);
+      });
+    }
+
     for (const [name, attach] of Object.entries(readers)) {
       test(`close(code) under ${name}`, async () => {
-        await withRawServer(async (client, raw) => {
-          for (const req of await openUploads(client, raw, sids.length)) {
-            attach(req);
-            req.close(codeOf[req.id!]);
-            ping(raw, 0);
-          }
-          await resetsThenTwoPings(raw);
-          expect(resetCodes(raw.frames)).toEqual(theGivenCode);
+        await expectTheGivenCodes(req => {
+          attach(req);
+          req.close(codeOf[req.id!]);
         });
       });
     }
+
+    const states: Record<string, (req: http2.ClientHttp2Stream) => void> = {
+      "with a write pending": req => void req.write("x"),
+      "with the writable ended": req => void req.end("x"),
+    };
+    for (const [state, prepare] of Object.entries(states)) {
+      test(`close(code) under pipeline(stream, sink, cb) ${state}`, async () => {
+        await expectTheGivenCodes(req => {
+          prepare(req);
+          pipeline(req, discard(), () => {});
+          req.close(codeOf[req.id!]);
+        });
+      });
+    }
+
+    test("close(code) when an 'aborted' listener throws: one reset with that code, then 'close'", async () => {
+      const afterThrow: unknown[] = [];
+      await expectTheGivenCodes(req => {
+        afterThrow.push(closeUnderThrowingListener(req));
+      });
+      expect(afterThrow).toEqual(sids.map(() => closedInSpiteOfThrow));
+    });
+
+    // The 'close' of a request submits the next request that waits for a stream slot. The reset of
+    // close(0) is written at 'finish', so the peer gets it before the HEADERS of that request.
+    test("close(0) under on('aborted', () => stream.destroy()): the reset precedes a queued request", async () => {
+      await withRawServer(async (client, raw) => {
+        const remoteSettings = once(client, "remoteSettings");
+        await raw.waitFor(f => f.type === FrameType.SETTINGS);
+        // SETTINGS_MAX_CONCURRENT_STREAMS = 1
+        raw.sendFrame(FrameType.SETTINGS, 0, 0, Buffer.from([0, 3, 0, 0, 0, 1]));
+        raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+        await remoteSettings;
+        const first = client.request({ ":method": "POST", ":path": "/" });
+        first.on("error", () => {});
+        await raw.waitFor(isHeaders(1));
+        const second = client.request({ ":path": "/" });
+        second.on("error", () => {});
+        const queued = second.pending;
+        first.on("aborted", () => first.destroy());
+        first.close(ErrorCode.NO_ERROR);
+        await raw.waitFor(isHeaders(3));
+        await twoPings(raw);
+        const order = raw.frames.filter(f => isReset(1)(f) || isHeaders(3)(f)).map(f => f.streamId);
+        expect({ queued, order }).toEqual({ queued: true, order: [1, 3] });
+      });
+    });
+
+    // Native rstStream(id, NGHTTP2_NO_ERROR) writes nothing for the id of a pushed stream, so
+    // destroy(err) after close(0) keeps its own code there.
+    test("pushed stream: close(0) then destroy(err) sends RST_STREAM(INTERNAL_ERROR)", async () => {
+      await withRawServer(async (client, raw) => {
+        const pushedStream = once(client, "stream");
+        client.request({ ":path": "/" }).on("error", () => {});
+        await raw.waitFor(isHeaders(1));
+        raw.sendFrame(FrameType.SETTINGS, 0, 0);
+        raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+        const promised = Buffer.alloc(4);
+        promised.writeUInt32BE(2, 0);
+        raw.sendFrame(FrameType.PUSH_PROMISE, 0x4, 1, Buffer.concat([promised, requestHeaderBlock("GET")]));
+        const [pushed] = (await pushedStream) as [http2.ClientHttp2Stream];
+        pushed.on("error", () => {});
+        pushed.close(ErrorCode.NO_ERROR);
+        pushed.destroy(new Error("boom"));
+        await resetsThenTwoPings(raw, [2]);
+        expect([...new Set(raw.frames.filter(isReset(2)).map(f => f.payload.readUInt32BE(0)))]).toEqual([2]);
+      });
+    });
+
+    // Both sessions run in this process on a duplexPair(). The server answers when it reads the
+    // END_STREAM of close(code), so its response is parsed before close(code) returns.
+    test("close(code) on an in-process transport: the response that arrives inside close() is delivered", async () => {
+      const [clientSide, serverSide] = duplexPair();
+      const server = http2.createServer();
+      server.on("stream", (stream: http2.ServerHttp2Stream) => {
+        stream.on("error", () => {});
+        stream.on("readable", () => {
+          while (stream.read() !== null);
+          if (stream.headersSent || !(stream as unknown as { _readableState: { ended: boolean } })._readableState.ended)
+            return;
+          stream.respond({ ":status": 200 });
+          stream.end("ok");
+        });
+      });
+      server.emit("connection", serverSide);
+      const client = http2.connect("http://localhost", { createConnection: () => clientSide });
+      client.on("error", () => {});
+      try {
+        const seen: Record<number, string[]> = {};
+        for (const code of [ErrorCode.INTERNAL_ERROR, ErrorCode.REFUSED_STREAM]) {
+          const streamEvent = once(server, "stream");
+          const req = client.request({ ":method": "POST", ":path": "/" });
+          await streamEvent;
+          const events: string[] = (seen[code] = []);
+          const { promise: closed, resolve } = Promise.withResolvers<void>();
+          req.on("error", err => events.push("error:" + (err as NodeJS.ErrnoException).code));
+          req.on("response", headers => events.push("response:" + headers[":status"]));
+          req.on("data", chunk => events.push("data:" + chunk));
+          for (const name of ["aborted", "end"]) req.on(name, () => events.push(name));
+          req.on("close", () => {
+            events.push("close:" + req.rstCode);
+            resolve();
+          });
+          req.close(code);
+          await closed;
+        }
+        const delivered = ["aborted", "response:200", "data:ok", "end", "error:ERR_HTTP2_STREAM_ERROR"];
+        expect(seen).toEqual({ 2: [...delivered, "close:2"], 7: [...delivered, "close:7"] });
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
+
+    // When its socket closes, the session closes each open stream with close(NGHTTP2_CANCEL). That
+    // close is complete for stream "a" too, whose 'aborted' listener throws.
+    test("socket close with a throwing 'aborted' listener: the stream closes with CANCEL", async () => {
+      const fixture = `
+        const http2 = require("node:http2");
+        const net = require("node:net");
+        const out = [];
+        process.on("uncaughtException", err => out.push("uncaught:" + err.message));
+        const server = http2.createServer();
+        server.on("sessionError", () => {});
+        let socket;
+        let streams = 0;
+        server.on("stream", stream => {
+          stream.on("error", () => {});
+          if (++streams === 2) socket.destroy();
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const port = server.address().port;
+          const client = http2.connect("http://127.0.0.1:" + port, {
+            createConnection: () => (socket = net.connect(port, "127.0.0.1")),
+          });
+          client.on("error", () => {});
+          let left = 3;
+          const done = () => {
+            if (--left === 0) {
+              console.log(JSON.stringify(out.sort()));
+              server.close();
+            }
+          };
+          client.on("close", done);
+          for (const name of ["a", "b"]) {
+            const req = client.request({ ":method": "POST", ":path": "/" });
+            req.on("error", () => {});
+            req.on("close", () => {
+              out.push(name + "-close:" + req.rstCode);
+              done();
+            });
+            if (name === "a") {
+              req.on("aborted", () => {
+                throw new Error("boom");
+              });
+            }
+          }
+        });
+      `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // stderr is in the diff for debugging. The fixture handles the exception, so it must not be there.
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: JSON.stringify(["a-close:8", "b-close:8", "uncaught:boom"]) + "\n",
+        stderr: expect.not.stringContaining("boom"),
+        exitCode: 0,
+      });
+    }, 30_000);
+
+    test.todo("close(7) with the AbortSignal of the request aborted inside 'aborted' sends RST_STREAM(7) (#42763)");
   });
 });

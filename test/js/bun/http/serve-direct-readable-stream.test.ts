@@ -861,7 +861,7 @@ describe("a pull() that outlives its own end() does not hold the request", () =>
           ),
       });
 
-      const socket = net.connect(server.port, "127.0.0.1");
+      const socket = net.connect(server.port!, "127.0.0.1");
       const received = Promise.withResolvers<number>();
       let head = "";
       let bodyBytes = -1;
@@ -1189,7 +1189,6 @@ describe("end() under transport backpressure over h3", () => {
     return Bun.serve({
       port: 0,
       tls,
-      // @ts-expect-error http3 is not in the public types yet
       http3: true,
       http1: false,
       fetch: () => new Response(body()),
@@ -1197,7 +1196,6 @@ describe("end() under transport backpressure over h3", () => {
   }
   const h3fetch = (server: any) =>
     fetch(`https://${server.hostname}:${server.port}/`, {
-      // @ts-expect-error protocol is bun-specific
       protocol: "http3",
       tls: { rejectUnauthorized: false },
     });
@@ -1333,9 +1331,9 @@ describe("close() with unflushed data writes the chunked terminator exactly once
   // the first response terminated (or right away if the server closes). Decodes
   // the first body strictly (RFC 9112 §7.1: it ends at the first last-chunk)
   // and returns whatever follows it on the connection.
-  async function exchange(server: { port: number }) {
+  async function exchange(server: Bun.Server<undefined>) {
     const { promise, resolve, reject } = Promise.withResolvers<string>();
-    const sock = net.connect(server.port, "127.0.0.1");
+    const sock = net.connect(server.port!, "127.0.0.1");
     let raw = "";
     let sentSecond = false;
     sock.setNoDelay(true);
@@ -1678,7 +1676,7 @@ describe("cancel() only runs when the client goes away", () => {
         },
       });
 
-      const socket = net.connect(server.port, "127.0.0.1");
+      const socket = net.connect(server.port!, "127.0.0.1");
       await new Promise<void>(resolve => socket.once("connect", () => resolve()));
       socket.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
       await new Promise<void>(resolve => socket.once("data", () => resolve()));
@@ -1771,12 +1769,12 @@ test("controller.close() sends the buffered bytes and ends the response once, li
 
   // One keep-alive connection and a strict parser: a stray terminating chunk or
   // a missing byte shows up as a framing error on the following response.
-  const socket = net.connect(server.port, "127.0.0.1");
+  const socket = net.connect(server.port!, "127.0.0.1");
   await new Promise<void>(resolve => socket.once("connect", () => resolve()));
   let buffered = Buffer.alloc(0);
   let wake: (() => void) | undefined;
   socket.on("data", chunk => {
-    buffered = Buffer.concat([buffered, chunk]);
+    buffered = Buffer.concat([buffered, chunk as Buffer]);
     wake?.();
   });
   const closed = new Promise<void>(resolve => socket.once("close", () => resolve()));
@@ -1963,7 +1961,7 @@ describe("close() under transport backpressure sends the buffered tail", () => {
     const chunks: Buffer[] = [];
     const done = Promise.withResolvers<void>();
     socket.on("error", done.reject);
-    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("data", chunk => chunks.push(chunk as Buffer));
     socket.on("close", () => done.resolve());
     socket.on("connect", () => {
       socket.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
@@ -2006,7 +2004,7 @@ describe("close() under transport backpressure sends the buffered tail", () => {
   test.each(modes)("over http/1.1, close() %s", async (_mode, later) => {
     const state = newState();
     using server = Bun.serve({ port: 0, idleTimeout: 0, fetch: () => new Response(body(state, later)) });
-    expect(await readPausedH1(server.port, state)).toEqual({
+    expect(await readPausedH1(server.port!, state)).toEqual({
       terminated: true,
       trailing: 0,
       length: state.bigBytes + 4,
@@ -2041,7 +2039,7 @@ describe("close() under transport backpressure sends the buffered tail", () => {
           } as any),
         ),
     });
-    expect(await readPausedH1(server.port, state)).toEqual({
+    expect(await readPausedH1(server.port!, state)).toEqual({
       terminated: true,
       trailing: 0,
       length: state.bigBytes + 4,
@@ -2059,7 +2057,7 @@ describe("close() under transport backpressure sends the buffered tail", () => {
     const state = newState();
     using server = Bun.serve({ port: 0, idleTimeout: 0, http2: true, fetch: () => new Response(body(state, later)) });
 
-    const client = await RawH2.connect(server.port, false);
+    const client = await RawH2.connect(server.port!, false);
     try {
       client.headers(1, baseHeaders("/"));
       await state.closed.promise;
@@ -2142,8 +2140,8 @@ describe("direct stream edge cases over Bun.serve", () => {
       (e: any) => ({ err: e?.code ?? e?.message ?? String(e) }),
     );
   // Opens a raw connection, reads until `until` appears in the response, then destroys the socket.
-  async function abortAfter(server: { port: number }, until: string) {
-    const sock = net.connect(server.port, "127.0.0.1");
+  async function abortAfter(server: Bun.Server<undefined>, until: string) {
+    const sock = net.connect(server.port!, "127.0.0.1");
     let raw = "";
     await new Promise<void>((resolve, reject) => {
       sock.on("connect", () => sock.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n"));
@@ -2397,7 +2395,7 @@ describe("direct stream edge cases over Bun.serve", () => {
         return new Response(req.body);
       },
     });
-    const sock = net.connect(server.port, "127.0.0.1");
+    const sock = net.connect(server.port!, "127.0.0.1");
     await new Promise<void>(resolve => sock.on("connect", () => resolve()));
     sock.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n");
     await new Promise<void>(resolve => sock.once("data", () => resolve()));

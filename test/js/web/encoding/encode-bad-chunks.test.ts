@@ -14,6 +14,7 @@ test("a chunk that cannot be converted to a string should error the streams", ()
   const ts = new TextEncoderStream();
   const writer = ts.writable.getWriter();
   const reader = ts.readable.getReader();
+  // @ts-expect-error
   const writePromise = writer.write({
     toString() {
       throw error1;

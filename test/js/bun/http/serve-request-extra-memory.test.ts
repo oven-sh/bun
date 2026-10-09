@@ -17,7 +17,7 @@ test("Bun.serve reports per-request context memory to the GC", async () => {
 
   const origin = new URL(await promise).origin;
   const report = async (): Promise<{ external: number; rss: number }> =>
-    await fetch(`${origin}/report`).then(r => r.json());
+    await fetch(`${origin}/report`).then(r => r.json() as Promise<any>);
 
   const baseline = (await report()).external;
 

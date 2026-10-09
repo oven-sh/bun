@@ -120,7 +120,7 @@ async function mtlsServer(opts: {
     });
     secure.on("secure", () => {
       const peer = secure.getPeerCertificate();
-      seen.peerCN = peer?.subject?.CN ?? "(none)";
+      seen.peerCN = (peer?.subject?.CN as string) ?? "(none)";
       opts.onSecure?.(secure);
     });
   });
@@ -129,7 +129,7 @@ async function mtlsServer(opts: {
     const upstream = net.connect(backend.port, "127.0.0.1");
     client.on("error", () => {});
     upstream.on("error", () => {});
-    client.on("data", chunk => {
+    client.on("data", (chunk: Buffer) => {
       fromClient = Buffer.concat([fromClient, chunk]);
       upstream.write(chunk);
     });

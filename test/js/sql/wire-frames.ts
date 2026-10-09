@@ -139,11 +139,6 @@ export function pgErrorResponse(fields: { S: string; C: string; M: string; [k: s
   return buf;
 }
 
-// PostgreSQL FE/BE protocol §55.7 ParameterStatus: Byte1('S') Int32(len) String(name) String(value)
-export function pgParameterStatus(name: string, value: string): Buffer {
-  return pgRaw("S", Buffer.concat([pgCString(name), pgCString(value)]));
-}
-
 // PostgreSQL FE/BE protocol §55.7 NotificationResponse: Byte1('A') Int32(len) Int32(pid) String(channel) String(payload)
 export function pgNotificationResponse(pid: number, channel: string, payload: string): Buffer {
   return pgRaw("A", Buffer.concat([pgInt32(pid), pgCString(channel), pgCString(payload)]));
@@ -237,7 +232,10 @@ export function pgParameterDescription(typeOids: number[]): Buffer {
  * onMessage(type, body) for each; returns the leftover bytes. The very first
  * frontend message (StartupMessage) has no type byte: feed it separately.
  */
-export function pgReadFrontendMessages(buffered: Buffer, onMessage: (type: number, body: Buffer) => void): Buffer {
+export function pgReadFrontendMessages<T extends ArrayBufferLike>(
+  buffered: Buffer<T>,
+  onMessage: (type: number, body: Buffer) => void,
+): Buffer<T> {
   while (buffered.length >= 5) {
     const len = buffered.readInt32BE(1);
     if (buffered.length < 1 + len) break;
@@ -384,7 +382,7 @@ export async function pgMockServer(
     };
     releases.add(release);
     socket.on("close", () => releases.delete(release));
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = Buffer.concat([buffered, chunk]);
       const out: Buffer[] = [];
       if (startup) {
@@ -431,7 +429,7 @@ export async function pgHoldingProxy(
     };
     releases.add(release);
     client.on("data", chunk => upstream.write(chunk));
-    upstream.on("data", chunk => {
+    upstream.on("data", (chunk: Buffer) => {
       buffered = Buffer.concat([buffered, chunk]);
       const out: Buffer[] = [];
       let end = 0;
@@ -797,7 +795,10 @@ export function mysqlStmtPrepareOk(seq: number, stmtId: number, numColumns: numb
 }
 
 /** Drain complete MySQL packets from `buffered`, calling onPacket(seq, payload) for each; returns the leftover bytes. */
-export function mysqlReadPackets(buffered: Buffer, onPacket: (seq: number, payload: Buffer) => void): Buffer {
+export function mysqlReadPackets<T extends ArrayBufferLike>(
+  buffered: Buffer<T>,
+  onPacket: (seq: number, payload: Buffer) => void,
+): Buffer<T> {
   while (buffered.length >= 4) {
     const len = buffered[0] | (buffered[1] << 8) | (buffered[2] << 16);
     if (buffered.length < 4 + len) break;

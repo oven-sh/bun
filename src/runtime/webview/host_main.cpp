@@ -369,7 +369,7 @@ extern "C" [[noreturn]] void Bun__WebView__hostMain(int fd)
     // ActivationPolicyAccessory so no dock tile for the host.
     auto* rt = ObjCRuntime::tryLoad();
     if (!rt->m_loaded) {
-        fprintf(stderr, "webview-host: %s\n", rt->m_loadError.utf8().data());
+        fprintf(stderr, "webview-host: %s\n", rt->m_loadError.utf8().legacyCStringPointer());
         _exit(70);
     }
 

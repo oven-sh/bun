@@ -964,6 +964,7 @@ it("Server should be able to send empty pings", async () => {
       return await promise;
     } finally {
       httpServer.closeAllConnections();
+      httpServer.close();
     }
   }
   {
@@ -1302,6 +1303,58 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     expect(await Promise.race([closed.promise, clientClosed])).toBe(1000);
   });
 
+  // server.upgrade(res, { headers }) converts `headers` after it checks that
+  // the response is still open. The conversion runs user code (a getter, a
+  // toString(), an iterator). If that code ends the response, upgrade() must
+  // return false and write nothing: the header bytes used to land after the
+  // finished response.
+  describe.each([
+    [
+      "a getter",
+      (end: () => void) => ({
+        get "x-a"() {
+          end();
+          return "1";
+        },
+      }),
+    ],
+    [
+      "a toString()",
+      (end: () => void) => ({
+        "x-a": {
+          toString() {
+            end();
+            return "1";
+          },
+        },
+      }),
+    ],
+    [
+      "an iterator",
+      (end: () => void) => ({
+        *[Symbol.iterator]() {
+          end();
+          yield ["x-a", "1"];
+        },
+      }),
+    ],
+  ])("when %s in options.headers ends the response", (_, headers) => {
+    it("returns false and writes nothing", async () => {
+      await using upgrade = await receiveUpgrade(upgradeRequest());
+      const { socket } = upgrade;
+      const internals = Symbol.for("::bunternal::");
+      const res = socket[internals];
+      const bunServer = socket.server[internals];
+
+      expect(bunServer.upgrade(res, { data: {}, headers: headers(() => res.end()) })).toBe(false);
+
+      // Anything upgrade() wrote is already on the socket. Close it so that
+      // the client sees the whole exchange.
+      socket.destroy();
+      expect(await upgrade.received()).toMatch(/^HTTP\/1\.1 200 OK\r\n(?:[^\r\n]+\r\n)*Content-Length: 0\r\n\r\n$/);
+    });
+  });
+
   it("returns without calling back when the socket was destroyed before handleUpgrade()", async () => {
     await using upgrade = await receiveUpgrade(upgradeRequest());
     const { req, socket, head } = upgrade;
@@ -1420,6 +1473,111 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
 
     expect(connections).toHaveLength(1);
     expect(await upgrade.received("\r\n\r\n")).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
+  });
+
+  // An upgrade from the request's body handler left the HTTP context marked as
+  // upgraded. The next request on any other connection of the server then
+  // stopped the parser, and requests pipelined behind it got no answer (#43163).
+  for (const [where, request, body] of [
+    ["in the same read as the head", upgradeRequest({ body: "hello" }), ""],
+    ["in a read of its own", upgradeRequest({ body: "hello" }).slice(0, -"hello".length), "hello"],
+  ] as const) {
+    it(`upgrades from the body handler with the body ${where}, and the next connection still pipelines`, async () => {
+      const server = createServer((req, res) => res.end(req.url));
+      const wss = new WebSocketServer({ noServer: true });
+      const upgraded = Promise.withResolvers<void>();
+      // Registered before the request arrives, so 'end' is armed while the
+      // parser still runs and handleUpgrade() runs from inside it.
+      server.on("upgrade", (req, socket, head) => {
+        req.on("end", () => wss.handleUpgrade(req, socket, head, () => upgraded.resolve()));
+        req.resume();
+      });
+      await using upgrade = await receiveUpgrade(request, server);
+      if (body) upgrade.client.write(body);
+      await upgraded.promise;
+      expect(await upgrade.received("\r\n\r\n")).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
+
+      // Two requests in one write on a second connection. Both get a response,
+      // and the server closes the connection after the second.
+      const other = connect((server.address() as AddressInfo).port, "127.0.0.1");
+      other.on("error", () => {});
+      let data = "";
+      other.on("data", chunk => (data += chunk.toString("latin1")));
+      const closed = new Promise<void>(resolve => other.once("close", resolve));
+      await once(other, "connect");
+      other.write("GET /one HTTP/1.1\r\nHost: x\r\n\r\nGET /two HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      await closed;
+      expect(data.match(/\/(one|two)/g)).toEqual(["/one", "/two"]);
+      wss.close();
+    });
+  }
+
+  // The bytes of the request body are not frames. The WebSocket reads from the
+  // first byte behind the body, where a client that does not wait for the 101
+  // can already have a frame (RFC 6455 4.1).
+  for (const [framing, header, body] of [
+    ["Content-Length", "Content-Length: 5", "hello"],
+    ["chunked", "Transfer-Encoding: chunked", "5\r\nhello\r\n0\r\n\r\n"],
+  ] as const) {
+    for (const where of ["in the same read as the head", "in a read of its own"] as const) {
+      it(`keeps the WebSocket of an upgrade from the body handler open, ${framing} body ${where}`, async () => {
+        const server = createServer();
+        const wss = new WebSocketServer({ noServer: true });
+        server.on("upgrade", (req, socket, head) => {
+          req.on("end", () =>
+            wss.handleUpgrade(req, socket, head, ws => ws.on("message", message => ws.send(`echo:${message}`))),
+          );
+          req.resume();
+        });
+        const head = upgradeRequest().replace("\r\n\r\n", `\r\n${header}\r\n\r\n`);
+        // FIN + text "ping", masked with a zero key.
+        const frame = Buffer.concat([Buffer.from([0x81, 0x84, 0, 0, 0, 0]), Buffer.from("ping")]);
+        const sameRead = where === "in the same read as the head";
+        await using upgrade = await receiveUpgrade(
+          sameRead ? Buffer.concat([Buffer.from(head + body), frame]) : head,
+          server,
+        );
+        if (!sameRead) upgrade.client.write(Buffer.concat([Buffer.from(body), frame]));
+        expect(await upgrade.received("echo:ping")).toContain("echo:ping");
+        wss.close();
+      });
+    }
+  }
+
+  // The parser of connection A must not take an upgrade of connection B, done
+  // from A's body handler, for an upgrade of A: the request pipelined behind
+  // A's body still gets its response, and A closes on Connection: close.
+  it("upgrades a parked request from another connection's body handler and keeps parsing that connection", async () => {
+    const wss = new WebSocketServer({ noServer: true });
+    const connections: unknown[] = [];
+    const server = createServer((req, res) => {
+      if (req.method !== "POST") return res.end(req.url);
+      req.on("end", () => {
+        wss.handleUpgrade(upgrade.req, upgrade.socket, upgrade.head, ws => connections.push(ws));
+        res.end("posted");
+      });
+      req.resume();
+    });
+    // Connection B: the Upgrade request, parked by the 'upgrade' listener.
+    await using upgrade = await receiveUpgrade(upgradeRequest(), server);
+
+    // Connection A: a POST whose 'end' upgrades B, and a request behind it.
+    const other = connect((server.address() as AddressInfo).port, "127.0.0.1");
+    other.on("error", () => {});
+    let data = "";
+    other.on("data", chunk => (data += chunk.toString("latin1")));
+    const closed = new Promise<void>(resolve => other.once("close", resolve));
+    await once(other, "connect");
+    other.write(
+      "POST /post HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello" +
+        "GET /after HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+    await closed;
+    expect(data.match(/posted|\/after/g)).toEqual(["posted", "/after"]);
+
+    expect(connections).toHaveLength(1);
+    expect(await upgrade.received("\r\n\r\n")).toStartWith("HTTP/1.1 101 Switching Protocols\r\n");
+    wss.close();
   });
 
   it("leaves a connection alone that another WebSocketServer on the same http.Server took", async () => {

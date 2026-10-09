@@ -4951,6 +4951,127 @@ it("http2 option range error messages use the options. prefix", () => {
   }
 });
 
+// node checks the session options in connect(), createServer(), createSecureServer() and
+// performServerHandshake() before it creates anything. An https connect() also runs the server
+// checks, because node builds the tls.connect() options with the server's initializeTLSOptions().
+// The fixture prints how each call ends. The expected text is the output of node v26.3.0.
+const optionChecksFixture = path.join(import.meta.dir, "http2-option-checks.fixture.js");
+const optionChecksExpected = `{ strictSingleValueFields: "yes" }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
+    every entry point
+{ strictSingleValueFields: 0 }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type number (0)
+    every entry point
+{ strictSingleValueFields: null }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received null
+    every entry point
+{ strictSingleValueFields: false }
+  no throw
+    every entry point
+{ strictSingleValueFields: undefined }
+  no throw
+    every entry point
+{ maxSessionInvalidFrames: -1 }
+  no throw
+    connect(http), connect(createConnection)
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ maxSessionInvalidFrames: 2 ** 32 }
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received 4294967296
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ maxSessionInvalidFrames: "1" }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.maxSessionInvalidFrames" property must be of type number. Received type string ('1')
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ maxSessionRejectedStreams: -1 }
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionRejectedStreams" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ unknownProtocolTimeout: -1 }
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.unknownProtocolTimeout" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ maxSessionInvalidFrames: 2 ** 32 - 1, maxSessionRejectedStreams: 2 ** 32 - 1, unknownProtocolTimeout: 0 }
+  no throw
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ settings: 1 }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.settings" property must be of type object. Received type number (1)
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ settings: null }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.settings" property must be of type object. Received null
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ settings: [] }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.settings" property must be of type object. Received an instance of Array
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ settings: function () {} }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.settings" property must be of type object. Received function settings
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ remoteCustomSettings: "x", strictSingleValueFields: "yes" }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.remoteCustomSettings" property must be an instance of Array. Received type string ('x')
+    every entry point
+{ remoteCustomSettings: [11 ids], maxSessionInvalidFrames: -1 }
+  Error [ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS]: Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS
+    every entry point
+{ settings: 1, maxSessionInvalidFrames: -1 }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.settings" property must be of type object. Received type number (1)
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ maxSessionInvalidFrames: -1, maxSessionRejectedStreams: -1 }
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ maxSessionRejectedStreams: -1, unknownProtocolTimeout: -1 }
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionRejectedStreams" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    connect(https), createServer, createSecureServer, performServerHandshake
+{ unknownProtocolTimeout: -1, strictSingleValueFields: "yes" }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
+    connect(http), connect(https), connect(createConnection)
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.unknownProtocolTimeout" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    createServer, createSecureServer, performServerHandshake
+other calls
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
+    connect("not a url", { strictSingleValueFields: "yes" })
+  TypeError [ERR_INVALID_ARG_TYPE]: The "authority" argument must be of type string or an instance of URL or Object. Received function authority
+    connect(function authority() {})
+  RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    connect({ hostname, port }, { protocol: "https:", maxSessionInvalidFrames: -1 }), connect({ hostname, port }, { maxSessionInvalidFrames: -1 })
+  no throw
+    connect({ hostname, port }, { protocol: "http:", maxSessionInvalidFrames: -1 })
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options" argument must be of type object. Received an instance of Array
+    createSecureServer([])
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options" argument must be of type object. Received function options
+    performServerHandshake(duplex, function options() {})
+  true
+    options.strictSingleValueFields that createConnection() receives
+  rejects with TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
+    promisify(connect)(http url, { strictSingleValueFields: "yes" })
+  rejects with RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received -1
+    promisify(connect)(https url, { maxSessionInvalidFrames: -1 })
+`;
+// An older node has no strictSingleValueFields option, and the macOS CI hosts can have one.
+const optionChecksNode = (() => {
+  const node = nodeExe();
+  if (!node) return null;
+  const { stdout } = Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
+  return parseInt(stdout.toString(), 10) >= 26 ? node : null;
+})();
+
+for (const [name, runtime] of [
+  ["bun", bunExe()],
+  ["node", optionChecksNode],
+]) {
+  it.skipIf(!runtime)(
+    `http2 entry points check their options like node v26 (${name})`,
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [runtime, optionChecksFixture],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: optionChecksExpected, stderr: "", exitCode: 0 });
+    },
+    // A debug build needs 3 to 5 s to start and load node:http2. Every other build keeps the default.
+    isDebug ? 15_000 : undefined,
+  );
+}
+
 it("getPackedSettings caps initialWindowSize at 2**31-1", () => {
   // The cap itself is valid.
   http2.getPackedSettings({ initialWindowSize: 2 ** 31 - 1 });
@@ -5558,6 +5679,122 @@ it("Http2SecureServer#close() calls closeIdleConnections() exactly when allowHTT
     calls[`allowHTTP1: ${allowHTTP1}`] = server.closeIdleConnections.mock.calls;
   }
   expect(calls).toEqual({ "allowHTTP1: true": [[]], "allowHTTP1: false": [] });
+});
+
+it("http2 allowHTTP1 fallback enforces maxRequestsPerSocket like http.Server", async () => {
+  const served = [];
+  const dropped = [];
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    served.push([req.url, res.maxRequestsOnConnectionReached]);
+    res.end("served");
+  });
+  // Like http.Server (and Node's Http2SecureServer), the limit is a property on the server.
+  server.maxRequestsPerSocket = 1;
+  server.on("dropRequest", (req, socket) => dropped.push([req.url, socket.encrypted === true]));
+  await new Promise(resolve => server.listen(0, resolve));
+  let socket;
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    socket = tls.connect(
+      { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () => socket.write("GET /1 HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+    );
+    const chunks = [];
+    let sentSecond = false;
+    socket.on("error", reject);
+    socket.on("data", chunk => {
+      chunks.push(chunk);
+      if (!sentSecond && Buffer.concat(chunks).toString("latin1").endsWith("served")) {
+        // The first response is complete; send the over-limit request. Its Connection: close
+        // makes the server end the connection after answering it, which resolves the promise.
+        sentSecond = true;
+        socket.write("GET /2 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      }
+    });
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString("latin1")));
+    const raw = await promise;
+    expect([...raw.matchAll(/HTTP\/1\.1 (\d+) /g)].map(match => match[1])).toEqual(["200", "503"]);
+    // The first response is the one that reaches the limit, so it already advertises close.
+    expect(raw.slice(0, raw.indexOf("\r\n\r\n") + 4)).toContain("\r\nConnection: close\r\n");
+    expect(served).toEqual([["/1", true]]);
+    expect(dropped).toEqual([["/2", true]]);
+  } finally {
+    socket?.destroy();
+    server.close();
+  }
+});
+
+// Sends a request with two Authorization and two Cookie lines over a TLS connection that negotiated
+// http/1.1 (the allowHTTP1 fallback) and returns what the handler saw, plus the option as stored on
+// the server.
+async function duplicateHeadersSeenOverAllowHTTP1(options) {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true, ...options }, (req, res) => {
+    res.end(JSON.stringify({ authorization: req.headers.authorization, cookie: req.headers.cookie }));
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const socket = tls.connect(
+      { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () =>
+        socket.write(
+          "GET / HTTP/1.1\r\nHost: localhost\r\n" +
+            "Authorization: one\r\nAuthorization: two\r\n" +
+            "Cookie: a=1\r\nCookie: b=2\r\n" +
+            "Connection: close\r\n\r\n",
+        ),
+    );
+    const chunks = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    const raw = await promise;
+    expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+    return { server: server.joinDuplicateHeaders, ...JSON.parse(raw.slice(raw.indexOf("\r\n\r\n") + 4)) };
+  } finally {
+    server.close();
+  }
+}
+
+it("http2 allowHTTP1 fallback applies joinDuplicateHeaders from options or options.http1Options like Node", async () => {
+  // Authorization is one of the headers Node keeps only the first value of unless the option is
+  // set; Cookie is joined either way. Node reads the option through
+  // storeHTTPOptions({ ...options, ...options.http1Options }), so http1Options takes precedence.
+  const joined = { authorization: "one, two", cookie: "a=1; b=2" };
+  const firstValueWins = { authorization: "one", cookie: "a=1; b=2" };
+  expect(
+    await Promise.all([
+      duplicateHeadersSeenOverAllowHTTP1({ joinDuplicateHeaders: true }),
+      duplicateHeadersSeenOverAllowHTTP1({ http1Options: { joinDuplicateHeaders: true } }),
+      duplicateHeadersSeenOverAllowHTTP1({ joinDuplicateHeaders: true, http1Options: { joinDuplicateHeaders: false } }),
+      duplicateHeadersSeenOverAllowHTTP1({ joinDuplicateHeaders: false }),
+      duplicateHeadersSeenOverAllowHTTP1({}),
+    ]),
+  ).toEqual([
+    { server: true, ...joined },
+    { server: true, ...joined },
+    { server: false, ...firstValueWins },
+    { server: false, ...firstValueWins },
+    { server: undefined, ...firstValueWins },
+  ]);
+});
+
+it("http2 createSecureServer type-checks joinDuplicateHeaders only when allowHTTP1 is set, like Node", () => {
+  for (const [options, received] of [
+    [{ joinDuplicateHeaders: "yes" }, "type string ('yes')"],
+    [{ http1Options: { joinDuplicateHeaders: 1 } }, "type number (1)"],
+  ]) {
+    expect(() => {
+      http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true, ...options });
+    }).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `The "options.joinDuplicateHeaders" property must be of type boolean. Received ${received}`,
+      }),
+    );
+    // Without allowHTTP1 there is no HTTP/1 side to configure: Node neither validates nor stores it.
+    expect(Object.hasOwn(http2.createSecureServer({ ...TLS_CERT, ...options }), "joinDuplicateHeaders")).toBe(false);
+  }
 });
 
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
@@ -6328,4 +6565,29 @@ describe("frames issued from inside a user-supplied Duplex transport's _write", 
       }
     },
   );
+});
+
+it("originSet is undefined on a destroyed TLS session that never read it", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: false });
+  const { promise: listening, resolve: onListening } = Promise.withResolvers();
+  server.listen(0, onListening);
+  await listening;
+  try {
+    const client = http2.connect(`https://localhost:${server.address().port}`, TLS_OPTIONS);
+    const { promise: connected, resolve: onConnect, reject } = Promise.withResolvers();
+    client.on("error", reject);
+    client.on("connect", onConnect);
+    await connected;
+    const { promise: closed, resolve: onClose } = Promise.withResolvers();
+    client.on("close", onClose);
+    client.destroy();
+    await closed;
+    expect({ encrypted: client.encrypted, destroyed: client.destroyed, originSet: client.originSet }).toEqual({
+      encrypted: true,
+      destroyed: true,
+      originSet: undefined,
+    });
+  } finally {
+    server.close();
+  }
 });

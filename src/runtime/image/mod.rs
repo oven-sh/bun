@@ -15,37 +15,37 @@
 // one `codecs::Error` type at every boundary.
 
 #[path = "codecs.rs"]
-pub mod codecs;
+pub(crate) mod codecs;
 
 #[path = "codec_jpeg.rs"]
-pub mod codec_jpeg;
+pub(crate) mod codec_jpeg;
 
 #[path = "codec_png.rs"]
-pub mod codec_png;
+pub(crate) mod codec_png;
 
 #[path = "codec_webp.rs"]
-pub mod codec_webp;
+pub(crate) mod codec_webp;
 
 #[path = "codec_bmp.rs"]
-pub mod codec_bmp;
+pub(crate) mod codec_bmp;
 
 #[path = "codec_gif.rs"]
-pub mod codec_gif;
+pub(crate) mod codec_gif;
 
 #[cfg(target_os = "macos")]
 #[path = "backend_coregraphics.rs"]
-pub mod backend_coregraphics;
+pub(crate) mod backend_coregraphics;
 
 #[path = "backend_wic.rs"]
-pub mod backend_wic;
+pub(crate) mod backend_wic;
 
 // ─── pure helpers (no jsc / no FFI sys deps) ─────────────────────────────────
 #[path = "exif.rs"]
-pub mod exif;
+pub(crate) mod exif;
 #[path = "quantize.rs"]
-pub mod quantize;
+pub(crate) mod quantize;
 #[path = "thumbhash.rs"]
-pub mod thumbhash;
+pub(crate) mod thumbhash;
 
 // ─── JS-facing `Image` class + pipeline task ─────────────────────────────────
 //
@@ -57,7 +57,5 @@ pub mod thumbhash;
 // directly — codegen addresses the defining module, not the flattened re-export.
 
 #[path = "Image.rs"]
-pub mod image_body;
-pub use image_body::{
-    Deliver, Fit, Image, Input, Kind, Modulate, Pipeline, PipelineTask, Resize, Source, TaskResult,
-};
+pub(crate) mod image_body;
+pub(crate) use image_body::Image;

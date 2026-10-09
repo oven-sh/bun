@@ -206,7 +206,8 @@ impl<'a> Context<'a, '_> {
             let second = match &second {
                 Some(second) => second,
                 None => {
-                    let second = second.insert(self.angular_html_parser_parse(range, &options, false)?);
+                    let second =
+                        second.insert(self.angular_html_parser_parse(range, &options, false)?);
                     second.errors.sort_unstable();
                     candidate = self.tree.first_child(second.root);
                     &*second
@@ -223,11 +224,14 @@ impl<'a> Context<'a, '_> {
                 return Err(ParseError::Syntax);
             }
             // `getElementWithSameLocation`. Both lists are in the order of the text.
-            while let Some(other) = candidate.filter(|&it| self.tree[it].span.start < start_span.start) {
+            while let Some(other) =
+                candidate.filter(|&it| self.tree[it].span.start < start_span.start)
+            {
                 candidate = self.tree.next(other);
             }
             if let Some(same) = candidate.filter(|&it| {
-                self.tree[it].kind == Kind::Element && self.tree[it].start_span.start == start_span.start
+                self.tree[it].kind == Kind::Element
+                    && self.tree[it].start_span.start == start_span.start
             }) {
                 candidate = self.tree.next(same);
                 self.tree.remove(same);

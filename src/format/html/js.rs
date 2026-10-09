@@ -193,7 +193,10 @@ fn write_statements<'b>(file: &'b File<'b>, f: &mut Formatter<'b>) {
         .body()
         .iter()
         .all(|it| matches!(it.kind(), StmtKind::Empty));
-    write_hashbang(is_all_empty && f.comments().unprinted_comments().is_empty(), f);
+    write_hashbang(
+        is_all_empty && f.comments().unprinted_comments().is_empty(),
+        f,
+    );
     if is_all_empty && (!file.body().is_empty() || f.options().in_html.is_in_attribute) {
         let comments = f.comments().unprinted_comments();
         let indent = DanglingIndentMode::None;

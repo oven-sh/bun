@@ -54,8 +54,8 @@ printed on stderr, the counts, and for each kind of difference (a rule and who r
   since the texts of `bun lint` are ESLint's, and the number of files.
 - **`fix`**: both with `--fix`, each on a copy. The files that were changed, byte for byte.
 - **`format`**: `--list-different`, then both write, each on a copy: the files that were changed, byte for byte. Which files
-  each reads: Prettier prints them; for `bun format`, empty lines are appended to every tracked file of a copy, which makes
-  `--list-different` name each file that it reads.
+  each reads: Prettier prints them; for `bun format` and oxfmt, empty lines are appended to every tracked file of a copy, which
+  makes `--list-different` name each file that it reads. "Same bytes, other files" is a verdict of its own.
 - **The judge** is their installed version for ESLint; where the results differ, ESLint 10.12.0, which `bun lint` follows,
   runs too, with their configuration and plugins, to tell what ESLint has changed since from what we get wrong. For Prettier it is 3.9.9, which `bun format` follows, next to their
   version: a repository on Prettier 2 differs for reasons that are in Prettier's changelog. For oxlint and oxfmt it is the

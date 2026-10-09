@@ -120,7 +120,8 @@ async function inCopy(
   label: string,
   command: Pick<Command, "cmd" | "env"> & { cwd?: string; upper?: string; perf?: boolean; seconds?: number },
 ): Promise<Outcome> {
-  const base = join(work, ".runs", nameOf(entry.repo), `${label}-${serial++}`);
+  // The process is in the name: `--exec` may run next to another one in the same repository.
+  const base = join(work, ".runs", nameOf(entry.repo), `${label}-${process.pid}-${serial++}`);
   const [upper, out] = [command.upper ?? ownDirectory(join(base, "upper")), ownDirectory(join(base, "out"))];
   const clone = cloneOf(entry.repo);
   const code = await sandboxed({
@@ -224,8 +225,11 @@ async function install(entry: Entry) {
   const extra = entry.installArgs ?? [];
   const root = cloneOf(entry.repo);
   // Their version of pnpm. Not through corepack: the one that comes with Node.js does not know how to start pnpm 12.
+  // Without `packageManager`: the last version that reads the format of their lock file.
+  const lockVersion = /^lockfileVersion: '?(\d+)/m.exec(read(join(root, "pnpm-lock.yaml")).slice(0, 200))?.[1];
   const pnpm =
-    /^pnpm@([\w.-]+)/.exec(JSON.parse(read(join(root, "package.json")) || "{}").packageManager ?? "")?.[1] ?? "latest";
+    /^pnpm@([\w.-]+)/.exec(JSON.parse(read(join(root, "package.json")) || "{}").packageManager ?? "")?.[1] ??
+    (lockVersion === "6" ? "8.15.9" : lockVersion === "5" ? "7.33.7" : "latest");
   if (entry.install === "pnpm") await installTools(pinnedTool("pnpm", pnpm), { pnpm });
   // A lock file of another package manager is read, and counts as changed.
   const theirLock = (
@@ -348,7 +352,13 @@ function parse<T>(path: string): T | null {
   try {
     const text = readFileSync(path, "utf8");
     // oxlint prints what plugins print before the report.
-    return JSON.parse(text.startsWith("{") || text.startsWith("[") ? text : text.slice(text.search(/^[[{]/m)));
+    const report = text.startsWith("{") || text.startsWith("[") ? text : text.slice(text.search(/^[[{]/m));
+    try {
+      return JSON.parse(report);
+    } catch {
+      // With `TIMING=1` ESLint prints a table after the report, which is one line.
+      return JSON.parse(report.slice(0, report.indexOf("\n")));
+    }
   } catch {
     return null;
   }
@@ -357,6 +367,36 @@ function parse<T>(path: string): T | null {
 /** The lines on stderr that say what was skipped, without the numbers that change from run to run. */
 const warnings = (stderr: string) =>
   [...new Set(stderr.split("\n").filter(it => /^(warn|error):/.test(it)))].slice(0, 40);
+
+/** The plugins whose rules are on, with how many: from `--print-config` of their ESLint for one linted file of each extension. */
+async function pluginsOf(entry: Entry, run: Run, eslint: string, results: { filePath: string }[]) {
+  const samples = new Map<string, string>();
+  for (const { filePath } of results) {
+    const extension = /\.[^./]+$/.exec(filePath)?.[0] ?? "";
+    if (!samples.has(extension) && samples.size < 5) samples.set(extension, filePath);
+  }
+  const at = run.args.findIndex(it => it === "-c" || it === "--config");
+  const config = at >= 0 ? run.args.slice(at, at + 2) : run.args.filter(it => it.startsWith("--config="));
+  const plugins: Record<string, number> = {};
+  for (const file of samples.values()) {
+    const it = await inCopy(entry, "config", {
+      cmd: [eslint, ...config, "--print-config", file],
+      cwd: run.cwd,
+      env: run.env,
+    });
+    const rules = parse<{ rules?: Record<string, unknown> }>(it.stdout)?.rules ?? {};
+    const counts: Record<string, number> = {};
+    for (const [name, value] of Object.entries(rules)) {
+      const severity = Array.isArray(value) ? value[0] : value;
+      if (severity === 0 || severity === "off") continue;
+      const plugin = name.includes("/") ? name.slice(0, name.lastIndexOf("/")) : "(core)";
+      counts[plugin] = (counts[plugin] ?? 0) + 1;
+    }
+    for (const [plugin, count] of Object.entries(counts)) plugins[plugin] = Math.max(plugins[plugin] ?? 0, count);
+    removeRuns(it.out);
+  }
+  return plugins;
+}
 
 async function lint(entry: Entry, run: Run) {
   const their = theirTool(entry, run);
@@ -419,6 +459,7 @@ async function lint(entry: Entry, run: Run) {
     theirs: summary(theirs),
     ours: summary(ours),
     warnings: warnings(read(ours.stderr)),
+    plugins: run.tool === "eslint" && a ? await pluginsOf(entry, run, their.path, a) : undefined,
     // What `--timing` prints, above all how much JavaScript the plugins are.
     timing: read(ours.stderr)
       .split("\n")
@@ -574,15 +615,24 @@ async function format(entry: Entry, run: Run) {
     env,
     upper: perturbed.upper,
   });
+  // Prettier names each file as it writes. oxfmt is asked as we are.
+  const theirFiles =
+    run.tool === "oxfmt"
+      ? await inCopy(entry, "theirs-files", {
+          cmd: commandOf(run, [their.path], ["--list-different", ...theirArgs]),
+          cwd: run.cwd,
+          env: run.env,
+          upper: perturbed.upper,
+        })
+      : null;
   const read_ = {
-    // `a.js 12ms`, `a.js 12ms (unchanged)`
-    theirs:
-      run.tool === "prettier"
-        ? lines(read(judgeWrite.stdout)).flatMap(it => /^(.*) \d+ms(?: \(unchanged\))?$/.exec(it)?.[1] ?? [])
-        : null,
+    theirs: theirFiles
+      ? lines(read(theirFiles.stdout))
+      : // `a.js 12ms`, `a.js 12ms (unchanged)`
+        lines(read(judgeWrite.stdout)).flatMap(it => /^(.*) \d+ms(?: \(unchanged\))?$/.exec(it)?.[1] ?? []),
     ours: lines(read(ourFiles.stdout)),
   };
-  const theirSet = new Set(read_.theirs ?? []);
+  const theirSet = new Set(read_.theirs);
   const ourSet = new Set(read_.ours);
 
   const trees = [theirWrite, judgeWrite, ourWrite].map(it => changedFiles(entry, it.upper));
@@ -601,7 +651,7 @@ async function format(entry: Entry, run: Run) {
       onlyOurs: [...b].filter(it => !a.has(it)).slice(0, 40),
     },
     write: { theirs: summary(theirWrite), judge: summary(judgeWrite), ours: summary(ourWrite) },
-    files: read_.theirs && {
+    files: {
       theirs: theirSet.size,
       ours: ourSet.size,
       onlyTheirs: byExtension([...theirSet].filter(it => !ourSet.has(it))),
@@ -615,15 +665,20 @@ async function format(entry: Entry, run: Run) {
     againstTheirs: treeResult(againstTheirs, trees[0], trees[2], entry),
     againstJudge: judged ? treeResult(againstJudge, trees[1], trees[2], entry) : null,
     verdict:
-      theirWrite.code > 2 || theirWrite.code < 0
+      // Prettier that cannot load a plugin or a configuration file reads no file.
+      theirWrite.code > 2 || theirWrite.code < 0 || (judgeWrite.code !== 0 && read_.theirs.length === 0)
         ? "cannot run: theirs"
-        : clean(againstJudge) && judgeWrite.code === ourWrite.code
-          ? "identical"
-          : "differs",
+        : !clean(againstJudge) || judgeWrite.code !== ourWrite.code
+          ? "differs"
+          : theirSet.size === ourSet.size && [...theirSet].every(it => ourSet.has(it))
+            ? "identical"
+            : "same bytes, other files",
     verdictAgainstTheirs: clean(againstTheirs) && theirWrite.code === ourWrite.code ? "identical" : "differs",
   };
   if (!flags.has("keep")) {
-    for (const it of [theirCheck, ourCheck, theirWrite, judgeWrite, ourWrite, perturbed, ourFiles]) removeRuns(it.out);
+    for (const it of [theirCheck, ourCheck, theirWrite, judgeWrite, ourWrite, perturbed, ourFiles, theirFiles]) {
+      if (it) removeRuns(it.out);
+    }
   }
   return result;
 }
@@ -865,7 +920,22 @@ function tables() {
     );
     text += "\n";
   }
-  const timed = results.flatMap(result => (result.time ?? []).map((run: any) => ({ result, run })));
+  // The best of three where the `time` stage has run, else the one run of the comparison. Only where both have done the work.
+  const timed = results.flatMap(result => {
+    if (result.time?.length) return result.time.map((run: any) => ({ result, run }));
+    const once = (tool: string, cwd: string, theirs: any, ours: any) => ({
+      result,
+      run: { tool, cwd, theirs: { ...theirs, rounds: 1 }, ours: { ...ours, rounds: 1 } },
+    });
+    return [
+      ...(result.lint ?? [])
+        .filter((it: any) => !it.verdict.startsWith("cannot run"))
+        .map((it: any) => once(it.tool, it.cwd, it.theirs, it.ours)),
+      ...(result.format ?? [])
+        .filter((it: any) => !it.verdict.startsWith("cannot run"))
+        .map((it: any) => once(it.tool, it.cwd, it.check.theirs, it.check.ours)),
+    ];
+  });
   for (const [title, unit, of] of [
     ["Wall time", "s", (it: any) => it.seconds],
     ["CPU time", "s", (it: any) => it.user],
@@ -874,10 +944,11 @@ function tables() {
   ] as const) {
     text += `## ${title}\n\n`;
     text += table(
-      ["Repository", "Tool", `theirs (${unit})`, `ours (${unit})`, "Ratio"],
+      ["Repository", "Tool", "Runs", `theirs (${unit})`, `ours (${unit})`, "Ratio"],
       timed.map(({ result, run }) => [
         label(result, run),
         run.tool,
+        run.theirs.rounds,
         of(run.theirs),
         of(run.ours),
         ratio(of(run.theirs), of(run.ours)),
@@ -951,7 +1022,7 @@ async function one(entry: Entry) {
       result[stage] = [];
       for (const run of runs) {
         const it = await with_(entry, run);
-        (result[stage] as unknown[]).push(it);
+        (result[stage] as unknown[]).push({ ...it, revision });
         say(`${stage} ${run.tool} ${run.cwd ?? ""}: ${it.verdict}`);
       }
       Object.assign(result, { revision });

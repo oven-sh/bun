@@ -9,6 +9,8 @@
 // https://github.com/oven-sh/bun/issues/32155
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { join } from "node:path";
 
 const adapters: [string, () => SQL][] = [
   ["sqlite", () => new SQL("sqlite://:memory:")],
@@ -148,6 +150,130 @@ describe.each(distributedAdapters)("%s distributed transaction name validation",
       expect(err).toBeInstanceOf(Error);
       expect(err.message).toBe("Distributed transaction name must be a string.");
     }
+  });
+});
+
+// sql.unsafe() and sql.file() take their values as an array, and only undefined and null mean
+// "no values". Any other value goes to the adapter: 0, false and "" like 5, true and "abc".
+
+// bun:sqlite takes one scalar as one positional value.
+describe.each([false, true])("sqlite direct unsafe() values (strict: %p)", strict => {
+  // [values, what SQLite stores, its type]
+  const scalars: [unknown, unknown, string][] = [
+    [0, 0, "integer"],
+    [-0, -0, "real"],
+    [false, 0, "integer"],
+    ["", "", "text"],
+    [0n, 0, "integer"],
+    [5, 5, "integer"],
+    [true, 1, "integer"],
+    ["abc", "abc", "text"],
+    [1n, 1, "integer"],
+    // bun:sqlite binds NaN as NULL.
+    [NaN, null, "null"],
+  ];
+  const makeDb = async () => {
+    const db = new SQL({ adapter: "sqlite", filename: ":memory:", strict });
+    await db`CREATE TABLE scalars (v)`;
+    return db;
+  };
+
+  test.each(scalars)("a scalar %p binds as one positional value", async (value, stored, type) => {
+    await using db = await makeDb();
+    const select = () => db.unsafe("SELECT ? AS v, typeof(?1) AS type", value as any);
+    expect(await select()).toEqual([{ v: stored, type }]);
+    expect(await select().execute()).toEqual([{ v: stored, type }]);
+    expect(await select().values()).toEqual([[stored, type]]);
+
+    // A statement that returns no rows takes the other path of the adapter, db.run().
+    await db.unsafe("INSERT INTO scalars (v) VALUES (?)", value as any);
+    expect(await db`SELECT v, typeof(v) AS type FROM scalars`).toEqual([{ v: stored, type }]);
+  });
+
+  test("sql.file, tx.unsafe and tx.file bind a falsy scalar", async () => {
+    await using db = await makeDb();
+    using dir = tempDir("sqlite-unsafe-scalar", {
+      "select.sql": "SELECT ? AS v",
+      "insert.sql": "INSERT INTO scalars (v) VALUES (?)",
+    });
+    const file = (name: string) => join(String(dir), name);
+
+    expect(await db.file(file("select.sql"), 0 as any)).toEqual([{ v: 0 }]);
+    await db.begin(async tx => {
+      expect(await tx.unsafe("SELECT ? AS v", "" as any)).toEqual([{ v: "" }]);
+      expect(await tx.file(file("select.sql"), false as any)).toEqual([{ v: 0 }]);
+      await tx.unsafe("INSERT INTO scalars (v) VALUES (?)", 0 as any);
+      await tx.file(file("insert.sql"), "" as any);
+    });
+    expect(await db`SELECT v FROM scalars ORDER BY rowid`).toEqual([{ v: 0 }, { v: "" }]);
+  });
+
+  // One scalar is one value, and bun:sqlite takes it only for a statement with one parameter.
+  test("a falsy scalar is rejected like a truthy one when the statement does not have one parameter", async () => {
+    await using db = await makeDb();
+    const outcome = (query: PromiseLike<unknown>) =>
+      query.then(
+        rows => rows,
+        e => e.message,
+      );
+    for (const value of [0, false, "", 0n, 5]) {
+      expect({
+        value,
+        noParameter: await outcome(db.unsafe("INSERT INTO scalars (v) VALUES ('k')", value as any)),
+        twoParameters: await outcome(db.unsafe("INSERT INTO scalars (v) VALUES (?), (?)", value as any)),
+        twoParametersAndRows: await outcome(db.unsafe("SELECT ? AS a, ? AS b", value as any)),
+        // A statement that has no parameter and returns rows does not look at its values.
+        noParameterAndRows: await outcome(db.unsafe("SELECT 1 AS a", value as any)),
+      }).toEqual({
+        value,
+        noParameter: "SQLite query expected 0 values, received 1",
+        twoParameters: "SQLite query expected 2 values, received 1",
+        twoParametersAndRows: "SQLite query expected 2 values, received 1",
+        noParameterAndRows: [{ a: 1 }],
+      });
+    }
+    expect(await db`SELECT count(*) AS count FROM scalars`).toEqual([{ count: 0 }]);
+  });
+
+  test("undefined, null and an empty array still mean no values", async () => {
+    await using db = await makeDb();
+    for (const values of [undefined, null, []]) {
+      await db.unsafe("INSERT INTO scalars (v) VALUES ('k')", values as any);
+    }
+    expect(await db`SELECT count(*) AS count FROM scalars`).toEqual([{ count: 3 }]);
+  });
+});
+
+// PostgreSQL and MySQL reject it when the query starts, before they dial.
+const serverAdapters = adapters.filter(([adapter]) => adapter !== "sqlite");
+
+describe.each(serverAdapters)("%s direct unsafe() values", (_adapter, makeSql) => {
+  const rejected = "values must be an array";
+  const outcome = (query: PromiseLike<unknown>) =>
+    query.then(
+      () => "resolved",
+      e => e.message,
+    );
+
+  test.each([0, -0, NaN, false, "", 0n, 5, true, "abc", 1n])("a scalar %p is rejected", async value => {
+    await using sql = makeSql();
+    using dir = tempDir("sql-unsafe-values", { "query.sql": "SELECT 1" });
+    const query = () => sql.unsafe("SELECT 1", value as any);
+    expect({
+      await: await outcome(query()),
+      execute: await outcome(query().execute()),
+      values: await outcome(query().values()),
+      raw: await outcome(query().raw()),
+      run: await outcome((query() as any).run()),
+      file: await outcome(sql.file(join(String(dir), "query.sql"), value as any)),
+    }).toEqual({
+      await: rejected,
+      execute: rejected,
+      values: rejected,
+      raw: rejected,
+      run: rejected,
+      file: rejected,
+    });
   });
 });
 

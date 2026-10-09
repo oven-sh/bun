@@ -395,8 +395,8 @@ function normalizeQuery(
   binding_idx = 1,
 ): [string, unknown[]] {
   if (typeof strings === "string") {
-    // identifier or unsafe query
-    return [strings, values || []];
+    // identifier or unsafe query. Only null and undefined mean "no values": 0, false and "" go to the adapter.
+    return [strings, values ?? []];
   }
 
   if (!$isArray(strings)) {
@@ -422,7 +422,7 @@ function normalizeQuery(
         const value = values[i];
 
         if (value instanceof Query) {
-          // Checked before the recursion: its string arm turns 0, false and "" into []. $isArray covers a Proxy.
+          // Only an array can be merged by index below. $isArray covers a Proxy.
           const fragment_values = (value as QueryType<any, any>)[_values];
           if (!$isJSArray(fragment_values) && fragment_values != null && !$isArray(fragment_values)) {
             throw new SyntaxError(

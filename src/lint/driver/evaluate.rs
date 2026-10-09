@@ -21,6 +21,7 @@ const MARKER: &[u8] = b"\x1e--bun-lint-configuration--\x1e";
 /// For `eslint.config.*` and `oxlint.config.ts`.
 pub(crate) const ESLINT: &str = concat!(
     include_str!("evaluate-track.js"),
+    include_str!("evaluate-describe.js"),
     include_str!("evaluate-eslint.js")
 );
 /// For the configuration files of Prettier.

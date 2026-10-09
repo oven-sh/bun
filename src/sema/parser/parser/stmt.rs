@@ -248,6 +248,13 @@ impl Parser<'_> {
         answer
     }
 
+    /// `nextTokenIsIdentifierOnSameLine`
+    #[inline]
+    fn next_is_identifier_on_same_line(&mut self) -> bool {
+        self.next();
+        self.is_identifier() && !self.newline_before()
+    }
+
     /// `isDeclaration`. `last`: set to the start of the last token at which the loop was.
     fn is_declaration(&mut self, last: &mut u32) -> bool {
         loop {
@@ -256,10 +263,8 @@ impl Parser<'_> {
                 T::Var | T::Let | T::Const | T::Function | T::Class | T::Enum => return true,
                 T::Using => return self.is_using_declaration(),
                 T::Await => return self.is_await_using_declaration(),
-                T::Interface | T::Type => {
-                    self.next();
-                    return self.is_identifier() && !self.newline_before();
-                }
+                T::Interface | T::Type => return self.next_is_identifier_on_same_line(),
+                T::Defer if self.recovers => return self.next_is_identifier_on_same_line(),
                 T::Module | T::Namespace => {
                     self.next();
                     return !self.newline_before()
@@ -302,6 +307,12 @@ impl Parser<'_> {
                     self.next();
                     let mut current = self.token();
                     if current == T::Type {
+                        // The native parser decides by the token after `type` alone.
+                        if self.recovers {
+                            self.next();
+                            return matches!(self.token(), T::Asterisk | T::OpenBrace)
+                                || self.is_identifier() && !self.newline_before();
+                        }
                         current = self.peek();
                     }
                     if matches!(
@@ -410,7 +421,7 @@ impl Parser<'_> {
             let token = self.token();
             if token == T::At {
                 if !allow_decorators {
-                    self.fail();
+                    self.fail_unless_recovering();
                     return flags;
                 }
                 if has_trailing_modifiers {
@@ -508,6 +519,14 @@ impl Parser<'_> {
         let saved = self.context;
         if flags.contains(Flags::AMBIENT) {
             self.context |= ctx::AMBIENT;
+            // `parseClassDeclarationOrExpression`: no `await` in it has the statement reparsed.
+            if self.recovers
+                && self.token() == T::Class
+                && !flags.contains(Flags::EXPORT)
+                && self.has_context(ctx::TOP_LEVEL)
+            {
+                self.context &= !ctx::AWAIT;
+            }
         }
         let statement = self.declaration_worker(start, base, flags);
         self.context = saved;
@@ -527,7 +546,8 @@ impl Parser<'_> {
     /// `parseDeclarationWorker`
     fn declaration_worker(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
         match self.token() {
-            T::Var | T::Let | T::Const | T::Using | T::Await => {
+            T::Var | T::Let | T::Const | T::Using => self.variable_statement(start, base, flags),
+            T::Await if !self.recovers || self.is_await_using_declaration() => {
                 self.variable_statement(start, base, flags)
             }
             T::Function if flags.contains(Flags::AMBIENT) && self.is_flow => {
@@ -566,11 +586,55 @@ impl Parser<'_> {
                 }
             }
             _ if self.is_flow => self.flow_declaration_at_word(start, base, flags),
-            _ => {
-                self.fail();
-                StmtId::NONE
+            _ => self.missing_declaration(start, base),
+        }
+    }
+
+    /// The end of `parseDeclarationWorker`: a `MissingDeclaration`, which is an empty statement.
+    /// Its decorators are statements before it, in the list that is being parsed.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    fn missing_declaration(&mut self, start: Start, base: usize) -> StmtId {
+        if !self.recovers {
+            self.fail();
+            return StmtId::NONE;
+        }
+        let end = self.full_start();
+        self.error(1146, (end, Diagnostic::NO_LENGTH), &[]);
+        let base = base.min(self.s.modifiers.len());
+        for modifier in self.s.modifiers.split_off(base) {
+            if let ModifierKind::Decorator(expression) = modifier.kind {
+                let statement = self.stray_decorator(expression, modifier.pos, end);
+                self.s.ids.push(statement.0);
             }
         }
+        self.add_stmt(StmtKind::Empty, start, Span::EMPTY)
+    }
+
+    /// The statement that `expression` is: that of a decorator which decorates nothing, and which
+    /// `checkDecorators` does not visit. `at`: its `@`. `end`: the end of the decorators.
+    fn stray_decorator(&mut self, expression: ExprId, at: u32, end: u32) -> StmtId {
+        let written = self.f.exprs.get(expression.idx());
+        let written = written.map_or((at, at), |it| (it.pos, it.end));
+        // The outermost parentheses are the last.
+        let is_around = |it: &&(ExprId, u32, u32)| it.0 == expression;
+        let (start, last) = match self.f.parens.iter().rfind(is_around) {
+            Some(&(_, open, close)) => (open, close),
+            None => written,
+        };
+        self.f.stray_decorators.push((start, end));
+        let id = StmtId(self.f.stmts.len() as u32);
+        self.f.stmts.push(Stmt {
+            kind: StmtKind::Expr(expression),
+            start,
+            loc: TextRange {
+                pos: at + 1,
+                end: last,
+            },
+            modifiers: Span::EMPTY,
+        });
+        id
     }
 
     /// `parseVariableStatement`
@@ -598,6 +662,10 @@ impl Parser<'_> {
             }
         };
         self.next();
+        // `for (let of X) { }`: the list is empty, and `of` is the keyword.
+        if self.recovers && self.token() == T::Of && self.is_before_identifier_and_close_paren() {
+            return Span::EMPTY;
+        }
         let flags = flags | self.ambient();
         let saved = match is_in_for {
             true => self.enter_context(ctx::DISALLOW_IN, 0),
@@ -622,6 +690,13 @@ impl Parser<'_> {
             let full = self.full_start();
             let pat = match self.token() {
                 T::PrivateIdentifier => self.missing_binding_identifier(18029),
+                // `parseArrayBindingPattern`, `parseObjectBindingPattern`: `in` is an operator.
+                T::OpenBracket | T::OpenBrace if is_in_for && self.recovers => {
+                    let saved = self.enter_context(0, ctx::DISALLOW_IN);
+                    let pat = self.identifier_or_pattern();
+                    self.context = saved;
+                    pat
+                }
                 _ => self.identifier_or_pattern(),
             };
             let mut flags = flags;
@@ -666,6 +741,20 @@ impl Parser<'_> {
         take_span!(self, var_decls, base)
     }
 
+    /// `nextIsIdentifierAndCloseParen`, in a `lookAhead`.
+    #[cold]
+    #[inline(never)]
+    fn is_before_identifier_and_close_paren(&mut self) -> bool {
+        self.look_ahead(|p| {
+            p.next();
+            if !p.is_identifier() {
+                return false;
+            }
+            p.next();
+            p.token() == T::CloseParen
+        })
+    }
+
     /// `parseInitializer`, at the `=`.
     #[inline]
     pub(crate) fn initializer(&mut self) -> ExprId {
@@ -685,7 +774,10 @@ impl Parser<'_> {
     /// `parseEnumDeclaration`
     fn enum_declaration(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
         self.next();
-        let (name, name_pos) = self.identifier();
+        let (name, name_pos) = match self.is_identifier() {
+            true => self.identifier(),
+            false => self.missing_name(),
+        };
         let has_members = self.expect(T::OpenBrace);
         let saved = self.enter_context(0, ctx::YIELD | ctx::AWAIT);
         let members = self.s.enum_members.len();
@@ -761,16 +853,23 @@ impl Parser<'_> {
             }
             keyword => {
                 self.next();
-                if self.token() == T::String && keyword == T::Namespace {
-                    self.report();
+                let mut is_string = self.token() == T::String;
+                // Only after `module` is a string a name.
+                if is_string && keyword == T::Namespace {
+                    match self.recovers {
+                        true => is_string = false,
+                        false => self.report(),
+                    }
                 }
-                if self.token() != T::String {
+                if !is_string {
                     let modifiers = self.take_modifiers(base);
+                    let identifier = self.identifier();
                     return self.namespace_declaration(
                         start,
                         modifiers,
                         flags,
                         keyword == T::Module,
+                        identifier,
                     );
                 }
                 (name, name_pos) = (ModuleName::String(self.lx.atom), self.pos());
@@ -800,24 +899,35 @@ impl Parser<'_> {
         statement
     }
 
-    /// `parseModuleOrNamespaceDeclaration`, at the name.
+    /// `parseIdentifierName`, for the `b` of `namespace a.b`.
+    fn name_of_nested_namespace(&mut self) -> (Atom, u32) {
+        if !self.recovers {
+            return self.identifier();
+        }
+        let (name, name_pos) = self.identifier_name();
+        (self.note_identifier(name, name_pos), name_pos)
+    }
+
+    /// `parseModuleOrNamespaceDeclaration`, after the name.
     fn namespace_declaration(
         &mut self,
         start: Start,
         modifiers: Span<ModifierId>,
         flags: Flags,
         specifies_module: bool,
+        (name, name_pos): (Atom, u32),
     ) -> StmtId {
         if self.is_too_deep() {
             return StmtId::NONE;
         }
-        let (name, name_pos) = self.identifier();
         let body = if self.token() == T::Dot {
             self.next();
             // The `b` of `namespace a.b` is exported from `a`, and starts with its name.
             let inner = self.start();
+            let nested = self.name_of_nested_namespace();
             let flags = flags & Flags::AMBIENT | Flags::EXPORT;
-            let inner = self.namespace_declaration(inner, Span::EMPTY, flags, specifies_module);
+            let inner =
+                self.namespace_declaration(inner, Span::EMPTY, flags, specifies_module, nested);
             if self.options.is_javascript {
                 self.check_js_statement(inner);
             }
@@ -877,11 +987,20 @@ impl Parser<'_> {
         }
         let list = self.statements_until_close_brace();
         self.expect_matching((T::OpenBrace, T::CloseBrace), Some(start.pos));
-        if self.token() == T::Equals && self.recovers {
+        if self.token() == T::Equals {
+            self.equals_after_block();
+        }
+        self.add_stmt(StmtKind::Block(list), start, Span::EMPTY)
+    }
+
+    /// The end of `parseBlock`, at a `=` after the `}`: it is reported and skipped.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn equals_after_block(&mut self) {
+        if self.recovers {
             self.error_at_token(2809, &[]);
             self.next();
         }
-        self.add_stmt(StmtKind::Block(list), start, Span::EMPTY)
     }
 
     /// `(` expression `)`
@@ -1042,7 +1161,7 @@ impl Parser<'_> {
                 // The reference notes the name at the start of the statement.
                 let label = self.lx.atom;
                 self.note_identifier(label, start.pos);
-                self.next();
+                self.next_after_name();
                 label
             }
         };
@@ -1156,13 +1275,19 @@ impl Parser<'_> {
                 let full = self.full_start();
                 let pat = self.identifier_or_pattern();
                 let ty = self.type_annotation();
-                if self.token() == T::Equals {
-                    self.refuse(Refusal::Reported);
-                }
+                // `checkCatchClause` reports it.
+                let init = match self.token() {
+                    T::Equals if self.recovers => self.initializer(),
+                    T::Equals => {
+                        self.refuse(Refusal::Reported);
+                        ExprId::NONE
+                    }
+                    _ => ExprId::NONE,
+                };
                 param = self.f.add_var_decl(VarDecl {
                     pat,
                     ty,
-                    init: ExprId::NONE,
+                    init,
                     kind: VarKind::Let,
                     flags: Flags::empty(),
                     loc: TextRange {

@@ -436,8 +436,17 @@ impl Preprocessor<'_> {
                     && (self.is_mdx || !is_indented_code(self.original, self.tree, node.next))
                     && self.is_aligned(id);
                 around.is_in_aligned_lists = is_aligned;
+                // Prettier's `getNthListSiblingIndex`
+                let nth = match self.tree.get(node.previous) {
+                    Some(previous)
+                        if previous.kind == Kind::List && previous.ordered == node.ordered =>
+                    {
+                        previous.first_align + 1
+                    }
+                    _ => 0,
+                };
                 if let Some(node) = self.tree.get_mut(id) {
-                    node.is_aligned = is_aligned;
+                    (node.is_aligned, node.first_align) = (is_aligned, nth);
                 }
             }
             Kind::Paragraph | Kind::Heading if around.paragraph.is_none() => {

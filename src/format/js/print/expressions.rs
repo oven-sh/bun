@@ -386,6 +386,8 @@ pub(crate) fn write_await_expression<'a>(e: Expr<'a>, argument: Expr<'a>, f: &mu
         AstNodes::StaticMemberExpression(_) | AstNodes::PrivateFieldExpression(_) => true,
         AstNodes::ComputedMemberExpression(member) => member.object() == Some(e),
         AstNodes::CallExpression(call) => call.callee() == Some(e),
+        // `new (await a())()`
+        AstNodes::NewExpression(new) => new.callee() == Some(e) && f.options().flavor.is_oxfmt(),
         _ => false,
     };
     if !is_callee_or_object {

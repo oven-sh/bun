@@ -157,8 +157,10 @@ fn with_semicolons_behind_each(text: &[u8]) -> Cow<'_, [u8]> {
     if !bun_core::strings::contains(text, b"each(") {
         return Cow::Borrowed(text);
     }
-    // For each `(` that is open, whether it is that of such a statement.
-    let mut open: Vec<bool> = Vec::new();
+    // How many `(` are open, and how many were when the statement started that the scan is in. What is in its parentheses
+    // is printed as it is.
+    let mut depth = 0usize;
+    let mut statement = None;
     let mut missing: Vec<usize> = Vec::new();
     // The last character that is neither white space nor in a comment.
     let mut last = b';';
@@ -182,18 +184,28 @@ fn with_semicolons_behind_each(text: &[u8]) -> Cow<'_, [u8]> {
                 at += bun_core::strings::index_of_char_usize(rest, b'\n').unwrap_or(rest.len());
                 continue;
             }
-            b'e' if matches!(last, b';' | b'{' | b'}') && rest.starts_with(b"each(") => {
-                open.push(true);
+            b'e' if statement.is_none()
+                && matches!(last, b';' | b'{' | b'}')
+                && rest.starts_with(b"each(") =>
+            {
+                statement = Some(depth);
+                depth += 1;
                 5
             }
             b'(' => {
-                open.push(false);
+                depth += 1;
                 1
             }
             b')' => {
-                let blanks = text::leading_white_space_len(&rest[1..]);
-                if open.pop() == Some(true) && rest.get(1 + blanks) != Some(&b';') {
-                    missing.push(at + 1);
+                depth = depth.saturating_sub(1);
+                if statement == Some(depth) {
+                    statement = None;
+                    let blanks = text::leading_white_space_len(&rest[1..]);
+                    if rest.get(1 + blanks) != Some(&b';') {
+                        missing.push(at + 1);
+                    }
+                    (at, last) = (at + 1, b';');
+                    continue;
                 }
                 1
             }
@@ -336,6 +348,7 @@ fn parse_and_print<'o>(
             is_original_text: matches!(blanked, Cow::Borrowed(_)),
             extra: &tree.extra,
             syntax: parser,
+            is_oxfmt: options.flavor.is_oxfmt(),
             refusal: Default::default(),
         },
         single_quote: matches!(options.quote_style, QuoteStyle::Single),

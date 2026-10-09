@@ -97,6 +97,9 @@ stacks! {
     prop_modifiers: (u32, Span<ModifierId>),
     /// By index in `params` or in `members`, a decorator.
     decorators: (u32, ExprId),
+    /// See `note_stray_decorators`: the start and the expression of each that no list of statements
+    /// has taken yet.
+    stray_decorators: (u32, ExprId),
 }
 
 macro_rules! file_lists {
@@ -134,7 +137,8 @@ file_lists! {
     modifiers, names, parens, non_null_ends, jsx_expressions, body_starts, specifier_uses,
     decorators, modifiers_of_params, modifiers_of_props, with_bodies, import_attributes,
     deferred_import_calls, import_call_type_args, keyword_identifier_positions, comments,
-    mentioned, fn_nodes, class_nodes, diagnostics, after_skipped,
+    mentioned, fn_nodes, class_nodes, diagnostics, after_skipped, stray_decorators,
+    specifier_expressions, exports_from_expressions,
 }
 
 /// The range and the code of an error that the checker reports about the syntax.
@@ -298,14 +302,20 @@ impl<'a> Parser<'a> {
         let names = &mut scratch.names;
         let source = text;
         let mut intern = |it: &[u8]| names.atom(crate::names::Text::elsewhere(source, it), atoms);
+        let errors = f.diagnostics.len();
         if !crate::pragmas::process_pragmas_into_fields(
             text,
             &leading_comments,
+            options.recovers,
             &mut intern,
             &mut f,
         ) {
             scratch.recycled = f;
             return Err(Refused::new(Refusal::Reported));
+        }
+        if f.diagnostics.len() > errors {
+            f.diagnostics.sort_by_key(|it| (it.start, it.code));
+            f.has_parse_diagnostics = true;
         }
         f.mentioned.extend_from_slice(scratch.names.mentioned());
         Ok(Parsed {
@@ -338,6 +348,7 @@ impl<'a> Parser<'a> {
         }
         while self.token() != T::Eof && self.is_at_element(ListKind::SourceElements) {
             let statement = self.statement();
+            self.take_stray_decorators(0);
             if self.is_an_external_module_indicator(statement) {
                 self.f.has_module_syntax = true;
             }
@@ -345,6 +356,9 @@ impl<'a> Parser<'a> {
         }
         self.f.body = self.take_ids(base);
         self.take_errors_of_scanner();
+        if self.f.diagnostics.iter().any(|it| it.code == 1141) {
+            self.forget_specifiers_of_misplaced_declarations();
+        }
         if self.unclaimed_nullable_types > 0 {
             self.refuse(Refusal::Reported);
         }
@@ -408,6 +422,13 @@ impl<'a> Parser<'a> {
 
     #[inline(always)]
     pub(crate) fn next(&mut self) {
+        self.lx.next();
+    }
+
+    /// `nextTokenWithoutCheck`: goes on from a word that is taken as a name.
+    #[inline(always)]
+    pub(crate) fn next_after_name(&mut self) {
+        self.lx.has_escape = false;
         self.lx.next();
     }
 
@@ -674,6 +695,24 @@ impl<'a> Parser<'a> {
         self.unclaimed_nullable_types = to.unclaimed_nullable_types;
     }
 
+    /// Forgets the nodes that were built since `since`, for which the tree has no place. The tokens
+    /// stay consumed, and what was said about the text stays said.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn forget_nodes(&mut self, since: &Checkpoint) {
+        let now = file_lens(&self.f);
+        let lens = FileLens {
+            specifier_uses: now.specifier_uses,
+            keyword_identifier_positions: now.keyword_identifier_positions,
+            diagnostics: now.diagnostics,
+            after_skipped: now.after_skipped,
+            ..since.file
+        };
+        truncate_file(&mut self.f, &lens);
+        let strays = since.stacks.stray_decorators as usize;
+        self.s.stray_decorators.truncate(strays);
+    }
+
     /// `tryParse`: what `parse` built is kept if it returns `Some` and met no syntax error.
     pub(crate) fn try_parse<R>(&mut self, parse: impl FnOnce(&mut Self) -> Option<R>) -> Option<R> {
         if self.has_failed() {
@@ -770,22 +809,22 @@ impl<'a> Parser<'a> {
         }
         let (atom, pos) = (self.lx.atom, self.lx.start);
         self.note_identifier(atom, pos);
-        self.next();
+        self.next_after_name();
         (atom, pos)
     }
 
-    /// `parseIdentifierName`: any word.
+    /// `parseIdentifierName`: any word. A private name is one for `tokenIsIdentifierOrKeyword`.
     #[inline]
     pub(crate) fn identifier_name(&mut self) -> (Atom, u32) {
         if !self.lx.token.is_identifier_or_keyword() {
             return self.missing_identifier(0, 0);
         }
-        if self.lx.token == T::PrivateIdentifier {
+        if self.lx.token == T::PrivateIdentifier && !self.recovers {
             self.fail();
             return (Atom::NONE, self.pos());
         }
         let (atom, pos) = (self.lx.atom, self.lx.start);
-        self.next();
+        self.next_after_name();
         (atom, pos)
     }
 
@@ -811,6 +850,62 @@ impl<'a> Parser<'a> {
         self.f.ids.extend_from_slice(items);
         self.s.ids.truncate(base);
         IdList::new(start, len)
+    }
+
+    /// The decorators among the modifiers from `base` on are those of a `MissingDeclaration` or of
+    /// a `this` parameter, which `checkDecorators` does not visit: see `File::stray_decorators`.
+    /// Pops the modifiers. `end`: where what follows the decorators starts.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    pub(crate) fn note_stray_decorators(&mut self, base: usize, end: u32) {
+        if !self.recovers {
+            return self.fail();
+        }
+        // Only the list of the file takes them.
+        if self.lists & 1 << ListKind::BlockStatements as u32 != 0 {
+            return self.refuse(Refusal::Unsupported);
+        }
+        for index in base..self.s.modifiers.len() {
+            if let Some(&Modifier {
+                kind: ModifierKind::Decorator(decorator),
+                ..
+            }) = self.s.modifiers.get(index)
+            {
+                let start = self.first_operand_pos(decorator);
+                self.f.stray_decorators.push((start, end));
+                self.s.stray_decorators.push((start, decorator));
+            }
+        }
+        self.s.modifiers.truncate(base);
+    }
+
+    /// After a statement of a list, before it is pushed on the stack of ids: pushes the decorators
+    /// that `note_stray_decorators` has saved in it, which are statements before it. `base`: how
+    /// many were saved when the list began.
+    #[inline(always)]
+    pub(crate) fn take_stray_decorators(&mut self, base: usize) {
+        if self.s.stray_decorators.len() > base {
+            self.take_stray_decorators_slowly(base);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn take_stray_decorators_slowly(&mut self, base: usize) {
+        for index in base..self.s.stray_decorators.len() {
+            let Some(&(start, decorator)) = self.s.stray_decorators.get(index) else {
+                break;
+            };
+            self.s.ids.push(self.f.stmts.len() as u32);
+            self.f.stmts.push(Stmt {
+                kind: StmtKind::Expr(decorator),
+                start,
+                loc: TextRange::default(),
+                modifiers: Span::EMPTY,
+            });
+        }
+        self.s.stray_decorators.truncate(base);
     }
 }
 

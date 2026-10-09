@@ -1089,9 +1089,11 @@ impl<'c> Configs<'c> {
             true => editorconfig::options_for(scope.editorconfigs.iter().map(|it| &**it), path),
             false => Vec::new(),
         };
-        // oxfmt does not know `max_line_length = off`.
-        let counts =
-            |it: &&(&[u8], Vec<u8>)| !is_oxfmt || (it.0, &it.1[..]) != (b"printWidth", b"65535");
+        // oxfmt does not know `max_line_length = off`, Prettier does not know `insert_final_newline`.
+        let counts = |it: &&(&[u8], Vec<u8>)| match is_oxfmt {
+            true => (it.0, &it.1[..]) != (b"printWidth", b"65535"),
+            false => it.0 != b"insertFinalNewline",
+        };
         from_files.extend(
             from_editorconfig
                 .iter()

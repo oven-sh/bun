@@ -252,6 +252,8 @@ impl Parser<'_> {
     #[inline(never)]
     #[track_caller]
     pub(crate) fn unmatched(&mut self, (open, close): (T, T), open_at: Option<u32>) {
+        // Otherwise one of them counts for the error that is reported here.
+        self.take_errors_of_scanner();
         let before = self.f.diagnostics.len();
         self.expected(close);
         if let Some(open_at) = open_at
@@ -326,6 +328,18 @@ impl Parser<'_> {
         (known::empty, self.pos())
     }
 
+    /// `parseIdentifier`, at a token that is none: the name, and where the node is.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    pub(crate) fn missing_name(&mut self) -> (Atom, u32) {
+        let full = self.full_start();
+        match self.missing_identifier(0, 0) {
+            (name, _) if name == known::empty => (name, full),
+            written => written,
+        }
+    }
+
     /// `parseIdentifierWithDiagnostic(code)` as an expression, at a token that is no identifier.
     #[cold]
     #[inline(never)]
@@ -395,6 +409,8 @@ impl Parser<'_> {
                 suggestion = keyword_suggestion(&word);
                 match suggestion {
                     Some(_) => ((pos, end), 1435),
+                    // "Unknown tokens are handled with their own errors in the scanner"
+                    None if token == T::Invalid => return,
                     None => ((pos, end), 1434),
                 }
             }

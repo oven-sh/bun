@@ -490,7 +490,7 @@ impl<'a> UnionMembers<'a> {
         }
         // Only those that are in the parent.
         let (span, parent_end) = (self.ty.span(), self.parent.span().end);
-        let end = match following_span_start_in(span, self.parent) {
+        let end = match following_span_start_in(span, self.parent, f.options().flavor) {
             0 => parent_end,
             following => following.min(parent_end),
         };

@@ -99,7 +99,7 @@ impl<'a> Format<'a> for FormatArguments<'a> {
 
         if has_function
             && has & kind(ExprTag::Array) != 0
-            && is_react_hook_with_deps_array(self, f.comments())
+            && is_react_hook_with_deps_array(self, f.comments(), f.options().flavor)
         {
             return write!(
                 f,
@@ -892,6 +892,7 @@ impl<'a> Format<'a> for FormatGroupedLastArgument<'a> {
 fn is_react_hook_with_deps_array<'a>(
     arguments: &FormatArguments<'a>,
     comments: &Comments<'a>,
+    flavor: Flavor,
 ) -> bool {
     if arguments.len() > 3 || arguments.len() < 2 {
         return false;
@@ -916,9 +917,10 @@ fn is_react_hook_with_deps_array<'a>(
     {
         return false;
     }
-    // Not if there is a comment that is not in the callback or the array. One in an empty array is
-    // a comment of the array.
-    let is_empty = matches!(deps.kind(), ExprKind::Array(elements) if elements.is_empty());
+    // Not if there is a comment that is not in the callback or the array. For Prettier one in an empty
+    // array is a comment of the array.
+    let is_empty = !flavor.is_oxfmt()
+        && matches!(deps.kind(), ExprKind::Array(elements) if elements.is_empty());
     !comments
         .comments_before(arguments.parent.span().end)
         .iter()

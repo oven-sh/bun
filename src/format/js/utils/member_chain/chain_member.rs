@@ -1,4 +1,7 @@
-use crate::js::format::{FormatNonNullMarks, identifier, write_trailing_comments_of};
+use crate::js::format::{
+    FormatNonNullMarks, identifier, no_comment_trails_what_is_before_another,
+    write_trailing_comments_of,
+};
 use crate::js::print::call_like_expression::FormatTypeArguments;
 use crate::js::print::call_like_expression::arguments::FormatArguments;
 use crate::js::print::member_expression::write_lookup_without_comments;
@@ -61,6 +64,11 @@ pub(super) fn call_of_callee(callee: Expr<'_>) -> Option<Call<'_>> {
     }
 }
 
+/// `a.b⏎// comment⏎.c()`: for oxfmt the comment stays on its line, before `.c`.
+fn comment_that_starts_line_leads_next_link(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt() && no_comment_trails_what_is_before_another(f)
+}
+
 /// The comments behind a link of the chain.
 fn write_trailing_comments_of_member<'a>(member: Expr<'a>, f: &mut Formatter<'a>) {
     if f.is_quiet() {
@@ -70,6 +78,7 @@ fn write_trailing_comments_of_member<'a>(member: Expr<'a>, f: &mut Formatter<'a>
         Some(call) => {
             write_callee_trailing_comments(call, member.span().end, f);
         }
+        None if comment_that_starts_line_leads_next_link(f) => {}
         None => write_trailing_comments_of(member.as_chain_element(), f),
     }
 }
@@ -143,13 +152,16 @@ impl<'a> ChainMember<'a> {
                     ".",
                     identifier(name, member.as_chain_element())
                 );
-                // The comments after the `.` lead the name.
+                // The comments after the `.` lead the name. For oxfmt they are before the `.` too.
                 let object_end = obj.span().end;
-                let end = f
-                    .comments()
-                    .comments_before_character(object_end, b'.')
-                    .last()
-                    .map_or(object_end, |it| it.span.end);
+                let end = match f.options().flavor.is_oxfmt() {
+                    true => name.span().start,
+                    false => f
+                        .comments()
+                        .comments_before_character(object_end, b'.')
+                        .last()
+                        .map_or(object_end, |it| it.span.end),
+                };
                 write!(
                     f,
                     [

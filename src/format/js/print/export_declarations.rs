@@ -140,6 +140,11 @@ pub(crate) fn write_export_default_expression<'a>(
     write_trailing_comments_of(node, f);
 }
 
+/// Flow's `declare export { a }`. Not `export export { a }`, of which TypeScript's parser makes `export { a }`.
+fn is_declared(statement: Stmt<'_>) -> bool {
+    (statement.modifiers().iter()).any(|it| it.flag() == Flags::AMBIENT)
+}
+
 /// `export * from "a"`, `export * as a from "a"`
 pub(crate) fn write_export_all_declaration<'a>(statement: Stmt<'a>, f: &mut Formatter<'a>) {
     let StmtKind::ExportStar {
@@ -151,7 +156,7 @@ pub(crate) fn write_export_all_declaration<'a>(statement: Stmt<'a>, f: &mut Form
     write!(
         f,
         [
-            (!statement.modifiers().is_empty()).then_some("declare "),
+            is_declared(statement).then_some("declare "),
             "export",
             space(),
             type_only.then_some("type ")
@@ -208,7 +213,7 @@ pub(crate) fn write_export_named_declaration<'a>(
     write!(
         f,
         [
-            (!statement.modifiers().is_empty()).then_some("declare "),
+            is_declared(statement).then_some("declare "),
             "export",
             space()
         ]

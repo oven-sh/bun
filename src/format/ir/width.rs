@@ -106,6 +106,32 @@ fn width_of_non_ascii(text: &[u8], flavor: Flavor) -> u32 {
     width
 }
 
+/// Whether `c` takes no column of its own behind `before`, to the crate `unicode-width`: the other ligatures that it
+/// knows, of which `before` has one column.
+fn ends_ligature(before: &[u32], c: u32) -> bool {
+    match c {
+        // A Khmer letter under another one.
+        0x1780..=0x1782
+        | 0x1784..=0x1787
+        | 0x1789..=0x178C
+        | 0x178E..=0x1793
+        | 0x1795..=0x1798
+        | 0x179B..=0x179D
+        | 0x17A0
+        | 0x17A2
+        | 0x17A7
+        | 0x17AB..=0x17AC
+        | 0x17AF => before.ends_with(&[0x17D2]),
+        // Two tone letters of Lisu.
+        0xA4FC..=0xA4FD => matches!(before, [.., 0xA4F8..=0xA4FB]),
+        // Hebrew alef and lamed, two consonants of Tifinagh, Old Turkic, each with a joiner.
+        0x5DC => before.ends_with(&[0x5D0, 0x200D]),
+        0x2D31..=0x2D65 | 0x2D6F => matches!(before, [.., 0x2D31..=0x2D65 | 0x2D6F, 0x200D]),
+        0x10C03 => before.ends_with(&[0x10C32, 0x200D]),
+        _ => false,
+    }
+}
+
 fn width_of_characters(text: &[u8], flavor: Flavor) -> u32 {
     let chars: smallvec::SmallVec<[u32; 64]> =
         bstr::ByteSlice::chars(text).map(u32::from).collect();
@@ -113,9 +139,20 @@ fn width_of_characters(text: &[u8], flavor: Flavor) -> u32 {
     // To the crate `unicode-width`, an Arabic lam and the alef after it are one ligature.
     let mut follows_lam = false;
     while let Some(&c) = chars.get(i) {
-        let is_alef_of_ligature =
-            follows_lam && flavor.is_oxfmt() && matches!(c, 0x622 | 0x623 | 0x625 | 0x627);
-        follows_lam = c == 0x644 || (follows_lam && is_in(OXFMT_ZERO_WIDTH, c));
+        let is_alef_of_ligature = follows_lam
+            && flavor.is_oxfmt()
+            && matches!(
+                c,
+                0x622 | 0x623 | 0x625 | 0x627 | 0x671..=0x673 | 0x675 | 0x773 | 0x774
+            );
+        // A joiner or a non-joiner between them keeps them apart.
+        follows_lam = matches!(c, 0x644 | 0x6B5..=0x6B8 | 0x76A | 0x8A6 | 0x8C7)
+            || (follows_lam
+                && is_in(OXFMT_ZERO_WIDTH, c)
+                && !matches!(
+                    c,
+                    0x605 | 0x890..=0x891 | 0x8E2 | 0x200C..=0x200D | 0x2065..=0x2069
+                ));
         match emoji_len(&chars[i..]) {
             0 => {}
             len => {
@@ -134,6 +171,7 @@ fn width_of_characters(text: &[u8], flavor: Flavor) -> u32 {
             0x20..=0x7E => 1,
             0x300..=0x36F | 0xFE00..=0xFE0F => 0,
             _ if is_alef_of_ligature => 0,
+            _ if flavor.is_oxfmt() && ends_ligature(&chars[..i - 1], c) => 0,
             _ if flavor.is_oxfmt() && is_in(OXFMT_ZERO_WIDTH, c) => 0,
             _ if is_in(WIDE, c) => 2,
             _ => 1,

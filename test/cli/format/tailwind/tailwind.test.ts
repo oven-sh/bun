@@ -36,9 +36,9 @@ exports.createContext = config => {
 `,
 };
 
-async function formatIn(cwd: string, names: string[], flags: string[] = []) {
+async function formatIn(cwd: string, names: string[], flags: string[] = ["."]) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "format", "--log-level=warn", ...flags, "."],
+    cmd: [bunExe(), "format", "--log-level=warn", ...flags],
     env: bunEnv,
     cwd,
     stdout: "pipe",
@@ -50,7 +50,7 @@ async function formatIn(cwd: string, names: string[], flags: string[] = []) {
 
 async function format(files: Record<string, string>, names: string[], flags: string[] = []) {
   using dir = tempDir("bun-format-tailwind", files);
-  return await formatIn(String(dir), names, flags);
+  return await formatIn(String(dir), names, [...flags, "."]);
 }
 
 describe.concurrent("sortTailwindcss", () => {
@@ -154,6 +154,12 @@ describe.concurrent("sortTailwindcss", () => {
     });
     write("app.css", "/* reversed */\n");
     age("app.css", 30);
+    // Nothing is asked for a file without classes.
+    write("c.js", "c  ;\n");
+    expect(await formatIn(String(dir), ["c.js", names[1]], ["c.js"])).toMatchObject({
+      stderr: "",
+      files: ["c;\n", "xx"],
+    });
     expect(await formatIn(String(dir), names)).toMatchObject({
       stderr: "",
       files: ['<a className="p-4 m-1" />;\n', "xxx"],

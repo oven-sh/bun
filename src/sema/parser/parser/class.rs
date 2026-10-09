@@ -39,14 +39,16 @@ impl Parser<'_> {
         };
         let class = self.class((start.pos, unnamed_at), base, class_flags);
         // In a namespace the other parser does not export what has no name. For acorn and Babel only
-        // a default export has none.
+        // a default export has none. In the list of the file `checkClassDeclaration` reports it.
         let is_ecmascript = self.is_ecmascript;
         let lacks_name = |it: &Class| {
             it.name.is_none()
                 && !it.flags.contains(Flags::DEFAULT)
                 && (is_ecmascript || it.flags.contains(Flags::EXPORT))
         };
-        if self.f.classes.get(class.idx()).is_some_and(lacks_name) {
+        if self.f.classes.get(class.idx()).is_some_and(lacks_name)
+            && !(self.recovers && self.lists == 1 << ListKind::SourceElements as u32)
+        {
             self.report();
         }
         let modifiers = self.f.classes.get(class.idx()).map(|it| it.modifiers);
@@ -67,12 +69,42 @@ impl Parser<'_> {
         let base = self.s.modifiers.len();
         let flags = self.modifiers(ModifiersOf::Declaration);
         if self.token() != T::Class {
-            self.fail();
-            return ExprId::NONE;
+            return self.missing_declaration_expression(start, base);
         }
         let keyword = self.pos();
         let class = self.class((start, keyword), base, flags & Flags::ABSTRACT);
         self.finish_expr(ExprKind::Class(class), keyword)
+    }
+
+    /// The end of `parseDecoratedExpression`, at another token than `class`: a `MissingDeclaration`
+    /// at the `@` at `start`, with the modifiers on the stack from `base` on.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    fn missing_declaration_expression(&mut self, start: u32, base: usize) -> ExprId {
+        if !self.recovers {
+            self.fail();
+            return ExprId::NONE;
+        }
+        let end = self.full_start();
+        self.error(1109, (end, Diagnostic::NO_LENGTH), &[]);
+        self.note_stray_decorators(base, end);
+        self.add_expr(ExprKind::Missing, start, start)
+    }
+
+    /// `parseTypeArguments` of an element of an `extends` clause that is not the base class, at the
+    /// `<`. The tree has no place for them.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    fn type_arguments_in_no_list(&mut self) {
+        if !self.recovers {
+            return self.refuse(Refusal::Reported);
+        }
+        let before = self.checkpoint();
+        let (list, _) = self.type_arguments_unchecked();
+        self.check_js_type_arguments(list);
+        self.forget_nodes(&before);
     }
 
     /// `parseHeritageClauses` of a class, with what `checkGrammarClassDeclarationHeritageClauses`
@@ -121,7 +153,7 @@ impl Parser<'_> {
                     if index > 0 || has_extends {
                         // Type arguments that the expression has not taken are in no list.
                         if p.token() == T::LessThan {
-                            p.refuse(Refusal::Reported);
+                            p.type_arguments_in_no_list();
                         }
                         other_extends.push(extended);
                         if index == 1 && !heritage.has_error {
@@ -213,7 +245,7 @@ impl Parser<'_> {
         if self.is_binding_identifier() && !self.is_implements_clause() {
             (name, name_pos) = (self.lx.atom, self.pos());
             self.note_identifier(name, name_pos);
-            self.next();
+            self.next_after_name();
         }
         let less_than = (self.token() == T::LessThan).then(|| self.pos());
         let type_params = self.type_parameters();
@@ -326,6 +358,19 @@ impl Parser<'_> {
         ) || self.can_parse_semicolon()
     }
 
+    /// `tryParseConstructorDeclaration` takes the keyword whatever follows it. `name`: the first
+    /// token of the name of a member that no parameters follow.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    fn is_constructor_without_parameters(&mut self, name: T) -> bool {
+        if self.recovers && name == T::Constructor {
+            return true;
+        }
+        self.report();
+        false
+    }
+
     /// `parseClassElement`: pushes it on the stack of members, of which the class's start at
     /// `base`.
     fn class_element(&mut self, base: usize) {
@@ -413,7 +458,7 @@ impl Parser<'_> {
                 (
                     PropKey::Name(known::empty),
                     NameKind::Identifier,
-                    self.pos(),
+                    self.full_start(),
                 )
             }
         };
@@ -430,8 +475,15 @@ impl Parser<'_> {
             _ if name_token == T::OpenBracket => flags |= Flags::COMPUTED_NAME,
             _ => {}
         }
+        // Neither `tryParseConstructorDeclaration` nor the property without a name looks for it.
         let mut question = None;
-        if self.token() == T::Question {
+        if self.token() == T::Question
+            && has_name
+            && !(self.recovers
+                && name_token == T::Constructor
+                && kind == MemberKind::Property
+                && !is_generator)
+        {
             question = Some(self.pos());
             self.next();
             flags |= Flags::OPTIONAL;
@@ -448,10 +500,19 @@ impl Parser<'_> {
             loc: TextRange::default(),
             modifiers: Span::EMPTY,
         };
-        if kind != MemberKind::Property
-            || is_generator
-            || matches!(self.token(), T::OpenParen | T::LessThan)
+        // What has no name is a property, whatever follows.
+        let mut is_function = has_name
+            && (kind != MemberKind::Property
+                || is_generator
+                || matches!(self.token(), T::OpenParen | T::LessThan));
+        // The other parser does not go on at the `!` of `async a!`.
+        if !is_function
+            && (name_token == T::Constructor
+                || flags.contains(Flags::ASYNC) && self.token() == T::Exclamation)
         {
+            is_function = self.is_constructor_without_parameters(name_token);
+        }
+        if is_function {
             // `tryParseConstructorDeclaration`: the keyword, or a string literal with the same
             // text. After `*` it is the name of a method.
             let is_constructor = kind == MemberKind::Property
@@ -497,13 +558,6 @@ impl Parser<'_> {
             member.func =
                 self.function_rest_or(code, fn_kind, fn_flags, (name, name_pos), start.pos);
         } else {
-            // `tryParseConstructorDeclaration` takes the keyword whatever follows it.
-            // The other parser does not go on at the `!` of `async a!`.
-            if name_token == T::Constructor
-                || flags.contains(Flags::ASYNC) && self.token() == T::Exclamation
-            {
-                self.report();
-            }
             // `parsePropertyDeclaration`
             if !flags.contains(Flags::OPTIONAL)
                 && self.token() == T::Exclamation

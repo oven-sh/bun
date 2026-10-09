@@ -137,12 +137,25 @@ impl Parser<'_> {
 
     /// `parseExpression`
     pub(crate) fn expression(&mut self) -> ExprId {
+        self.expression_maybe_in_parentheses(false)
+    }
+
+    /// `parseExpression`. `is_in_parentheses`: for `parseParenthesizedExpression`.
+    #[inline(always)]
+    fn expression_maybe_in_parentheses(&mut self, is_in_parentheses: bool) -> ExprId {
         let saved = self.enter_context(0, ctx::DECORATOR);
-        let start = self.pos();
+        let mut start = self.pos();
         let mut expression = self.assignment_expression();
+        // `()` stays at its `)`.
+        if is_in_parentheses && self.recovers && self.token() != T::CloseParen {
+            start = self.place_missing_operand(expression).unwrap_or(start);
+        }
         while self.token() == T::Comma {
             self.next();
             let right = self.assignment_expression();
+            if is_in_parentheses && self.recovers {
+                self.place_missing_operand(right);
+            }
             let kind = ExprKind::Binary {
                 op: BinOp::Comma,
                 left: expression,
@@ -152,6 +165,20 @@ impl Parser<'_> {
         }
         self.context = saved;
         expression
+    }
+
+    /// `createMissingIdentifier`: if `operand` is one at the token, as in `(a, )` and `( , a)`, it
+    /// is at the end of the token before, which is returned.
+    #[cold]
+    #[inline(never)]
+    fn place_missing_operand(&mut self, operand: ExprId) -> Option<u32> {
+        let (here, after_previous) = (self.pos(), self.full_start());
+        let missing = self.f.exprs.get_mut(operand.idx())?;
+        if !matches!(missing.kind, ExprKind::Missing) || missing.pos != here {
+            return None;
+        }
+        missing.pos = after_previous;
+        Some(after_previous)
     }
 
     #[inline(always)]
@@ -449,6 +476,8 @@ impl Parser<'_> {
         if self.is_too_deep() {
             return left;
         }
+        // Of the operator of `left`, if this loop has made it. `OperatorPrecedenceHighest` otherwise.
+        let mut last_precedence = u8::MAX;
         loop {
             // "We either have a binary operator here, or we're finished."
             if self.token() == T::GreaterThan {
@@ -491,21 +520,47 @@ impl Parser<'_> {
                         }
                     };
                     left = self.finish_expr(kind, start);
+                    // "Stop if the precedence of the next operator is too high": in `a + b as T * c`
+                    // the `as T` could not be erased.
+                    if self.token() == T::GreaterThan {
+                        self.lx.rescan_greater_than();
+                    }
+                    if self.token().binary_precedence() > last_precedence && !self.is_flow {
+                        return left;
+                    }
                 }
-                _ => {
+                T::QuestionQuestion => {
                     self.next();
-                    let right = self.binary_expression(new_precedence);
-                    if token == T::QuestionQuestion
+                    // `checkNullishCoalesceOperands` reports `a ?? b || c`.
+                    let takes_a_mix = self.recovers && !self.options.dialect.typescript_5;
+                    let right = self.binary_expression(match takes_a_mix {
+                        // `OperatorPrecedenceCoalesce` is `OperatorPrecedenceLogicalOR`.
+                        true => T::BarBar.binary_precedence(),
+                        false => new_precedence,
+                    });
+                    if !takes_a_mix
                         && (self.is_logical_and_or_or(left) || self.is_logical_and_or_or(right))
                     {
                         self.report();
                     }
+                    let kind = ExprKind::Binary {
+                        op: BinOp::Nullish,
+                        left,
+                        right,
+                    };
+                    left = self.finish_expr(kind, start);
+                    last_precedence = new_precedence;
+                }
+                _ => {
+                    self.next();
+                    let right = self.binary_expression(new_precedence);
                     let kind = ExprKind::Binary {
                         op: binary_operator(token),
                         left,
                         right,
                     };
                     left = self.finish_expr(kind, start);
+                    last_precedence = new_precedence;
                 }
             }
         }
@@ -538,7 +593,7 @@ impl Parser<'_> {
 
     /// `parseUnaryExpressionOrHigher`
     #[inline]
-    fn unary_expression(&mut self) -> ExprId {
+    pub(crate) fn unary_expression(&mut self) -> ExprId {
         let start = self.pos();
         match self.name_or_literal() {
             Some(primary) => self.rest_of_operand(start, primary),
@@ -563,17 +618,36 @@ impl Parser<'_> {
                 return self.rest_of_power(start, expression);
             }
         }
-        let is_await_name = self.token() == T::Await && !self.is_await_expression();
+        let operator = self.token();
+        let is_await_name = operator == T::Await && !self.is_await_expression();
         let expression = self.simple_unary_expression();
         if self.token() == T::AsteriskAsterisk {
-            if is_await_name {
+            if is_await_name && !self.recovers {
                 let precedence = T::AsteriskAsterisk.binary_precedence();
                 return self.binary_expression_rest(precedence, expression, start);
             }
-            // The operand of `**` cannot be a unary expression.
-            self.refuse(Refusal::Reported);
+            self.unary_expression_before_power(operator, start);
         }
         expression
+    }
+
+    /// The end of `parseUnaryExpressionOrHigher`, at a `**` after what starts with `operator`.
+    #[cold]
+    #[inline(never)]
+    fn unary_expression_before_power(&mut self, operator: T, start: u32) {
+        if !self.recovers {
+            return self.refuse(Refusal::Reported);
+        }
+        let at = (start, self.prev_end());
+        let text: &[u8] = match operator {
+            T::LessThan => return self.error(17007, at, &[]),
+            T::Plus => b"+",
+            T::Minus => b"-",
+            T::Tilde => b"~",
+            T::Exclamation => b"!",
+            keyword => keyword.text(),
+        };
+        self.error(17006, at, &[text]);
     }
 
     /// What `parseUnaryExpressionOrHigher` does after `parseUpdateExpression`.
@@ -618,6 +692,7 @@ impl Parser<'_> {
             T::TypeOf => UnOp::Typeof,
             T::Void => UnOp::Void,
             T::LessThan if !self.options.is_jsx => return self.type_assertion(),
+            T::LessThan if !self.is_ecmascript => return self.jsx_elements(true),
             T::Await if self.is_await_expression() => {
                 self.note_await();
                 self.next();
@@ -693,13 +768,29 @@ impl Parser<'_> {
     /// `parseDecoratorExpression`
     pub(crate) fn decorator_expression(&mut self) -> ExprId {
         if self.token() == T::Await && self.has_context(ctx::AWAIT) {
-            self.refuse(Refusal::Reported);
+            return self.await_as_decorator();
         }
         // An element is no decorator.
         if self.token() == T::LessThan {
-            self.fail();
+            self.fail_unless_recovering();
         }
         self.left_hand_side_expression()
+    }
+
+    /// `parseDecoratorExpression`, at an `await` that is no name.
+    #[cold]
+    #[inline(never)]
+    fn await_as_decorator(&mut self) -> ExprId {
+        if !self.recovers {
+            self.refuse(Refusal::Reported);
+            return ExprId::NONE;
+        }
+        // The context of the top level reaches the decorators of the parameters of a method.
+        self.has_top_level_await = true;
+        let start = self.pos();
+        let missing = self.missing_expression(1109);
+        self.next();
+        self.expression_rest(start, missing, true)
     }
 
     /// `parseLeftHandSideExpressionOrHigher`
@@ -722,10 +813,17 @@ impl Parser<'_> {
 
     /// What `parseSuperExpression` does after a `super` that neither `(`, `.` nor `[` follows.
     #[cold]
-    fn super_without_access(&mut self, start: u32, obj: ExprId) -> ExprId {
-        // Type arguments are looked for.
-        if self.token() == T::LessThan {
+    #[inline(never)]
+    fn super_without_access(&mut self, start: u32, mut obj: ExprId) -> ExprId {
+        if !self.recovers {
             self.fail();
+            return obj;
+        }
+        if self.token() == T::LessThan && self.has_type_arguments_in_expressions {
+            match self.type_arguments_of_super(start, obj) {
+                (with_type_arguments, true) => return with_type_arguments,
+                (with_type_arguments, false) => obj = with_type_arguments,
+            }
         }
         self.error_at_token(1034, &[]);
         let (name, name_pos) = self.right_side_of_dot();
@@ -738,9 +836,64 @@ impl Parser<'_> {
         self.finish_expr(kind, start)
     }
 
+    /// `parseSuperExpression`, at the `<` after `obj`: `super` with its type arguments, and whether
+    /// an argument list or an access follows them.
+    #[cold]
+    #[inline(never)]
+    fn type_arguments_of_super(&mut self, start: u32, obj: ExprId) -> (ExprId, bool) {
+        let (after_super, less_than) = (self.full_start(), self.pos());
+        let checkpoint = self.checkpoint();
+        let reported = self.f.diagnostics.len();
+        let Some(type_args) = self.try_type_arguments_in_expression(true) else {
+            return (obj, false);
+        };
+        self.error(2754, (after_super, self.prev_end()), &[]);
+        match self.token() {
+            // `isTemplateStartOfTaggedTemplate`: the type arguments are in no node.
+            T::NoSubstitutionTemplate | T::TemplateHead => {
+                let template = self.pos();
+                let mut errors = self.f.diagnostics.split_off(reported);
+                errors.retain(|it| it.kind == DiagnosticKind::Parse);
+                self.rollback(&checkpoint);
+                while self.pos() < template && self.token() != T::Eof {
+                    self.next();
+                }
+                // A token of a type was read as another token.
+                if self.pos() != template {
+                    self.refuse(Refusal::Unsupported);
+                }
+                // What the scanner has reported again is among them.
+                self.lx.errors.clear();
+                self.f.diagnostics.extend(errors);
+                (obj, false)
+            }
+            T::OpenParen => (self.call(start, obj, type_args, Chain::No), true),
+            token => {
+                let kind = ExprKind::Instantiation {
+                    expr: obj,
+                    type_args,
+                };
+                let instantiation = self.finish_expr(kind, start);
+                match token {
+                    T::Dot => {
+                        let access =
+                            self.access_to_instantiation(start, instantiation, less_than, true);
+                        (access.0, true)
+                    }
+                    T::OpenBracket => (instantiation, true),
+                    _ => (instantiation, false),
+                }
+            }
+        }
+    }
+
     /// `import(..)`, `import.meta`
     fn import_expression(&mut self) -> ExprId {
         let start = self.pos();
+        // `nextTokenIsOpenParenOrLessThan`, `nextTokenIsDot`: otherwise `parsePrimaryExpression`.
+        if self.recovers && !matches!(self.peek(), T::OpenParen | T::LessThan | T::Dot) {
+            return self.missing_expression(1109);
+        }
         self.next();
         let mut is_deferred = false;
         if self.token() == T::Dot {
@@ -760,52 +913,106 @@ impl Parser<'_> {
             is_deferred = true;
         }
         match self.token() {
-            T::OpenParen => {
-                self.next();
-                let saved = self.enter_context(0, ctx::DISALLOW_IN | ctx::DECORATOR);
-                let base = self.s.ids.len();
-                let parens = self.f.parens.len();
-                // `checkGrammarImportCallExpression` reports a spread, and any number of arguments but
-                // one or two.
-                let lists = self.enter_list(ListKind::ArgumentExpressions);
-                while self.is_in_list(T::CloseParen)
-                    && self.is_at_element(ListKind::ArgumentExpressions)
-                {
-                    let element = self.full_start();
-                    let argument = match self.token() {
-                        T::DotDotDot => self.spread_element(),
-                        _ => self.assignment_expression(),
-                    };
-                    self.s.ids.push(argument.0);
-                    // `IsStringLiteralLike`: `("m")` is a `ParenthesizedExpression`.
-                    if self.s.ids.len() == base + 1 && self.f.parens.len() == parens {
-                        self.call_specifier(argument, SpecifierKind::ImportCall);
-                    }
-                    if !self.eat(T::Comma)
-                        && !self.goes_on_without_comma(ListKind::ArgumentExpressions, element)
-                    {
-                        break;
-                    }
-                }
-                self.lists = lists;
-                self.context = saved;
-                let close = self.pos();
-                self.expect(T::CloseParen);
-                if self.s.ids.len() == base {
-                    let missing = self.add_expr(ExprKind::Missing, close, close);
-                    self.s.ids.push(missing.0);
-                }
-                let args = self.take_ids(base);
-                if is_deferred && !args.is_empty() {
-                    let specifier = self.f.id_at(args, 0);
-                    self.f.deferred_import_calls.push((specifier, close));
-                }
-                self.finish_expr(ExprKind::ImportCall { args }, start)
+            T::OpenParen => self.import_call(start, is_deferred).0,
+            _ => self.import_without_arguments(start, is_deferred),
+        }
+    }
+
+    /// At the `(` of `import(..)`, which starts at `start`: the call and its arguments.
+    fn import_call(&mut self, start: u32, is_deferred: bool) -> (ExprId, IdList<ExprId>) {
+        self.next();
+        let saved = self.enter_context(0, ctx::DISALLOW_IN | ctx::DECORATOR);
+        let base = self.s.ids.len();
+        let parens = self.f.parens.len();
+        // `checkGrammarImportCallExpression` reports a spread, and any number of arguments but
+        // one or two.
+        let lists = self.enter_list(ListKind::ArgumentExpressions);
+        while self.is_in_list(T::CloseParen) && self.is_at_element(ListKind::ArgumentExpressions) {
+            let element = self.full_start();
+            let argument = match self.token() {
+                T::DotDotDot => self.spread_element(),
+                _ => self.assignment_expression(),
+            };
+            self.s.ids.push(argument.0);
+            // `IsStringLiteralLike`: `("m")` is a `ParenthesizedExpression`.
+            if self.s.ids.len() == base + 1 && self.f.parens.len() == parens {
+                self.call_specifier(argument, SpecifierKind::ImportCall);
             }
-            _ => {
-                self.fail();
-                ExprId::NONE
+            if !self.eat(T::Comma)
+                && !self.goes_on_without_comma(ListKind::ArgumentExpressions, element)
+            {
+                break;
             }
+        }
+        self.lists = lists;
+        self.context = saved;
+        let close = self.close_of_argument_list();
+        if self.s.ids.len() == base {
+            let missing = self.add_expr(ExprKind::Missing, close, close);
+            self.s.ids.push(missing.0);
+        }
+        let args = self.take_ids(base);
+        if is_deferred && !args.is_empty() {
+            let specifier = self.f.id_at(args, 0);
+            self.f.deferred_import_calls.push((specifier, close));
+        }
+        (self.finish_expr(ExprKind::ImportCall { args }, start), args)
+    }
+
+    /// `parseCallExpressionRest`, after an `import` that no `(` follows. The keyword is kept as a
+    /// missing expression.
+    #[cold]
+    #[inline(never)]
+    fn import_without_arguments(&mut self, start: u32, is_deferred: bool) -> ExprId {
+        if !self.recovers || is_deferred || self.token() != T::LessThan {
+            self.fail();
+            return ExprId::NONE;
+        }
+        let (less_than, reported) = (self.pos(), self.f.diagnostics.len());
+        let type_args = match self.has_type_arguments_in_expressions {
+            true => self.try_type_arguments_in_expression(true),
+            false => None,
+        };
+        let Some(type_args) = type_args else {
+            return self.add_expr(ExprKind::Missing, start, start);
+        };
+        if self.token() == T::OpenParen {
+            // `checkImportCallExpression` does not look at them.
+            let mut index = 0;
+            self.f.diagnostics.retain(|it| {
+                index += 1;
+                index <= reported || it.kind == DiagnosticKind::Parse
+            });
+            let (call, args) = self.import_call(start, false);
+            if !args.is_empty() {
+                let specifier = self.f.id_at(args, 0);
+                self.f.import_call_type_args.push((specifier, type_args));
+            }
+            return call;
+        }
+        let keyword = self.add_expr(ExprKind::Missing, start, start);
+        if matches!(self.token(), T::NoSubstitutionTemplate | T::TemplateHead) {
+            return self.tagged_template(start, keyword, type_args, false);
+        }
+        // `checkGrammarExpressionWithTypeArguments`
+        let at = (start, self.prev_end());
+        self.flag(DiagnosticKind::Grammar, 1326, at, &[]);
+        let kind = ExprKind::Instantiation {
+            expr: keyword,
+            type_args,
+        };
+        let instantiation = self.finish_expr(kind, start);
+        match self.token() {
+            T::Dot => {
+                self.access_to_instantiation(start, instantiation, less_than, true)
+                    .0
+            }
+            // The chain would go on in `expression_rest`.
+            T::QuestionDot => {
+                self.refuse(Refusal::Unsupported);
+                instantiation
+            }
+            _ => instantiation,
         }
     }
 
@@ -894,10 +1101,12 @@ impl Parser<'_> {
                 self.refuse(Refusal::Reported);
             }
         } else {
-            return self.missing_identifier(0, 0);
+            // `createMissingIdentifier`
+            let after_dot = self.full_start();
+            return (self.missing_identifier(0, 0).0, after_dot);
         }
         let name = (self.lx.atom, self.lx.start);
-        self.next();
+        self.next_after_name();
         name
     }
 
@@ -969,9 +1178,8 @@ impl Parser<'_> {
                     continue;
                 }
                 T::QuestionDot => {
-                    // `new a?.b()` is an error.
+                    // `parseNewExpressionOrNewDotTarget` reports `new a?.b()`.
                     if !allows_calls {
-                        self.refuse(Refusal::Reported);
                         return expression;
                     }
                     self.next();
@@ -989,17 +1197,22 @@ impl Parser<'_> {
                                 false => None,
                             };
                             let Some(type_args) = type_args else {
-                                self.fail();
-                                return expression;
+                                return self.missing_name_after_question_dot(start, expression);
                             };
-                            if self.token() != T::OpenParen {
-                                self.refuse(Refusal::Reported);
-                            }
-                            expression = self.call(start, expression, type_args, Chain::Start);
+                            expression = match self.token() {
+                                T::OpenParen => {
+                                    self.call(start, expression, type_args, Chain::Start)
+                                }
+                                _ => self
+                                    .optional_call_without_open_paren(start, expression, type_args),
+                            };
                         }
                         T::NoSubstitutionTemplate | T::TemplateHead => {
                             expression =
                                 self.tagged_template(start, expression, IdList::EMPTY, true);
+                        }
+                        token if !token.is_identifier_or_keyword() => {
+                            return self.missing_name_after_question_dot(start, expression);
                         }
                         _ => {
                             if self.token() == T::PrivateIdentifier {
@@ -1023,6 +1236,7 @@ impl Parser<'_> {
                         self.tagged_template(start, expression, IdList::EMPTY, is_in_chain);
                 }
                 T::LessThan | T::LessThanLessThan if self.has_type_arguments_in_expressions => {
+                    let less_than = self.pos();
                     let Some(type_args) = self.try_type_arguments_in_expression(allows_calls)
                     else {
                         return expression;
@@ -1040,10 +1254,18 @@ impl Parser<'_> {
                                 expr: expression,
                                 type_args,
                             };
-                            let instantiation = self.finish_expr(kind, start);
-                            // `a<b>.c` is an error.
+                            let mut instantiation = self.finish_expr(kind, start);
+                            // `tryReparseOptionalChain`: it is in no chain.
+                            if !self.is_flow {
+                                chain = Chain::No;
+                            }
                             if matches!(self.token(), T::Dot | T::QuestionDot) {
-                                self.refuse(Refusal::Reported);
+                                (instantiation, chain) = self.access_to_instantiation(
+                                    start,
+                                    instantiation,
+                                    less_than,
+                                    allows_calls,
+                                );
                             }
                             instantiation
                         }
@@ -1059,6 +1281,89 @@ impl Parser<'_> {
             }
             non_null = ExprId::NONE;
         }
+    }
+
+    /// `parsePropertyAccessExpressionRest`, at the `.` or the `?.` after `obj`, which is `a<b>`:
+    /// the access and the chain that goes on, or `obj` before a `?.` that no name follows.
+    #[cold]
+    #[inline(never)]
+    fn access_to_instantiation(
+        &mut self,
+        start: u32,
+        obj: ExprId,
+        less_than: u32,
+        allows_chain: bool,
+    ) -> (ExprId, Chain) {
+        if !self.recovers {
+            self.refuse(Refusal::Reported);
+            return (obj, Chain::No);
+        }
+        let is_optional = self.token() == T::QuestionDot;
+        // `isStartOfOptionalPropertyOrElementAccessChain`
+        if is_optional && !(allows_chain && self.peek().is_identifier_or_keyword()) {
+            return (obj, Chain::No);
+        }
+        let greater_than_end = self.prev_end();
+        self.next();
+        if is_optional && self.token() == T::PrivateIdentifier {
+            self.private_name_in_optional_chain();
+        }
+        let (name, name_pos) = self.right_side_of_dot();
+        self.error(1477, (less_than, greater_than_end), &[]);
+        let (chain, chain_after) = match is_optional {
+            true => (Chain::Start, Chain::Continue),
+            false => (Chain::No, Chain::No),
+        };
+        let kind = ExprKind::Dot {
+            obj,
+            name,
+            name_pos,
+            chain,
+        };
+        (self.finish_expr(kind, start), chain_after)
+    }
+
+    /// The end of `parseCallExpressionRest`, after a `?.` that nothing follows.
+    #[cold]
+    #[inline(never)]
+    fn missing_name_after_question_dot(&mut self, start: u32, obj: ExprId) -> ExprId {
+        self.error_at_token(1003, &[]);
+        let kind = ExprKind::Dot {
+            obj,
+            name: known::empty,
+            name_pos: self.full_start(),
+            chain: Chain::Start,
+        };
+        self.finish_expr(kind, start)
+    }
+
+    /// `parseCallExpressionRest`, after `callee?.<T>` at a token that is no `(`.
+    #[cold]
+    #[inline(never)]
+    fn optional_call_without_open_paren(
+        &mut self,
+        start: u32,
+        callee: ExprId,
+        type_args: IdList<TypeNodeId>,
+    ) -> ExprId {
+        if !self.recovers {
+            self.refuse(Refusal::Reported);
+            return callee;
+        }
+        if matches!(self.token(), T::NoSubstitutionTemplate | T::TemplateHead) {
+            return self.tagged_template(start, callee, type_args, true);
+        }
+        self.expected(T::OpenParen);
+        let (args, close_pos) = self.rest_of_argument_list();
+        let call = self.f.add_call(Call {
+            callee,
+            args,
+            type_args,
+            close_pos,
+            chain: Chain::Start,
+            template: ExprId::NONE,
+        });
+        self.finish_expr(ExprKind::Call(call), start)
     }
 
     /// At the `#b` of `a?.#b` or `a?.b.#c`, which is an error of TypeScript's parser.
@@ -1081,7 +1386,8 @@ impl Parser<'_> {
         let index = match self.token() {
             T::CloseBracket => {
                 self.error(1011, (self.full_start(), Diagnostic::NO_LENGTH), &[]);
-                self.add_expr(ExprKind::Missing, self.pos(), self.full_start())
+                // `createMissingIdentifier`
+                self.add_expr(ExprKind::Missing, self.full_start(), self.full_start())
             }
             _ => self.expression_allowing_in(),
         };
@@ -1090,8 +1396,14 @@ impl Parser<'_> {
     }
 
     /// `parseArgumentList`, at the `(`: the arguments and the position of the `)`.
+    #[inline(always)]
     fn argument_list(&mut self) -> (IdList<ExprId>, u32) {
         self.next();
+        self.rest_of_argument_list()
+    }
+
+    /// `parseArgumentList`, after the `(`.
+    fn rest_of_argument_list(&mut self) -> (IdList<ExprId>, u32) {
         let saved = self.enter_context(0, ctx::DISALLOW_IN | ctx::DECORATOR);
         let base = self.s.ids.len();
         let lists = self.enter_list(ListKind::ArgumentExpressions);
@@ -1110,9 +1422,18 @@ impl Parser<'_> {
         }
         self.lists = lists;
         self.context = saved;
-        let close = self.pos();
-        self.expect(T::CloseParen);
+        let close = self.close_of_argument_list();
         (self.take_ids(base), close)
+    }
+
+    /// The end of `parseArgumentList`: the position of the `)`, or of the last character before.
+    #[inline(always)]
+    fn close_of_argument_list(&mut self) -> u32 {
+        let close = self.pos();
+        match self.expect(T::CloseParen) {
+            true => close,
+            false => self.prev_end().saturating_sub(1),
+        }
     }
 
     /// `parseSpreadElement`
@@ -1336,6 +1657,7 @@ impl Parser<'_> {
             T::LessThan if self.is_ecmascript => self.jsx_element_or_fragment(),
             T::Import if self.is_ecmascript => self.import_expression(),
             _ if self.is_identifier() => {
+                self.lx.has_escape = false;
                 let name = self.lx.atom;
                 self.note_identifier(name, self.lx.start);
                 self.token_expr(ExprKind::Ident(name))
@@ -1356,7 +1678,9 @@ impl Parser<'_> {
     fn parenthesized_expression(&mut self) -> ExprId {
         let open = self.pos();
         self.next();
-        let expression = self.expression_allowing_in();
+        let saved = self.enter_context(0, ctx::DISALLOW_IN);
+        let expression = self.expression_maybe_in_parentheses(true);
+        self.context = saved;
         if self.token() != T::CloseParen {
             return self.unclosed_parenthesized_expression(open, expression);
         }
@@ -1418,19 +1742,48 @@ impl Parser<'_> {
             return self.token_expr(ExprKind::String(self.lx.atom));
         }
         let start = self.pos();
-        let exprs = self.template_parts(false);
+        let (exprs, _) = self.template_parts(false);
         self.finish_expr(ExprKind::Template { exprs }, start)
     }
 
     /// The token is a piece of a template in which every escape has to be valid.
     pub(crate) fn piece_of_template_without_tag(&mut self) {
         if self.lx.has_escape {
-            self.report();
+            self.rescan_template_piece();
         }
     }
 
-    /// The substitutions of the template at the token. The texts follow them in the list of ids.
-    fn template_parts(&mut self, has_tag: bool) -> IdList<ExprId> {
+    /// `reScanTemplateToken(false)`: the invalid escapes of the piece are reported.
+    #[cold]
+    #[inline(never)]
+    fn rescan_template_piece(&mut self) {
+        match self.recovers {
+            true => self.lx.rescan_template_without_tag(),
+            false => self.report(),
+        }
+    }
+
+    /// `IsUnterminated` of the last piece of a template, which is the token.
+    #[inline(always)]
+    fn is_at_unterminated_piece(&self) -> bool {
+        self.recovers && self.lx.end as usize == self.lx.src.len() && self.ends_without_backtick()
+    }
+
+    /// The piece of a template at the end of the text has no `` ` `` of its own at its end.
+    #[cold]
+    #[inline(never)]
+    fn ends_without_backtick(&self) -> bool {
+        let piece = self.lx.text().get(1..).unwrap_or_default();
+        let Some((b'`', before)) = piece.split_last() else {
+            return true;
+        };
+        let backslashes = before.iter().rev().take_while(|&&c| c == b'\\').count();
+        backslashes % 2 == 1
+    }
+
+    /// The substitutions of the template at the token, which the texts follow in the list of ids,
+    /// and `callIsIncomplete`.
+    fn template_parts(&mut self, has_tag: bool) -> (IdList<ExprId>, bool) {
         // The first text, then each substitution and the text after it.
         let base = self.s.ids.len();
         if !has_tag {
@@ -1438,20 +1791,25 @@ impl Parser<'_> {
         }
         self.s.ids.push(self.lx.atom.0);
         let mut goes_on = self.token() == T::TemplateHead;
+        let mut is_incomplete = has_tag && !goes_on && self.is_at_unterminated_piece();
         self.next();
         while goes_on {
             let expression = self.expression_allowing_in();
+            self.s.ids.push(expression.0);
             if self.token() != T::CloseBrace {
-                self.fail();
+                // `parseLiteralOfTemplateSpan`
+                self.expected(T::CloseBrace);
+                self.s.ids.push(known::empty.0);
+                is_incomplete = true;
                 break;
             }
             self.lx.rescan_template_continuation();
             if !has_tag {
                 self.piece_of_template_without_tag();
             }
-            self.s.ids.push(expression.0);
             self.s.ids.push(self.lx.atom.0);
             goes_on = self.token() == T::TemplateMiddle;
+            is_incomplete = has_tag && !goes_on && self.is_at_unterminated_piece();
             self.next();
         }
         let parts = self.s.ids.get(base..).unwrap_or_default();
@@ -1460,7 +1818,7 @@ impl Parser<'_> {
         self.f.ids.extend(parts.iter().step_by(2));
         let count = (parts.len() / 2) as u32;
         self.s.ids.truncate(base);
-        IdList::new(start, count)
+        (IdList::new(start, count), is_incomplete)
     }
 
     /// `parseTaggedTemplateRest`
@@ -1473,7 +1831,7 @@ impl Parser<'_> {
     ) -> ExprId {
         let backtick = self.pos();
         let head = self.lx.atom;
-        let exprs = self.template_parts(true);
+        let (exprs, is_incomplete) = self.template_parts(true);
         // `checkGrammarTaggedTemplateChain`
         if is_in_chain {
             self.flag(
@@ -1493,7 +1851,10 @@ impl Parser<'_> {
             callee,
             args: exprs,
             type_args,
-            close_pos: u32::MAX,
+            close_pos: match is_incomplete {
+                true => INCOMPLETE_TEMPLATE,
+                false => u32::MAX,
+            },
             chain: Chain::No,
             template,
         });
@@ -1538,6 +1899,10 @@ impl Parser<'_> {
         }
         let (args, close_pos) = match self.token() {
             T::OpenParen => self.argument_list(),
+            T::QuestionDot => {
+                self.optional_chain_from_new_expression(callee);
+                (IdList::EMPTY, u32::MAX)
+            }
             _ => (IdList::EMPTY, u32::MAX),
         };
         let call = self.f.add_call(Call {
@@ -1549,6 +1914,24 @@ impl Parser<'_> {
             template: ExprId::NONE,
         });
         self.finish_expr(ExprKind::New(call), start)
+    }
+
+    /// `parseNewExpressionOrNewDotTarget`, at the `?.` after `new callee`.
+    #[cold]
+    #[inline(never)]
+    fn optional_chain_from_new_expression(&mut self, callee: ExprId) {
+        if !self.recovers {
+            return self.refuse(Refusal::Reported);
+        }
+        // `GetTextOfNodeFromSourceText`
+        let (from, to) = match (self.f.parens.last(), self.f.exprs.get(callee.idx())) {
+            (Some(&(inside, open, end)), _) if inside == callee => (open, end),
+            (_, Some(written)) => (written.pos, written.end),
+            _ => (0, 0),
+        };
+        let src = self.lx.src;
+        let text = src.get(from as usize..to as usize).unwrap_or_default();
+        self.error_at_token(1209, &[text]);
     }
 
     // ───────────────────────────── object literals ─────────────────────────────
@@ -1599,13 +1982,17 @@ impl Parser<'_> {
                 self.next();
                 let parens = self.f.parens.len();
                 let had_await = std::mem::take(&mut self.has_top_level_await);
-                let saved = self.enter_context(0, ctx::DISALLOW_IN | ctx::TYPE);
+                let left = self.await_context_of_module();
+                let saved = self.enter_context(0, ctx::DISALLOW_IN | ctx::TYPE | left);
                 // "We parse any expression (including a comma expression)."
                 let expression = match self.is_ecmascript {
                     true => self.assignment_expression(),
                     false => self.expression(),
                 };
                 self.context = saved;
+                if saved & left != 0 {
+                    self.computed_name_outside_await_context(pos);
+                }
                 // `parsePropertyName` of the native parser restores `statementHasAwaitIdentifier`, so
                 // that no statement is parsed again for an `await` in a name.
                 if self.has_top_level_await
@@ -1664,8 +2051,33 @@ impl Parser<'_> {
                 return (key, NameKind::Identifier, pos);
             }
         };
-        self.next();
+        self.next_after_name();
         (name.0, name.1, pos)
+    }
+
+    /// `parsePropertyName` restores `statementHasAwaitIdentifier`: a name stays outside the await
+    /// context of the top level of a module. That context, where there is one to leave.
+    #[inline(always)]
+    fn await_context_of_module(&self) -> u32 {
+        match self.recovers && self.has_context(ctx::TOP_LEVEL) {
+            true if !self.options.dialect.typescript_5 => ctx::AWAIT,
+            _ => 0,
+        }
+    }
+
+    /// After the computed name from `open` on, which has left that context: `reparseTopLevelAwait`
+    /// parses it in the context all the same if another `await` is in its statement.
+    #[cold]
+    #[inline(never)]
+    fn computed_name_outside_await_context(&mut self, open: u32) {
+        let (src, open, close) = (self.lx.src, open as usize, self.pos() as usize);
+        let has_await =
+            |text: Option<&[u8]>| bun_core::strings::contains(text.unwrap_or_default(), b"await");
+        if has_await(src.get(open..close))
+            && (has_await(src.get(..open)) || has_await(src.get(close..)))
+        {
+            self.refuse(Refusal::Unsupported);
+        }
     }
 
     /// Removes `e`, which is the last expression and is not referred to.
@@ -1773,7 +2185,11 @@ impl Parser<'_> {
                 start,
             );
             // The function expression starts at its parameters.
-            self.finish_expr(ExprKind::Fn(func), self.f[func].anchor)
+            let parameters = match self.recovers {
+                true => self.start_of_parameters(func),
+                false => self.f[func].anchor,
+            };
+            self.finish_expr(ExprKind::Fn(func), parameters)
         } else if is_identifier && self.token() != T::Colon {
             kind = PropKind::Shorthand;
             let PropKey::Name(name) = key else {
@@ -1821,6 +2237,18 @@ impl Parser<'_> {
         self.s.props.push(prop);
     }
 
+    /// The `(` of the parameters of `func`, or the token in its place.
+    #[cold]
+    #[inline(never)]
+    fn start_of_parameters(&self, func: FnId) -> u32 {
+        let anchor = self.f[func].anchor;
+        match self.lx.src.get(anchor as usize) {
+            Some(b'(') => anchor,
+            // `createMissingList`: the anchor is before the end of the previous token.
+            _ => bun_sema::check::spans::skip_trivia(self.lx.src, anchor as usize + 1) as u32,
+        }
+    }
+
     /// The position of the first token of `e` that is neither a parenthesis nor part of `<T>`.
     pub(crate) fn first_operand_pos(&self, mut e: ExprId) -> u32 {
         loop {
@@ -1847,12 +2275,12 @@ impl Parser<'_> {
         }
     }
 
-    /// `canFollowModifier`, after `get` or `set`.
+    /// `canFollowGetOrSetKeyword`
     pub(crate) fn can_follow_accessor_keyword(&self) -> bool {
         match self.token() {
             T::OpenBracket | T::PrivateIdentifier => true,
-            // acorn's `isClassElementNameStart`
-            T::OpenBrace | T::Asterisk | T::DotDotDot => !self.is_ecmascript,
+            // acorn's `isClassElementNameStart`. Without recovery an accessor fails at them.
+            T::OpenBrace | T::Asterisk | T::DotDotDot => !self.is_ecmascript && !self.recovers,
             _ => self.is_literal_property_name(),
         }
     }

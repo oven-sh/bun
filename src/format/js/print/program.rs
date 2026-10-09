@@ -56,10 +56,14 @@ pub(crate) fn write_program<'a>(file: &'a File<'a>, f: &mut Formatter<'a>) {
         write!(f, FormatDanglingComments::Comments { comments, indent });
         rest = others;
     }
-    write!(
-        f,
-        [FormatTrailingComments::Comments(rest), hard_line_break()]
-    );
+    // Behind the comments, if that is all there is in the file.
+    let ends_with_empty_line = !rest.is_empty()
+        && (file.body().last()).is_some_and(|last| is_directive_before_empty_line(last, f));
+    write!(f, FormatTrailingComments::Comments(rest));
+    match ends_with_empty_line {
+        true => write!(f, empty_line()),
+        false => write!(f, hard_line_break()),
+    }
 }
 
 /// `#!/usr/bin/env bun`. `is_last`: nothing is written behind it, not even a line break.
@@ -178,7 +182,11 @@ impl<'a> Format<'a> for FormatStatements<'a> {
                 true => &[][..],
                 false => f.comments().comments_before(statement.span().start),
             };
-            let placements = match comments.iter().all(|comment| comment.preceded_by_newline()) {
+            let starts_line = |comment: &Comment| {
+                comment.preceded_by_newline()
+                    || is_behind_empty_statements_that_start_line(previous_statement, comment, f)
+            };
+            let placements = match comments.iter().all(starts_line) {
                 true => SmallVec::new(),
                 false => write_more_trailing_comments(previous_statement, comments, statement, f),
             };
@@ -225,7 +233,37 @@ impl<'a> Format<'a> for FormatStatements<'a> {
             );
         }
         imports.finish(f);
+        if let Some(last) = previous
+            && matches!(last.parent(), Node::Func(_))
+            && is_directive_before_empty_line(last, f)
+        {
+            write!(f, empty_line());
+        }
     }
+}
+
+/// `a;⏎;// comment⏎b;`, as bundlers write it: with the empty statement gone the comment starts its line, and for oxfmt it
+/// leads `b`. For Prettier it trails `a`.
+fn is_behind_empty_statements_that_start_line<'a>(
+    previous: Stmt<'a>,
+    comment: &Comment,
+    f: &Formatter<'a>,
+) -> bool {
+    f.options().flavor.is_oxfmt()
+        && previous.span().end <= comment.span.start
+        && (f
+            .source_text()
+            .text_for(&previous.span().between(comment.span))
+            .iter()
+            .rev())
+        .find(|byte| !matches!(byte, b' ' | b'\t' | b';'))
+        .is_some_and(|byte| matches!(byte, b'\n' | b'\r'))
+}
+
+/// `function a() { "use strict";⏎⏎}`: oxfmt keeps the empty line after the last directive, whatever follows, be it
+/// nothing.
+fn is_directive_before_empty_line<'a>(last: Stmt<'a>, f: &Formatter<'a>) -> bool {
+    f.options().flavor.is_oxfmt() && last.directive().is_some() && is_next_line_empty_after(last, f)
 }
 
 /// Of `comments`, which are what is left between `previous` and `next`, writes those that trail

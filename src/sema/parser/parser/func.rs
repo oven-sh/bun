@@ -57,7 +57,7 @@ impl Parser<'_> {
         let (name, name_pos) = if self.is_binding_identifier() {
             let name = (self.lx.atom, self.pos());
             self.note_identifier(name.0, name.1);
-            self.next();
+            self.next_after_name();
             name
         } else if !flags.contains(Flags::DEFAULT) {
             let full = self.full_start();
@@ -99,7 +99,7 @@ impl Parser<'_> {
         if self.is_binding_identifier() {
             (name, name_pos) = (self.lx.atom, self.pos());
             self.note_identifier(name, name_pos);
-            self.next();
+            self.next_after_name();
         }
         self.context = saved;
         let saved = self.enter_context(0, ctx::DECORATOR);
@@ -208,6 +208,9 @@ impl Parser<'_> {
         let list = self.statements_until_close_brace();
         self.context = saved;
         self.expect_matching((T::OpenBrace, T::CloseBrace), open_at);
+        if self.token() == T::Equals {
+            self.equals_after_block();
+        }
         (FnBody::Block(list), open)
     }
 
@@ -239,11 +242,17 @@ impl Parser<'_> {
             };
             // The checker reports the others, which are in the list.
             let flags = flags & (Flags::IN | Flags::OUT | Flags::CONST);
-            let (name, pos) = self.identifier();
+            let (name, pos, start) = if self.is_identifier() {
+                let (name, pos) = (self.lx.atom, self.pos());
+                self.note_identifier(name, pos);
+                self.next_after_name();
+                (name, pos, start)
+            } else {
+                self.missing_name_of_type_parameter(start)
+            };
             let constraint = match self.eat(T::Extends) {
-                // What starts an expression and no type is read as an expression, and reported.
                 true if !self.is_start_of_type(false) && self.is_start_of_expression() => {
-                    self.fail();
+                    self.expression_in_place_of_constraint();
                     TypeNodeId::NONE
                 }
                 true => self.ty(),
@@ -280,6 +289,38 @@ impl Parser<'_> {
         }
         self.expect(T::GreaterThan);
         take_span!(self, type_params, base)
+    }
+
+    /// `parseIdentifier` in `parseTypeParameter`, at none: the name, its position, the new `start`.
+    #[cold]
+    #[inline(never)]
+    fn missing_name_of_type_parameter(&mut self, start: u32) -> (Atom, u32, u32) {
+        let (full, token) = (self.full_start(), self.pos());
+        match self.missing_identifier(0, 0) {
+            // Without modifiers the type parameter is nothing but the name, at `nodePos()`.
+            (known::empty, _) if start == token => (known::empty, full, full),
+            (known::empty, _) => (known::empty, full, start),
+            (name, pos) => (name, pos, start),
+        }
+    }
+
+    /// `parseUnaryExpressionOrHigher` in `parseTypeParameter`: the tree has no place for it.
+    #[cold]
+    #[inline(never)]
+    fn expression_in_place_of_constraint(&mut self) {
+        if !self.recovers {
+            return self.fail();
+        }
+        if self.is_too_deep() {
+            return;
+        }
+        // `checkTypeParameter`
+        self.flag(DiagnosticKind::Grammar, 1110, self.range_of_token(), &[]);
+        let before = self.checkpoint();
+        let strays = self.s.stray_decorators.len();
+        self.unary_expression();
+        self.s.stray_decorators.truncate(strays);
+        self.forget_nodes(&before);
     }
 
     /// `parseParameters`, at the `(`: the `this` parameter, and the others. `context`: that of the
@@ -341,7 +382,7 @@ impl Parser<'_> {
         let modifiers = self.s.param_modifiers.len();
         let decorators = self.s.decorators.len();
         let lists = self.enter_list(ListKind::Parameters);
-        while self.is_in_list(close) && self.is_at_element(ListKind::Parameters) {
+        while self.is_in_list(close) && self.is_at_parameter() {
             let element = self.full_start();
             if !self.parameter(base, outer_await, ambiguity) {
                 return None;
@@ -365,6 +406,14 @@ impl Parser<'_> {
         }
         self.s.decorators.truncate(decorators);
         Some(params)
+    }
+
+    /// `is_at_element` for a parameter. `isStartOfParameter`: a private name starts one.
+    #[inline(always)]
+    fn is_at_parameter(&mut self) -> bool {
+        !self.recovers
+            || self.token() == T::PrivateIdentifier
+            || self.is_at_element(ListKind::Parameters)
     }
 
     /// `parseParameterEx`: pushes it on the stack of parameters, of which the list's start at
@@ -421,6 +470,9 @@ impl Parser<'_> {
             self.next();
             // A decorator of `this` is an error of the parser.
             if token.is_modifier() || token == T::At {
+                if self.recovers {
+                    return self.this_parameter_after_modifiers(base, start, pat, flags);
+                }
                 self.refuse(Refusal::Reported);
             }
         } else {
@@ -464,6 +516,65 @@ impl Parser<'_> {
             pat,
             ty,
             default,
+            flags,
+            pos: start.pos,
+            loc: TextRange {
+                pos: start.full,
+                end: self.prev_end(),
+            },
+        });
+        true
+    }
+
+    /// The rest of `parseParameterEx` after a `this` with modifiers, the last list of the file.
+    #[cold]
+    #[inline(never)]
+    fn this_parameter_after_modifiers(
+        &mut self,
+        base: usize,
+        start: Start,
+        pat: PatId,
+        mut flags: Flags,
+    ) -> bool {
+        let index = (self.s.params.len() - base) as u32;
+        let list = match self.s.param_modifiers.last() {
+            Some(&(param, list)) if param == index => list,
+            _ => Span::EMPTY,
+        };
+        let modifiers = self.f.modifiers.get(list.range()).unwrap_or_default();
+        // `modifiers.Nodes[0].Loc`
+        let end_of_first = modifiers.first().and_then(|first| match first.kind {
+            ModifierKind::Keyword(flag) => Some(first.pos + modifier_text(flag).len() as u32),
+            ModifierKind::Decorator(e) => {
+                (self.f.exprs.get(e.idx())).map(|_| end_of_expr(&self.f, e))
+            }
+        });
+        // `GetThisParameter`: nothing asks for its modifiers, and `checkDecorators` passes it by.
+        let strays = self.s.modifiers.len();
+        if index == 0 && !list.is_empty() && !self.has_context(ctx::TYPE) {
+            let is_decorator = |it: &&Modifier| matches!(it.kind, ModifierKind::Decorator(_));
+            self.s
+                .modifiers
+                .extend(modifiers.iter().filter(is_decorator));
+            let decorators = self.s.modifiers.len() - strays;
+            let of_others = self.s.decorators.len().saturating_sub(decorators);
+            self.s.decorators.truncate(of_others);
+            self.s.param_modifiers.pop();
+            self.f.modifiers.truncate(list.start as usize);
+            flags = Flags::empty();
+        }
+        let ty = self.type_annotation();
+        if let Some(end) = end_of_first {
+            self.error(1433, (start.full, end), &[]);
+        }
+        if self.s.modifiers.len() > strays {
+            let name_pos = self.f.pats.get(pat.idx()).map_or(start.pos, |it| it.pos);
+            self.note_stray_decorators(strays, name_pos);
+        }
+        self.s.params.push(Param {
+            pat,
+            ty,
+            default: ExprId::NONE,
             flags,
             pos: start.pos,
             loc: TextRange {
@@ -544,7 +655,7 @@ impl Parser<'_> {
         let full = self.full_start();
         let (name, pos, end) = (self.lx.atom, self.lx.start, self.lx.end);
         self.note_identifier(name, pos);
-        self.next();
+        self.next_after_name();
         Some(self.simple_arrow_function(name, (pos, end, full), true, start, allow_return_type))
     }
 
@@ -691,14 +802,18 @@ impl Parser<'_> {
         if !allow_ambiguity && !matches!(last, T::EqualsGreaterThan | T::OpenBrace) {
             return None;
         }
-        let anchor = self.pos();
-        self.expect(T::EqualsGreaterThan);
+        let mut anchor = self.pos();
+        if !self.expect(T::EqualsGreaterThan) {
+            // `parseExpectedToken`: the missing token is at `nodePos()`.
+            anchor = self.full_start();
+        }
         let (body, open) = match last {
             T::EqualsGreaterThan | T::OpenBrace => {
                 self.arrow_function_body(flags, allow_return_type)
             }
             // `parseIdentifier`
             _ if self.is_identifier() => {
+                self.lx.has_escape = false;
                 let name = self.note_identifier(self.lx.atom, self.lx.start);
                 (FnBody::Expr(self.token_expr(ExprKind::Ident(name))), 0)
             }
@@ -736,18 +851,25 @@ impl Parser<'_> {
 
     /// `typeHasArrowFunctionBlockingParseError`, of a type in which an error was reported.
     #[cold]
-    fn has_arrow_function_blocking_parse_error(&mut self, ty: TypeNodeId) -> bool {
-        match self.f.types.get(ty.idx()).map(|it| it.kind) {
-            Some(TypeNodeKind::Ref { name, .. }) => {
-                let first = self.f.names.get(name.start as usize);
-                name.len == 1 && first.is_some_and(|it| it.text == known::empty)
+    fn has_arrow_function_blocking_parse_error(&self, mut ty: TypeNodeId) -> bool {
+        loop {
+            match self.f.types.get(ty.idx()).map(|it| it.kind) {
+                Some(TypeNodeKind::Ref { name, .. }) => {
+                    let first = self.f.names.get(name.start as usize);
+                    return name.len == 1 && first.is_some_and(|it| it.text == known::empty);
+                }
+                Some(TypeNodeKind::Fn(func)) => {
+                    let Some(func) = self.f.fns.get(func.idx()) else {
+                        return false;
+                    };
+                    // `isMissingNodeList`: `anchor` is where `parseParameters` has started.
+                    if self.lx.src.get(func.anchor as usize) != Some(&b'(') {
+                        return true;
+                    }
+                    ty = func.ret;
+                }
+                _ => return false,
             }
-            // Whether its list of parameters is missing is not kept.
-            Some(TypeNodeKind::Fn(_)) => {
-                self.refuse(Refusal::Unsupported);
-                true
-            }
-            _ => false,
         }
     }
 
@@ -759,12 +881,13 @@ impl Parser<'_> {
         }
         // It starts a statement and no expression statement: a block whose `{` is missing.
         if self.token() == T::At {
-            self.fail();
+            self.fail_unless_recovering();
         }
+        // `isStartOfExpressionStatement`
         if self.recovers
             && !matches!(self.token(), T::Semicolon | T::Function | T::Class)
             && self.is_start_of_statement()
-            && !self.is_start_of_expression()
+            && (self.token() == T::At || !self.is_start_of_expression())
         {
             return self.function_block(context);
         }

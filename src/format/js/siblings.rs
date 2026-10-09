@@ -14,6 +14,7 @@
 use super::ast_nodes::{
     AsAstNodes, AstNodes, ExpressionStatement, type_arguments_of, type_parameters_of,
 };
+use crate::options::Flavor;
 use bun_lint::ast::{
     ExprKind, FnBody, Func, Handle, ImportEqualsTarget, Key, List, Member, ModuleName, Node,
     PatKind, StmtKind, TypeKind,
@@ -25,6 +26,8 @@ struct Finder {
     me: Span,
     is_found: bool,
     following: Option<u32>,
+    /// oxfmt has a node for what Prettier has none: see [`Finder::transparent`].
+    has_all_nodes: bool,
 }
 
 impl Finder {
@@ -44,7 +47,12 @@ impl Finder {
     /// A child that Prettier has no node for, like the parentheses around parameters. What is before
     /// it is followed by the first thing in it, which starts at `first`.
     fn transparent(&mut self, child: Option<Span>, first: Option<u32>) -> &mut Self {
-        if self.following.is_none() && self.is_found && child.is_some() && first.is_some() {
+        if self.following.is_none()
+            && self.is_found
+            && child.is_some()
+            && first.is_some()
+            && !self.has_all_nodes
+        {
             self.following = first;
         }
         self.one(child)
@@ -179,9 +187,13 @@ fn member_fields(finder: &mut Finder, member: Member<'_>) {
 
 /// Where the next sibling of the child of `parent` at `span` starts, or 0 if there is none. The child
 /// can be a name or something else that there is no [`AstNodes`] for.
-pub(crate) fn following_span_start_in(mut span: Span, mut parent: AstNodes<'_>) -> u32 {
+pub(crate) fn following_span_start_in(
+    mut span: Span,
+    mut parent: AstNodes<'_>,
+    flavor: Flavor,
+) -> u32 {
     loop {
-        match following_span_start_among_siblings(span, parent) {
+        match following_span_start_among_siblings(span, parent, flavor) {
             Some(following) => return following,
             None => (span, parent) = (parent.span(), parent.parent()),
         }
@@ -189,12 +201,17 @@ pub(crate) fn following_span_start_in(mut span: Span, mut parent: AstNodes<'_>) 
 }
 
 /// `None`: the child is the last one, and what follows `parent` follows it.
-fn following_span_start_among_siblings(span: Span, parent: AstNodes<'_>) -> Option<u32> {
+fn following_span_start_among_siblings(
+    span: Span,
+    parent: AstNodes<'_>,
+    flavor: Flavor,
+) -> Option<u32> {
     use AstNodes as N;
     let mut finder = Finder {
         me: span,
         is_found: false,
         following: None,
+        has_all_nodes: flavor.is_oxfmt(),
     };
     let f = &mut finder;
     let span_of = |e: bun_lint::ast::Expr<'_>| Some(e.span());

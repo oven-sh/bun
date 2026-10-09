@@ -6,6 +6,12 @@
 #[repr(u8)]
 pub(crate) enum T {
     Eof,
+    /// `KindUnknown`: a character that starts no token. Only with `recovers`, as the next two.
+    Invalid,
+    /// `KindConflictMarkerTrivia`: JSX text and the conflict marker that ends it.
+    ConflictMarker,
+    /// `KindNonTextFileMarkerTrivia`: the rest of a text that is binary.
+    NotText,
     Number,
     BigInt,
     String,

@@ -882,7 +882,9 @@ impl<'a> Format<'a> for AssignmentLike<'a> {
             });
         let left = f.elements().get(left_group + 1..).unwrap_or_default();
         let is_left_text = left.len() <= 12 && left.iter().all(is_text_on_one_line);
-        let left_may_break = !is_left_text && f.elements_from(left_group + 1).may_directly_break();
+        let left_may_break = !is_left_text
+            && f.elements_from(left_group + 1)
+                .may_directly_break(f.options().flavor);
         let layout = match self.layout(right_expression, is_left_short, left_may_break, f) {
             AssignmentLikeLayout::Fluid | AssignmentLikeLayout::NeverBreakAfterOperator
                 if has_line_comment_on_operator_line
@@ -1164,19 +1166,21 @@ fn is_poorly_breakable_member_or_call_chain<'a>(
         false => &call_expressions[..],
     };
     !asked.iter().any(|&call_expression| {
-        call_expression.callee().is_some_and(|callee| {
-            matches!(
-                callee.as_ast_nodes(),
+        call_expression
+            .callee()
+            .is_some_and(|callee| match callee.as_ast_nodes() {
                 AstNodes::StaticMemberExpression(_)
-                    | AstNodes::ComputedMemberExpression(_)
-                    | AstNodes::PrivateFieldExpression(_)
-            )
-        }) && is_member_call_chain(call_expression, f)
+                | AstNodes::ComputedMemberExpression(_)
+                | AstNodes::PrivateFieldExpression(_) => true,
+                AstNodes::CallExpression(_) => only_last_call_can_be_member_chain(f),
+                _ => false,
+            })
+            && is_member_call_chain(call_expression, f)
     })
 }
 
 /// `a = await b.c("d")!.e("f")!.g("h")!.i!()`: oxfmt asks whether the last call is a member chain, which the call of
-/// `x!` is not, and breaks the line after the `=`.
+/// `x!` is not, and breaks the line after the `=`. The call of a call is one: `a = b.c().d()(e)`.
 fn only_last_call_can_be_member_chain(f: &Formatter<'_>) -> bool {
     f.options().flavor.is_oxfmt()
 }
@@ -1190,33 +1194,41 @@ fn comment_in_call_chain_makes_it_breakable(f: &Formatter<'_>) -> bool {
 /// Prettier's `isShortCallArgument`/`isLoneShortArgument`.
 pub(crate) fn is_short_argument<'a>(argument: Expr<'a>, threshold: u16, f: &Formatter<'a>) -> bool {
     let threshold = threshold as usize;
+    // Prettier asks for the `length` of a string of JavaScript, oxfmt for that of one of Rust.
+    let is_oxfmt = f.options().flavor.is_oxfmt();
+    let len = |text: &[u8]| match is_oxfmt {
+        true => text.len(),
+        false => bun_lint::utils::text::utf16_len(text) as usize,
+    };
     match argument.as_ast_nodes() {
-        AstNodes::IdentifierReference(_) => argument.text().len() <= threshold,
+        AstNodes::IdentifierReference(_) => len(argument.text()) <= threshold,
         AstNodes::UnaryExpression(_) => argument
             .argument()
             .is_some_and(|operand| is_short_argument(operand, threshold as u16, f)),
         AstNodes::RegExpLiteral(_) => {
-            matches!(argument.kind(), ExprKind::Regex(regex) if regex.pattern().len() <= threshold)
+            matches!(argument.kind(), ExprKind::Regex(regex) if len(regex.pattern()) <= threshold)
         }
         AstNodes::StringLiteral(_) => {
-            FormatLiteralStringToken::new(
+            let text = FormatLiteralStringToken::new(
                 argument.text(),
                 false,
                 StringLiteralParentKind::Expression,
             )
-            .clean_text(f)
-            .width()
-                <= threshold
+            .clean_text(f);
+            match is_oxfmt {
+                true => text.width() <= threshold,
+                false => len(&text) <= threshold,
+            }
         }
         AstNodes::TemplateLiteral(_) => matches!(argument.kind(), ExprKind::Template(template) if {
             let raw = template.raw(0);
-            template.quasi_count() == 1 && raw.len() <= threshold && bun_core::strings::index_of_any(raw, b"\r\n").is_none()
+            template.quasi_count() == 1 && len(raw) <= threshold && bun_core::strings::index_of_any(raw, b"\r\n").is_none()
         }),
         AstNodes::CallExpression(_) => argument.call().is_some_and(|call| {
             let callee = call.callee();
             call.args().is_empty()
                 && matches!(callee.kind(), ExprKind::Ident(_))
-                && callee.text().len() <= threshold.saturating_sub(2)
+                && len(callee.text()) <= threshold.saturating_sub(2)
         }),
         AstNodes::ThisExpression(_)
         | AstNodes::NullLiteral(_)

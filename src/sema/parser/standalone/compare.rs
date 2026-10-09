@@ -153,8 +153,11 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
             jsx_pragmas
         );
         // The reference lists what the lowering reports before what the parser reports.
+        // `hasParseDiagnostics`: the checker reports none of `Grammar` then, and the reference drops some of them.
+        let has_errors = a.has_parse_diagnostics && b.has_parse_diagnostics;
         let sorted = |list: &[Diagnostic]| {
             let mut list = list.to_vec();
+            list.retain(|it| !has_errors || it.kind != DiagnosticKind::Grammar);
             list.sort_by_key(|it| (it.start, it.code, it.end));
             list
         };
@@ -194,6 +197,26 @@ impl<'a, A: Storage, B: Storage> Comparison<'a, A, B> {
                     self.differ("import_attributes", &x.0, &y.0);
                 }
                 self.expr("import attributes", x.1, y.1);
+            }
+        }
+        if self.lens(
+            "specifier_expressions",
+            a.specifier_expressions.len(),
+            b.specifier_expressions.len(),
+        ) {
+            let both = (a.specifier_expressions.iter()).zip(&b.specifier_expressions[..]);
+            for (&x, &y) in both {
+                self.expr("specifier expression", x, y);
+            }
+        }
+        if self.lens(
+            "exports_from_expressions",
+            a.exports_from_expressions.len(),
+            b.exports_from_expressions.len(),
+        ) {
+            let both = (a.exports_from_expressions.iter()).zip(&b.exports_from_expressions[..]);
+            for (x, y) in both {
+                self.expr("export from an expression", x.1, y.1);
             }
         }
         if self.is_done() {

@@ -6,7 +6,7 @@
 
 use super::Parser as Syntax;
 use super::misc::is_space;
-use crate::syntax_error::{Message, SyntaxError};
+use crate::syntax_error::{Message, Refusal, Refused, SyntaxError};
 use crate::text::{self, ByteSet};
 
 /// A range of the text.
@@ -163,6 +163,8 @@ impl Token {
 struct Tokenizer<'a> {
     css: &'a [u8],
     syntax: Syntax,
+    /// Why the tokenizer or the parser refuses the text.
+    refusal: Refusal,
     pos: usize,
     /// What is subtracted from a position to get what `postcss` takes for it.
     shift: usize,
@@ -205,7 +207,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     /// `interpolation` of `postcss-scss`. `next`: where the `#` is. Returns where the `}` is.
-    fn interpolation(&self, mut next: usize) -> Result<usize, SyntaxError> {
+    fn interpolation(&self, mut next: usize) -> Result<usize, Refused> {
         let start = next as u32;
         let mut deep = 1;
         let mut string_quote = None;
@@ -215,7 +217,7 @@ impl<'a> Tokenizer<'a> {
             let &code = self
                 .css
                 .get(next)
-                .ok_or(SyntaxError(Message::UnclosedInterpolation, start))?;
+                .ok_or_else(|| self.refusal.note(Message::UnclosedInterpolation, start))?;
             if let Some(quote) = string_quote {
                 if !string_escaped && code == quote {
                     string_quote = None;
@@ -236,7 +238,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     #[inline]
-    fn next_token(&mut self, ignore_unclosed: bool) -> Result<Option<Token>, SyntaxError> {
+    fn next_token(&mut self, ignore_unclosed: bool) -> Result<Option<Token>, Refused> {
         if let Some(token) = self.returned.pop() {
             return Ok(token);
         }
@@ -312,11 +314,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     /// The token that starts with `code`, where `self.pos` is.
-    fn next_special_token(
-        &mut self,
-        code: u8,
-        ignore_unclosed: bool,
-    ) -> Result<Token, SyntaxError> {
+    fn next_special_token(&mut self, code: u8, ignore_unclosed: bool) -> Result<Token, Refused> {
         let (css, pos) = (self.css, self.pos);
         let is_scss = self.syntax == Syntax::Scss;
         // The position of the last character of the token.
@@ -346,7 +344,9 @@ impl<'a> Tokenizer<'a> {
                 } else if prev == b"url" && !matches!(n, Some(b'\'' | b'"')) && !is_space(n) {
                     let close = match self.find_unescaped(b')', pos) {
                         None if ignore_unclosed => pos,
-                        close => close.ok_or(SyntaxError(Message::UnclosedBracket, pos as u32))?,
+                        close => close.ok_or_else(|| {
+                            self.refusal.note(Message::UnclosedBracket, pos as u32)
+                        })?,
                     };
                     (kind, next) = (TokenKind::Brackets, close);
                 } else if !is_scss && self.last_bad_paren.is_some_and(|last| pos <= last) {
@@ -387,7 +387,7 @@ impl<'a> Tokenizer<'a> {
                     at += 1;
                     let &byte = css
                         .get(at)
-                        .ok_or(SyntaxError(Message::UnclosedString, pos as u32))?;
+                        .ok_or_else(|| self.refusal.note(Message::UnclosedString, pos as u32))?;
                     if !escaped && byte == code {
                         break;
                     } else if byte == b'\\' {
@@ -403,7 +403,8 @@ impl<'a> Tokenizer<'a> {
             b'\'' | b'"' => {
                 let close = match self.find_unescaped(code, pos) {
                     None if ignore_unclosed => pos + 1,
-                    close => close.ok_or(SyntaxError(Message::UnclosedString, pos as u32))?,
+                    close => close
+                        .ok_or_else(|| self.refusal.note(Message::UnclosedString, pos as u32))?,
                 };
                 (kind, next) = (TokenKind::String, close);
             }
@@ -438,7 +439,11 @@ impl<'a> Tokenizer<'a> {
             b'/' if css.get(pos + 1) == Some(&b'*') => {
                 let close = match text::index_of_from(css, b"*/", pos + 2) {
                     None if ignore_unclosed => css.len(),
-                    close => close.ok_or(SyntaxError(Message::UnclosedComment, pos as u32))? + 1,
+                    close => {
+                        close.ok_or_else(|| {
+                            self.refusal.note(Message::UnclosedComment, pos as u32)
+                        })? + 1
+                    }
                 };
                 (kind, next) = (TokenKind::Comment, close);
             }
@@ -557,8 +562,6 @@ struct Parser<'a> {
     is_custom_property_set: bool,
     /// For the tokens of a statement.
     token_buffer: Vec<Token>,
-    /// What is said where a token is missing.
-    at_end: SyntaxError,
 }
 
 /// How deep rules can be nested. What writes them is recursive.
@@ -611,9 +614,9 @@ fn has_extend(text: &[u8], prefix: &[u8]) -> bool {
     false
 }
 
-/// The first `(` or `[` of `tokens` that nothing closes.
+/// Where the first `(` or `[` of `tokens` is that nothing closes.
 #[cold]
-fn unclosed_bracket(tokens: &[Token]) -> SyntaxError {
+fn unclosed_bracket(tokens: &[Token]) -> u32 {
     let mut open: Vec<(u8, Token)> = Vec::new();
     for &token in tokens {
         match token.kind {
@@ -629,17 +632,21 @@ fn unclosed_bracket(tokens: &[Token]) -> SyntaxError {
         .first()
         .map(|it| it.1)
         .or_else(|| tokens.first().copied());
-    SyntaxError(Message::UnclosedBracket, at.map_or(0, |it| it.range.start))
-}
-
-#[cold]
-fn neither_declaration_nor_rule(tokens: &[Token], at_end: SyntaxError) -> SyntaxError {
-    tokens.first().map_or(at_end, |&first| {
-        SyntaxError(Message::NeitherDeclarationNorRule, first.range.start)
-    })
+    at.map_or(0, |it| it.range.start)
 }
 
 impl<'a> Parser<'a> {
+    #[cold]
+    fn refuse(&self, message: Message, offset: u32) -> Refused {
+        self.tokenizer.refusal.note(message, offset)
+    }
+
+    /// A token is missing.
+    #[cold]
+    fn at_end(&self) -> Refused {
+        self.refuse(Message::UnexpectedEnd, self.css.len() as u32)
+    }
+
     fn node(&mut self, id: NodeId) -> &mut Node {
         &mut self.nodes[id as usize]
     }
@@ -673,23 +680,23 @@ impl<'a> Parser<'a> {
         id
     }
 
-    fn open(&mut self, id: NodeId) -> Result<(), SyntaxError> {
+    fn open(&mut self, id: NodeId) -> Result<(), Refused> {
         self.node(id).has_block = true;
         self.current = id;
         self.depth += 1;
         if self.depth > MAX_DEPTH {
-            Err(SyntaxError(
-                Message::NestedTooDeeply,
-                self.nodes[id as usize].start,
-            ))
+            Err(self.refuse(Message::NestedTooDeeply, self.nodes[id as usize].start))
         } else {
             Ok(())
         }
     }
 
-    fn parse(&mut self) -> Result<(), SyntaxError> {
+    fn parse(&mut self) -> Result<(), Refused> {
         while !self.tokenizer.end_of_file() {
-            let token = self.tokenizer.next_token(false)?.ok_or(self.at_end)?;
+            let token = self
+                .tokenizer
+                .next_token(false)?
+                .ok_or_else(|| self.at_end())?;
             match token.kind {
                 TokenKind::Space => self.spaces = self.texts.join(self.spaces, token.range),
                 TokenKind::Control(b';') => self.free_semicolon(token),
@@ -709,7 +716,7 @@ impl<'a> Parser<'a> {
         }
         // `endFile`
         if self.current != 0 {
-            return Err(SyntaxError(
+            return Err(self.refuse(
                 Message::UnclosedBlock,
                 self.nodes[self.current as usize].start,
             ));
@@ -733,13 +740,10 @@ impl<'a> Parser<'a> {
         self.semicolon = false;
     }
 
-    fn end(&mut self, token: Token) -> Result<(), SyntaxError> {
+    fn end(&mut self, token: Token) -> Result<(), Refused> {
         self.close_current();
         if self.current == 0 {
-            return Err(SyntaxError(
-                Message::UnexpectedClosingBrace,
-                token.range.start,
-            ));
+            return Err(self.refuse(Message::UnexpectedClosingBrace, token.range.start));
         }
         let current = self.current;
         let node = self.node(current);
@@ -789,7 +793,7 @@ impl<'a> Parser<'a> {
         node.raw_inline = token.inline;
     }
 
-    fn atrule(&mut self, token: Token) -> Result<(), SyntaxError> {
+    fn atrule(&mut self, token: Token) -> Result<(), Refused> {
         let name = Range::new(token.range.start + 1, token.range.end);
         match self.syntax {
             Syntax::Css => self.base_atrule(token.start, name),
@@ -797,7 +801,10 @@ impl<'a> Parser<'a> {
                 let mut name = name;
                 let mut prev = token;
                 while !self.tokenizer.end_of_file() {
-                    let next = self.tokenizer.next_token(false)?.ok_or(self.at_end)?;
+                    let next = self
+                        .tokenizer
+                        .next_token(false)?
+                        .ok_or_else(|| self.at_end())?;
                     if next.kind == TokenKind::Word
                         && prev.last.is_some_and(|last| next.start == last + 1)
                     {
@@ -815,9 +822,9 @@ impl<'a> Parser<'a> {
     }
 
     /// `atrule` of `postcss`. `start`: `token[2]`. `name`: `token[1].slice(1)`.
-    fn base_atrule(&mut self, start: u32, name: Range) -> Result<(), SyntaxError> {
+    fn base_atrule(&mut self, start: u32, name: Range) -> Result<(), Refused> {
         if name.is_empty() {
-            return Err(SyntaxError(Message::AtRuleWithoutName, start));
+            return Err(self.refuse(Message::AtRuleWithoutName, start));
         }
         let id = self.new_node(Kind::AtRule, start);
         self.node(id).name = name;
@@ -828,7 +835,10 @@ impl<'a> Parser<'a> {
         let mut brackets: Vec<u8> = Vec::new();
 
         while !self.tokenizer.end_of_file() {
-            let token = self.tokenizer.next_token(false)?.ok_or(self.at_end)?;
+            let token = self
+                .tokenizer
+                .next_token(false)?
+                .ok_or_else(|| self.at_end())?;
             match token.kind {
                 TokenKind::Control(b'(') => brackets.push(b')'),
                 TokenKind::Control(b'[') => brackets.push(b']'),
@@ -891,7 +901,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn other(&mut self, start: Token) -> Result<(), SyntaxError> {
+    fn other(&mut self, start: Token) -> Result<(), Refused> {
         let mut tokens = std::mem::take(&mut self.token_buffer);
         tokens.clear();
         let result = self.other_with(start, &mut tokens);
@@ -900,7 +910,7 @@ impl<'a> Parser<'a> {
     }
 
     /// `tokens` is empty.
-    fn other_with(&mut self, start: Token, tokens: &mut Vec<Token>) -> Result<(), SyntaxError> {
+    fn other_with(&mut self, start: Token, tokens: &mut Vec<Token>) -> Result<(), Refused> {
         let mut end = false;
         let mut colon = false;
         let mut brackets: Vec<u8> = Vec::new();
@@ -939,7 +949,7 @@ impl<'a> Parser<'a> {
             end = true;
         }
         if !brackets.is_empty() {
-            return Err(unclosed_bracket(tokens));
+            return Err(self.refuse(Message::UnclosedBracket, unclosed_bracket(tokens)));
         }
         if !(end && colon) {
             return self.unknown_word(tokens);
@@ -953,7 +963,7 @@ impl<'a> Parser<'a> {
         self.decl(tokens, custom_property)
     }
 
-    fn rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), SyntaxError> {
+    fn rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), Refused> {
         match self.syntax {
             Syntax::Css => self.base_rule(tokens),
             Syntax::Scss => self.scss_rule(tokens),
@@ -961,7 +971,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn base_rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), SyntaxError> {
+    fn base_rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), Refused> {
         tokens.pop();
         let start = tokens.first().map_or(0, |token| token.start);
         let id = self.new_node(Kind::Rule, start);
@@ -976,7 +986,7 @@ impl<'a> Parser<'a> {
     }
 
     /// `colon`: the index of the first `:` outside of parentheses. An error if nothing is before it.
-    fn colon(&self, tokens: &[Token]) -> Result<Option<usize>, SyntaxError> {
+    fn colon(&self, tokens: &[Token]) -> Result<Option<usize>, Refused> {
         let mut brackets = 0i32;
         let mut prev: Option<Token> = None;
         for (index, &token) in tokens.iter().enumerate() {
@@ -988,7 +998,7 @@ impl<'a> Parser<'a> {
             }
             if brackets == 0 && token.is(b':') {
                 match prev {
-                    None => return Err(SyntaxError(Message::UnexpectedColon, token.range.start)),
+                    None => return Err(self.refuse(Message::UnexpectedColon, token.range.start)),
                     Some(prev)
                         if prev.kind == TokenKind::Word && self.text_of(prev) == b"progid" =>
                     {
@@ -1071,9 +1081,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn decl(&mut self, tokens: &mut Vec<Token>, custom_property: bool) -> Result<(), SyntaxError> {
+    fn decl(&mut self, tokens: &mut Vec<Token>, custom_property: bool) -> Result<(), Refused> {
         let Some((&first, &last)) = tokens.first().zip(tokens.last()) else {
-            return Err(self.at_end);
+            return Err(self.at_end());
         };
         let id = self.new_node(Kind::Decl, first.start);
         if last.is(b';') {
@@ -1088,7 +1098,7 @@ impl<'a> Parser<'a> {
         let start = tokens
             .iter()
             .position(|token| token.kind == TokenKind::Word)
-            .ok_or(SyntaxError(Message::PropertyWithoutName, first.range.start))?;
+            .ok_or_else(|| self.refuse(Message::PropertyWithoutName, first.range.start))?;
         let before = self.texts.range_of(&tokens[..start]);
         let node = &mut self.nodes[id as usize];
         node.before = self.texts.join(node.before, before);
@@ -1113,7 +1123,7 @@ impl<'a> Parser<'a> {
                     .iter()
                     .any(|&b| text::is_word_character(b))
             {
-                return Err(SyntaxError(Message::ExpectedColon, token.range.start));
+                return Err(self.refuse(Message::ExpectedColon, token.range.start));
             }
         }
         let mut between = self.texts.range_of(&tokens[between_start..at]);
@@ -1162,26 +1172,23 @@ impl<'a> Parser<'a> {
         node.extend = extend;
 
         if !custom_property && let Some(colon) = self.colon(tokens)? {
-            return Err(SyntaxError(
-                Message::UnexpectedColon,
-                tokens[colon].range.start,
-            ));
+            return Err(self.refuse(Message::UnexpectedColon, tokens[colon].range.start));
         }
         Ok(())
     }
 
-    fn unknown_word(&mut self, tokens: &mut Vec<Token>) -> Result<(), SyntaxError> {
+    fn unknown_word(&mut self, tokens: &mut Vec<Token>) -> Result<(), Refused> {
         let (Syntax::Less, Some(&first)) = (self.syntax, tokens.first()) else {
-            return Err(neither_declaration_nor_rule(tokens, self.at_end));
+            return Err(match tokens.first() {
+                Some(first) => self.refuse(Message::NeitherDeclarationNorRule, first.range.start),
+                None => self.at_end(),
+            });
         };
         let symbol = self.text_of(first);
         if symbol == b"each"
             && tokens
                 .get(1)
-                .ok_or(SyntaxError(
-                    Message::NeitherDeclarationNorRule,
-                    first.range.start,
-                ))?
+                .ok_or_else(|| self.refuse(Message::NeitherDeclarationNorRule, first.range.start))?
                 .is(b'(')
         {
             return self.less_each(tokens);
@@ -1195,15 +1202,12 @@ impl<'a> Parser<'a> {
         if matches!(symbol.first(), Some(b'.' | b'#')) && !is_hash_color && !has_fraction {
             return self.less_mixin(tokens);
         }
-        Err(SyntaxError(
-            Message::NeitherDeclarationNorRule,
-            first.range.start,
-        ))
+        Err(self.refuse(Message::NeitherDeclarationNorRule, first.range.start))
     }
 
     // ───────────────────────────── postcss-scss ─────────────────────────────
 
-    fn scss_rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), SyntaxError> {
+    fn scss_rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), Refused> {
         let mut with_colon = false;
         let mut brackets = 0;
         // Of what is behind the colon, comments aside: the first character, and whether there is
@@ -1238,22 +1242,24 @@ impl<'a> Parser<'a> {
         }
 
         tokens.pop();
-        let id = self.new_node(Kind::Decl, tokens.first().ok_or(self.at_end)?.start);
+        let id = self.new_node(
+            Kind::Decl,
+            tokens.first().ok_or_else(|| self.at_end())?.start,
+        );
         self.node(id).is_nested = true;
         let last = tokens
             .iter()
             .rev()
             .find(|token| token.kind != TokenKind::Space)
-            .ok_or(self.at_end)?;
+            .ok_or_else(|| self.at_end())?;
         self.node(id).end = last.last_position().map(|at| at + 1);
 
         let start = tokens
             .iter()
             .position(|token| token.kind == TokenKind::Word)
-            .ok_or(SyntaxError(
-                Message::PropertyWithoutName,
-                self.nodes[id as usize].start,
-            ))?;
+            .ok_or_else(|| {
+                self.refuse(Message::PropertyWithoutName, self.nodes[id as usize].start)
+            })?;
         let before = self.texts.range_of(&tokens[..start]);
         let node = &mut self.nodes[id as usize];
         node.before = self.texts.join(node.before, before);
@@ -1297,10 +1303,7 @@ impl<'a> Parser<'a> {
         node.value = value;
         node.clean_value = clean_value;
         if let Some(colon) = self.colon(tokens)? {
-            return Err(SyntaxError(
-                Message::UnexpectedColon,
-                tokens[colon].range.start,
-            ));
+            return Err(self.refuse(Message::UnexpectedColon, tokens[colon].range.start));
         }
         self.open(id)
     }
@@ -1308,13 +1311,13 @@ impl<'a> Parser<'a> {
     // ───────────────────────────── postcss-less ─────────────────────────────
 
     /// `interpolation`: makes one word of `@{a}` and what is attached to it.
-    fn less_interpolation(&mut self, token: Token) -> Result<bool, SyntaxError> {
+    fn less_interpolation(&mut self, token: Token) -> Result<bool, Refused> {
         let next = self.tokenizer.next_token(false)?;
-        if token.range.end - token.range.start > 1 || !next.ok_or(self.at_end)?.is(b'{') {
+        if token.range.end - token.range.start > 1 || !next.ok_or_else(|| self.at_end())?.is(b'{') {
             self.tokenizer.back(next);
             return Ok(false);
         }
-        let mut last = next.ok_or(self.at_end)?;
+        let mut last = next.ok_or_else(|| self.at_end())?;
         let mut following = self.tokenizer.next_token(false)?;
         while let Some(token) = following.filter(|it| it.kind == TokenKind::Word || it.is(b'}')) {
             last = token;
@@ -1331,7 +1334,7 @@ impl<'a> Parser<'a> {
         Ok(true)
     }
 
-    fn less_atrule(&mut self, token: Token, name: Range) -> Result<(), SyntaxError> {
+    fn less_atrule(&mut self, token: Token, name: Range) -> Result<(), Refused> {
         if self.less_interpolation(token)? {
             return Ok(());
         }
@@ -1365,15 +1368,15 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn less_each(&mut self, tokens: &mut Vec<Token>) -> Result<(), SyntaxError> {
+    fn less_each(&mut self, tokens: &mut Vec<Token>) -> Result<(), Refused> {
         let first_paren = tokens
             .iter()
             .position(|token| token.is(b'('))
-            .ok_or(self.at_end)?;
+            .ok_or_else(|| self.at_end())?;
         let last_paren = tokens
             .iter()
             .rposition(|token| token.is(b')'))
-            .ok_or_else(|| unclosed_bracket(tokens))?;
+            .ok_or_else(|| self.refuse(Message::UnclosedBracket, unclosed_bracket(tokens)))?;
         let params = self
             .texts
             .range_of(&tokens[first_paren..(first_paren + last_paren).min(tokens.len())]);
@@ -1381,7 +1384,10 @@ impl<'a> Parser<'a> {
         for &token in tokens.iter().rev() {
             self.tokenizer.back(Some(token));
         }
-        let first = self.tokenizer.next_token(false)?.ok_or(self.at_end)?;
+        let first = self
+            .tokenizer
+            .next_token(false)?
+            .ok_or_else(|| self.at_end())?;
         // A space has been put before the name, which the `@` is taken for.
         self.less_atrule(first, first.range)?;
         let id = self.last_node;
@@ -1392,8 +1398,8 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn less_mixin(&mut self, tokens: &mut Vec<Token>) -> Result<(), SyntaxError> {
-        let first = *tokens.first().ok_or(self.at_end)?;
+    fn less_mixin(&mut self, tokens: &mut Vec<Token>) -> Result<(), Refused> {
+        let first = *tokens.first().ok_or_else(|| self.at_end())?;
         let identifier = Range::new(first.range.start, first.range.start + 1);
         let brackets_index = tokens
             .iter()
@@ -1407,7 +1413,7 @@ impl<'a> Parser<'a> {
             let last_paren = tokens
                 .iter()
                 .rposition(|token| token.is(b')'))
-                .ok_or_else(|| unclosed_bracket(tokens))?;
+                .ok_or_else(|| self.refuse(Message::UnclosedBracket, unclosed_bracket(tokens)))?;
             // The end is what `postcss-less` takes, which is too far if there is more than the name
             // before the parenthesis.
             let contents = tokens
@@ -1466,7 +1472,10 @@ impl<'a> Parser<'a> {
         for &token in tokens.iter().rev() {
             self.tokenizer.back(Some(token));
         }
-        let first = self.tokenizer.next_token(false)?.ok_or(self.at_end)?;
+        let first = self
+            .tokenizer
+            .next_token(false)?
+            .ok_or_else(|| self.at_end())?;
         self.less_atrule(first, Range::new(first.range.start + 1, first.range.end))?;
         let id = self.last_node;
         let node = self.node(id);
@@ -1479,7 +1488,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn less_rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), SyntaxError> {
+    fn less_rule(&mut self, tokens: &mut Vec<Token>) -> Result<(), Refused> {
         if let [.., prev, last] = tokens[..]
             && prev.kind == TokenKind::AtWord
             && last.is(b'{')
@@ -1504,7 +1513,7 @@ impl<'a> Parser<'a> {
     }
 
     /// `isInlineComment`
-    fn less_inline_comment(&mut self, mut token: Token) -> Result<bool, SyntaxError> {
+    fn less_inline_comment(&mut self, mut token: Token) -> Result<bool, Refused> {
         let text = self.text_of(token);
         if token.kind == TokenKind::Word && text.starts_with(b"//") {
             let mut end = token.range.start;
@@ -1543,7 +1552,10 @@ impl<'a> Parser<'a> {
             return Ok(true);
         }
         if text == b"/" {
-            let mut next = self.tokenizer.next_token(true)?.ok_or(self.at_end)?;
+            let mut next = self
+                .tokenizer
+                .next_token(true)?
+                .ok_or_else(|| self.at_end())?;
             if next.kind == TokenKind::Comment && self.text_of(next).starts_with(b"/*") {
                 next.kind = TokenKind::Word;
                 next.range.start += 1;
@@ -1592,6 +1604,7 @@ fn parse_from(
         tokenizer: Tokenizer {
             css,
             syntax,
+            refusal: Refusal::default(),
             pos,
             shift: 0,
             buffer: Vec::new(),
@@ -1607,13 +1620,14 @@ fn parse_from(
         depth: 0,
         is_custom_property_set,
         token_buffer: Vec::new(),
-        at_end: SyntaxError(Message::UnexpectedEnd, css.len() as u32),
     };
     parser.nodes.push(Node {
         has_block: true,
         ..Node::default()
     });
-    parser.parse()?;
+    parser
+        .parse()
+        .map_err(|_| parser.tokenizer.refusal.reason())?;
     Ok(Tree {
         nodes: parser.nodes,
         extra: parser.texts.extra,

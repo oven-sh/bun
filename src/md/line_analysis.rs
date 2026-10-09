@@ -902,7 +902,12 @@ impl Parser<'_> {
                 && (matches!(ch(self.text, name), b'_' | b'{' | b'[')
                     || char::from_u32(helpers::decode_utf8(self.text, name as usize).codepoint)
                         .is_some_and(char::is_alphanumeric));
-            if fence_len >= 3 && starts_name {
+            // Every line is asked about each of them, however short it is
+            let open = self.containers[..self.n_containers as usize]
+                .iter()
+                .filter(|it| it.ch == b':')
+                .count();
+            if fence_len >= 3 && starts_name && open < 32 {
                 let rest = &self.text[name as usize..];
                 let len = bun_core::strings::index_of_any(rest, b"\r\n").unwrap_or(rest.len());
                 return ContainerMarkResult {

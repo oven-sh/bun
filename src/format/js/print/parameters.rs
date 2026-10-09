@@ -170,6 +170,15 @@ fn comments_trailing_the_name(func: Func<'_>, has_parameters: bool, comments: &[
                 .count()
         }
         _ if has_parameters && !matches!(func.as_ast_nodes(), AstNodes::Function(_)) => 0,
+        // Babel has no node for the function of a method: on a line of its own the comment is between the key and
+        // the first parameter, which it leads.
+        FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor
+            if has_parameters && func.file().is_javascript() =>
+        {
+            (comments.iter())
+                .take_while(|it| !it.preceded_by_newline())
+                .count()
+        }
         _ => comments.len(),
     }
 }

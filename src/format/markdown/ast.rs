@@ -160,7 +160,7 @@ pub(crate) struct Node {
     pub(crate) reference_type: ReferenceType,
     /// `depth` of a heading, `start` of an ordered list, the number of columns of a table, which are
     /// at `Tree::aligns[first_align..]`, the number of tokens of a sentence, which are at
-    /// `Tree::tokens[first_align..]`.
+    /// `Tree::tokens[first_align..]`. Of a list: how many lists of its kind are right before it.
     pub(crate) number: u32,
     pub(crate) first_align: u32,
     pub(crate) start: u32,

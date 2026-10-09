@@ -250,7 +250,7 @@ fn syntax_error_in_words(text: &[u8], message: &[u8], offset: u32) -> Vec<u8> {
         }
     }
     // As Prettier counts them: in UTF-16 code units.
-    let column = strings::element_length_utf8_into_utf16(&before[line_start..]) as u32;
+    let column = bun_lint::source::utf16_len(&before[line_start..]);
     let mut out = format!(
         "SyntaxError: {} ({line}:{})",
         BStr::new(message),
@@ -274,6 +274,8 @@ struct Scratches {
     yaml: bun_format::yaml::Scratch,
     markdown: bun_format::markdown::Scratch,
     verify: bun_format::verify::Scratch,
+    /// For the blocks of code in Markdown.
+    blocks: Option<Box<Scratches>>,
 }
 
 fn without_final_newline(out: &mut Vec<u8>) {
@@ -306,6 +308,29 @@ fn format_block(
     out: &mut Vec<u8>,
     verifies: bool,
 ) -> bool {
+    let names = Session::new();
+    let names = (&Interner::new_in(&names) as &dyn Intern, &names);
+    format_block_in(
+        path,
+        code,
+        options,
+        out,
+        verifies,
+        names,
+        &mut Scratches::default(),
+    )
+}
+
+/// The same with what the caller keeps from one block to the next.
+fn format_block_in(
+    path: &[u8],
+    code: &[u8],
+    options: &FormatOptions,
+    out: &mut Vec<u8>,
+    verifies: bool,
+    names: (&dyn Intern, &Session),
+    scratch: &mut Scratches,
+) -> bool {
     let sort_imports = options.sort_imports.clone();
     let resolved = Resolved {
         options: FormatOptions {
@@ -314,13 +339,12 @@ fn format_block(
         },
         omits_final_newline: false,
     };
-    let names = Session::new();
     let formatted = format(
         path,
         code,
         &resolved,
-        (&Interner::new_in(&names), &names),
-        &mut Scratches::default(),
+        names,
+        scratch,
         // Of JSX in MDX, which comes in a fragment, what is in the fragment is printed. That is no program.
         verifies && !options.is_mdx_jsx,
     );
@@ -423,14 +447,40 @@ fn format(
             let done = bun_format::yaml::format(text, options, &mut scratch.yaml, &mut out);
             return finish(done, out, "YAML");
         }
-        Some(Kind::Markdown) => {
-            let done = bun_format::markdown::format(text, options, &mut scratch.markdown, &mut out);
-            return finish(done, out, "Markdown");
-        }
-        Some(Kind::Mdx) => {
-            let done =
-                bun_format::markdown::format_mdx(text, options, &mut scratch.markdown, &mut out);
-            return finish(done, out, "MDX");
+        Some(kind @ (Kind::Markdown | Kind::Mdx)) => {
+            let mut blocks = scratch.blocks.take().unwrap_or_default();
+            let mut format_block =
+                |path: &[u8], code: &[u8], options: &FormatOptions, out: &mut Vec<u8>| {
+                    let names = (atoms, memory);
+                    format_block_in(path, code, options, out, verifies, names, &mut blocks)
+                };
+            let format_block: Option<&mut bun_format::markdown::FormatBlock<'_>> =
+                Some(&mut format_block);
+            let markdown = &mut scratch.markdown;
+            let (done, what) = match kind {
+                Kind::Mdx => (
+                    bun_format::markdown::format_mdx_with(
+                        text,
+                        options,
+                        markdown,
+                        &mut out,
+                        format_block,
+                    ),
+                    "MDX",
+                ),
+                _ => (
+                    bun_format::markdown::format_with(
+                        text,
+                        options,
+                        markdown,
+                        &mut out,
+                        format_block,
+                    ),
+                    "Markdown",
+                ),
+            };
+            scratch.blocks = Some(blocks);
+            return finish(done, out, what);
         }
         Some(Kind::GraphQl) => {
             let done = bun_format::graphql::format(text, options, &mut scratch.graphql, &mut out);

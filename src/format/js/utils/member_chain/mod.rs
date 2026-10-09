@@ -488,6 +488,11 @@ pub(crate) fn is_member_call_chain<'a>(expression: Expr<'a>, f: &Formatter<'a>) 
     chain.tail_len() > 1 || chain.has_comment(f)
 }
 
+/// `a.#b().c()`: for oxfmt `a.#b` is no link of the chain. It, or the call of it, is what the chain starts with.
+fn starts_chain(member: Expr<'_>, f: &Formatter<'_>) -> bool {
+    member.is_private_member() && f.options().flavor.is_oxfmt()
+}
+
 /// Appends the links of the chain that ends with the call `root`, from the last to the first. Returns
 /// whether there is another call among them. The chain starts where something needs parentheses.
 fn push_chain_members<'a>(root: Expr<'a>, members: &mut Members<'a>, f: &Formatter<'a>) -> bool {
@@ -520,7 +525,8 @@ fn push_chain_members<'a>(root: Expr<'a>, members: &mut Members<'a>, f: &Formatt
         members.push(match tag {
             ExprTag::Call
                 if expression.callee().is_some_and(|callee| {
-                    is_member_expression(callee, f) || is_call_expression(callee, f)
+                    (is_member_expression(callee, f) && !starts_chain(callee, f))
+                        || is_call_expression(callee, f)
                 }) =>
             {
                 next = expression.callee();
@@ -530,7 +536,7 @@ fn push_chain_members<'a>(root: Expr<'a>, members: &mut Members<'a>, f: &Formatt
                     position: CallExpressionPosition::Middle,
                 }
             }
-            ExprTag::Dot => {
+            ExprTag::Dot if !starts_chain(expression, f) => {
                 next = expression.object();
                 ChainMember::StaticMember(expression)
             }

@@ -5,7 +5,7 @@
 //! which are all the nodes that graphql-js has in it. What a child is to its parent is told from its
 //! kind and its place among the others.
 
-use crate::syntax_error::{Message, SyntaxError};
+use crate::syntax_error::{Message, Refusal, Refused, SyntaxError};
 use bun_lint::span::Span;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -141,7 +141,7 @@ impl Tree {
     }
 }
 
-type Result<T> = std::result::Result<T, SyntaxError>;
+type Result<T> = std::result::Result<T, Refused>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum TokenKind {
@@ -238,6 +238,7 @@ pub(crate) fn read_escape(text: &[u8]) -> Option<(char, usize)> {
 struct Parser<'t> {
     text: &'t [u8],
     tree: &'t mut Tree,
+    refusal: Refusal,
     token: Token,
     /// The token after `token`, if it has been looked at.
     next: Option<Token>,
@@ -247,7 +248,7 @@ struct Parser<'t> {
 }
 
 /// Fills `tree` with the syntax of `text`.
-pub(crate) fn parse(text: &[u8], tree: &mut Tree) -> Result<()> {
+pub(crate) fn parse(text: &[u8], tree: &mut Tree) -> std::result::Result<(), SyntaxError> {
     tree.nodes.clear();
     tree.children.clear();
     tree.comments.clear();
@@ -258,6 +259,7 @@ pub(crate) fn parse(text: &[u8], tree: &mut Tree) -> Result<()> {
     let mut parser = Parser {
         text,
         tree,
+        refusal: Refusal::default(),
         token: Token {
             kind: TokenKind::StartOfFile,
             start: 0,
@@ -267,7 +269,7 @@ pub(crate) fn parse(text: &[u8], tree: &mut Tree) -> Result<()> {
         last_end: 0,
         stack_check: bun_core::StackCheck::init(),
     };
-    parser.parse_document()
+    parser.parse_document().map_err(|_| parser.refusal.reason())
 }
 
 /// What is said where there is no token of `kind`.
@@ -277,8 +279,6 @@ fn expected(kind: TokenKind) -> Message {
         TokenKind::Name => Message::ExpectedName,
         TokenKind::Colon => Message::ExpectedColon,
         TokenKind::BraceL => Message::ExpectedOpeningBrace,
-        TokenKind::BraceR => Message::ExpectedClosingBrace,
-        TokenKind::ParenR => Message::ExpectedClosingParenthesis,
         TokenKind::BracketR => Message::ExpectedClosingBracket,
         _ => Message::UnexpectedToken,
     }
@@ -359,7 +359,11 @@ impl Parser<'_> {
                         .count();
                     return token(TokenKind::Name, position, position + len);
                 }
-                _ => return Err(SyntaxError(Message::UnexpectedCharacter, position as u32)),
+                _ => {
+                    return Err(self
+                        .refusal
+                        .note(Message::UnexpectedCharacter, position as u32));
+                }
             };
             return token(punctuator, position, position + 1);
         }
@@ -369,7 +373,7 @@ impl Parser<'_> {
     fn read_digits(&self, position: usize) -> Result<usize> {
         let rest = self.text.get(position..).unwrap_or_default();
         match rest.iter().take_while(|byte| byte.is_ascii_digit()).count() {
-            0 => Err(SyntaxError(Message::ExpectedDigit, position as u32)),
+            0 => Err(self.refusal.note(Message::ExpectedDigit, position as u32)),
             count => Ok(position + count),
         }
     }
@@ -386,7 +390,7 @@ impl Parser<'_> {
                 .byte(position)
                 .is_some_and(|byte| byte.is_ascii_digit())
             {
-                return Err(SyntaxError(Message::InvalidNumber, start as u32));
+                return Err(self.refusal.note(Message::InvalidNumber, start as u32));
             }
         } else {
             position = self.read_digits(position)?;
@@ -405,7 +409,7 @@ impl Parser<'_> {
         }
         match self.byte(position) {
             Some(byte) if byte == b'.' || is_name_start(byte) => {
-                Err(SyntaxError(Message::InvalidNumber, start as u32))
+                Err(self.refusal.note(Message::InvalidNumber, start as u32))
             }
             _ => Ok((kind, position)),
         }
@@ -417,15 +421,18 @@ impl Parser<'_> {
         loop {
             let rest = self.text.get(position..).unwrap_or_default();
             position += bun_core::strings::index_of_any(rest, b"\"\\\n\r")
-                .ok_or(SyntaxError(Message::UnclosedString, start as u32))?;
+                .ok_or_else(|| self.refusal.note(Message::UnclosedString, start as u32))?;
             match self.byte(position) {
                 Some(b'"') => return Ok(position + 1),
                 Some(b'\\') => {
                     position += read_escape(&self.text[position..])
-                        .ok_or(SyntaxError(Message::InvalidEscapeSequence, position as u32))?
+                        .ok_or_else(|| {
+                            self.refusal
+                                .note(Message::InvalidEscapeSequence, position as u32)
+                        })?
                         .1
                 }
-                _ => return Err(SyntaxError(Message::UnclosedString, start as u32)),
+                _ => return Err(self.refusal.note(Message::UnclosedString, start as u32)),
             }
         }
     }
@@ -435,7 +442,7 @@ impl Parser<'_> {
         loop {
             let rest = self.text.get(position..).unwrap_or_default();
             position += bun_core::strings::index_of(rest, b"\"\"\"")
-                .ok_or(SyntaxError(Message::UnclosedString, start as u32))?;
+                .ok_or_else(|| self.refusal.note(Message::UnclosedString, start as u32))?;
             // `\"""` is not the end.
             if position > start + 3 && self.byte(position - 1) == Some(b'\\') {
                 position += 3;
@@ -483,12 +490,12 @@ impl Parser<'_> {
 
     /// `message`, where the current token is.
     #[cold]
-    fn unexpected(&self, message: Message) -> SyntaxError {
+    fn unexpected(&self, message: Message) -> Refused {
         let message = match self.token.kind {
             TokenKind::EndOfFile => Message::UnexpectedEnd,
             _ => message,
         };
-        SyntaxError(message, self.token.start)
+        self.refusal.note(message, self.token.start)
     }
 
     fn expect(&mut self, kind: TokenKind) -> Result<Token> {
@@ -558,7 +565,9 @@ impl Parser<'_> {
     fn check_depth(&self) -> Result<()> {
         match self.stack_check.is_safe_to_recurse() {
             true => Ok(()),
-            false => Err(SyntaxError(Message::NestedTooDeeply, self.token.start)),
+            false => Err(self
+                .refusal
+                .note(Message::NestedTooDeeply, self.token.start)),
         }
     }
 
@@ -696,7 +705,7 @@ impl Parser<'_> {
             b"query" => Ok(QUERY),
             b"mutation" => Ok(MUTATION),
             b"subscription" => Ok(SUBSCRIPTION),
-            _ => Err(SyntaxError(Message::ExpectedDefinition, token.start)),
+            _ => Err(self.refusal.note(Message::ExpectedDefinition, token.start)),
         }
     }
 
@@ -1165,7 +1174,7 @@ impl Parser<'_> {
             _ => return Err(self.unexpected(Message::ExpectedDefinition)),
         };
         if !adds_something {
-            return Err(self.unexpected(Message::EmptyExtension));
+            return Err(self.refusal.note(Message::EmptyExtension, self.last_end));
         }
         self.finish(kind, 0, begin);
         Ok(())

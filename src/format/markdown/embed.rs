@@ -257,7 +257,7 @@ pub(crate) fn write_template<'a>(
         is_in_template: true,
         is_mdx: false,
     };
-    let is_written = super::with_document(&text, &options, &mut tree, mode, |document| {
+    let is_written = super::with_document(&text, &options, &mut tree, mode, None, |document| {
         let document = doc::strip_trailing_hardline(doc::clean(document));
         let mut ops = Vec::new();
         if !flatten(&document, &mut ops) {

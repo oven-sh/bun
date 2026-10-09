@@ -18,7 +18,7 @@ mod tokenizer;
 use crate::css::doc::{self, Elements};
 use crate::options::{HtmlWhitespaceSensitivity, QuoteStyle};
 use crate::range::{Offsets, normalized_len};
-use crate::syntax_error::{Message, SyntaxError};
+use crate::syntax_error::{Message, Refusal, Refused};
 use crate::text::{self, BOM};
 use crate::{FormatError, FormatOptions};
 use std::borrow::Cow;
@@ -28,7 +28,7 @@ const MAX_DEPTH: usize = 256;
 
 #[derive(Copy, Clone, Debug)]
 enum Error {
-    Syntax(SyntaxError),
+    Syntax(Refused),
     NestedTooDeeply,
 }
 
@@ -67,6 +67,7 @@ fn parse(
     content: &[u8],
     front_matter_end: usize,
     scratch: &mut Scratch,
+    refusal: &Refusal,
 ) -> Result<ast::NodeId, Error> {
     let Scratch {
         tokens,
@@ -81,13 +82,13 @@ fn parse(
     tree.clear();
     // Positions have 31 bits.
     if content.len() > i32::MAX as usize {
-        return Err(Error::Syntax(SyntaxError(Message::TooLarge, 0)));
+        return Err(Error::Syntax(refusal.note(Message::TooLarge, 0)));
     }
-    lexer::lex(content, tokens, positions)?;
-    parser::parse(content, tokens, tree, statements)?;
+    lexer::lex(content, tokens, positions, refusal)?;
+    parser::parse(content, tokens, tree, statements, refusal)?;
     let front_matter =
         (front_matter_end > 0).then(|| tree.add(ast::Kind::FrontMatter, 0, front_matter_end));
-    tokenizer::build(content, statements, positions, front_matter, tree)
+    tokenizer::build(content, statements, positions, front_matter, tree, refusal)
 }
 
 /// Appends the formatted `text` to `out`: Prettier's `formatWithCursor`, without the cursor.
@@ -125,12 +126,13 @@ pub fn format(
             }
         }
     }
-    let template = parse(&content, front_matter_end, scratch).map_err(|error| match error {
-        Error::Syntax(error) => {
-            FormatError::SyntaxErrorAt(error).before_normalizing_end_of_line(&original[first..])
-        }
-        Error::NestedTooDeeply => FormatError::NestedTooDeeply,
-    })?;
+    let refusal = Refusal::default();
+    let template =
+        parse(&content, front_matter_end, scratch, &refusal).map_err(|error| match error {
+            Error::Syntax(_) => FormatError::SyntaxErrorAt(refusal.reason())
+                .before_normalizing_end_of_line(&original[first..]),
+            Error::NestedTooDeeply => FormatError::NestedTooDeeply,
+        })?;
     out.extend_from_slice(&original[..first]);
     // Nothing in a template is something that Prettier formats on its own.
     if is_range {

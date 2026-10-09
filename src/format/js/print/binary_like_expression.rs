@@ -161,11 +161,16 @@ impl<'a> Format<'a> for BinaryLikeExpression<'a> {
     }
 }
 
+/// `const a = /** @type {T} */ (⏎b ||⏎c⏎)`: oxfmt looks at what the cast is in, and does not indent `c`.
+fn parentheses_of_cast_are_a_node(f: &Formatter<'_>) -> bool {
+    !f.options().flavor.is_oxfmt()
+}
+
 impl<'a> BinaryLikeExpression<'a> {
     fn write(&self, f: &mut Formatter<'a>) {
         let parent = self.parent();
         // For Prettier it is in a `ParenthesizedExpression` then, which is none of what is asked for.
-        let is_in_type_cast = is_cast_target(self.expr, f);
+        let is_in_type_cast = parentheses_of_cast_are_a_node(f) && is_cast_target(self.expr, f);
 
         // A condition has its own indentation and group.
         if !is_in_type_cast && self.is_inside_condition(parent) {

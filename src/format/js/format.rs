@@ -182,7 +182,7 @@ fn write_trailing_comments_in<'a>(
     let parent = parent();
     let enclosing = span_for_comments(parent, f);
     if f.comments().next_start() < enclosing.end {
-        let following = following_span_start_in(span, parent);
+        let following = following_span_start_in(span, parent, f.options().flavor);
         format_trailing_comments(enclosing, span, following).fmt(f);
     }
 }

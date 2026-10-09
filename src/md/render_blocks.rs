@@ -113,7 +113,13 @@ impl Parser<'_> {
         is_header: bool,
         col_count: u32,
     ) -> Result<(), ParserError> {
-        let row_text = self.text[vline.beg as usize..vline.end as usize].trim_ascii_end();
+        let row_text = &self.text[vline.beg as usize..vline.end as usize];
+        let blanks = row_text
+            .iter()
+            .rev()
+            .take_while(|&&byte| helpers::is_blank(byte))
+            .count();
+        let row_text = &row_text[..row_text.len() - blanks];
         // Who wants to know what is written gets the cells that are written.
         let col_count = if self.track { u32::MAX } else { col_count };
         let mut start: usize = 0;

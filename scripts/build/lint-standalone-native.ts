@@ -1,7 +1,7 @@
 // What `bun-lint` and the fuzzers link of Bun's C++ side: JavaScriptCore's regular expression engine, which `bun_lint::regex`
 // runs on. There is no stand-in for it in `src/sema/standalone/native.rs`: a test binary runs the engine that ships.
 //
-//   bun src/lint/standalone/native.ts <directory> [--asan | --lto] [--fetch] [--force] [--dry-run]
+//   bun scripts/build/lint-standalone-native.ts <directory> [--asan | --lto] [--fetch] [--force] [--dry-run]
 //
 // Prints the arguments for the linker, one a line, which has to be lld (`-fuse-ld=lld` is the first of them): the order of
 // archives does not matter to it, and it does not ask for symbols that only sections without a use want. With
@@ -24,15 +24,15 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { sharedCacheDir } from "../../../scripts/build/config.ts";
-import { WEBKIT_VERSION } from "../../../scripts/build/deps/webkit.ts";
-import { fetchPrebuilt } from "../../../scripts/build/download.ts";
+import { sharedCacheDir } from "./config.ts";
+import { WEBKIT_VERSION } from "./deps/webkit.ts";
+import { fetchPrebuilt } from "./download.ts";
 
 /** Each is compiled by itself. What a function of theirs wants of the rest of Bun's C++ does not matter if nothing calls it. */
 const SOURCES = ["src/jsc/bindings/RegularExpression.cpp"];
 const ARCHIVES = ["JavaScriptCore", "WTF", "bmalloc", "icui18n", "icuuc", "icudata"];
 
-const root = resolve(import.meta.dirname, "../../..");
+const root = resolve(import.meta.dirname, "../..");
 const flags = new Set(process.argv.slice(2).filter(it => it.startsWith("--")));
 const [directory] = process.argv.slice(2).filter(it => !it.startsWith("--"));
 const isDryRun = flags.has("--dry-run");
@@ -51,9 +51,10 @@ function run(command: string[]): void {
   if (status !== 0) fail(`${basename(command[0]!)} failed`);
 }
 
-if (directory === undefined) fail("usage: bun native.ts <directory> [--asan | --lto] [--fetch] [--force] [--dry-run]");
+if (directory === undefined)
+  fail("usage: bun lint-standalone-native.ts <directory> [--asan | --lto] [--fetch] [--force] [--dry-run]");
 if (process.platform !== "linux" || process.arch !== "x64")
-  fail("native.ts knows the prebuilt WebKit of linux-x64 only");
+  fail("lint-standalone-native.ts knows the prebuilt WebKit of linux-x64 only");
 
 // The names of scripts/build/deps/webkit.ts.
 const isTag = WEBKIT_VERSION.startsWith("autobuild-");

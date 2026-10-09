@@ -7,7 +7,7 @@
 use super::ast::{self, Call, Head, Kind, NOTHING, NodeId, Range, Text, Tree};
 use super::lexer::{Token, TokenKind};
 use super::{Error, MAX_DEPTH};
-use crate::syntax_error::{Message, SyntaxError};
+use crate::syntax_error::{Message, Refusal};
 use bun_core::strings;
 use smallvec::SmallVec;
 
@@ -142,6 +142,7 @@ fn is_this_path(original: &[u8]) -> bool {
 
 struct Parser<'a> {
     source: &'a [u8],
+    refusal: &'a Refusal,
     tokens: &'a [Token],
     at: usize,
     tree: &'a mut Tree,
@@ -192,7 +193,7 @@ impl Parser<'_> {
         let (kind, start) = token.map_or((TokenKind::Eof, self.source.len() as u32), |it| {
             (it.kind, it.start)
         });
-        Error::Syntax(SyntaxError(
+        Error::Syntax(self.refusal.note(
             match kind {
                 TokenKind::Eof => Message::UnexpectedEnd,
                 _ => message,
@@ -713,10 +714,10 @@ impl Parser<'_> {
         let path = self.helper_name()?;
         let last = self.expect(TokenKind::Close)?;
         if !self.closes(open, path.original) {
-            return Err(Error::Syntax(SyntaxError(
-                Message::WrongNameAtEndOfBlock,
-                first.start,
-            )));
+            return Err(Error::Syntax(
+                self.refusal
+                    .note(Message::WrongNameAtEndOfBlock, first.start),
+            ));
         }
         Ok(self.strip(first, last))
     }
@@ -824,10 +825,9 @@ impl Parser<'_> {
             false => self.inverse_chain()?,
         };
         if self.peek().kind == TokenKind::Eof {
-            return Err(Error::Syntax(SyntaxError(
-                Message::UnclosedBlock,
-                open.start,
-            )));
+            return Err(Error::Syntax(
+                self.refusal.note(Message::UnclosedBlock, open.start),
+            ));
         }
         let close = self.close_block(header.path.original)?;
         if is_decorator {
@@ -866,10 +866,10 @@ impl Parser<'_> {
         let close = self.expect(TokenKind::EndRawBlock)?;
         let name = Text::source(close.start as usize + 5, close.end as usize - 4);
         if !self.closes(header.path.original, Original::Text(name)) {
-            return Err(Error::Syntax(SyntaxError(
-                Message::WrongNameAtEndOfBlock,
-                close.start,
-            )));
+            return Err(Error::Syntax(
+                self.refusal
+                    .note(Message::WrongNameAtEndOfBlock, close.start),
+            ));
         }
         let first_end = self.statements.len() as u32;
         self.end_block(index, &header, first_end, None, None, false);
@@ -1008,9 +1008,11 @@ pub(crate) fn parse(
     tokens: &[Token],
     tree: &mut Tree,
     statements: &mut Vec<Statement>,
+    refusal: &Refusal,
 ) -> Result<(), Error> {
     let mut parser = Parser {
         source,
+        refusal,
         tokens,
         at: 0,
         tree,

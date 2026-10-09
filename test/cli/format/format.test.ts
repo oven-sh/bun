@@ -450,12 +450,24 @@ describe.concurrent("bun format", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test("MDX is formatted as Prettier formats it, with and without an .oxfmtrc.json", async () => {
+    const files = { "a.mdx": "import   A from 'a'\n\n#   b\n\n<A   c='d'/>\n" };
+    const printed = 'import A from "a";\n\n# b\n\n<A c="d" />\n';
+    const result = await format(files, [], { reads: ["a.mdx"] });
+    expect(result.files).toEqual({ "a.mdx": printed });
+    expect(result.exitCode).toBe(0);
+    const forOxfmt = await format({ ...files, ".oxfmtrc.json": "{}\n" }, [], { reads: ["a.mdx"] });
+    expect(forOxfmt.files["a.mdx"]).toBe(printed);
+    expect(forOxfmt.exitCode).toBe(0);
+  });
+
   test("other languages are left alone, which is an error at the end, or a warning with --allow-unsupported", async () => {
-    const files = { "a.mdx": "#   a\n", "b.mdx": "#   b\n", "c.js": ugly };
-    const reads = Object.keys(files);
-    const text = "2 files are in a language that bun format does not support yet, and left as they are: 2 .mdx";
+    const left = { "a.svelte": "<p   >a</p>\n", "b.svelte": "<p   >b</p>\n" };
+    const files = { ".prettierrc": '{ "plugins": ["prettier-plugin-svelte"] }\n', ...left, "c.js": ugly };
+    const reads = [...Object.keys(left), "c.js"];
+    const text = "2 files are in a language that bun format does not support yet, and left as they are: 2 .svelte";
     const result = await format(files, [], { reads });
-    expect(result.files).toEqual({ ...files, "c.js": formatted });
+    expect(result.files).toEqual({ ...left, "c.js": formatted });
     expect(result.stderr.trimEnd().split("\n").at(-1)).toBe(
       `[error] ${text}. With --allow-unsupported this is a warning.`,
     );
@@ -464,7 +476,7 @@ describe.concurrent("bun format", () => {
     expect(checked.stderr).toContain(`[error] ${text}`);
     expect(checked.exitCode).toBe(2);
     const allowed = await format(files, ["--allow-unsupported"], { reads });
-    expect(allowed.files).toEqual({ ...files, "c.js": formatted });
+    expect(allowed.files).toEqual({ ...left, "c.js": formatted });
     expect(allowed.stderr.split("\n")).toContain(`[warn] ${text}`);
     expect(allowed.exitCode).toBe(0);
   });
@@ -1105,6 +1117,15 @@ try {
     expect(result.exitCode).toBe(0);
   }, 60_000);
 
+  test("insert_final_newline of an .editorconfig says nothing to Prettier, and nothing is said about it", async () => {
+    const result = await format(
+      { ".editorconfig": "root = true\n[*]\ninsert_final_newline = true\nindent_size = 4\n", "a.js": "if (a) b;\n" },
+      ["--check", "a.js"],
+    );
+    expect(result.stderr).toBe("");
+    expect(result.exitCode).toBe(0);
+  });
+
   test("the first line says what a file without an extension is", async () => {
     const files = {
       "bin/a": "#!/usr/bin/env node\na  ;\n",
@@ -1268,7 +1289,7 @@ try {
     ];
     const files = Object.fromEntries(cases.map(([ending, text], index) => [`${index}${ending}`, text]));
     const result = await format(files, ["--check"]);
-    const errors = result.stderr.split("\n").filter(line => line.startsWith("[error]"));
+    const errors = result.stderr.split("\n").filter(line => /^\[error\] \d+\./.test(line));
     expect(errors.sort()).toEqual(
       cases.map(([ending, , message], index) => `[error] ${index}${ending}: SyntaxError: ${message}`).sort(),
     );

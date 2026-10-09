@@ -94,7 +94,6 @@ messages! {
 
     // GraphQL
     EmptyExtension = "This extension adds nothing",
-    ExpectedClosingBrace = "Expected \"}\"",
     ExpectedClosingBracket = "Expected \"]\"",
     ExpectedClosingParenthesis = "Expected \")\"",
     ExpectedDefinition = "Expected a definition",
@@ -112,7 +111,8 @@ messages! {
 
     // Handlebars
     AttributeInEndTag = "An end tag cannot have attributes",
-    EndTagWithoutStartTag = "This end tag does not close the element that is open",
+    EndTagOfVoidElement = "This element has no end tag",
+    EndTagWithoutStartTag = "This end tag has no start tag",
     ExpectedEndOfMustache = "Expected \"}}\"",
     InvalidBlockParameters = "These block parameters cannot be read",
     InvalidDoctype = "This doctype cannot be read",
@@ -124,6 +124,7 @@ messages! {
     UnclosedElement = "This element is not closed",
     UnquotedValueWithMustache = "A value with a mustache and text in it needs quotes",
     UnsupportedMustache = "Partials, decorators and raw blocks are not supported",
+    WrongEndTag = "This end tag does not close the element that is open",
     WrongNameAtEndOfBlock = "This is not the name of the block that is open",
 
     // YAML

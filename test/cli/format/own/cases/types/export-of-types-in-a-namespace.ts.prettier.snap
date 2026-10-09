@@ -1,0 +1,37 @@
+------------------
+{ printWidth: 80 }
+------------------
+export declare namespace A {
+  export type { B, C };
+  export { D };
+  export * from "e";
+}
+declare namespace F {
+  export type { B, C };
+}
+namespace G {
+  export type { B, C };
+}
+export namespace H {
+  export type { B, C };
+}
+
+-------------------
+{ printWidth: 100 }
+-------------------
+export declare namespace A {
+  export type { B, C };
+  export { D };
+  export * from "e";
+}
+declare namespace F {
+  export type { B, C };
+}
+namespace G {
+  export type { B, C };
+}
+export namespace H {
+  export type { B, C };
+}
+
+===================== End =====================

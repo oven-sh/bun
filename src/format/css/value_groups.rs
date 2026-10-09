@@ -245,6 +245,30 @@ impl<'a> Printer<'a, '_> {
             && is_in_paren_group
             && grandparent.is_some_and(|it| is_func(it) && it.value() == Some(b"if"));
 
+        // For oxfmt a value is laid out as it is without the line comments before it. For Prettier it is one of several
+        // things that fill lines, which are indented.
+        let count = node.groups().len();
+        if self.is_oxfmt
+            && count > 1
+            && node.groups().take(count - 1).all(is_inline_comment)
+            && !node.groups().next_back().is_some_and(is_inline_comment)
+        {
+            let mut previous = None;
+            for it in node.groups() {
+                if it.id == self.comment_behind_comma {
+                    self.comment_behind_comma = 0;
+                    continue;
+                }
+                self.value_stack.push(id);
+                self.print_value(statement, it.id, previous.replace(it.id));
+                self.value_stack.pop();
+                if is_inline_comment(it) {
+                    self.sink.hard_line();
+                }
+            }
+            return;
+        }
+
         let shape = self.shape_of_comma_group(statement, node);
         self.sink.start_group(false);
         if shape != Shape::GroupFill {

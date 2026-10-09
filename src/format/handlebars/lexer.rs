@@ -2,7 +2,7 @@
 
 use super::Error;
 use super::positions::Positions;
-use crate::syntax_error::{Message, SyntaxError};
+use crate::syntax_error::{Message, Refusal};
 use crate::text::white_space_len;
 use bun_core::strings;
 
@@ -130,6 +130,7 @@ fn delimited_len(text: &[u8], close: u8) -> Option<usize> {
 
 struct Lexer<'a> {
     text: &'a [u8],
+    refusal: &'a Refusal,
     at: usize,
     states: Vec<State>,
     tokens: &'a mut Vec<Token>,
@@ -176,7 +177,7 @@ impl Lexer<'_> {
     /// `message`, where the lexer is.
     #[cold]
     fn error(&self, message: Message) -> Error {
-        Error::Syntax(SyntaxError(message, self.at as u32))
+        Error::Syntax(self.refusal.note(message, self.at as u32))
     }
 
     fn initial(&mut self) -> Result<(), Error> {
@@ -422,7 +423,13 @@ impl Lexer<'_> {
                 }
                 let len = id_len(rest);
                 if len == 0 || !is_lookahead(&rest[len..]) {
-                    return Err(self.error(Message::UnexpectedCharacter));
+                    let message = match len == rest.len() {
+                        true => Message::UnexpectedEnd,
+                        false => Message::UnexpectedCharacter,
+                    };
+                    return Err(Error::Syntax(
+                        self.refusal.note(message, (self.at + len) as u32),
+                    ));
                 }
                 self.token(TokenKind::Id, len);
             }
@@ -460,10 +467,12 @@ pub(crate) fn lex(
     text: &[u8],
     tokens: &mut Vec<Token>,
     positions: &mut Positions,
+    refusal: &Refusal,
 ) -> Result<(), Error> {
     let counts_wrongly = Positions::can_be_wrong(text);
     let mut lexer = Lexer {
         text,
+        refusal,
         at: 0,
         states: vec![State::Initial],
         tokens,

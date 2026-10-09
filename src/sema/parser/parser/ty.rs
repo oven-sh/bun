@@ -3,6 +3,7 @@
 use super::stmt::{ModifiersOf, Start};
 use super::{GrammarError, ListKind, Parser, ctx, take_span};
 use crate::Refusal;
+use crate::lexer::Mark;
 use crate::token::T;
 use bun_sema::atom::{Atom, known};
 use bun_sema::hir::*;
@@ -153,12 +154,15 @@ impl Parser<'_> {
             let base = self.s.modifiers.len();
             self.modifiers(ModifiersOf::TypeMember);
             self.s.modifiers.truncate(base);
+            self.eat(T::DotDotDot);
         }
         if self.is_identifier() || self.token() == T::This {
             self.next();
         } else if matches!(self.token(), T::OpenBracket | T::OpenBrace) {
+            // "Return true if we can parse an array or object binding pattern with no errors"
+            let errors = self.number_of_errors();
             self.identifier_or_pattern();
-            if self.has_failed() {
+            if self.has_failed() || self.number_of_errors() != errors {
                 return false;
             }
         } else {
@@ -174,6 +178,24 @@ impl Parser<'_> {
             }
             _ => false,
         }
+    }
+
+    /// `len(p.diagnostics)`. Only recovery has any.
+    #[inline]
+    fn number_of_errors(&mut self) -> usize {
+        match self.recovers {
+            true => self.count_errors(),
+            false => 0,
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn count_errors(&mut self) -> usize {
+        // One of the scanner's that starts where the last error starts does not count.
+        self.take_errors_of_scanner();
+        let is_of_parser = |it: &&Diagnostic| it.kind == DiagnosticKind::Parse;
+        self.f.diagnostics.iter().filter(is_of_parser).count()
     }
 
     /// `parseFunctionOrConstructorType`
@@ -247,14 +269,17 @@ impl Parser<'_> {
     fn union_type(&mut self) -> TypeNodeId {
         let start = self.pos();
         let has_leading_operator = self.eat(T::Bar);
-        let first = self.intersection_type();
+        let first = match has_leading_operator {
+            true => self.member_of_union(),
+            false => self.intersection_type(),
+        };
         if self.token() != T::Bar && !has_leading_operator {
             return first;
         }
         let base = self.s.ids.len();
         self.s.ids.push(first.0);
         while self.eat(T::Bar) {
-            let member = self.intersection_type();
+            let member = self.member_of_union();
             self.s.ids.push(member.0);
         }
         let members = self.take_ids(base);
@@ -265,28 +290,60 @@ impl Parser<'_> {
     fn intersection_type(&mut self) -> TypeNodeId {
         let start = self.pos();
         let has_leading_operator = self.eat(T::Ampersand);
-        let first = self.constituent_type();
+        let first = match has_leading_operator {
+            true => self.member_of_intersection(),
+            false => self.type_operator(),
+        };
         if self.token() != T::Ampersand && !has_leading_operator {
             return first;
         }
         let base = self.s.ids.len();
         self.s.ids.push(first.0);
         while self.eat(T::Ampersand) {
-            let member = self.constituent_type();
+            let member = self.member_of_intersection();
             self.s.ids.push(member.0);
         }
         let members = self.take_ids(base);
         self.finish_type(TypeNodeKind::Intersection(members), start)
     }
 
-    /// A member of a union or an intersection. `parseFunctionOrConstructorTypeToError`: a function
-    /// type has to be in parentheses there.
+    /// `parseFunctionOrConstructorTypeToError(true, parseIntersectionTypeOrHigher)`, after a `|`.
     #[inline]
-    fn constituent_type(&mut self) -> TypeNodeId {
+    fn member_of_union(&mut self) -> TypeNodeId {
         if self.is_start_of_function_or_constructor_type() {
-            self.refuse(Refusal::Reported);
+            return self.function_type_without_parentheses(T::Bar);
+        }
+        self.intersection_type()
+    }
+
+    /// `parseFunctionOrConstructorTypeToError(false, parseTypeOperatorOrHigher)`, after a `&`.
+    #[inline]
+    fn member_of_intersection(&mut self) -> TypeNodeId {
+        if self.is_start_of_function_or_constructor_type() {
+            return self.function_type_without_parentheses(T::Ampersand);
         }
         self.type_operator()
+    }
+
+    /// `parseFunctionOrConstructorTypeToError`, where a function type starts after `operator`.
+    #[cold]
+    #[inline(never)]
+    fn function_type_without_parentheses(&mut self, operator: T) -> TypeNodeId {
+        if !self.recovers {
+            self.refuse(Refusal::Reported);
+            return TypeNodeId::NONE;
+        }
+        let full = self.full_start();
+        let is_constructor = matches!(self.token(), T::New | T::Abstract);
+        let ty = self.function_or_constructor_type();
+        let code = match (is_constructor, operator == T::Bar) {
+            (false, true) => 1385,
+            (true, true) => 1386,
+            (false, false) => 1387,
+            (true, false) => 1388,
+        };
+        self.error(code, (full, self.prev_end()), &[]);
+        ty
     }
 
     /// `parseTypeOperatorOrHigher`
@@ -306,12 +363,7 @@ impl Parser<'_> {
             T::Unique => {
                 self.next();
                 let operand_start = self.pos();
-                let nullable_types = self.unclaimed_nullable_types;
                 let operand = self.nested_type_operator();
-                // `symbol?` is not the whole element of a tuple.
-                if self.unclaimed_nullable_types != nullable_types {
-                    self.report();
-                }
                 match self.f.types.last() {
                     Some(&TypeNode {
                         kind: TypeNodeKind::Keyword(Keyword::Symbol),
@@ -321,10 +373,8 @@ impl Parser<'_> {
                         self.f.types.pop();
                         self.finish_type(TypeNodeKind::UniqueSymbol, start)
                     }
-                    _ => {
-                        self.report();
-                        self.finish_type(TypeNodeKind::Unique(operand), start)
-                    }
+                    // `checkGrammarTypeOperatorNode` reports it.
+                    _ => self.finish_type(TypeNodeKind::Unique(operand), start),
                 }
             }
             T::Infer => self.infer_type(),
@@ -386,6 +436,9 @@ impl Parser<'_> {
                     self.next();
                     if self.eat(T::CloseBracket) {
                         ty = self.finish_type(TypeNodeKind::Array(ty), start);
+                    } else if self.recovers && !self.is_start_of_type(false) {
+                        self.expected(T::CloseBracket);
+                        ty = self.finish_type(TypeNodeKind::Array(ty), start);
                     } else {
                         let index = self.type_in_list();
                         self.expect(T::CloseBracket);
@@ -401,16 +454,26 @@ impl Parser<'_> {
                     if is_before_type {
                         return ty;
                     }
-                    // A `JSDocNullableType`, which only an element of a tuple can be: see
-                    // `tuple_element`.
+                    // A `JSDocNullableType`, which the checker reports unless it is an element of
+                    // a tuple: see `take_back_nullable_type`.
                     self.next();
-                    self.unclaimed_nullable_types += 1;
+                    let kind = TypeNodeKind::JSDoc {
+                        ty,
+                        kind: JSDocTypeKind::Nullable,
+                        is_postfix: true,
+                    };
+                    ty = self.finish_type(kind, start);
                     self.last_nullable_type = (ty, self.prev_end());
                 }
-                // A `JSDocNonNullableType`
+                // A `JSDocNonNullableType`, which the checker reports.
                 T::Exclamation => {
-                    self.report();
                     self.next();
+                    let kind = TypeNodeKind::JSDoc {
+                        ty,
+                        kind: JSDocTypeKind::NonNullable,
+                        is_postfix: true,
+                    };
+                    ty = self.finish_type(kind, start);
                 }
                 _ => break,
             }
@@ -576,7 +639,12 @@ impl Parser<'_> {
             T::Asserts => {
                 let is_predicate = self.look_ahead(|p| {
                     p.next();
-                    (p.is_identifier() || p.token() == T::This) && !p.newline_before()
+                    let is_name = match p.recovers {
+                        // `nextTokenIsIdentifierOrKeywordOnSameLine`
+                        true => p.token().is_identifier_or_keyword(),
+                        false => p.is_identifier() || p.token() == T::This,
+                    };
+                    is_name && !p.newline_before()
                 });
                 return match is_predicate {
                     true => self.asserts_type_predicate(),
@@ -584,16 +652,11 @@ impl Parser<'_> {
                 };
             }
             T::TemplateHead => return self.template_type(),
-            // The types of JSDoc.
             T::Asterisk
             | T::AsteriskEquals
             | T::Question
             | T::QuestionQuestion
-            | T::Exclamation
-            | T::Function => {
-                self.refuse(Refusal::Reported);
-                return TypeNodeId::NONE;
-            }
+            | T::Exclamation => return self.jsdoc_prefix_type(),
             _ => return self.type_reference(),
         };
         // `parseKeywordAndNoDot`
@@ -601,6 +664,44 @@ impl Parser<'_> {
             return self.type_reference();
         }
         self.token_type(TypeNodeKind::Keyword(keyword))
+    }
+
+    /// `parseJSDocAllType`, `parseJSDocNullableType`, `parseJSDocNonNullableType`: the checker
+    /// reports them.
+    #[cold]
+    #[inline(never)]
+    fn jsdoc_prefix_type(&mut self) -> TypeNodeId {
+        let (token, start) = (self.token(), self.pos());
+        // `ReScanAsteriskEqualsToken`, `ReScanQuestionToken`
+        if matches!(token, T::AsteriskEquals | T::QuestionQuestion) {
+            self.lx.end = start + 1;
+        }
+        self.next();
+        // `parseJSDocUnknownOrNullableType` of TypeScript 5: a `?` by itself.
+        let is_unknown_type = token == T::Question
+            && self.options.dialect.typescript_5
+            && matches!(
+                self.token(),
+                T::Comma | T::CloseBrace | T::CloseParen | T::GreaterThan | T::Equals | T::Bar
+            );
+        if matches!(token, T::Asterisk | T::AsteriskEquals) || is_unknown_type {
+            // `checkJSDocTypeIsInJsFile`
+            if !self.options.is_javascript {
+                self.flag(DiagnosticKind::Grammar, 8020, (start, start + 1), &[]);
+            }
+            return self.add_type(TypeNodeKind::Keyword(Keyword::Any), start, start + 1);
+        }
+        let ty = self.nested_type_operator();
+        let kind = match token {
+            T::Exclamation => JSDocTypeKind::NonNullable,
+            _ => JSDocTypeKind::Nullable,
+        };
+        let kind = TypeNodeKind::JSDoc {
+            ty,
+            kind,
+            is_postfix: false,
+        };
+        self.finish_type(kind, start)
     }
 
     /// `parseAssertsTypePredicate`
@@ -612,12 +713,13 @@ impl Parser<'_> {
                 self.next();
                 known::this
             }
-            _ => {
+            _ if self.is_identifier() => {
                 let name = self.lx.atom;
                 self.note_identifier(name, start);
-                self.next();
+                self.next_after_name();
                 name
             }
+            _ => self.missing_identifier(0, 0).0,
         };
         let ty = match self.eat(T::Is) {
             true => self.ty(),
@@ -660,21 +762,76 @@ impl Parser<'_> {
         };
         self.note_identifier(first.0, first.1);
         self.s.names.push(first);
-        while self.token() == T::Dot {
-            self.next();
-            if self.newline_before()
-                && self.token().is_identifier_or_keyword()
-                && self.is_followed_by_word_on_same_line()
-            {
-                self.refuse(Refusal::Reported);
-            }
-            let name = self.identifier_name();
-            self.s.names.push(name);
+        // `checkTypeReferenceNode`: `A.<T>`
+        if self.rest_of_entity_name() && !self.newline_before() {
+            let dot = self.full_start().saturating_sub(1);
+            self.flag(DiagnosticKind::Grammar, 8020, (dot, dot + 1), &[]);
         }
         let names = self.s.names.get(base..).unwrap_or_default();
         let name = self.f.entity_name(names.iter().copied());
         self.s.names.truncate(base);
         name
+    }
+
+    /// The loop of `parseEntityName`: pushes the names after the first on the stack of names.
+    /// Whether it ends between the dot and the `<` of `A.<T>`.
+    #[inline]
+    fn rest_of_entity_name(&mut self) -> bool {
+        while self.token() == T::Dot {
+            self.next();
+            let token = self.token();
+            if token.is_identifier_or_keyword()
+                && token != T::PrivateIdentifier
+                && !self.newline_before()
+            {
+                self.s.names.push((self.lx.atom, self.lx.start));
+                self.next_after_name();
+                continue;
+            }
+            match self.name_after_dot_in_type() {
+                Some(name) => self.s.names.push(name),
+                None => return true,
+            }
+        }
+        false
+    }
+
+    /// `parseRightSideOfDot(allowIdentifierNames, !allowPrivateIdentifiers)`. `None`: at a `<`,
+    /// where `parseEntityName` does not call it.
+    #[cold]
+    #[inline(never)]
+    fn name_after_dot_in_type(&mut self) -> Option<(Atom, u32)> {
+        let token = self.token();
+        // Flow, whose `typeof a.b` is read here, has neither rule.
+        if token == T::LessThan && !self.is_flow {
+            return None;
+        }
+        let is_word = token.is_identifier_or_keyword();
+        let starts_something_else = is_word
+            && self.newline_before()
+            && !self.is_flow
+            && self.is_followed_by_word_on_same_line();
+        if starts_something_else && !self.recovers {
+            self.refuse(Refusal::Reported);
+        }
+        if is_word && !starts_something_else {
+            if token != T::PrivateIdentifier {
+                return Some(self.identifier_name());
+            }
+            // `parsePrivateIdentifier`
+            match self.recovers {
+                true => self.next(),
+                false => self.fail(),
+            }
+        }
+        let at = self.full_start();
+        if is_word {
+            // "Report that we need an identifier. However, report it right after the dot"
+            self.error(1003, (at, Diagnostic::NO_LENGTH), &[]);
+        } else {
+            self.missing_identifier(0, 0);
+        }
+        Some((known::empty, at))
     }
 
     /// `scanTypeMemberStart`, at a modifier: whether the list of members goes on with the token.
@@ -747,8 +904,9 @@ impl Parser<'_> {
 
     /// `parseType` where `isStartOfType` is asked first, as `isListElement` does: for it a reserved
     /// word starts no type, although it can be the name in a type reference.
-    pub(crate) fn type_in_list(&mut self) -> TypeNodeId {
-        if !self.is_start_of_type(false) {
+    fn type_in_list(&mut self) -> TypeNodeId {
+        // With recovery `is_at_element` has asked, and a comma is an element whose type is missing.
+        if !self.recovers && !self.is_start_of_type(false) {
             self.fail();
             return TypeNodeId::NONE;
         }
@@ -770,6 +928,12 @@ impl Parser<'_> {
             }
             _ => return IdList::EMPTY,
         }
+        self.type_arguments_checked_if(is_checked)
+    }
+
+    /// `parseTypeArguments`, at the `<`. `is_checked`: with `checkGrammarTypeArguments`.
+    #[inline]
+    fn type_arguments_checked_if(&mut self, is_checked: bool) -> IdList<TypeNodeId> {
         match is_checked {
             true => self.type_arguments(),
             false => self.type_arguments_unchecked().0,
@@ -847,28 +1011,67 @@ impl Parser<'_> {
     /// `implements` of a class. `is_checked`: `checkTypeReferenceNode` gets to it.
     /// `not_entity_name`: what it says about `A?.B`.
     pub(crate) fn heritage_type(&mut self, is_checked: bool, not_entity_name: u32) -> TypeNodeId {
-        // Anything but an entity name is an error.
+        let before = self.lx.mark();
+        let reference = match self.recovers {
+            // What type arguments have built is taken back if the expression goes on after them.
+            true => self.try_parse(|p| p.heritage_entity_name(is_checked, not_entity_name)),
+            false => self.heritage_entity_name(is_checked, not_entity_name),
+        };
+        match reference {
+            Some(reference) => reference,
+            None if self.has_failed() => TypeNodeId::NONE,
+            // An error of its parser.
+            None if self.is_flow => {
+                self.refuse(Refusal::Reported);
+                TypeNodeId::NONE
+            }
+            None => {
+                self.lx.reset(before);
+                self.heritage_expression(is_checked)
+            }
+        }
+    }
+
+    /// `heritage_type`, if `IsEntityNameExpression` is true of the expression. `None`: it is not,
+    /// and without recovery only tokens have been read.
+    #[inline]
+    fn heritage_entity_name(
+        &mut self,
+        is_checked: bool,
+        not_entity_name: u32,
+    ) -> Option<TypeNodeId> {
         if !self.is_identifier() {
-            self.refuse(Refusal::Reported);
+            return None;
         }
         let start = self.pos();
         let base = self.s.names.len();
         let first = self.identifier_name();
-        self.note_identifier(first.0, first.1);
         self.s.names.push(first);
         let mut is_optional_chain = false;
         while matches!(self.token(), T::Dot | T::QuestionDot) {
             is_optional_chain |= self.token() == T::QuestionDot;
             self.next();
-            if self.newline_before()
-                && self.token().is_identifier_or_keyword()
-                && self.is_followed_by_word_on_same_line()
+            let token = self.token();
+            if !token.is_identifier_or_keyword()
+                || token == T::PrivateIdentifier
+                || self.newline_before() && self.is_followed_by_word_on_same_line()
             {
-                self.refuse(Refusal::Reported);
+                self.s.names.truncate(base);
+                return None;
             }
-            let name = self.identifier_name();
-            self.s.names.push(name);
+            self.s.names.push((self.lx.atom, self.lx.start));
+            self.next_after_name();
         }
+        // `parseMemberExpressionRest` and `parseCallExpressionRest` go on.
+        if matches!(
+            self.token(),
+            T::OpenParen | T::OpenBracket | T::NoSubstitutionTemplate | T::TemplateHead
+        ) || self.token() == T::Exclamation && !self.newline_before()
+        {
+            self.s.names.truncate(base);
+            return None;
+        }
+        self.note_identifier(first.0, first.1);
         let names = self.s.names.get(base..).unwrap_or_default();
         let name = self.f.entity_name(names.iter().copied());
         self.s.names.truncate(base);
@@ -876,24 +1079,73 @@ impl Parser<'_> {
             let at = (start, self.prev_end());
             self.flag(DiagnosticKind::Checker, not_entity_name, at, &[]);
         }
-        let args = match self.token() {
-            T::LessThan if is_checked => self.type_arguments(),
-            T::LessThan => self.type_arguments_unchecked().0,
-            _ => IdList::EMPTY,
-        };
-        if matches!(
-            self.token(),
-            T::OpenParen
-                | T::OpenBracket
-                | T::Dot
-                | T::QuestionDot
-                | T::Exclamation
-                | T::NoSubstitutionTemplate
-                | T::TemplateHead
-        ) {
-            self.refuse(Refusal::Reported);
+        let mut args = IdList::EMPTY;
+        if self.token() == T::LessThan {
+            args = self.type_arguments_checked_if(is_checked);
+            if matches!(
+                self.token(),
+                T::OpenParen
+                    | T::OpenBracket
+                    | T::Dot
+                    | T::QuestionDot
+                    | T::Exclamation
+                    | T::NoSubstitutionTemplate
+                    | T::TemplateHead
+            ) && self.goes_on_after_type_arguments()
+            {
+                return None;
+            }
         }
-        self.finish_type(TypeNodeKind::Ref { name, args }, start)
+        Some(self.finish_type(TypeNodeKind::Ref { name, args }, start))
+    }
+
+    /// Whether `parseLeftHandSideExpressionOrHigher` takes the type arguments before the token and
+    /// goes on with it (`canFollowTypeArgumentsInExpression`).
+    #[cold]
+    #[inline(never)]
+    fn goes_on_after_type_arguments(&mut self) -> bool {
+        if !self.recovers {
+            self.refuse(Refusal::Reported);
+            return false;
+        }
+        match self.token() {
+            // In JavaScript no expression takes type arguments.
+            _ if !self.has_type_arguments_in_expressions => false,
+            // It starts an expression, and only on the next line it goes on with this one.
+            T::OpenBracket => self.newline_before(),
+            // On the next line it goes on with nothing.
+            T::Exclamation => false,
+            _ => true,
+        }
+    }
+
+    /// `parseExpressionWithTypeArguments`, of an expression that is no entity name: the checker
+    /// reports it.
+    #[cold]
+    #[inline(never)]
+    fn heritage_expression(&mut self, is_checked: bool) -> TypeNodeId {
+        let start = self.pos();
+        let saved = self.enter_context(0, ctx::TYPE);
+        let mut expr = self.left_hand_side_expression();
+        self.context = saved;
+        let mut args = IdList::EMPTY;
+        if expr.idx() + 1 == self.f.exprs.len()
+            && let Some(&Expr {
+                kind:
+                    ExprKind::Instantiation {
+                        expr: instantiated,
+                        type_args,
+                    },
+                ..
+            }) = self.f.exprs.last()
+            && self.f.parens.last().is_none_or(|last| last.0 != expr)
+        {
+            self.f.exprs.pop();
+            (expr, args) = (instantiated, type_args);
+        } else if self.token() == T::LessThan {
+            args = self.type_arguments_checked_if(is_checked);
+        }
+        self.finish_type(TypeNodeKind::Heritage { expr, args }, start)
     }
 
     /// `parseHeritageClauses` of an interface, with what `checkGrammarInterfaceDeclaration` reports
@@ -950,13 +1202,18 @@ impl Parser<'_> {
     pub(crate) fn type_query(&mut self) -> TypeNodeId {
         let start = self.pos();
         self.next();
+        // `parseEntityName(allowReservedWords, nil)`
         let base = self.s.names.len();
-        let first = self.identifier_name();
+        let first = match self.token().is_identifier_or_keyword() {
+            true => self.identifier_name(),
+            false => {
+                let at = self.full_start();
+                self.missing_identifier(0, 0);
+                (known::empty, at)
+            }
+        };
         self.s.names.push(first);
-        while self.eat(T::Dot) {
-            let name = self.identifier_name();
-            self.s.names.push(name);
-        }
+        self.rest_of_entity_name();
         // No atom of a name that is missing is looked at.
         if self.has_failed() {
             self.s.names.truncate(base);
@@ -1007,54 +1264,53 @@ impl Parser<'_> {
         let is_typeof = self.eat(T::TypeOf);
         self.expect(T::Import);
         self.expect(T::OpenParen);
-        if self.token() != T::String {
-            self.refuse(Refusal::Reported);
-        }
-        let (spec, spec_pos) = (self.lx.atom, self.pos());
-        self.next();
+        let (mut spec, spec_pos) = (self.lx.atom, self.pos());
+        let before = self.lx.mark();
+        // `IsLiteralImportTypeNode`
+        let argument = match self.eat(T::String) && matches!(self.token(), T::Comma | T::CloseParen)
+        {
+            true => TypeNodeId::NONE,
+            false => self.argument_of_import_type(before),
+        };
         let (mut mode, mut attributes) = (ResolutionMode::None, ImportAttributesToken::None);
-        // `{ with: { name: "value" } }`
         if self.eat(T::Comma) {
-            self.expect(T::OpenBrace);
-            attributes = match self.token() {
-                T::With => ImportAttributesToken::With,
-                // An error of the parser.
-                T::Assert => {
-                    self.report();
-                    ImportAttributesToken::Assert
-                }
-                _ => {
-                    self.fail();
-                    ImportAttributesToken::None
-                }
-            };
-            mode = self.import_attributes(true);
-            self.eat(T::Comma);
-            self.expect(T::CloseBrace);
+            (mode, attributes) = self.attributes_of_import_type();
         }
         self.expect(T::CloseParen);
-        self.f.specifier_uses.push(SpecifierUse {
-            spec,
-            pos: spec_pos,
-            kind: SpecifierKind::ImportType,
-            mode,
-        });
+        if argument.is_none() {
+            self.f.specifier_uses.push(SpecifierUse {
+                spec,
+                pos: spec_pos,
+                kind: SpecifierKind::ImportType,
+                mode,
+            });
+        }
         let mut name = Span::EMPTY;
         if self.eat(T::Dot) {
+            // `parseEntityNameOfTypeReference`
             let base = self.s.names.len();
-            loop {
-                let part = self.identifier_name();
-                self.s.names.push(part);
-                if !self.eat(T::Dot) {
-                    break;
+            match self.token().is_identifier_or_keyword() {
+                true => {
+                    let first = self.identifier_name();
+                    self.s.names.push(first);
                 }
+                false => self.missing_qualifier_of_import_type(),
             }
+            self.rest_of_entity_name();
             let names = self.s.names.get(base..).unwrap_or_default();
-            name = self.f.entity_name(names.iter().copied());
+            if !names.is_empty() {
+                name = self.f.entity_name(names.iter().copied());
+            }
             self.s.names.truncate(base);
         }
         // `checkImportType` does not look at the list.
-        let args = self.type_arguments_of_type_reference(false);
+        let args = match argument.is_none() {
+            true => self.type_arguments_of_type_reference(false),
+            false => {
+                (spec, mode) = (Atom::NONE, ResolutionMode::None);
+                self.argument_in_place_of_type_arguments(argument)
+            }
+        };
         let kind = TypeNodeKind::Import {
             spec,
             name,
@@ -1064,6 +1320,88 @@ impl Parser<'_> {
             attributes,
         };
         self.finish_type(kind, start)
+    }
+
+    /// The argument of `import(..)`, which starts at `before`, unless it is nothing but a string:
+    /// `getTypeFromImportTypeNode` reports it.
+    #[cold]
+    #[inline(never)]
+    fn argument_of_import_type(&mut self, before: Mark) -> TypeNodeId {
+        if self.has_failed() {
+            return TypeNodeId::NONE;
+        }
+        self.lx.reset(before);
+        let (start, is_string) = (self.pos(), self.token() == T::String);
+        let argument = self.ty();
+        if is_string
+            && argument.idx() + 1 == self.f.types.len()
+            && let Some(&TypeNode {
+                kind: TypeNodeKind::StringLit(_),
+                pos,
+                ..
+            }) = self.f.types.last()
+            && pos == start
+        {
+            self.f.types.pop();
+            return TypeNodeId::NONE;
+        }
+        let at = (start, self.prev_end());
+        self.flag(DiagnosticKind::Checker, 1141, at, &[]);
+        argument
+    }
+
+    /// The `args` of `import(argument)`: `checkImportType` looks at an argument that is no string.
+    /// The tree has no place for the type arguments, which the token can be the `<` of.
+    #[cold]
+    #[inline(never)]
+    fn argument_in_place_of_type_arguments(&mut self, argument: TypeNodeId) -> IdList<TypeNodeId> {
+        let before = self.checkpoint();
+        self.type_arguments_of_type_reference(false);
+        self.forget_nodes(&before);
+        self.f.list(&[argument])
+    }
+
+    /// `parseImportType`, after the comma: `{ with: { name: "value" } }`
+    #[cold]
+    #[inline(never)]
+    fn attributes_of_import_type(&mut self) -> (ResolutionMode, ImportAttributesToken) {
+        let open = self.pos();
+        self.expect(T::OpenBrace);
+        let attributes = match self.token() {
+            T::With => ImportAttributesToken::With,
+            T::Assert => {
+                // An error of the native parser.
+                let at = (self.pos(), 0);
+                match self.options.dialect.typescript_5 {
+                    true => self.flag(DiagnosticKind::Grammar, 2880, at, &[]),
+                    false => self.error_and_go_on(2880, at, &[]),
+                }
+                ImportAttributesToken::Assert
+            }
+            // The token stays, and `import_attributes` goes on at it.
+            _ => {
+                self.error_at_token(1005, &[T::With.text()]);
+                ImportAttributesToken::With
+            }
+        };
+        let mode = self.import_attributes(true);
+        self.eat(T::Comma);
+        if !self.eat(T::CloseBrace) {
+            self.unclosed_import_attributes(open);
+        }
+        (mode, attributes)
+    }
+
+    /// `parseIdentifierNameWithDiagnostic(Type_expected)` after `import(..).`, at no name.
+    #[cold]
+    #[inline(never)]
+    fn missing_qualifier_of_import_type(&mut self) {
+        let at = self.full_start();
+        self.missing_identifier(1110, 0);
+        // `NodeIsMissing(n.Qualifier)`: a missing name that none follows is no qualifier.
+        if self.token() == T::Dot && self.peek() != T::LessThan {
+            self.s.names.push((known::empty, at));
+        }
     }
 
     /// `parseTemplateType`
@@ -1076,8 +1414,11 @@ impl Parser<'_> {
         self.next();
         loop {
             let ty = self.ty();
+            // `parseLiteralOfTemplateSpan`
             if self.token() != T::CloseBrace {
-                self.fail();
+                self.expected(T::CloseBrace);
+                self.s.ids.push(ty.0);
+                self.s.ids.push(known::empty.0);
                 break;
             }
             self.lx.rescan_template_continuation();
@@ -1137,43 +1478,114 @@ impl Parser<'_> {
             p.token() == T::Colon || p.eat(T::Question) && p.token() == T::Colon
         });
         let has_dots = self.eat(T::DotDotDot);
-        let (mut name, mut optional) = (Atom::NONE, false);
-        let ty;
-        if is_named {
-            name = self.lx.atom;
-            self.note_identifier(name, start);
-            self.next();
-            optional = self.eat(T::Question);
-            self.expect(T::Colon);
-            if has_dots && optional || self.token() == T::DotDotDot {
-                self.refuse(Refusal::Reported);
-            }
-            ty = self.ty();
-        } else {
-            // `parseTupleElementType`: a `JSDocNullableType` that is the whole type is an
-            // optional element.
-            ty = self.type_in_list();
-            if self.unclaimed_nullable_types > 0 && self.last_nullable_type == (ty, self.prev_end())
-            {
-                self.unclaimed_nullable_types -= 1;
-                self.last_nullable_type = (TypeNodeId::NONE, 0);
-                optional = true;
-                if has_dots {
-                    self.refuse(Refusal::Reported);
-                }
-            }
-        }
-        self.s.tuple_elems.push(TupleElem {
-            ty,
-            written: ty,
+        let mut element = TupleElem {
+            ty: TypeNodeId::NONE,
+            written: TypeNodeId::NONE,
             member_type: TupleMemberType::Plain,
-            name,
-            optional,
+            name: Atom::NONE,
+            optional: false,
             rest: has_dots,
             has_dots,
             start,
-            end: self.prev_end(),
-        });
+            end: 0,
+        };
+        if is_named {
+            element.name = self.lx.atom;
+            self.note_identifier(element.name, start);
+            self.next_after_name();
+            element.optional = self.eat(T::Question);
+            self.expect(T::Colon);
+            // `parseTupleElementType`
+            let type_start = self.pos();
+            let has_dots_before_type = self.eat(T::DotDotDot);
+            element.ty = self.ty();
+            element.written = element.ty;
+            element.end = self.prev_end();
+            if has_dots_before_type
+                || has_dots && element.optional
+                || self.last_nullable_type == (element.ty, element.end)
+            {
+                self.check_named_tuple_member(&mut element, type_start, has_dots_before_type);
+            }
+        } else {
+            // `parseTupleElementType`: a `JSDocNullableType` that is the whole type is an
+            // optional element.
+            element.ty = self.type_in_list();
+            if !has_dots && let Some(ty) = self.take_back_nullable_type(element.ty) {
+                element.ty = ty;
+                element.optional = true;
+            }
+            element.written = element.ty;
+            element.end = self.prev_end();
+        }
+        self.s.tuple_elems.push(element);
+    }
+
+    /// `T`, if `ty` is the `T?` that ends with the previous token. Its node is removed.
+    #[inline]
+    fn take_back_nullable_type(&mut self, ty: TypeNodeId) -> Option<TypeNodeId> {
+        if self.last_nullable_type != (ty, self.prev_end()) || ty.idx() + 1 != self.f.types.len() {
+            return None;
+        }
+        let Some(&TypeNode {
+            kind:
+                TypeNodeKind::JSDoc {
+                    ty: operand,
+                    kind: JSDocTypeKind::Nullable,
+                    is_postfix: true,
+                },
+            ..
+        }) = self.f.types.last()
+        else {
+            return None;
+        };
+        self.f.types.pop();
+        Some(operand)
+    }
+
+    /// `getTypeFromRestTypeNode`: the element type if `ty` is an array type, otherwise `ty`.
+    fn rest_element_type(&self, ty: TypeNodeId) -> TypeNodeId {
+        match self.f.types.get(ty.idx()) {
+            Some(&TypeNode {
+                kind: TypeNodeKind::Array(element),
+                ..
+            }) => element,
+            _ => ty,
+        }
+    }
+
+    /// `checkNamedTupleMember`, of `name: ...T`, `name: T?` and `...name?: T`. The type starts at
+    /// `type_start`, with its dots.
+    #[cold]
+    #[inline(never)]
+    fn check_named_tuple_member(
+        &mut self,
+        element: &mut TupleElem,
+        type_start: u32,
+        has_dots_before_type: bool,
+    ) {
+        let at = (type_start, element.end);
+        if has_dots_before_type {
+            element.member_type = TupleMemberType::Rest;
+            self.flag(DiagnosticKind::Grammar, 5087, at, &[]);
+            element.ty = self.rest_element_type(element.ty);
+        } else if let Some(operand) = self.take_back_nullable_type(element.ty) {
+            element.member_type = TupleMemberType::Optional;
+            element.written = operand;
+            self.flag(DiagnosticKind::Grammar, 5086, at, &[]);
+            // `getTypeFromOptionalTypeNode`
+            let undefined = TypeNodeKind::Keyword(Keyword::Undefined);
+            let undefined = self.add_type(undefined, type_start, type_start);
+            let members = self.f.list(&[operand, undefined]);
+            element.ty = self.add_type(TypeNodeKind::Union(members), type_start, element.end);
+        }
+        if element.has_dots && element.optional {
+            let at = (element.start, element.end);
+            self.flag(DiagnosticKind::Grammar, 5085, at, &[]);
+            // `getTupleElementFlags`: it is optional.
+            element.rest = false;
+            element.ty = self.rest_element_type(element.ty);
+        }
     }
 
     /// `isStartOfMappedType`
@@ -1251,7 +1663,10 @@ impl Parser<'_> {
         }
         let ty = self.type_annotation();
         self.semicolon();
-        // Members after it are an error.
+        let members = match self.token() {
+            T::CloseBrace => Span::EMPTY,
+            _ => self.members_after_mapped_type(),
+        };
         self.expect(T::CloseBrace);
         let param = self.f.add_type_param(TypeParam {
             name,
@@ -1271,9 +1686,31 @@ impl Parser<'_> {
             optional,
             is_readonly_with_plus,
             is_optional_with_plus,
-            members: Span::EMPTY,
+            members,
         });
         self.finish_type(TypeNodeKind::Mapped(mapped), start)
+    }
+
+    /// The `parseList(PCTypeMembers, parseTypeMember)` of `parseMappedType`, and
+    /// `checkGrammarMappedType`.
+    #[cold]
+    #[inline(never)]
+    fn members_after_mapped_type(&mut self) -> Span<MemberId> {
+        let members = self.type_member_list();
+        let first = self.f.members.get(members.start as usize);
+        // `GetErrorRangeForNode`
+        let at = first
+            .filter(|_| !members.is_empty())
+            .map(|first| match first.kind {
+                MemberKind::Property | MemberKind::Getter | MemberKind::Setter => {
+                    (first.name_pos, 0)
+                }
+                _ => (first.start, first.loc.end),
+            });
+        if let Some(at) = at {
+            self.flag(DiagnosticKind::Grammar, 7061, at, &[]);
+        }
+        members
     }
 
     /// `parseTypeLiteral`
@@ -1288,6 +1725,14 @@ impl Parser<'_> {
         if !self.expect(T::OpenBrace) {
             return Span::EMPTY;
         }
+        let members = self.type_member_list();
+        self.expect(T::CloseBrace);
+        members
+    }
+
+    /// `parseList(PCTypeMembers, parseTypeMember)`
+    #[inline]
+    fn type_member_list(&mut self) -> Span<MemberId> {
         let base = self.s.members.len();
         let lists = self.enter_list(ListKind::TypeMembers);
         while self.is_in_list(T::CloseBrace) && self.is_at_element(ListKind::TypeMembers) {
@@ -1295,7 +1740,6 @@ impl Parser<'_> {
             self.s.members.push(member);
         }
         self.lists = lists;
-        self.expect(T::CloseBrace);
         take_span!(self, members, base)
     }
 
@@ -1447,7 +1891,10 @@ impl Parser<'_> {
         let (this_param, params) = self.parameters(0);
         // `shouldParseReturnType`: "This is easy to get backward, especially in type contexts, so
         // parse the type anyway"
-        if self.token() == T::EqualsGreaterThan && self.recovers {
+        if self.token() == T::EqualsGreaterThan
+            && self.recovers
+            && !matches!(kind, FnKind::Getter | FnKind::Setter)
+        {
             self.expected(T::Colon);
             self.lx.token = T::Colon;
         }
@@ -1499,7 +1946,8 @@ impl Parser<'_> {
         } else {
             let first_modifier = self.s.modifiers.len();
             if self.token().is_modifier() {
-                if !self.look_ahead(Self::scan_type_member_start) {
+                // With recovery `is_at_element` has asked.
+                if !self.recovers && !self.look_ahead(Self::scan_type_member_start) {
                     self.fail();
                 }
                 member.flags = self.modifiers(ModifiersOf::TypeMember);
@@ -1560,8 +2008,13 @@ impl Parser<'_> {
                 let name = key.name().unwrap_or(Atom::NONE);
                 let flags = member.flags - Flags::LITERAL_NAME;
                 member.func = self.signature(fn_kind, flags, name, name_pos, start.pos);
-                if self.token() == T::OpenBrace {
-                    self.refuse(Refusal::Reported);
+                // `parseFunctionBlockOrSemicolon`: nothing has to follow a body.
+                if self.token() == T::OpenBrace && self.body_in_type(member.kind, member.func) {
+                    member.loc = TextRange {
+                        pos: start.full,
+                        end: self.prev_end(),
+                    };
+                    return member;
                 }
             } else {
                 member.ty = self.type_annotation();
@@ -1579,6 +2032,30 @@ impl Parser<'_> {
             end: self.prev_end(),
         };
         member
+    }
+
+    /// At the `{` after the signature `func` of a member of a type. Whether it is an accessor,
+    /// which `parseAccessorDeclaration` gives a body: `checkGrammarAccessor` reports it.
+    #[cold]
+    #[inline(never)]
+    fn body_in_type(&mut self, kind: MemberKind, func: FnId) -> bool {
+        if !matches!(kind, MemberKind::Getter | MemberKind::Setter) {
+            // `parseTypeMemberSemicolon` reports the `{`.
+            if !self.recovers {
+                self.refuse(Refusal::Reported);
+            }
+            return false;
+        }
+        let saved = self.enter_context(0, ctx::TYPE);
+        let (body, open) = self.function_block(0);
+        self.context = saved;
+        if let Some(accessor) = self.f.fns.get_mut(func.idx()) {
+            accessor.body = body;
+        }
+        self.f.body_starts.push((func, open));
+        let at = (open, self.prev_end());
+        self.flag(DiagnosticKind::Grammar, 1183, at, &[]);
+        true
     }
 
     // ───────────────────────────── declarations ─────────────────────────────
@@ -1623,7 +2100,7 @@ impl Parser<'_> {
         self.next();
         // After `declare type` a line break is possible, and an error.
         if self.newline_before() {
-            self.report();
+            self.error_and_go_on(1142, self.range_of_token(), &[]);
         }
         let (name, name_pos) = self.identifier();
         let saved = self.enter_context(ctx::TYPE, 0);

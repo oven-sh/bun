@@ -38,6 +38,8 @@ pub(crate) struct Printer<'a, 'e> {
     pub(crate) indentation: usize,
     /// What is being written is in a reference whose label is its text, which has to stay as it is.
     pub(crate) is_in_label: bool,
+    /// For oxfmt: of the lists that have been asked about, the first of the lists of their kind that they follow.
+    pub(crate) first_of_run: Vec<NodeId>,
     pub(crate) stack_check: bun_core::StackCheck,
     pub(crate) is_nested_too_deeply: bool,
 }
@@ -405,31 +407,35 @@ impl<'a> Printer<'a, '_> {
 
     /// Prettier's `getNthListSiblingIndex`: how many lists of the same kind are right before `list`.
     fn nth_list_sibling_index(&self, list: NodeId) -> usize {
-        let Some(node) = self.node(list) else {
-            return 0;
-        };
-        let mut count = 0;
-        let mut previous = node.previous;
-        while let Some(sibling) = self
-            .node(previous)
-            .filter(|it| it.kind == Kind::List && it.ordered == node.ordered)
-        {
-            count += 1;
-            previous = sibling.previous;
+        self.node(list).map_or(0, |it| it.first_align as usize)
+    }
+
+    /// The first of the lists of its kind that `list` follows, or itself.
+    fn first_list_of_run(&mut self, list: NodeId) -> NodeId {
+        if self.first_of_run.is_empty() {
+            self.first_of_run = vec![NONE; self.tree.nodes.len()];
         }
-        count
+        let mut at = list;
+        let first = loop {
+            match (self.first_of_run.get(at as usize), self.node(at)) {
+                (Some(&known), _) if known != NONE => break known,
+                (_, Some(node)) if node.first_align > 0 => at = node.previous,
+                _ => break at,
+            }
+        };
+        if let Some(slot) = self.first_of_run.get_mut(list as usize) {
+            *slot = first;
+        }
+        first
     }
 
     /// Whether `list` has `*` or `)`: lists of the same kind that follow each other take turns.
-    fn uses_alternate_marker(&self, list: NodeId) -> bool {
+    fn uses_alternate_marker(&mut self, list: NodeId) -> bool {
         let index = self.nth_list_sibling_index(list);
         let mut is_first_alternate = false;
         // oxfmt: a list that is left as it is written has the marker that it has.
-        if self.options.flavor.is_oxfmt() {
-            let mut first = list;
-            for _ in 0..index {
-                first = self.node(first).map_or(NONE, |it| it.previous);
-            }
+        if self.options.flavor.is_oxfmt() && index > 0 {
+            let first = self.first_list_of_run(list);
             if let Some(first) = self.node(first)
                 && self.prettier_ignore(first.previous) == Some(Ignore::Next)
             {
@@ -1415,19 +1421,20 @@ impl<'a> Printer<'a, '_> {
                 Doc::from(crate::text::trim_end(self.str(node.value)))
             }
             Kind::EsComment => docs!["{/* ", self.str(node.value), " */}"],
-            Kind::ThematicBreak => match self.find_ancestor(id, |it| it.kind == Kind::List) {
-                Some(list) if !self.uses_alternate_marker(list) => Doc::from("***"),
-                // oxfmt: at the start of a document `---` would start front matter.
-                None if self.options.flavor.is_oxfmt()
-                    && self.kind(node.parent) == Some(Kind::Root)
-                    && self
-                        .kind(node.previous)
-                        .is_none_or(|it| it == Kind::FrontMatter) =>
-                {
-                    Doc::from("***")
-                }
-                _ => Doc::from("---"),
-            },
+            Kind::ThematicBreak => {
+                let is_of_asterisks = match self.find_ancestor(id, |it| it.kind == Kind::List) {
+                    Some(list) => !self.uses_alternate_marker(list),
+                    // oxfmt: at the start of a document `---` would start front matter.
+                    None => {
+                        self.options.flavor.is_oxfmt()
+                            && self.kind(node.parent) == Some(Kind::Root)
+                            && self
+                                .kind(node.previous)
+                                .is_none_or(|it| it == Kind::FrontMatter)
+                    }
+                };
+                Doc::from(if is_of_asterisks { "***" } else { "---" })
+            }
             Kind::LinkReference => {
                 let is_in_label = node.reference_type != ReferenceType::Full;
                 let was_in_label = std::mem::replace(&mut self.is_in_label, is_in_label);

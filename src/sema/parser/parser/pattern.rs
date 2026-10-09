@@ -25,7 +25,7 @@ impl Parser<'_> {
         let name = self.lx.atom;
         self.note_identifier(name, self.lx.start);
         let pat = self.f.pat(PatKind::Ident(name), self.lx.start, self.lx.end);
-        self.next();
+        self.next_after_name();
         pat
     }
 
@@ -120,7 +120,11 @@ impl Parser<'_> {
             let element = self.full_start();
             // `parseObjectBindingElement`
             let pos = self.pos();
-            let property = if self.eat(T::DotDotDot) {
+            let property = if !self.eat(T::DotDotDot) {
+                self.object_binding_element(pos)
+            } else if self.recovers {
+                self.rest_binding_element(pos)
+            } else {
                 let key_pos = self.pos();
                 let value = self.binding_identifier();
                 PatProp {
@@ -129,42 +133,6 @@ impl Parser<'_> {
                     value,
                     default: ExprId::NONE,
                     is_rest: true,
-                    pos,
-                    key_pos,
-                    end: self.prev_end(),
-                }
-            } else {
-                let is_identifier = self.is_binding_identifier();
-                let bigint = (self.token() == T::BigInt).then(|| self.lx.text());
-                let name_end = self.lx.end;
-                let (mut key, mut name_kind, key_pos) = self.property_name();
-                // In a type nothing asks whether the name is in quotes.
-                if name_kind == NameKind::StringLiteral && self.has_context(ctx::TYPE) {
-                    name_kind = NameKind::Identifier;
-                }
-                // `name.Text()` ends with the `n`.
-                if let Some(written) = bigint {
-                    key = PropKey::Name(self.atom(&bun_sema::json::bigint_token_value(written)));
-                }
-                let value = if is_identifier && self.token() != T::Colon {
-                    match key {
-                        PropKey::Name(name) => {
-                            self.note_identifier(name, key_pos);
-                            self.f.pat(PatKind::Ident(name), key_pos, name_end)
-                        }
-                        _ => PatId::NONE,
-                    }
-                } else {
-                    self.expect(T::Colon);
-                    self.identifier_or_pattern()
-                };
-                let default = self.optional_initializer();
-                PatProp {
-                    key,
-                    name_kind,
-                    value,
-                    default,
-                    is_rest: false,
                     pos,
                     key_pos,
                     end: self.prev_end(),
@@ -188,5 +156,61 @@ impl Parser<'_> {
         let properties = take_span!(self, pat_props, base);
         let end = self.prev_end();
         self.f.pat(PatKind::Object(properties), start, end)
+    }
+
+    /// `parseObjectBindingElement`, after its `...` if it has one. `pos`: its first token.
+    #[inline(always)]
+    fn object_binding_element(&mut self, pos: u32) -> PatProp {
+        let is_identifier = self.is_binding_identifier();
+        let bigint = (self.token() == T::BigInt).then(|| self.lx.text());
+        let name_end = self.lx.end;
+        let (mut key, mut name_kind, key_pos) = self.property_name();
+        // In a type nothing asks whether the name is in quotes.
+        if name_kind == NameKind::StringLiteral && self.has_context(ctx::TYPE) {
+            name_kind = NameKind::Identifier;
+        }
+        // `name.Text()` ends with the `n`.
+        if let Some(written) = bigint {
+            key = PropKey::Name(self.atom(&bun_sema::json::bigint_token_value(written)));
+        }
+        let value = if is_identifier && self.token() != T::Colon {
+            match key {
+                PropKey::Name(name) => {
+                    self.note_identifier(name, key_pos);
+                    self.f.pat(PatKind::Ident(name), key_pos, name_end)
+                }
+                _ => PatId::NONE,
+            }
+        } else {
+            self.expect(T::Colon);
+            self.identifier_or_pattern()
+        };
+        let default = self.optional_initializer();
+        PatProp {
+            key,
+            name_kind,
+            value,
+            default,
+            is_rest: false,
+            pos,
+            key_pos,
+            end: self.prev_end(),
+        }
+    }
+
+    /// The same after `...`, where `checkGrammarBindingElement` reports a property name and an
+    /// initializer.
+    #[cold]
+    #[inline(never)]
+    fn rest_binding_element(&mut self, pos: u32) -> PatProp {
+        let is_identifier = self.is_binding_identifier();
+        let mut property = self.object_binding_element(pos);
+        property.is_rest = true;
+        // `...a`: the identifier is the binding, and there is no property name.
+        let value = self.f.pats.get(property.value.idx());
+        if is_identifier && value.is_some_and(|pat| pat.pos == property.key_pos) {
+            property.key = PropKey::None;
+        }
+        property
     }
 }

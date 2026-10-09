@@ -8,7 +8,7 @@ use super::ast::{Kind, NOTHING, NodeId, Range, Text, Tree};
 use super::parser::{Statement, StatementKind};
 use super::positions::Positions;
 use super::{Error, MAX_DEPTH};
-use crate::syntax_error::{Message, SyntaxError};
+use crate::syntax_error::{Message, Refusal};
 use bun_core::strings;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -135,6 +135,7 @@ struct Frame {
 
 struct Builder<'a> {
     source: &'a [u8],
+    refusal: &'a Refusal,
     statements: &'a [Statement],
     positions: &'a Positions,
     tree: &'a mut Tree,
@@ -279,7 +280,7 @@ impl Builder<'_> {
 
     #[cold]
     fn error_at(&self, message: Message, at: usize) -> Error {
-        Error::Syntax(SyntaxError(message, at as u32))
+        Error::Syntax(self.refusal.note(message, at as u32))
     }
 
     fn finish_tag(&mut self) -> Result<(), Error> {
@@ -323,6 +324,9 @@ impl Builder<'_> {
     }
 
     fn finish_end_tag(&mut self, is_void: bool) -> Result<(), Error> {
+        if is_void_tag(self.text(self.tag.name)) && !is_void {
+            return Err(self.error_at(Message::EndTagOfVoidElement, self.tag.start));
+        }
         let frame = self
             .stack
             .pop()
@@ -330,9 +334,8 @@ impl Builder<'_> {
         let Kind::Element { tag, .. } = self.tree.kind(frame.element) else {
             return Err(self.error_at(Message::EndTagWithoutStartTag, self.tag.start));
         };
-        let name = self.text(self.tag.name);
-        if (is_void_tag(name) && !is_void) || self.text(tag) != name {
-            return Err(self.error_at(Message::EndTagWithoutStartTag, self.tag.start));
+        if self.text(tag) != self.text(self.tag.name) {
+            return Err(self.error_at(Message::WrongEndTag, self.tag.start));
         }
         let list = self.take_children(frame.base);
         let end = self.position() as u32;
@@ -1219,9 +1222,11 @@ pub(crate) fn build(
     positions: &Positions,
     front_matter: Option<NodeId>,
     tree: &mut Tree,
+    refusal: &Refusal,
 ) -> Result<NodeId, Error> {
     let mut builder = Builder {
         source,
+        refusal,
         statements,
         positions,
         tree,

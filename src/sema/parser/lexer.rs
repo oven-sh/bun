@@ -15,6 +15,8 @@ use std::simd::u8x16;
 
 pub(crate) struct Lexer<'a> {
     pub(crate) src: &'a [u8],
+    /// What [`Lexer::scan`] reads: `src`, or nothing. See [`Lexer::end_of_window`].
+    window: &'a [u8],
     pub(crate) token: T,
     /// A line break precedes the token.
     pub(crate) newline_before: bool,
@@ -57,6 +59,8 @@ pub(crate) struct Lexer<'a> {
     /// What [`Lexer::error`] has reported and the parser has not taken yet
     /// (`Parser::take_errors_of_scanner`), in the order of events.
     pub(crate) errors: Vec<Diagnostic>,
+    /// For each of `errors`, where the scan that reported it began. See [`Lexer::error`].
+    origins: Vec<u32>,
     /// Where values with escapes are decoded.
     buffer: Vec<u8>,
     pub(crate) stack_check: bun_core::StackCheck,
@@ -128,12 +132,25 @@ pub(crate) fn decode(text: &[u8]) -> Option<(u32, usize)> {
     Some((u32::from(valid.chars().next()?), len))
 }
 
+/// `DecodeLastRuneInString`: the code point at the end of `text`, and its length in bytes.
+fn decode_last(text: &[u8]) -> Option<(u32, usize)> {
+    (1..=4).find_map(|len| {
+        let last = text.get(text.len().checked_sub(len)?..)?;
+        decode(last).filter(|decoded| decoded.1 == len)
+    })
+}
+
 /// `IsWhiteSpaceSingleLine` for a code point that is not ASCII.
 fn is_unicode_blank(c: u32) -> bool {
     matches!(
         c,
         0x85 | 0xA0 | 0x1680 | 0x2000..=0x200B | 0x202F | 0x205F | 0x3000 | 0xFEFF
     )
+}
+
+/// `IsWhiteSpaceLike`
+fn is_white_space_like(c: u32) -> bool {
+    matches!(c, 0x09..=0x0D | 0x20 | 0x2028 | 0x2029) || is_unicode_blank(c)
 }
 
 fn is_identifier_start(c: u32) -> bool {
@@ -148,6 +165,7 @@ impl<'a> Lexer<'a> {
     pub(crate) fn new(src: &'a [u8], atoms: &'a dyn Intern, names: &'a mut Names) -> Self {
         Lexer {
             src,
+            window: src,
             token: T::Eof,
             newline_before: false,
             has_escape: false,
@@ -170,6 +188,7 @@ impl<'a> Lexer<'a> {
             flagged: Vec::new(),
             recovers: false,
             errors: Vec::new(),
+            origins: Vec::new(),
             buffer: Vec::new(),
             stack_check: bun_core::StackCheck::init(),
         }
@@ -205,20 +224,18 @@ impl<'a> Lexer<'a> {
         if self.flagged.last().is_some_and(|last| last.1 >= mark.end) {
             self.forget_flagged_from(mark.end);
         }
-        if self
-            .errors
-            .last()
-            .is_some_and(|last| last.start >= mark.end)
-        {
-            self.forget_errors_from(mark.end);
+        if !self.errors.is_empty() {
+            self.forget_errors_from(mark.start.saturating_add(1));
         }
     }
 
-    /// What follows `pos` is scanned again, and reported again.
+    /// Forgets the errors of the scans that began at `pos` or later: they are made again.
     #[cold]
     #[inline(never)]
     fn forget_errors_from(&mut self, pos: u32) {
-        self.errors.retain(|it| it.start < pos);
+        let kept = self.origins.partition_point(|&origin| origin < pos);
+        self.errors.truncate(kept);
+        self.origins.truncate(kept);
     }
 
     /// `s.errorAt(message, pos, length)`: the message `code` with `args`, from `start` to `end`.
@@ -242,9 +259,25 @@ impl<'a> Lexer<'a> {
             true => (start as u32, Diagnostic::NO_LENGTH),
             false => (start as u32, end as u32),
         };
+        // A scan begins where the token before ends, a second scan of the token behind its start.
+        let origin = match self.full_start == self.end {
+            true => self.full_start,
+            false => self.start.saturating_add(1),
+        };
+        // The parser has taken the others.
+        self.origins.truncate(self.errors.len());
+        self.origins.push(origin);
         self.errors
             .push(Diagnostic::new(DiagnosticKind::Parse, at, code, args));
         true
+    }
+
+    /// [`Lexer::error`], where only recovery gets.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    fn report(&mut self, code: u32, at: (usize, usize), args: &[&[u8]]) {
+        self.error(Refusal::Unsupported, code, at, args);
     }
 
     #[cold]
@@ -326,10 +359,11 @@ impl<'a> Lexer<'a> {
     /// Scans the token at `pos`, or after the blanks and comments there. Every call in it is the
     /// last thing it does, so it saves no register.
     fn scan(&mut self, mut pos: usize) {
-        let src = self.src;
+        let src = self.window;
+        let at = |pos: usize| src.get(pos).copied().unwrap_or(0);
         loop {
             let Some(&byte) = src.get(pos) else {
-                return self.set(T::Eof, src.len(), src.len());
+                return self.end_of_window(pos);
             };
             let next = pos + 1;
             match byte {
@@ -366,31 +400,31 @@ impl<'a> Lexer<'a> {
                 b':' => self.set(T::Colon, pos, next),
                 b'~' => self.set(T::Tilde, pos, next),
                 b'@' => self.set(T::At, pos, next),
-                b'.' => match (self.at(next), self.at(next + 1)) {
+                b'.' => match (at(next), at(next + 1)) {
                     (b'0'..=b'9', _) => return self.number(pos),
                     (b'.', b'.') => self.set(T::DotDotDot, pos, pos + 3),
                     _ => self.set(T::Dot, pos, next),
                 },
-                b'=' => match (self.at(next), self.at(next + 1)) {
-                    (b'=', b'=') if self.at(pos + 3) == b'=' => return self.same_four_times(pos),
+                b'=' => match (at(next), at(next + 1)) {
+                    (b'=', b'=') if at(pos + 3) == b'=' => return self.same_four_times(pos),
                     (b'=', b'=') => self.set(T::EqualsEqualsEquals, pos, pos + 3),
                     (b'=', _) => self.set(T::EqualsEquals, pos, pos + 2),
                     (b'>', _) => self.set(T::EqualsGreaterThan, pos, pos + 2),
                     _ => self.set(T::Equals, pos, next),
                 },
                 b'\'' | b'"' => return self.string(pos, byte),
-                b'/' => match self.at(next) {
+                b'/' => match at(next) {
                     b'/' | b'*' => return self.scan_after_comments(pos),
                     b'=' => self.set(T::SlashEquals, pos, pos + 2),
                     _ => self.set(T::Slash, pos, next),
                 },
                 b'0'..=b'9' => return self.number(pos),
-                b'!' => match (self.at(next), self.at(next + 1)) {
+                b'!' => match (at(next), at(next + 1)) {
                     (b'=', b'=') => self.set(T::ExclamationEqualsEquals, pos, pos + 3),
                     (b'=', _) => self.set(T::ExclamationEquals, pos, pos + 2),
                     _ => self.set(T::Exclamation, pos, next),
                 },
-                b'?' => match (self.at(next), self.at(next + 1)) {
+                b'?' => match (at(next), at(next + 1)) {
                     (b'.', after) if !after.is_ascii_digit() => {
                         self.set(T::QuestionDot, pos, pos + 2);
                     }
@@ -398,32 +432,32 @@ impl<'a> Lexer<'a> {
                     (b'?', _) => self.set(T::QuestionQuestion, pos, pos + 2),
                     _ => self.set(T::Question, pos, next),
                 },
-                b'<' => match (self.at(next), self.at(next + 1)) {
-                    (b'<', b'<') if self.at(pos + 3) == b'<' => return self.same_four_times(pos),
+                b'<' => match (at(next), at(next + 1)) {
+                    (b'<', b'<') if at(pos + 3) == b'<' => return self.same_four_times(pos),
                     (b'<', b'=') => self.set(T::LessThanLessThanEquals, pos, pos + 3),
                     (b'<', _) => self.set(T::LessThanLessThan, pos, pos + 2),
                     (b'=', _) => self.set(T::LessThanEquals, pos, pos + 2),
                     (b'/', after) if self.is_jsx && !self.is_ecmascript && after != b'*' => {
                         self.set(T::LessThanSlash, pos, pos + 2);
                     }
-                    (b'!', b'-') if self.is_script && self.at(pos + 3) == b'-' => {
+                    (b'!', b'-') if self.is_script && at(pos + 3) == b'-' => {
                         return self.scan_after_comments(pos);
                     }
                     _ => self.set(T::LessThan, pos, next),
                 },
                 // The parser asks for `>=`, `>>` and so on where they can be.
                 b'>' => {
-                    if self.at(next) == b'>' && src.get(pos..pos + 4) == Some(b">>>>") {
+                    if at(next) == b'>' && src.get(pos..pos + 4) == Some(b">>>>") {
                         return self.same_four_times(pos);
                     }
                     self.set(T::GreaterThan, pos, next);
                 }
-                b'+' => match self.at(next) {
+                b'+' => match at(next) {
                     b'+' => self.set(T::PlusPlus, pos, pos + 2),
                     b'=' => self.set(T::PlusEquals, pos, pos + 2),
                     _ => self.set(T::Plus, pos, next),
                 },
-                b'-' => match (self.at(next), self.at(next + 1)) {
+                b'-' => match (at(next), at(next + 1)) {
                     // Only blanks and comments are before it on its line.
                     (b'-', b'>')
                         if self.is_script && (self.newline_before || self.full_start == 0) =>
@@ -434,44 +468,44 @@ impl<'a> Lexer<'a> {
                     (b'=', _) => self.set(T::MinusEquals, pos, pos + 2),
                     _ => self.set(T::Minus, pos, next),
                 },
-                b'*' => match (self.at(next), self.at(next + 1)) {
+                b'*' => match (at(next), at(next + 1)) {
                     (b'*', b'=') => self.set(T::AsteriskAsteriskEquals, pos, pos + 3),
                     (b'*', _) => self.set(T::AsteriskAsterisk, pos, pos + 2),
                     (b'=', _) => self.set(T::AsteriskEquals, pos, pos + 2),
                     _ => self.set(T::Asterisk, pos, next),
                 },
-                b'%' => match self.at(next) {
+                b'%' => match at(next) {
                     b'=' => self.set(T::PercentEquals, pos, pos + 2),
                     _ => self.set(T::Percent, pos, next),
                 },
-                b'&' => match (self.at(next), self.at(next + 1)) {
+                b'&' => match (at(next), at(next + 1)) {
                     (b'&', b'=') => self.set(T::AmpersandAmpersandEquals, pos, pos + 3),
                     (b'&', _) => self.set(T::AmpersandAmpersand, pos, pos + 2),
                     (b'=', _) => self.set(T::AmpersandEquals, pos, pos + 2),
                     _ => self.set(T::Ampersand, pos, next),
                 },
-                b'|' => match (self.at(next), self.at(next + 1)) {
-                    (b'|', b'|') if self.at(pos + 3) == b'|' => return self.same_four_times(pos),
+                b'|' => match (at(next), at(next + 1)) {
+                    (b'|', b'|') if at(pos + 3) == b'|' => return self.same_four_times(pos),
                     (b'|', b'=') => self.set(T::BarBarEquals, pos, pos + 3),
                     (b'|', _) => self.set(T::BarBar, pos, pos + 2),
                     (b'=', _) => self.set(T::BarEquals, pos, pos + 2),
                     _ => self.set(T::Bar, pos, next),
                 },
-                b'^' => match self.at(next) {
+                b'^' => match at(next) {
                     b'=' => self.set(T::CaretEquals, pos, pos + 2),
                     _ => self.set(T::Caret, pos, next),
                 },
                 b'`' => return self.template(pos, true),
                 b'#' => {
                     let is_first = pos == 0 || pos == 3 && src.starts_with(b"\xEF\xBB\xBF");
-                    if is_first && self.at(next) == b'!' {
+                    if is_first && at(next) == b'!' {
                         return self.scan_after_comments(pos);
                     }
                     return self.private_name(pos);
                 }
                 b'\\' => return self.name_slowly(pos, pos),
                 0x80.. => return self.scan_after_comments(pos),
-                _ => return self.refuse(Refusal::UnexpectedCharacter),
+                _ => return self.invalid_character(Refusal::UnexpectedCharacter, pos),
             }
             return;
         }
@@ -485,6 +519,48 @@ impl<'a> Lexer<'a> {
         }
         self.refuse(Refusal::TooDeep);
         true
+    }
+
+    /// Where `window` ends: the end of the text, or any place once a keyword had an escape.
+    #[cold]
+    #[inline(never)]
+    fn end_of_window(&mut self, pos: usize) {
+        let src = self.src;
+        if self.window.len() == src.len() {
+            return self.set(T::Eof, src.len(), src.len());
+        }
+        if self.is_too_deep() {
+            return;
+        }
+        // `nextToken`. For `nextTokenWithoutCheck` the parser says that the word has no escape.
+        if self.has_escape && self.token > T::PrivateIdentifier {
+            self.report(1260, (self.start as usize, self.end as usize), &[]);
+        }
+        self.window = src;
+        self.scan(pos);
+        self.window = &[];
+    }
+
+    /// The `default:` of `Scan`, at what starts no token. Go reads invalid UTF-8 as U+FFFD.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    fn invalid_character(&mut self, why: Refusal, pos: usize) {
+        if !self.recovers {
+            return self.refuse(why);
+        }
+        let src = self.src;
+        match decode(src.get(pos..).unwrap_or_default()) {
+            Some((c, len)) if c != 0xFFFD => {
+                self.report(1127, (pos, pos + len), &[]);
+                self.set(T::Invalid, pos, pos + len);
+            }
+            // "File appears to be binary."
+            _ => {
+                self.report(1490, (0, 0), &[]);
+                self.set(T::NotText, pos, src.len());
+            }
+        }
     }
 
     /// At a comment, or at a character that is not ASCII: scans the token after it and after the
@@ -532,7 +608,7 @@ impl<'a> Lexer<'a> {
     #[inline(never)]
     fn not_ascii(&mut self, pos: usize) -> Option<usize> {
         let Some((c, len)) = decode(&self.src[pos..]) else {
-            self.refuse(Refusal::NotUtf8);
+            self.invalid_character(Refusal::NotUtf8, pos);
             return None;
         };
         if c == 0x2028 || c == 0x2029 {
@@ -569,9 +645,34 @@ impl<'a> Lexer<'a> {
         let Some([marker @ .., after]) = src.get(pos..pos + 8) else {
             return false;
         };
-        is_first_in_line
-            && marker.iter().all(|&c| c == marker[0])
+        marker.iter().all(|&c| c == marker[0])
             && (marker[0] == b'=' || *after == b' ')
+            && (is_first_in_line || self.recovers && self.is_third_in_line(pos))
+    }
+
+    /// `isConflictMarkerTrivia` takes that for the start of a line too.
+    fn is_third_in_line(&self, pos: usize) -> bool {
+        let before = pos.checked_sub(2).and_then(|end| self.src.get(..end));
+        decode_last(before.unwrap_or_default())
+            .is_some_and(|(c, _)| matches!(c, 0x0A | 0x0D | 0x2028 | 0x2029))
+    }
+
+    /// `scanConflictMarkerTrivia`, at `pos`. Returns the end of what is passed over.
+    fn conflict_marker(&mut self, pos: usize) -> usize {
+        self.report(1185, (pos, pos + 7), &[]);
+        let marker = self.at(pos);
+        if matches!(marker, b'<' | b'>') {
+            return self.end_of_line(pos);
+        }
+        // To the next `=======` or `>>>>>>>`.
+        let mut end = pos;
+        while let Some(&c) = self.src.get(end) {
+            if matches!(c, b'=' | b'>') && c != marker && self.is_conflict_marker(end) {
+                break;
+            }
+            end += 1;
+        }
+        end
     }
 
     /// At `====`, `<<<<`, `>>>>` or `||||`.
@@ -579,7 +680,11 @@ impl<'a> Lexer<'a> {
     #[inline(never)]
     fn same_four_times(&mut self, pos: usize) {
         if self.is_conflict_marker(pos) {
-            return self.refuse(Refusal::ConflictMarker);
+            if !self.recovers {
+                return self.refuse(Refusal::ConflictMarker);
+            }
+            let end = self.conflict_marker(pos);
+            return self.scan_after_comments(end);
         }
         match self.at(pos) {
             b'=' => self.set(T::EqualsEqualsEquals, pos, pos + 3),
@@ -688,19 +793,19 @@ impl<'a> Lexer<'a> {
         // The text of a private name has the `#`.
         let is_private = src.get(start) == Some(&b'#');
         loop {
+            // `scanIdentifierParts`: with `recovers` the name ends before what is no part of it.
             let (c, len) = match src.get(pos) {
-                Some(b'\\') => {
-                    self.has_escape = true;
-                    match self.unicode_escape(pos + 1) {
-                        Some((c, end)) => (c, end - pos),
-                        None => {
-                            self.buffer = text;
-                            return self.refuse(Refusal::InvalidEscape);
-                        }
+                Some(b'\\') => match self.unicode_escape(pos + 1) {
+                    Some((c, end)) => (c, end - pos),
+                    None if self.recovers => break,
+                    None => {
+                        self.buffer = text;
+                        return self.refuse(Refusal::InvalidEscape);
                     }
-                }
+                },
                 Some(_) => match decode(&src[pos..]) {
                     Some(decoded) => decoded,
+                    None if self.recovers => break,
                     None => {
                         self.buffer = text;
                         return self.refuse(Refusal::NotUtf8);
@@ -720,8 +825,9 @@ impl<'a> Lexer<'a> {
                             && bun_core::lexer::is_recent_identifier_part(c as i32)
                 }
             };
+            let is_escape = src[pos] == b'\\';
             if !belongs {
-                if src[pos] == b'\\' {
+                if is_escape && !self.recovers {
                     self.buffer = text;
                     return self.refuse(Refusal::InvalidEscape);
                 }
@@ -731,12 +837,16 @@ impl<'a> Lexer<'a> {
                 self.buffer = text;
                 return self.refuse(Refusal::InvalidEscape);
             };
+            self.has_escape |= is_escape;
             text.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
             pos += len;
         }
         if text.len() == usize::from(is_private) {
             self.buffer = text;
-            return self.refuse(Refusal::UnexpectedCharacter);
+            return match is_private {
+                true => self.hash_without_name(start),
+                false => self.invalid_character(Refusal::UnexpectedCharacter, start),
+            };
         }
         self.atom = (self.names).atom(Text::elsewhere(src, &text), self.atoms);
         let mut kind = crate::token::keyword(&text);
@@ -745,6 +855,11 @@ impl<'a> Lexer<'a> {
             return self.set(T::PrivateIdentifier, start, pos);
         }
         if self.has_escape && kind != T::Identifier {
+            // `GetIdentifierToken`. See `end_of_window`.
+            if self.recovers {
+                self.window = &[];
+                return self.set(kind, start, pos);
+            }
             if matches!(kind, T::Await | T::Yield | T::Async) {
                 return self.refuse(Refusal::EscapedKeyword);
             }
@@ -797,7 +912,7 @@ impl<'a> Lexer<'a> {
         let src = self.src;
         let mut end = start + 1;
         if src.get(end).is_some_and(u8::is_ascii_digit) {
-            return self.refuse(Refusal::UnexpectedCharacter);
+            return self.hash_without_name(start);
         }
         while src.get(end).is_some_and(|&byte| is_name_byte(byte)) {
             end += 1;
@@ -808,6 +923,26 @@ impl<'a> Lexer<'a> {
         self.has_escape = false;
         self.atom = (self.names).atom(Text::of_source(src, start, end), self.atoms);
         self.set(T::PrivateIdentifier, start, end);
+    }
+
+    /// The `#` of `Scan`, at `start`, that no name follows.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    fn hash_without_name(&mut self, start: usize) {
+        if !self.recovers {
+            return self.refuse(Refusal::UnexpectedCharacter);
+        }
+        // "'#!' can only be used at the start of a file."
+        if self.at(start + 1) == b'!' {
+            self.report(18026, (start, start + 2), &[]);
+            return self.set(T::Invalid, start, start + 1);
+        }
+        self.report(1127, (start, start + 1), &[]);
+        self.has_escape = false;
+        let text = Text::of_source(self.src, start, start + 1);
+        self.atom = self.names.atom(text, self.atoms);
+        self.set(T::PrivateIdentifier, start, start + 1);
     }
 
     // ───────────────────────────── comments ─────────────────────────────
@@ -1119,7 +1254,9 @@ impl<'a> Lexer<'a> {
             b'\r' if src.get(pos + 2) == Some(&b'\n') => return Some(pos + 3),
             b'\r' | b'\n' => return Some(pos + 2),
             0x80.. => {
-                let (c, len) = decode(&src[pos + 1..])?;
+                let Some((c, len)) = decode(&src[pos + 1..]) else {
+                    return self.escaped_byte(pos, text);
+                };
                 if c != 0x2028 && c != 0x2029 {
                     text.extend_from_slice(&src[pos + 1..pos + 1 + len]);
                 }
@@ -1131,6 +1268,17 @@ impl<'a> Lexer<'a> {
         Some(pos + 2)
     }
 
+    /// `scanEscapeSequence`, at a backslash before a byte that is not UTF-8: Go reads U+FFFD.
+    #[cold]
+    #[inline(never)]
+    fn escaped_byte(&self, pos: usize, text: &mut Vec<u8>) -> Option<usize> {
+        if !self.recovers {
+            return None;
+        }
+        Self::push_code_point(text, 0xFFFD);
+        Some(pos + 2)
+    }
+
     #[cold]
     #[inline(never)]
     fn string_slowly(&mut self, start: usize, quote: u8) {
@@ -1139,15 +1287,26 @@ impl<'a> Lexer<'a> {
         text.clear();
         let mut pos = start + 1;
         let mut is_ascii = true;
-        let refusal = loop {
+        let has_end = loop {
             match src.get(pos) {
-                None | Some(b'\n' | b'\r') => break Some(Refusal::Unterminated),
-                Some(&c) if c == quote => break None,
+                None | Some(b'\n' | b'\r') => {
+                    // "Unterminated string literal." The string ends there.
+                    if !self.error(Refusal::Unterminated, 1002, (pos, pos), &[]) {
+                        self.buffer = text;
+                        return;
+                    }
+                    break false;
+                }
+                Some(&c) if c == quote => break true,
                 Some(b'\\') => match self.escape(pos, &mut text) {
                     Some(end) => pos = end,
                     None => match self.legacy_escape(pos, &mut text) {
                         Some(end) => pos = end,
-                        None => break Some(Refusal::InvalidEscape),
+                        None if self.recovers => pos = self.invalid_escape(pos, &mut text, true),
+                        None => {
+                            self.buffer = text;
+                            return self.refuse(Refusal::InvalidEscape);
+                        }
                     },
                 },
                 Some(&c) => {
@@ -1157,17 +1316,85 @@ impl<'a> Lexer<'a> {
                 }
             }
         };
-        let refusal = refusal.or_else(|| {
-            let is_valid = is_ascii || core::str::from_utf8(&src[start + 1..pos]).is_ok();
-            (!is_valid).then_some(Refusal::NotUtf8)
-        });
-        if refusal.is_none() {
-            self.atom = (self.names).atom(Text::elsewhere(src, &text), self.atoms);
+        // TypeScript's scanner takes the bytes as they are.
+        if !is_ascii && core::str::from_utf8(&src[start + 1..pos]).is_err() && !self.recovers {
+            self.buffer = text;
+            return self.refuse(Refusal::NotUtf8);
         }
+        self.atom = (self.names).atom(Text::elsewhere(src, &text), self.atoms);
         self.buffer = text;
-        match refusal {
-            Some(why) => self.refuse(why),
-            None => self.set(T::String, start, pos + 1),
+        self.set(T::String, start, pos + usize::from(has_end));
+    }
+
+    /// `scanEscapeSequence`, for what `escape` does not decode. `reports`: `ReportErrors`.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    fn invalid_escape(&mut self, pos: usize, text: &mut Vec<u8>, reports: bool) -> usize {
+        let src = self.src;
+        let end = self.end_of_invalid_escape(pos);
+        let written = src.get(pos..end).unwrap_or_default();
+        let Some(&c) = src.get(pos + 1) else {
+            // "Unexpected end of text." It stands for nothing.
+            self.error(Refusal::Unterminated, 1126, (end, end), &[]);
+            return end;
+        };
+        if !reports {
+            text.extend_from_slice(written);
+            return end;
+        }
+        match c {
+            b'0'..=b'7' => {
+                let digits = written.iter().skip(1);
+                let code = digits.fold(0, |code, &digit| code * 8 + u32::from(digit - b'0'));
+                let syntax = format!("\\x{code:02x}");
+                self.report(1487, (pos, end), &[syntax.as_bytes()]);
+                Self::push_code_point(text, code);
+            }
+            b'8' | b'9' => {
+                self.report(1488, (pos, end), &[written]);
+                text.push(c);
+            }
+            // "Hexadecimal digit expected."
+            b'x' => {
+                self.report(1125, (end, end), &[]);
+                text.extend_from_slice(written);
+            }
+            b'u' => {
+                self.report_invalid_unicode_escape(pos, end);
+                text.extend_from_slice(written);
+            }
+            // `escape` decodes the others.
+            _ => return pos + 1,
+        }
+        end
+    }
+
+    /// `scanUnicodeEscape(true)`, for the `\u` from `pos` to `end` that is not valid.
+    fn report_invalid_unicode_escape(&mut self, pos: usize, end: usize) {
+        let src = self.src;
+        if src.get(pos + 2) != Some(&b'{') {
+            return self.report(1125, (end, end), &[]);
+        }
+        let first = pos + 3;
+        let digits = src.get(first..).unwrap_or_default();
+        let digits = digits.iter().take_while(|c| c.is_ascii_hexdigit());
+        let (mut after, mut value) = (first, 0u32);
+        for &digit in digits {
+            let digit = char::from(digit).to_digit(16).unwrap_or(0);
+            value = value.saturating_mul(16).saturating_add(digit);
+            after += 1;
+        }
+        if after == first {
+            return self.report(1125, (after, after), &[]);
+        }
+        if value > 0x10_FFFF {
+            self.report(1198, (first, after), &[]);
+        }
+        match src.get(after) {
+            None => self.report(1126, (after, after), &[]),
+            Some(b'}') => {}
+            Some(_) => self.report(1199, (after, after), &[]),
         }
     }
 
@@ -1176,36 +1403,47 @@ impl<'a> Lexer<'a> {
     /// A piece of a template, from the `` ` `` (`is_head`) or the `}` at `start`.
     #[inline(never)]
     fn template(&mut self, start: usize, is_head: bool) {
+        self.piece_of_template(start, is_head, false);
+    }
+
+    /// `scanTemplateAndSetTokenValue`. `reports`: `shouldEmitInvalidEscapeError`.
+    #[inline(always)]
+    #[track_caller]
+    fn piece_of_template(&mut self, start: usize, is_head: bool, reports: bool) {
         let src = self.src;
         let mut text = std::mem::take(&mut self.buffer);
         text.clear();
         let mut pos = start + 1;
         let mut is_ascii = true;
         self.has_escape = false;
-        let found = loop {
+        let last = match is_head {
+            true => T::NoSubstitutionTemplate,
+            false => T::TemplateTail,
+        };
+        let (token, end) = loop {
             match src.get(pos) {
-                None => break Err(Refusal::Unterminated),
-                Some(b'`') => {
-                    break Ok(match is_head {
-                        true => (T::NoSubstitutionTemplate, pos + 1),
-                        false => (T::TemplateTail, pos + 1),
-                    });
+                None => {
+                    // "Unterminated template literal." The template ends there.
+                    if !self.error(Refusal::Unterminated, 1160, (pos, pos), &[]) {
+                        self.buffer = text;
+                        return;
+                    }
+                    break (last, pos);
                 }
+                Some(b'`') => break (last, pos + 1),
                 Some(b'$') if src.get(pos + 1) == Some(&b'{') => {
-                    break Ok(match is_head {
+                    break match is_head {
                         true => (T::TemplateHead, pos + 2),
                         false => (T::TemplateMiddle, pos + 2),
-                    });
+                    };
                 }
                 Some(b'\\') => match self.escape(pos, &mut text) {
                     Some(end) => pos = end,
-                    // It stands for itself. That is an error unless the template has a tag.
+                    // That is an error unless the template has a tag.
                     None => {
-                        let end = self.end_of_invalid_escape(pos);
-                        text.extend_from_slice(src.get(pos..end).unwrap_or_default());
-                        self.has_escape = true;
+                        self.has_escape |= pos + 1 < src.len();
                         is_ascii = false;
-                        pos = end;
+                        pos = self.invalid_escape(pos, &mut text, reports);
                     }
                 },
                 // A line break is a line feed, however it is written.
@@ -1224,26 +1462,32 @@ impl<'a> Lexer<'a> {
                 }
             }
         };
-        let found = found.and_then(|found| {
-            match is_ascii || core::str::from_utf8(&src[start + 1..pos]).is_ok() {
-                true => Ok(found),
-                false => Err(Refusal::NotUtf8),
-            }
-        });
-        if found.is_ok() {
-            self.atom = (self.names).atom(Text::elsewhere(src, &text), self.atoms);
+        if !is_ascii && core::str::from_utf8(&src[start + 1..pos]).is_err() && !self.recovers {
+            self.buffer = text;
+            return self.refuse(Refusal::NotUtf8);
         }
+        self.atom = (self.names).atom(Text::elsewhere(src, &text), self.atoms);
         self.buffer = text;
-        match found {
-            Ok((token, end)) => self.set(token, start, end),
-            Err(why) => self.refuse(why),
-        }
+        self.set(token, start, end);
     }
 
     /// `ReScanTemplateToken`: the token is the `}` that ends a substitution.
     pub(crate) fn rescan_template_continuation(&mut self) {
         debug_assert_eq!(self.token, T::CloseBrace);
         self.template(self.start as usize, false);
+    }
+
+    /// `ReScanTemplateToken(false)`, at a piece of a template that has an invalid escape.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn rescan_template_without_tag(&mut self) {
+        if !self.recovers {
+            return self.refuse(Refusal::Reported);
+        }
+        // TypeScript scans what follows a `}` once.
+        self.forget_errors_from(self.start.saturating_add(1));
+        let start = self.start as usize;
+        self.piece_of_template(start, self.at(start) == b'`', true);
     }
 
     // ───────────────────────────── numbers ─────────────────────────────
@@ -1292,7 +1536,7 @@ impl<'a> Lexer<'a> {
         }
         match self.unusual_number(start) {
             Some((token, end)) => self.set(token, start, end),
-            None => self.refuse(Refusal::UnusualNumber),
+            None => self.invalid_number(start),
         }
     }
 
@@ -1418,6 +1662,185 @@ impl<'a> Lexer<'a> {
         Some((token, end))
     }
 
+    /// `scanNumberFragment`, `scanHexDigits`, `scanBinaryOrOctalDigits`. Returns the end.
+    fn digits_and_separators(&mut self, mut pos: usize, radix: u32, digits: &mut Vec<u8>) -> usize {
+        let (mut allows_separator, mut is_after_separator) = (false, false);
+        while let Some(&c) = self.src.get(pos) {
+            if char::from(c).is_digit(radix) {
+                digits.push(c);
+                allows_separator = true;
+                is_after_separator = false;
+            } else if c != b'_' {
+                break;
+            } else if allows_separator {
+                allows_separator = false;
+                is_after_separator = true;
+            } else if is_after_separator {
+                self.report(6189, (pos, pos + 1), &[]);
+            } else {
+                self.report(6188, (pos, pos + 1), &[]);
+            }
+            pos += 1;
+        }
+        if is_after_separator {
+            self.report(6188, (pos - 1, pos), &[]);
+        }
+        pos
+    }
+
+    /// `scanIdentifierParts`: the end of what goes on a name at `pos`.
+    fn end_of_identifier_parts(&self, mut pos: usize) -> usize {
+        loop {
+            let part = match self.src.get(pos) {
+                Some(b'\\') => self.unicode_escape(pos + 1).map(|(c, end)| (c, end - pos)),
+                _ => decode(self.src.get(pos..).unwrap_or_default()),
+            };
+            match part {
+                Some((c, len)) if is_identifier_part(c) => pos += len,
+                _ => return pos,
+            }
+        }
+    }
+
+    /// `scanNumber`, and the `0x`, `0b` and `0o` of `Scan`, for what `unusual_number` refuses.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    fn invalid_number(&mut self, start: usize) {
+        if !self.recovers {
+            return self.refuse(Refusal::UnusualNumber);
+        }
+        let mut digits = std::mem::take(&mut self.buffer);
+        digits.clear();
+        let (token, end) = self.number_with_errors(start, &mut digits);
+        self.buffer = digits;
+        self.set(token, start, end);
+    }
+
+    /// The token and its end. `digits`: empty, to work in.
+    fn number_with_errors(&mut self, start: usize, digits: &mut Vec<u8>) -> (T, usize) {
+        let src = self.src;
+        let radix = match (self.at(start), self.at(start + 1)) {
+            (b'0', b'x' | b'X') => 16,
+            (b'0', b'b' | b'B') => 2,
+            (b'0', b'o' | b'O') => 8,
+            _ => 10,
+        };
+        if radix != 10 {
+            let end = self.digits_and_separators(start + 2, radix, digits);
+            if digits.is_empty() {
+                let code = match radix {
+                    16 => 1125,
+                    2 => 1177,
+                    _ => 1178,
+                };
+                self.report(code, (end, end), &[]);
+                digits.push(b'0');
+            }
+            // `scanBigIntSuffix`. Whatever follows is the next token.
+            if self.at(end) == b'n' {
+                let decimal = decimal_digits(digits, radix);
+                self.atom = (self.names).atom(Text::elsewhere(src, &decimal), self.atoms);
+                return (T::BigInt, end + 1);
+            }
+            self.number = number_from_digits(digits, radix);
+            return (T::Number, end);
+        }
+        let mut end;
+        let mut has_leading_zero = false;
+        if self.at(start) == b'0' && self.at(start + 1) == b'_' {
+            self.report(6188, (start + 1, start + 2), &[]);
+            end = self.digits_and_separators(start, 10, digits);
+        } else if self.at(start) == b'0' && self.at(start + 1).is_ascii_digit() {
+            // `scanDigits`
+            end = start + 1;
+            while self.at(end).is_ascii_digit() {
+                end += 1;
+            }
+            let rest = src.get(start + 1..end).unwrap_or_default();
+            if rest.iter().all(|c| matches!(c, b'0'..=b'7')) {
+                // `strconv.ParseInt(digits, 8, 64)`
+                let value = rest.iter().fold(0i64, |value, &c| {
+                    value.saturating_mul(8).saturating_add(i64::from(c - b'0'))
+                });
+                self.number = value as f64;
+                // After a `-`, whatever is between them, the error starts one byte earlier.
+                let (sign, from) = match self.token == T::Minus {
+                    true => ("-", start.saturating_sub(1)),
+                    false => ("", start),
+                };
+                let syntax = format!("{sign}0o{value:o}");
+                self.report(1121, (from, end), &[syntax.as_bytes()]);
+                return (T::Number, end);
+            }
+            has_leading_zero = true;
+            digits.extend_from_slice(rest);
+        } else {
+            end = self.digits_and_separators(start, 10, digits);
+        }
+        let end_of_fixed_part = end;
+        if self.at(end) == b'.' {
+            digits.push(b'.');
+            end = self.digits_and_separators(end + 1, 10, digits);
+        }
+        let is_scientific = matches!(self.at(end), b'e' | b'E');
+        if is_scientific {
+            let mantissa = digits.len();
+            digits.push(b'e');
+            end += 1;
+            if let sign @ (b'+' | b'-') = self.at(end) {
+                digits.push(sign);
+                end += 1;
+            }
+            let preamble = digits.len();
+            end = self.digits_and_separators(end, 10, digits);
+            if digits.len() == preamble {
+                // "Digit expected."
+                self.report(1124, (end, end), &[]);
+                digits.truncate(mantissa);
+            }
+        }
+        self.number = core::str::from_utf8(digits)
+            .ok()
+            .and_then(|text| text.parse().ok())
+            .unwrap_or(f64::NAN);
+        if has_leading_zero {
+            // Neither an `n` nor what follows is looked at.
+            self.report(1489, (start, end), &[]);
+            return (T::Number, end);
+        }
+        let mut token = T::Number;
+        if end_of_fixed_part == end && self.at(end) == b'n' {
+            // `scanBigIntSuffix`, `ParsePseudoBigInt`
+            let zeros = digits.iter().take_while(|&&c| c == b'0').count();
+            let zeros = zeros.min(digits.len().saturating_sub(1));
+            let decimal = digits.get(zeros..).unwrap_or_default();
+            self.atom = (self.names).atom(Text::elsewhere(src, decimal), self.atoms);
+            token = T::BigInt;
+            end += 1;
+        }
+        let follows = decode(src.get(end..).unwrap_or_default());
+        let is_before_name = follows.is_some_and(|(c, _)| is_identifier_start(c));
+        if !is_before_name {
+            return (token, end);
+        }
+        let end_of_name = self.end_of_identifier_parts(end);
+        if token != T::BigInt && src.get(end..end_of_name) == Some(&b"n"[..]) {
+            // The `n` is part of the token.
+            if is_scientific {
+                self.report(1352, (start, end_of_name), &[]);
+                return (token, end_of_name);
+            }
+            if end_of_fixed_part < end {
+                self.report(1353, (start, end_of_name), &[]);
+                return (token, end_of_name);
+            }
+        }
+        // The name is the next token.
+        self.report(1351, (end, end_of_name), &[]);
+        (token, end)
+    }
+
     // ───────────────────────────── what the parser asks for ─────────────────────────────
 
     /// `ReScanGreaterThanToken`: the token is a `>`.
@@ -1445,13 +1868,13 @@ impl<'a> Lexer<'a> {
         let mut is_in_class = false;
         loop {
             match src.get(pos) {
-                None | Some(b'\n' | b'\r') => return self.refuse(Refusal::Unterminated),
+                None | Some(b'\n' | b'\r') => return self.unterminated_regex(pos),
                 Some(b'/') if !is_in_class => break,
                 Some(b'[') => is_in_class = true,
                 Some(b']') => is_in_class = false,
                 Some(b'\\') => {
                     if matches!(src.get(pos + 1), None | Some(b'\n' | b'\r')) {
-                        return self.refuse(Refusal::Unterminated);
+                        return self.unterminated_regex(pos + 1);
                     }
                     // What follows is looked at as if it stood alone, unless it is one byte.
                     if src.get(pos + 1).is_some_and(u8::is_ascii) {
@@ -1463,7 +1886,7 @@ impl<'a> Lexer<'a> {
                     if self.is_typescript_5
                         && matches!(src.get(pos..pos + 3), Some([_, 0x80, 0xA8 | 0xA9])) =>
                 {
-                    return self.refuse(Refusal::Unterminated);
+                    return self.unterminated_regex(pos);
                 }
                 _ => {}
             }
@@ -1477,15 +1900,58 @@ impl<'a> Lexer<'a> {
                 Some(0x80..) => match decode(&src[pos..]) {
                     Some((c, len)) if is_identifier_part(c) => pos += len,
                     Some(_) => break,
+                    None if self.recovers => break,
                     None => return self.refuse(Refusal::NotUtf8),
                 },
                 _ => break,
             }
         }
-        if core::str::from_utf8(&src[start..pos]).is_err() {
+        if core::str::from_utf8(&src[start..pos]).is_err() && !self.recovers {
             return self.refuse(Refusal::NotUtf8);
         }
         self.set(T::Regex, start, pos);
+    }
+
+    /// `ReScanSlashToken`, for a regular expression whose line ends at `end_of_line`.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    fn unterminated_regex(&mut self, end_of_line: usize) {
+        if !self.recovers {
+            return self.refuse(Refusal::Unterminated);
+        }
+        let src = self.src;
+        let start = self.start as usize;
+        // "Search for the nearest unbalanced bracket for better recovery."
+        let (mut is_in_escape, mut is_in_quantifier) = (false, false);
+        let (mut classes, mut groups) = (0usize, 0usize);
+        let mut end = start + 1;
+        for &c in src.get(end..end_of_line).unwrap_or_default() {
+            match c {
+                _ if is_in_escape => is_in_escape = false,
+                b'\\' => is_in_escape = true,
+                b'[' => classes += 1,
+                b']' if classes != 0 => classes -= 1,
+                _ if classes != 0 => {}
+                b'{' => is_in_quantifier = true,
+                b'}' if is_in_quantifier => is_in_quantifier = false,
+                _ if is_in_quantifier => {}
+                b'(' => groups += 1,
+                b')' if groups != 0 => groups -= 1,
+                b')' | b']' | b'}' => break,
+                _ => {}
+            }
+            end += 1;
+        }
+        // "Whitespaces and semicolons at the end are not likely to be part of the regex"
+        while end > start + 1 {
+            match decode_last(src.get(..end).unwrap_or_default()) {
+                Some((c, len)) if is_white_space_like(c) || c == u32::from(b';') => end -= len,
+                _ => break,
+            }
+        }
+        self.report(1161, (start, end), &[]);
+        self.set(T::Regex, start, end);
     }
 }
 
@@ -1524,6 +1990,7 @@ impl Lexer<'_> {
         let start = match self.refusal == had_refused {
             true if self.token != T::String => return,
             true => self.start as usize,
+            false if self.recovers => return,
             // It is scanned again from the quote.
             false => {
                 self.refusal = had_refused;
@@ -1539,21 +2006,75 @@ impl Lexer<'_> {
         };
         // What looked like an escape is none.
         self.forget_flagged_from(start as u32);
+        if !self.errors.is_empty() && self.is_string_of_javascript(before, start) {
+            return;
+        }
         let quote = src[start];
         let Some(len) = bun_core::strings::index_of_char_usize(&src[start + 1..], quote) else {
-            return self.refuse(Refusal::Unterminated);
+            return self.unterminated_jsx_string(before, start);
         };
         let text = &src[start + 1..start + 1 + len];
-        if core::str::from_utf8(text).is_err() {
+        if core::str::from_utf8(text).is_err() && !self.recovers {
             return self.refuse(Refusal::NotUtf8);
         }
-        // TypeScript reads a string that blanks precede as one of JavaScript.
-        if start != before && bun_core::strings::contains_char(text, b'\\') {
-            return self.refuse(Refusal::Unsupported);
+        if start != before
+            && bun_core::strings::contains_char(text, b'\\')
+            && self.is_string_with_escapes(before, start)
+        {
+            return;
         }
         let text = Text::of_source(src, start + 1, start + 1 + len);
         self.atom = self.names.atom(text, self.atoms);
         self.set(T::String, start, start + len + 2);
+    }
+
+    /// Whether the string at `start`, which has a backslash, stays as `next` has scanned it.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    fn is_string_with_escapes(&mut self, before: usize, start: usize) -> bool {
+        if !self.recovers {
+            self.refuse(Refusal::Unsupported);
+            return true;
+        }
+        self.is_string_of_javascript(before, start)
+    }
+
+    /// `ScanJsxAttributeValue`: whether `Scan` scans the string at `start`, after a comment.
+    #[cold]
+    #[inline(never)]
+    fn is_string_of_javascript(&mut self, before: usize, start: usize) -> bool {
+        let mut pos = before;
+        while let Some((c, len)) = decode(self.src.get(pos..start).unwrap_or_default())
+            && is_white_space_like(c)
+        {
+            pos += len;
+        }
+        // For TypeScript 5 blanks are enough.
+        if pos < start || self.is_typescript_5 && before < start {
+            return true;
+        }
+        self.forget_errors_from(before as u32);
+        false
+    }
+
+    /// `scanString(true)`, for the string at `start` that goes to the end of the text.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    fn unterminated_jsx_string(&mut self, before: usize, start: usize) {
+        let src = self.src;
+        let end = src.len();
+        if !self.error(Refusal::Unterminated, 1002, (end, end), &[]) {
+            return;
+        }
+        // It is of the scan that began at `before`, and a mark at the string is after that.
+        if let Some(origin) = self.origins.last_mut() {
+            *origin = before as u32;
+        }
+        let text = Text::of_source(src, start + 1, end);
+        self.atom = self.names.atom(text, self.atoms);
+        self.set(T::String, start, end);
     }
 
     /// `ScanJsxToken`: scans a child of an element, from the end of the token. Text that is nothing
@@ -1561,30 +2082,43 @@ impl Lexer<'_> {
     pub(crate) fn next_jsx_child(&mut self) {
         let src = self.src;
         self.full_start = self.end;
-        self.newline_before = false;
+        let mut newline_before = false;
         let mut start = self.end as usize;
         loop {
             match src.get(start) {
-                None => return self.set(T::Eof, src.len(), src.len()),
-                Some(b'{') => return self.set(T::OpenBrace, start, start + 1),
+                None => {
+                    self.newline_before = newline_before;
+                    return self.set(T::Eof, src.len(), src.len());
+                }
+                Some(b'{') => {
+                    self.newline_before = newline_before;
+                    return self.set(T::OpenBrace, start, start + 1);
+                }
                 Some(b'<') if src.get(start + 1) == Some(&b'/') && !self.is_ecmascript => {
+                    self.newline_before = newline_before;
                     return self.set(T::LessThanSlash, start, start + 2);
                 }
-                Some(b'<') if self.is_conflict_marker(start) => {
-                    return self.refuse(Refusal::ConflictMarker);
+                Some(b'<') => {
+                    self.newline_before = newline_before;
+                    return self.set(T::LessThan, start, start + 1);
                 }
-                Some(b'<') => return self.set(T::LessThan, start, start + 1),
                 Some(_) => {}
             }
             let rest = &src[start..];
             let len = bun_core::strings::index_of_any(rest, b"{<").unwrap_or(rest.len());
             let text = &rest[..len];
             // Each is an error, and stays text.
-            if bun_core::strings::index_of_any(text, b">}").is_some() {
-                return self.refuse(Refusal::Reported);
+            if bun_core::strings::index_of_any(text, b">}").is_some()
+                && !self.closers_in_jsx_text(start, text)
+            {
+                return;
             }
+            if rest.get(len..len + 2) == Some(b"<<") && self.conflict_marker_in_jsx(start + len) {
+                return;
+            }
+            self.newline_before = newline_before;
             let Ok(valid) = core::str::from_utf8(text) else {
-                return self.refuse(Refusal::NotUtf8);
+                return self.jsx_text_of_bytes(start, text);
             };
             let needs_fixing = text
                 .iter()
@@ -1596,7 +2130,7 @@ impl Lexer<'_> {
             }
             let fixed = fix_whitespace_and_decode_jsx_entities(valid);
             if fixed.is_empty() {
-                self.newline_before = true;
+                newline_before = true;
                 start += len;
                 continue;
             }
@@ -1604,6 +2138,69 @@ impl Lexer<'_> {
             return self.set(T::JsxText, start, start + len);
         }
     }
+
+    /// `ScanJsxTokenEx`: reports each `>` and `}` of `text`. Returns whether the scanner goes on.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    fn closers_in_jsx_text(&mut self, start: usize, text: &[u8]) -> bool {
+        if !self.recovers {
+            self.refuse(Refusal::Reported);
+            return false;
+        }
+        for (at, &c) in text.iter().enumerate() {
+            let code = match c {
+                b'>' => 1382,
+                b'}' => 1381,
+                _ => continue,
+            };
+            self.report(code, (start + at, start + at + 1), &[]);
+        }
+        true
+    }
+
+    /// `ScanJsxTokenEx`: whether a conflict marker ends JSX text at `pos`. They are one token.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    fn conflict_marker_in_jsx(&mut self, pos: usize) -> bool {
+        if !self.is_conflict_marker(pos) {
+            return false;
+        }
+        if !self.recovers {
+            self.refuse(Refusal::ConflictMarker);
+            return true;
+        }
+        let end = self.conflict_marker(pos);
+        // `newline_before` stays that of the token before, as `tokenFlags` does.
+        self.set(T::ConflictMarker, self.full_start as usize, end);
+        true
+    }
+
+    /// The JSX text `text` at `start`, which is not UTF-8.
+    #[cold]
+    #[inline(never)]
+    #[track_caller]
+    fn jsx_text_of_bytes(&mut self, start: usize, text: &[u8]) {
+        if !self.recovers {
+            return self.refuse(Refusal::NotUtf8);
+        }
+        let read = with_replacement_characters(text);
+        let fixed = fix_whitespace_and_decode_jsx_entities(&read);
+        self.atom = (self.names).atom(Text::elsewhere(self.src, &fixed), self.atoms);
+        self.set(T::JsxText, start, start + text.len());
+    }
+}
+
+/// `text` as Go reads it: each byte that is not UTF-8 is U+FFFD.
+fn with_replacement_characters(mut text: &[u8]) -> String {
+    let mut read = String::new();
+    while !text.is_empty() {
+        let (c, len) = decode(text).unwrap_or((0xFFFD, 1));
+        read.push(char::from_u32(c).unwrap_or(char::REPLACEMENT_CHARACTER));
+        text = text.get(len..).unwrap_or_default();
+    }
+    read
 }
 
 fn is_line_break(c: char) -> bool {

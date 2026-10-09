@@ -334,24 +334,11 @@ pub(crate) fn parser_by_interpreter(path: &[u8]) -> Option<&'static [u8]> {
 }
 
 pub(crate) fn language_of(path: &[u8]) -> Language {
-    match Kind::of(path, None) {
-        // Prettier reads MDX 1, and damages what is written today. Only for who asks: `--parser mdx`.
-        Some(Kind::Mdx) => return Language::Other,
-        Some(_) => return Language::Supported,
-        None => {}
+    if Kind::of(path, None).is_some() {
+        return Language::Supported;
     }
-    let name = paths::basename(path);
-    let extension =
-        strings::last_index_of_char(name, b'.').map_or(&b""[..], |dot| &name[dot + 1..]);
-    match extension {
-        b"mdx" => Language::Other,
-        _ if matches!(
-            name,
-            b".prettierrc" | b".lintstagedrc" | b".stylelintrc" | b".clang-format"
-        ) =>
-        {
-            Language::Other
-        }
+    match paths::basename(path) {
+        b".prettierrc" | b".lintstagedrc" | b".stylelintrc" | b".clang-format" => Language::Other,
         _ => Language::Unknown,
     }
 }

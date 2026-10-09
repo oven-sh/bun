@@ -194,6 +194,7 @@ fn format_embedded(
     width: usize,
     options: &FormatOptions,
     is_in_template: bool,
+    format_block: Option<&mut FormatBlock<'_>>,
 ) -> Option<Vec<u8>> {
     // Nothing to format: front matter without anything in it.
     if language.is_empty() {
@@ -244,10 +245,6 @@ fn format_embedded(
         ..options.clone()
     };
     let mut out = Vec::new();
-    let format_javascript = |path: &[u8], out: &mut Vec<u8>| match &options.format_javascript {
-        Some(format_javascript) => format_javascript(path, code, &options, out),
-        None => false,
-    };
     let is_done = if let Some(parser) = crate::json::Parser::from_name(parser) {
         crate::json::format(code, parser, &options, &mut Default::default(), &mut out).is_ok()
     } else if let Some(parser) = crate::css::Parser::from_name(parser) {
@@ -283,12 +280,22 @@ fn format_embedded(
                     is_in_template,
                     is_mdx: parser == b"mdx",
                 };
-                format_in(code, &options, &mut Default::default(), &mut out, mode).is_ok()
+                let scratch = &mut Default::default();
+                format_in(code, &options, scratch, &mut out, mode, format_block).is_ok()
             }
-            _ if !file_of_oxfmt.is_empty() => format_javascript(file_of_oxfmt, &mut out),
-            b"babel" => format_javascript(b"dummy.jsx", &mut out),
-            _ if language == b"tsx" => format_javascript(b"dummy.tsx", &mut out),
-            _ => format_javascript(b"dummy.ts", &mut out),
+            _ => {
+                let path: &[u8] = match parser {
+                    _ if !file_of_oxfmt.is_empty() => file_of_oxfmt,
+                    b"babel" => b"dummy.jsx",
+                    _ if language == b"tsx" => b"dummy.tsx",
+                    _ => b"dummy.ts",
+                };
+                match (format_block, options.format_javascript) {
+                    (Some(format), _) => format(path, code, &options, &mut out),
+                    (None, Some(format)) => format(path, code, &options, &mut out),
+                    (None, None) => false,
+                }
+            }
         }
     };
     is_done.then_some(out)
@@ -344,6 +351,10 @@ fn has_pragma(text: &[u8], pragmas: [&[u8]; 2]) -> bool {
     has_line && lines.any(|line| bun_core::strings::contains(line, b"-->"))
 }
 
+/// Formats the JavaScript and TypeScript in blocks of code, as [`crate::options::FormatJavaScript`] does. It can keep
+/// what it allocates from one block to the next.
+pub type FormatBlock<'f> = dyn FnMut(&[u8], &[u8], &FormatOptions, &mut Vec<u8>) -> bool + 'f;
+
 /// Appends the formatted `text` to `out`.
 pub fn format(
     text: &[u8],
@@ -351,7 +362,18 @@ pub fn format(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
-    format_in(text, options, scratch, out, Mode::default())
+    format_with(text, options, scratch, out, None)
+}
+
+/// The same. `format_block` takes the place of `FormatOptions::format_javascript`.
+pub fn format_with(
+    text: &[u8],
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+    format_block: Option<&mut FormatBlock<'_>>,
+) -> Result<(), FormatError> {
+    format_in(text, options, scratch, out, Mode::default(), format_block)
 }
 
 /// The same for MDX.
@@ -361,11 +383,22 @@ pub fn format_mdx(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
 ) -> Result<(), FormatError> {
+    format_mdx_with(text, options, scratch, out, None)
+}
+
+/// The same. `format_block` takes the place of `FormatOptions::format_javascript`.
+pub fn format_mdx_with(
+    text: &[u8],
+    options: &FormatOptions,
+    scratch: &mut Scratch,
+    out: &mut Vec<u8>,
+    format_block: Option<&mut FormatBlock<'_>>,
+) -> Result<(), FormatError> {
     let mode = Mode {
         is_mdx: true,
         ..Mode::default()
     };
-    format_in(text, options, scratch, out, mode)
+    format_in(text, options, scratch, out, mode, format_block)
 }
 
 #[derive(Copy, Clone, Default)]
@@ -381,6 +414,7 @@ fn format_in(
     scratch: &mut Scratch,
     out: &mut Vec<u8>,
     mode: Mode,
+    format_block: Option<&mut FormatBlock<'_>>,
 ) -> Result<(), FormatError> {
     let original = text;
     let first = if text.starts_with(BOM) { BOM.len() } else { 0 };
@@ -433,7 +467,8 @@ fn format_in(
         return Ok(());
     }
 
-    with_document(text, &options, &mut scratch.tree, mode, |document| {
+    let tree = &mut scratch.tree;
+    with_document(text, &options, tree, mode, format_block, |document| {
         doc::print(document, &options, text, out)
     })
 }
@@ -444,6 +479,7 @@ fn with_document<R>(
     options: &FormatOptions,
     tree: &mut ast::Tree,
     mode: Mode,
+    mut format_block: Option<&mut FormatBlock<'_>>,
     then: impl FnOnce(doc::Doc<'_>) -> R,
 ) -> Result<R, FormatError> {
     let blanked = parse::blank_front_matter(text);
@@ -483,6 +519,7 @@ fn with_document<R>(
             embedded.width,
             options,
             mode.is_in_template,
+            format_block.as_deref_mut(),
         ),
         false => None,
     };
@@ -496,6 +533,7 @@ fn with_document<R>(
         is_mdx: mode.is_mdx,
         indentation: 0,
         is_in_label: false,
+        first_of_run: Vec::new(),
         stack_check: bun_core::StackCheck::init(),
         is_nested_too_deeply: false,
     };

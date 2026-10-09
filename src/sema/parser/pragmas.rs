@@ -2,13 +2,17 @@
 //! `// @ts-nocheck`, `/* @jsx h */` and similar.
 
 use bun_sema::atom::Atom;
-use bun_sema::hir::{FileBuilder, FileKind, JsxPragmas, ReferenceKind, ResolutionMode};
+use bun_sema::hir::{
+    Diagnostic, DiagnosticKind, FileBuilder, FileKind, JsxPragmas, ReferenceKind, ResolutionMode,
+};
 
 /// `getCommentPragmas` and `processPragmasIntoFields`. `leading`: the comments before the first
-/// token. False: TypeScript reports an error about one of them.
+/// token. False: TypeScript reports an error about one of them. With `recovers` the error is among
+/// the diagnostics of the file instead.
 pub(crate) fn process_pragmas_into_fields(
     text: &[u8],
     leading: &[(u32, u32)],
+    recovers: bool,
     intern: &mut dyn FnMut(&[u8]) -> Atom,
     file: &mut FileBuilder,
 ) -> bool {
@@ -16,7 +20,7 @@ pub(crate) fn process_pragmas_into_fields(
         let comment = &text[start as usize..end as usize];
         match comment.get(..2) {
             Some(b"//") => {
-                if !single_line_pragma(comment, start as usize, intern, file) {
+                if !single_line_pragma(comment, start as usize, recovers, intern, file) {
                     return false;
                 }
             }
@@ -35,6 +39,7 @@ pub(crate) fn process_pragmas_into_fields(
 fn single_line_pragma(
     text: &[u8],
     comment_pos: usize,
+    recovers: bool,
     intern: &mut dyn FnMut(&[u8]) -> Atom,
     file: &mut FileBuilder,
 ) -> bool {
@@ -98,14 +103,27 @@ fn single_line_pragma(
         (Some(types), ..) => (ReferenceKind::Types, types),
         (None, Some(lib), _) => (ReferenceKind::Lib, lib),
         (None, None, Some(path)) => (ReferenceKind::Path, path),
-        (None, None, None) => return false,
+        (None, None, None) => {
+            let at = (comment_pos as u32, (comment_pos + text.len()) as u32);
+            if recovers {
+                let error = Diagnostic::new(DiagnosticKind::Parse, at, 1084, &[]);
+                file.diagnostics.push(error);
+            }
+            return recovers;
+        }
     };
     // `parseResolutionMode`
     let mode = match resolution_mode.filter(|_| kind == ReferenceKind::Types) {
         Some((from, to)) => match &text[from..to] {
             b"import" => ResolutionMode::Import,
             b"require" => ResolutionMode::Require,
-            _ => return false,
+            _ if !recovers => return false,
+            _ => {
+                let at = ((comment_pos + from) as u32, (comment_pos + to) as u32);
+                let error = Diagnostic::new(DiagnosticKind::Parse, at, 1453, &[]);
+                file.diagnostics.push(error);
+                ResolutionMode::None
+            }
         },
         None => ResolutionMode::None,
     };

@@ -9,7 +9,7 @@ use super::width::OddBlocks;
 use crate::js::comments::Comments;
 use crate::js::context::JsFormatContext;
 use crate::js::source_text::SourceText;
-use crate::options::FormatOptions;
+use crate::options::{Flavor, FormatOptions};
 use bun_lint::ast::File;
 use bun_lint::span::Span;
 use rustc_hash::FxHashMap;
@@ -310,7 +310,7 @@ impl Storage {
     }
 
     /// Whether there is any [`FormatElement::Line`] in `elements`.
-    pub(crate) fn may_directly_break(&self, elements: &[FormatElement]) -> bool {
+    pub(crate) fn may_directly_break(&self, elements: &[FormatElement], flavor: Flavor) -> bool {
         let mut ignore_depth = 0usize;
         let mut elements = elements.iter();
         while let Some(element) = elements.next() {
@@ -326,10 +326,16 @@ impl Storage {
                 | FormatElement::Tag(Tag::StartIndentWithLine(_) | Tag::EndIndentWithLine(_)) => {
                     return true;
                 }
-                FormatElement::Interned(it) if self.may_directly_break(self.interned(*it)) => {
+                FormatElement::Interned(it)
+                    if self.may_directly_break(self.interned(*it), flavor) =>
+                {
                     return true;
                 }
-                FormatElement::BestFitting(it) if self.may_directly_break(self.most_flat(*it)) => {
+                // oxfmt does not look into it.
+                FormatElement::BestFitting(it)
+                    if !flavor.is_oxfmt()
+                        && self.may_directly_break(self.most_flat(*it), flavor) =>
+                {
                     return true;
                 }
                 _ => {}
@@ -383,8 +389,8 @@ impl<'f> Elements<'f> {
         }
     }
 
-    pub(crate) fn may_directly_break(self) -> bool {
-        self.storage.may_directly_break(self.elements)
+    pub(crate) fn may_directly_break(self, flavor: Flavor) -> bool {
+        self.storage.may_directly_break(self.elements, flavor)
     }
 
     pub(crate) fn has_label(self, label: LabelId) -> bool {

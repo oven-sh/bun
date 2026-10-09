@@ -88,6 +88,7 @@ pub(crate) struct Context<'a> {
     /// `Tree::extra`
     pub(crate) extra: &'a [u8],
     pub(crate) syntax: Syntax,
+    pub(crate) is_oxfmt: bool,
     /// Why a node has not been converted.
     pub(crate) refusal: Refusal,
 }
@@ -607,7 +608,11 @@ impl<'a> Context<'a> {
             return Ok(());
         }
         if matches!(name, b"warn" | b"error") {
-            node.params = Params::Unknown(params.clone());
+            // For oxfmt what they say is an expression like any other.
+            match self.is_oxfmt.then(|| value(&params, values, selectors)) {
+                Some(Ok(parsed)) => node.value = Value::Parsed(parsed),
+                _ => node.params = Params::Unknown(params.clone()),
+            }
         } else if matches!(name, b"extend" | b"nest") {
             node.selector = Some(selectors.parse(&params));
         } else if name == b"at-root" {

@@ -4,14 +4,18 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
-
-// Stable Rust cannot branch a type on a const
-// generic, so per bit_set.rs guidance we pick `ArrayBitSet` directly. The
-// inline scanner in inlines.rs depends on `is_set()` being real — a no-op
-// stub here makes every byte fall through the fast path and disables all
-// inline-span recognition (emphasis, links, code, entities, breaks).
-pub(crate) type MarkCharMap = ArrayBitSet<256, { num_masks_for(256) }>;
+// What a byte can mean in inline content: `MARK_*`. 0: nothing, and the scans
+// in inlines.rs and links.rs do not look at it.
+pub(crate) type MarkCharMap = [u8; 256];
+/// `[`
+pub(crate) const MARK_OPENER: u8 = 1 << 0;
+/// `]`
+pub(crate) const MARK_CLOSER: u8 = 1 << 1;
+/// `*`, `_`, `~`
+pub(crate) const MARK_DELIMITER: u8 = 1 << 2;
+/// `hidden_at` can find something at it.
+pub(crate) const MARK_HIDES: u8 = 1 << 3;
+pub(crate) const MARK_OTHER: u8 = 1 << 4;
 use bun_core::StackCheck;
 
 use super::helpers;
@@ -44,8 +48,14 @@ pub(crate) struct Parser<'a> {
     // Code indent offset: 4 normally, maxInt if no_indented_code_blocks
     pub(crate) code_indent_offset: u32,
 
-    // Mark character map — bitset of characters that need special handling
+    // Mark character map — the characters that need special handling
     pub(crate) mark_char_map: MarkCharMap,
+    // Where the bytes of the inline content that is being processed are that
+    // `mark_char_map` has, and all that they can mean.
+    pub(crate) marks: Vec<OFF>,
+    pub(crate) marks_seen: u8,
+    // What hides markers in that content, in its order.
+    pub(crate) hidden: Vec<crate::inlines::Hidden>,
 
     // Dynamic arrays
     pub(crate) containers: Vec<Container>,
@@ -280,7 +290,10 @@ impl<'a> Parser<'a> {
             } else {
                 4
             },
-            mark_char_map: MarkCharMap::init_empty(),
+            mark_char_map: [0; 256],
+            marks: Vec::new(),
+            marks_seen: 0,
+            hidden: Vec::new(),
             containers: Vec::new(),
             block_bytes: Vec::new(),
             buffer: Vec::new(),
@@ -319,40 +332,39 @@ impl<'a> Parser<'a> {
     }
 
     fn build_mark_char_map(&mut self) {
-        self.mark_char_map.set(b'\\' as usize);
-        self.mark_char_map.set(b'*' as usize);
-        self.mark_char_map.set(b'_' as usize);
-        self.mark_char_map.set(b'`' as usize);
-        self.mark_char_map.set(b'&' as usize);
-        self.mark_char_map.set(b';' as usize);
-        self.mark_char_map.set(b'[' as usize);
-        self.mark_char_map.set(b'!' as usize);
-        self.mark_char_map.set(b']' as usize);
-        self.mark_char_map.set(0);
-        self.mark_char_map.set(b'\n' as usize); // newlines always need handling (hard/soft breaks)
-        if !self.flags.no_html_spans {
-            self.mark_char_map.set(b'<' as usize);
-            self.mark_char_map.set(b'>' as usize);
+        let flags = self.flags;
+        let map = &mut self.mark_char_map;
+        // newlines always need handling (hard/soft breaks)
+        for c in [b'\\', b'&', b'!', 0, b'\n'] {
+            map[c as usize] = MARK_OTHER;
         }
-        if self.flags.strikethrough {
-            self.mark_char_map.set(b'~' as usize);
+        map[b'*' as usize] = MARK_DELIMITER;
+        map[b'_' as usize] = MARK_DELIMITER;
+        map[b'`' as usize] = MARK_HIDES;
+        map[b'[' as usize] = MARK_OPENER;
+        map[b']' as usize] = MARK_CLOSER;
+        if !flags.no_html_spans {
+            map[b'<' as usize] = MARK_HIDES;
         }
-        if self.flags.latex_math {
-            self.mark_char_map.set(b'$' as usize);
+        if flags.strikethrough {
+            map[b'~' as usize] = MARK_DELIMITER;
         }
-        if self.flags.permissive_email_autolinks || self.flags.permissive_url_autolinks {
-            self.mark_char_map.set(b':' as usize);
+        if flags.latex_math {
+            map[b'$' as usize] = MARK_OTHER;
         }
-        if self.flags.permissive_email_autolinks {
-            self.mark_char_map.set(b'@' as usize);
+        if flags.permissive_email_autolinks || flags.permissive_url_autolinks {
+            map[b':' as usize] = MARK_OTHER;
         }
-        if self.flags.permissive_www_autolinks {
-            self.mark_char_map.set(b'.' as usize);
+        if flags.permissive_email_autolinks {
+            map[b'@' as usize] = MARK_OTHER;
         }
-        if self.flags.collapse_whitespace {
-            self.mark_char_map.set(b' ' as usize);
-            self.mark_char_map.set(b'\t' as usize);
-            self.mark_char_map.set(b'\r' as usize);
+        if flags.permissive_www_autolinks {
+            map[b'.' as usize] = MARK_OTHER;
+        }
+        if flags.collapse_whitespace {
+            for c in [b' ', b'\t', b'\r'] {
+                map[c as usize] = MARK_OTHER;
+            }
         }
     }
 

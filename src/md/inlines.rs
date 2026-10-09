@@ -1,8 +1,8 @@
 use crate::autolinks::{find_permissive_autolink, is_emph_boundary_resolved};
 use crate::helpers;
 use crate::links::{BracketMatches, LabelLeave};
-use crate::parser::{self, Parser};
-use crate::types::{SpanType, TextType, VerbatimLine};
+use crate::parser::{self, MARK_DELIMITER, MARK_HIDES, Parser};
+use crate::types::{OFF, SpanType, TextType, VerbatimLine};
 
 /// Emphasis delimiter entry for CommonMark emphasis algorithm.
 pub(crate) const MAX_EMPH_MATCHES: usize = 6;
@@ -19,6 +19,50 @@ pub(crate) struct LabelFrame {
     resolved: Vec<EmphDelim>,
     delim_cursor: usize,
     leave: LabelLeave,
+}
+
+/// What hides the markers in it: they stand for themselves.
+#[derive(Clone, Copy)]
+pub(crate) struct Hidden {
+    pub(crate) beg: usize,
+    pub(crate) end: usize,
+    pub(crate) kind: HiddenKind,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum HiddenKind {
+    /// A code span between two runs of so many backticks.
+    Code {
+        ticks: usize,
+    },
+    /// Backticks that nothing closes.
+    Backticks,
+    Html,
+    Autolink {
+        is_email: bool,
+    },
+}
+
+/// Where a scan of the block's inline content is in `Parser::marks` and in
+/// `Parser::hidden`.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Walk {
+    mark: usize,
+    hidden: usize,
+}
+
+/// The index of the first of `sorted[from..]` that is not before a place. Most of
+/// the time it is near.
+#[inline]
+fn skip_before<T>(sorted: &[T], from: usize, is_before: impl Fn(&T) -> bool) -> usize {
+    let mut index = from;
+    for _ in 0..4 {
+        match sorted.get(index) {
+            Some(it) if is_before(it) => index += 1,
+            _ => return index,
+        }
+    }
+    index + sorted[index..].partition_point(is_before)
 }
 
 #[derive(Clone, Copy)]
@@ -195,6 +239,15 @@ impl Parser<'_> {
         // valid for them via `offset_within`.
         self.html_scan_memo.set(HtmlScanMemo::EMPTY);
 
+        // Fast path: no character has a special meaning
+        self.find_marks(content);
+        if self.marks.is_empty() {
+            if !content.is_empty() {
+                self.emit_text(TextType::Normal, content)?;
+            }
+            return Ok(());
+        }
+
         // Bracket-pair map for the whole slice: link processing looks up the
         // ']' matching a '[' here instead of rescanning the rest of the slice
         // for every opener. Label frames share this map (with their offset as
@@ -223,7 +276,8 @@ impl Parser<'_> {
         let mut base: usize = 0;
 
         // Phase 1: Collect and resolve emphasis delimiters
-        self.collect_emphasis_delimiters(cur, &brackets, base);
+        let mut walk = Walk::default();
+        self.collect_emphasis_delimiters(cur, &brackets, base, walk);
         self.resolve_emphasis_delimiters();
 
         // Take the resolved delimiters (label frames reuse emph_delims)
@@ -250,7 +304,7 @@ impl Parser<'_> {
                 });
                 base += parse.label_start;
                 cur = &cur[parse.label_start..parse.label_end];
-                self.collect_emphasis_delimiters(cur, &brackets, base);
+                self.collect_emphasis_delimiters(cur, &brackets, base, walk);
                 self.resolve_emphasis_delimiters();
                 resolved = core::mem::take(&mut self.emph_delims);
                 i = 0;
@@ -262,13 +316,14 @@ impl Parser<'_> {
         'frames: loop {
             while i < cur.len() {
                 let content = cur;
-                let c = content[i];
 
-                // Fast path: character has no special meaning, skip it
-                if !self.mark_char_map.is_set(c as usize) {
-                    i += 1;
-                    continue;
+                // Fast path: characters without a special meaning, skip them
+                let mark = self.next_mark(&mut walk, base + i);
+                if mark >= base + content.len() {
+                    break;
                 }
+                i = mark - base;
+                let c = content[i];
 
                 // Newline from merged lines — check for hard break
                 if c == b'\n' {
@@ -321,25 +376,36 @@ impl Parser<'_> {
                     continue;
                 }
 
-                // Code span
-                if c == b'`' {
-                    if i > text_start {
-                        self.emit_text(TextType::Normal, &content[text_start..i])?;
+                // Code spans, HTML tags, autolinks
+                if let Some(Hidden { beg, end, kind }) = self.hidden_over(&walk, content, base, i) {
+                    if beg > text_start {
+                        self.emit_text(TextType::Normal, &content[text_start..beg])?;
                     }
-                    let count = count_backticks(content, i);
-                    if let Some(end_pos) = self.find_code_span_end(content, i + count, count) {
-                        self.enter_span(SpanType::Code)?;
-                        let code_content =
-                            self.normalize_code_span_content(&content[i + count..end_pos]);
-                        self.emit_text(TextType::Code, code_content)?;
-                        self.leave_span(SpanType::Code)?;
-                        i = end_pos + count;
-                    } else {
-                        // No matching closer found — emit the entire backtick run as literal text
-                        self.emit_text(TextType::Normal, &content[i..i + count])?;
-                        i += count;
+                    match kind {
+                        HiddenKind::Code { ticks } => {
+                            self.enter_span(SpanType::Code)?;
+                            let code_content = self
+                                .normalize_code_span_content(&content[beg + ticks..end - ticks]);
+                            self.emit_text(TextType::Code, code_content)?;
+                            self.leave_span(SpanType::Code)?;
+                        }
+                        HiddenKind::Backticks => {
+                            self.emit_text(TextType::Normal, &content[beg..end])?;
+                        }
+                        HiddenKind::Html => {
+                            self.emit_text(TextType::Html, &content[beg..end])?;
+                        }
+                        HiddenKind::Autolink { is_email } => {
+                            self.render_autolink(&content[beg + 1..end - 1], is_email)?;
+                        }
                     }
+                    i = end;
                     text_start = i;
+                    continue;
+                }
+                // It could only have hidden something.
+                if self.mark_char_map[c as usize] == MARK_HIDES {
+                    i += 1;
                     continue;
                 }
 
@@ -400,31 +466,6 @@ impl Parser<'_> {
                         }
                         self.emit_text(TextType::Entity, &content[i..end_pos])?;
                         i = end_pos;
-                        text_start = i;
-                        continue;
-                    }
-                }
-
-                // HTML tag
-                if c == b'<' && !self.flags.no_html_spans {
-                    if let Some(tag_end) = self.find_html_tag(content, i) {
-                        if i > text_start {
-                            self.emit_text(TextType::Normal, &content[text_start..i])?;
-                        }
-                        self.emit_text(TextType::Html, &content[i..tag_end])?;
-                        i = tag_end;
-                        text_start = i;
-                        continue;
-                    }
-                    if let Some(autolink) = self.find_autolink(content, i) {
-                        if i > text_start {
-                            self.emit_text(TextType::Normal, &content[text_start..i])?;
-                        }
-                        self.render_autolink(
-                            &content[i + 1..autolink.end_pos - 1],
-                            autolink.is_email,
-                        )?;
-                        i = autolink.end_pos;
                         text_start = i;
                         continue;
                     }
@@ -625,6 +666,76 @@ impl Parser<'_> {
         self.renderer.text(text_type, content)
     }
 
+    /// Fills `marks` for `content`.
+    fn find_marks(&mut self, content: &[u8]) {
+        self.marks.clear();
+        let mut seen = 0;
+        for (index, &c) in content.iter().enumerate() {
+            let meaning = self.mark_char_map[c as usize];
+            if meaning != 0 {
+                seen |= meaning;
+                self.marks.push(index as OFF);
+            }
+        }
+        self.marks_seen = seen;
+    }
+
+    /// Moves `walk` on to `pos` of the block's inline content. Returns where the
+    /// first marked byte is from there on, `usize::MAX` if there is none.
+    #[inline]
+    pub(crate) fn next_mark(&self, walk: &mut Walk, pos: usize) -> usize {
+        // Also what `pos` is in the middle of: the scan has taken its start for
+        // something else.
+        walk.hidden = skip_before(&self.hidden, walk.hidden, |it| it.beg < pos);
+        walk.mark = skip_before(&self.marks, walk.mark, |&it| (it as usize) < pos);
+        self.marks
+            .get(walk.mark)
+            .map_or(usize::MAX, |&it| it as usize)
+    }
+
+    /// What hides the marked byte at `pos` of `content`, which starts at `base`
+    /// of the block's inline content. `walk` is at that byte.
+    #[inline]
+    fn hidden_over(&self, walk: &Walk, content: &[u8], base: usize, pos: usize) -> Option<Hidden> {
+        let hidden = self.hidden.get(walk.hidden)?;
+        if hidden.beg > base + pos || hidden.end > base + content.len() {
+            return None;
+        }
+        Some(Hidden {
+            beg: hidden.beg.checked_sub(base)?,
+            end: hidden.end - base,
+            kind: hidden.kind,
+        })
+    }
+
+    /// What starts at `pos` of `content` and hides the markers in it. Only the
+    /// scan that fills `hidden` asks.
+    pub(crate) fn hidden_at(&self, content: &[u8], pos: usize) -> Option<Hidden> {
+        let (end, kind) = match content[pos] {
+            b'`' => {
+                let ticks = count_backticks(content, pos);
+                match self.find_code_span_end(content, pos + ticks, ticks) {
+                    Some(close) => (close + ticks, HiddenKind::Code { ticks }),
+                    None => (pos + ticks, HiddenKind::Backticks),
+                }
+            }
+            b'<' if !self.flags.no_html_spans => match self.find_html_tag(content, pos) {
+                Some(end) => (end, HiddenKind::Html),
+                None => {
+                    let autolink = self.find_autolink(content, pos)?;
+                    let is_email = autolink.is_email;
+                    (autolink.end_pos, HiddenKind::Autolink { is_email })
+                }
+            },
+            _ => return None,
+        };
+        Some(Hidden {
+            beg: pos,
+            end,
+            kind,
+        })
+    }
+
     /// Emit emphasis opening tags (outermost to innermost).
     pub(crate) fn emit_emph_open_tags(&mut self, sizes: &[u8]) -> crate::types::JsResult<()> {
         // First match = innermost, so emit in reverse (outermost first in HTML)
@@ -697,10 +808,20 @@ impl Parser<'_> {
         content: &[u8],
         brackets: &BracketMatches,
         base: usize,
+        // Where the scan that asks is: not behind the start of `content`.
+        mut walk: Walk,
     ) {
         self.emph_delims.clear();
+        if self.marks_seen & MARK_DELIMITER == 0 {
+            return;
+        }
         let mut i: usize = 0;
-        while i < content.len() {
+        loop {
+            let mark = self.next_mark(&mut walk, base + i);
+            if mark >= base + content.len() {
+                break;
+            }
+            i = mark - base;
             let c = content[i];
             // Skip backslash escapes
             if c == b'\\' && i + 1 < content.len() && helpers::is_ascii_punctuation(content[i + 1])
@@ -708,28 +829,10 @@ impl Parser<'_> {
                 i += 2;
                 continue;
             }
-            // Skip code spans
-            if c == b'`' {
-                let count = count_backticks(content, i);
-                if let Some(end_pos) = self.find_code_span_end(content, i + count, count) {
-                    i = end_pos + count;
-                } else {
-                    i += count;
-                }
+            // Skip code spans, HTML tags and autolinks
+            if let Some(hidden) = self.hidden_over(&walk, content, base, i) {
+                i = hidden.end;
                 continue;
-            }
-            // Skip HTML tags and autolinks
-            if c == b'<' {
-                if !self.flags.no_html_spans {
-                    if let Some(tag_end) = self.find_html_tag(content, i) {
-                        i = tag_end;
-                        continue;
-                    }
-                    if let Some(auto) = self.find_autolink(content, i) {
-                        i = auto.end_pos;
-                        continue;
-                    }
-                }
             }
             // Skip wiki links — like regular links they resolve before
             // emphasis; the label gets its own collection pass.

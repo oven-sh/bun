@@ -1,6 +1,6 @@
 use crate::helpers;
-use crate::inlines;
-use crate::parser::{self, Parser};
+use crate::inlines::Walk;
+use crate::parser::{self, MARK_CLOSER, MARK_HIDES, MARK_OPENER, Parser};
 use crate::types::{OFF, SpanDetail, SpanType, TextType};
 
 // Aliases for the real `SpanType` / `SpanDetail` types (named `Span` /
@@ -122,13 +122,6 @@ pub(crate) fn scan_link_destination(text: &[u8], start: usize) -> Option<ParsedD
     })
 }
 
-/// Characters that can affect bracket matching: the brackets themselves,
-/// backslash escapes, code spans, and (unless HTML spans are disabled) HTML
-/// tags/autolinks. Used to SIMD-skip runs of ordinary text while building the
-/// bracket-pair map.
-const BRACKET_SCAN_CHARS: &[u8] = b"[]\\`<";
-const BRACKET_SCAN_CHARS_NO_HTML: &[u8] = b"[]\\`";
-
 /// A `[` of inline content, outside of code spans, HTML tags/autolinks and
 /// backslash escapes.
 #[derive(Clone, Copy)]
@@ -182,9 +175,10 @@ impl BracketMatches {
 }
 
 impl Parser<'_> {
-    /// Pair the brackets of `content` and tell which of them are links, in a
-    /// single pass (code spans, HTML tags, autolinks and backslash escapes hide
-    /// brackets). `storage` is the recycled backing vec from
+    /// Pair the brackets of `content`, whose marks have been found, and tell
+    /// which of them are links, in a single pass (code spans, HTML tags,
+    /// autolinks and backslash escapes hide brackets). Fill `hidden` with what
+    /// hides them. `storage` is the recycled backing vec from
     /// `Parser.bracket_pairs`.
     pub(crate) fn compute_bracket_matches(
         &mut self,
@@ -192,20 +186,14 @@ impl Parser<'_> {
         mut storage: Vec<Bracket>,
     ) -> BracketMatches {
         storage.clear();
+        self.hidden.clear();
         debug_assert!(content.len() <= OFF::MAX as usize);
 
-        // Without a '[' and a ']' there is no link — skip the walk.
-        if bun_core::strings::index_of_char(content, b'[').is_none()
-            || bun_core::strings::index_of_char(content, b']').is_none()
-        {
+        // Without a '[' and a ']' there is no link.
+        let has_pairs = self.marks_seen & MARK_OPENER != 0 && self.marks_seen & MARK_CLOSER != 0;
+        if self.marks_seen & MARK_HIDES == 0 && !has_pairs {
             return BracketMatches { pairs: storage };
         }
-
-        let scan_chars: &'static [u8] = if self.flags.no_html_spans {
-            BRACKET_SCAN_CHARS_NO_HTML
-        } else {
-            BRACKET_SCAN_CHARS
-        };
 
         // While an opener is still unmatched, its `close` slot holds the index
         // of the previous unmatched opener — a stack threaded through the vec
@@ -221,8 +209,10 @@ impl Parser<'_> {
         let mut around_wiki_labels: Vec<(usize, OFF)> = Vec::new();
         // A label is content of its own.
         let mut end = content.len();
+        let mut walk = Walk::default();
         let mut pos: usize = 0;
         loop {
+            pos = self.next_mark(&mut walk, pos);
             if pos >= end {
                 let Some((outer_end, outer_top)) = around_wiki_labels.pop() else {
                     break;
@@ -233,30 +223,22 @@ impl Parser<'_> {
                 continue;
             }
             let content = &content[..end];
-            match content[pos] {
-                b'\\' => {
-                    pos += 2;
+            if content[pos] == b'\\' {
+                pos += 1;
+                if pos < content.len() && helpers::is_ascii_punctuation(content[pos]) {
+                    pos += 1;
                     escape_end = pos;
                 }
-                // Code spans take precedence over brackets (CommonMark §6.3)
-                b'`' => {
-                    let count = inlines::count_backticks(content, pos);
-                    if let Some(end_pos) = self.find_code_span_end(content, pos + count, count) {
-                        pos = end_pos + count;
-                    } else {
-                        pos += count;
-                    }
-                }
-                // HTML tags and autolinks take precedence over brackets
-                b'<' if !self.flags.no_html_spans => {
-                    if let Some(tag_end) = self.find_html_tag(content, pos) {
-                        pos = tag_end;
-                    } else if let Some(autolink) = self.find_autolink(content, pos) {
-                        pos = autolink.end_pos;
-                    } else {
-                        pos += 1;
-                    }
-                }
+                continue;
+            }
+            // Code spans, HTML tags and autolinks take precedence over brackets
+            // (CommonMark §6.3)
+            if let Some(hidden) = self.hidden_at(content, pos) {
+                self.hidden.push(hidden);
+                pos = hidden.end;
+                continue;
+            }
+            match content[pos] {
                 b'[' => {
                     let is_image = pos > 0 && content[pos - 1] == b'!' && escape_end != pos;
                     if self.flags.wiki_links
@@ -280,33 +262,26 @@ impl Parser<'_> {
                         is_image,
                     });
                     top = index;
-                    pos += 1;
                 }
                 b']' if top != BracketMatches::UNMATCHED => {
                     let index = top as usize;
                     let Bracket { open, is_image, .. } = storage[index];
                     top = storage[index].close;
                     storage[index].close = pos as OFF;
-                    pos += 1;
                     if (is_image || index >= inactive_below)
-                        && let Some(link_end) =
-                            self.link_end_behind(content, open as usize, pos - 1)
+                        && let Some(link_end) = self.link_end_behind(content, open as usize, pos)
                     {
                         storage[index].link_end = link_end as OFF;
                         if !is_image {
                             inactive_below = index;
                         }
                         pos = link_end;
+                        continue;
                     }
                 }
-                b']' => pos += 1,
-                // Ordinary text: SIMD-jump to the next character that can
-                // affect bracket matching.
-                _ => match bun_core::strings::index_of_any(&content[pos..], scan_chars) {
-                    Some(rel) => pos += rel,
-                    None => pos = end,
-                },
+                _ => {}
             }
+            pos += 1;
         }
         BracketMatches::leave_open(&mut storage, top);
 

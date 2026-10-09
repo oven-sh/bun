@@ -46,31 +46,31 @@ static NEVER_INLINE Identifier toKey(JSGlobalObject* globalObject, JSValue key)
 
 // The index in `tags` of what `Object.prototype.toString.call(value)` returns, or their number.
 static constexpr std::pair<ASCIILiteral, SnapshotKind> tags[] = {
-        { "[object Object]"_s, SnapshotKind::Object },
-        { "[object Array]"_s, SnapshotKind::List },
-        { "[object Map]"_s, SnapshotKind::Map },
-        { "[object Set]"_s, SnapshotKind::Set },
-        { "[object Date]"_s, SnapshotKind::Date },
-        { "[object Error]"_s, SnapshotKind::Error },
-        { "[object RegExp]"_s, SnapshotKind::RegExp },
-        { "[object Arguments]"_s, SnapshotKind::Arguments },
-        { "[object WeakMap]"_s, SnapshotKind::WeakMap },
-        { "[object WeakSet]"_s, SnapshotKind::WeakSet },
-        { "[object Function]"_s, SnapshotKind::Function },
-        { "[object GeneratorFunction]"_s, SnapshotKind::Function },
-        { "[object Symbol]"_s, SnapshotKind::Symbol },
-        { "[object Promise]"_s, SnapshotKind::Promise },
-        { "[object ArrayBuffer]"_s, SnapshotKind::List },
-        { "[object DataView]"_s, SnapshotKind::List },
-        { "[object Float32Array]"_s, SnapshotKind::List },
-        { "[object Float64Array]"_s, SnapshotKind::List },
-        { "[object Int8Array]"_s, SnapshotKind::List },
-        { "[object Int16Array]"_s, SnapshotKind::List },
-        { "[object Int32Array]"_s, SnapshotKind::List },
-        { "[object Uint8Array]"_s, SnapshotKind::List },
-        { "[object Uint8ClampedArray]"_s, SnapshotKind::List },
-        { "[object Uint16Array]"_s, SnapshotKind::List },
-        { "[object Uint32Array]"_s, SnapshotKind::List },
+    { "[object Object]"_s, SnapshotKind::Object },
+    { "[object Array]"_s, SnapshotKind::List },
+    { "[object Map]"_s, SnapshotKind::Map },
+    { "[object Set]"_s, SnapshotKind::Set },
+    { "[object Date]"_s, SnapshotKind::Date },
+    { "[object Error]"_s, SnapshotKind::Error },
+    { "[object RegExp]"_s, SnapshotKind::RegExp },
+    { "[object Arguments]"_s, SnapshotKind::Arguments },
+    { "[object WeakMap]"_s, SnapshotKind::WeakMap },
+    { "[object WeakSet]"_s, SnapshotKind::WeakSet },
+    { "[object Function]"_s, SnapshotKind::Function },
+    { "[object GeneratorFunction]"_s, SnapshotKind::Function },
+    { "[object Symbol]"_s, SnapshotKind::Symbol },
+    { "[object Promise]"_s, SnapshotKind::Promise },
+    { "[object ArrayBuffer]"_s, SnapshotKind::List },
+    { "[object DataView]"_s, SnapshotKind::List },
+    { "[object Float32Array]"_s, SnapshotKind::List },
+    { "[object Float64Array]"_s, SnapshotKind::List },
+    { "[object Int8Array]"_s, SnapshotKind::List },
+    { "[object Int16Array]"_s, SnapshotKind::List },
+    { "[object Int32Array]"_s, SnapshotKind::List },
+    { "[object Uint8Array]"_s, SnapshotKind::List },
+    { "[object Uint8ClampedArray]"_s, SnapshotKind::List },
+    { "[object Uint16Array]"_s, SnapshotKind::List },
+    { "[object Uint32Array]"_s, SnapshotKind::List },
 };
 
 static size_t tagOf(JSGlobalObject* globalObject, JSValue value)
@@ -224,7 +224,8 @@ extern "C" uint32_t SnapshotFormat__lengthOf(JSGlobalObject* globalObject, Encod
         }
     }
     double count = std::ceil(length.asNumber());
-    return count >= std::numeric_limits<uint32_t>::max() ? std::numeric_limits<uint32_t>::max() : count > 0 ? static_cast<uint32_t>(count) : 0;
+    return count >= std::numeric_limits<uint32_t>::max() ? std::numeric_limits<uint32_t>::max() : count > 0 ? static_cast<uint32_t>(count)
+                                                                                                            : 0;
 }
 
 // `Array.isArray(value)`

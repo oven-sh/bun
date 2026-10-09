@@ -1,6 +1,7 @@
 import type { QueryStrings, Query as QueryType } from "./query";
 
 const PublicArray = globalThis.Array;
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const {
   Query,
   SQLQueryFlags,
@@ -2151,18 +2152,32 @@ function parseOptions(
     }
   }
 
+  // Only an own `rejectUnauthorized: false` turns certificate verification off.
+  const verifyOptedOut =
+    $isObject(tls) &&
+    ObjectPrototypeHasOwnProperty.$call(tls, "rejectUnauthorized") &&
+    tls.rejectUnauthorized === false;
+
   if ($isObject(tls) && sslMode < SSLMode.verify_ca) {
-    if (tls.rejectUnauthorized === true || (tls.rejectUnauthorized !== false && (tls.ca || tls.caFile))) {
+    if (tls.rejectUnauthorized === true || (!verifyOptedOut && (tls.ca || tls.caFile))) {
       sslMode = SSLMode.verify_full;
     }
   }
 
-  if (sslMode !== SSLMode.disable && !(tls as Exclude<typeof tls, boolean>)?.serverName) {
+  // An inherited serverName does not survive the own-property copies below, so it must not suppress the host name.
+  const ownServerName = $isObject(tls) && ObjectPrototypeHasOwnProperty.$call(tls, "serverName") && tls.serverName;
+
+  if (sslMode !== SSLMode.disable && !ownServerName) {
     if (hostname) {
       tls = { ...(tls as Exclude<typeof tls, boolean>), serverName: hostname };
     } else if (tls) {
       tls = true;
     }
+  }
+
+  // Without this, an unset rejectUnauthorized takes NODE_TLS_REJECT_UNAUTHORIZED and 0 skips the verify-* checks.
+  if (sslMode >= SSLMode.verify_ca && !verifyOptedOut) {
+    tls = { __proto__: null, ...($isObject(tls) ? tls : {}), rejectUnauthorized: true };
   }
 
   // Explicit tls/ssl options request an encrypted connection: if the server

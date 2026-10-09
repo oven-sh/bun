@@ -6,6 +6,9 @@
 
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import tls from "node:tls";
 import { listeningServer, pgAuthenticationOk, pgReadyForQuery, pgSSLResponse } from "./wire-frames";
 
 // Bun.SQL picks up PGHOST/PGPORT/PGUSER/PGPASSWORD/PGDATABASE from the
@@ -19,10 +22,19 @@ import { listeningServer, pgAuthenticationOk, pgReadyForQuery, pgSSLResponse } f
 
 const fixture = /* js */ `
   import { SQL } from "bun";
-  const sql = new SQL({ max: 1, connectionTimeout: 5 });
+  const options = { max: 1, connectionTimeout: 5 };
+  const caFile = process.env.SQL_TEST_CA_FILE;
+  const serverName = process.env.SQL_TEST_SERVER_NAME;
+  const inheritedServerName = process.env.SQL_TEST_INHERITED_SERVER_NAME;
+  if (caFile) {
+    options.tls = Object.create(inheritedServerName ? { serverName: inheritedServerName } : Object.prototype);
+    options.tls.caFile = caFile;
+    if (serverName) options.tls.serverName = serverName;
+  }
+  const sql = new SQL(options);
   try {
     await sql.connect();
-    console.log("CONNECTED_PLAINTEXT");
+    console.log("CONNECTED");
   } catch (e) {
     console.log("ERROR:" + (e?.code ?? e?.message ?? String(e)));
   } finally {
@@ -52,6 +64,31 @@ async function plaintextOnlyServer() {
       }
     });
     socket.on("error", () => {});
+  });
+}
+
+async function selfSignedTlsServer() {
+  // Answers SSLRequest with 'S', wraps the socket in TLS with a self-signed
+  // certificate, then answers the startup with AuthenticationOk + ReadyForQuery.
+  const ready = Buffer.concat([pgAuthenticationOk(), pgReadyForQuery("I")]);
+  const key = readFileSync(join(import.meta.dir, "docker-tls", "server.key"));
+  const cert = readFileSync(join(import.meta.dir, "docker-tls", "server.crt"));
+  return listeningServer(rawSocket => {
+    let buf = Buffer.alloc(0);
+    const onPlainData = (chunk: Buffer) => {
+      buf = Buffer.concat([buf, chunk]);
+      if (buf.length < 8) return;
+      rawSocket.removeListener("data", onPlainData);
+      rawSocket.pause();
+      const leftover = buf.subarray(8);
+      if (leftover.length) rawSocket.unshift(leftover);
+      rawSocket.write(pgSSLResponse("S"));
+      const tlsSocket = new tls.TLSSocket(rawSocket, { isServer: true, key, cert });
+      tlsSocket.on("data", () => tlsSocket.write(ready));
+      tlsSocket.on("error", () => {});
+    };
+    rawSocket.on("data", onPlainData);
+    rawSocket.on("error", () => {});
   });
 }
 
@@ -115,7 +152,105 @@ test.concurrent("URL ?sslmode=disable overrides PGSSLMODE=require", async () => 
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("CONNECTED_PLAINTEXT");
+    expect(stdout.trim()).toBe("CONNECTED");
+    expect(exitCode).toBe(0);
+  } finally {
+    await new Promise<void>(r => server.close(() => r()));
+  }
+});
+
+// A verify-ca / verify-full sslmode is an explicit request to verify the
+// server certificate. NODE_TLS_REJECT_UNAUTHORIZED=0 may relax a default, but
+// it must not silently turn that request off.
+test.concurrent.each(["url", "PGSSLMODE"] as const)(
+  "sslmode=verify-full from the %s still verifies under NODE_TLS_REJECT_UNAUTHORIZED=0",
+  async source => {
+    const { server, port } = await selfSignedTlsServer();
+    try {
+      const extra: Record<string, string> = { NODE_TLS_REJECT_UNAUTHORIZED: "0" };
+      if (source === "url") extra.POSTGRES_URL = `postgres://u:pw@localhost:${port}/db?sslmode=verify-full`;
+      else extra.PGSSLMODE = "verify-full";
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: pgEnv(port, extra),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("ERROR:DEPTH_ZERO_SELF_SIGNED_CERT");
+      expect(exitCode).toBe(0);
+    } finally {
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  },
+);
+
+test.concurrent("sslmode=require does not verify the certificate", async () => {
+  const { server, port } = await selfSignedTlsServer();
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: pgEnv(port, { PGSSLMODE: "require" }),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("CONNECTED");
+    expect(exitCode).toBe(0);
+  } finally {
+    await new Promise<void>(r => server.close(() => r()));
+  }
+});
+
+// tls: { caFile } selects verify-full, so the server is checked against that CA
+// even under NODE_TLS_REJECT_UNAUTHORIZED=0.
+test.concurrent.each([
+  ["the CA that signed the server certificate", join("docker-tls", "server.crt"), "CONNECTED"],
+  ["an unrelated CA", join("mysql-tls", "ssl", "ca.pem"), "ERROR:DEPTH_ZERO_SELF_SIGNED_CERT"],
+] as const)("tls: { caFile } naming %s under NODE_TLS_REJECT_UNAUTHORIZED=0", async (_, caFile, expected) => {
+  const { server, port } = await selfSignedTlsServer();
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: pgEnv(port, {
+        NODE_TLS_REJECT_UNAUTHORIZED: "0",
+        PGHOST: "localhost",
+        SQL_TEST_CA_FILE: join(import.meta.dir, caFile),
+      }),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(expected);
+    expect(exitCode).toBe(0);
+  } finally {
+    await new Promise<void>(r => server.close(() => r()));
+  }
+});
+
+// verify-full checks an own tls.serverName, or else the host. The certificate names localhost.
+test.concurrent.each([
+  ["an inherited tls.serverName is ignored", { SQL_TEST_INHERITED_SERVER_NAME: "wrong.example" }, "CONNECTED"],
+  [
+    "an own tls.serverName is the verified name",
+    { SQL_TEST_SERVER_NAME: "wrong.example" },
+    "ERROR:ERR_TLS_CERT_ALTNAME_INVALID",
+  ],
+] as const)("verify-full: %s", async (_, extra, expected) => {
+  const { server, port } = await selfSignedTlsServer();
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: pgEnv(port, {
+        PGHOST: "localhost",
+        SQL_TEST_CA_FILE: join(import.meta.dir, "docker-tls", "server.crt"),
+        ...extra,
+      }),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(expected);
     expect(exitCode).toBe(0);
   } finally {
     await new Promise<void>(r => server.close(() => r()));

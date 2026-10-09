@@ -45,6 +45,9 @@ declare module "bun" {
   interface EventListenerOptions {
     __proto__?: null;
   }
+  interface TLSOptions {
+    __proto__?: null;
+  }
 
   // Listen options `node:net` passes that the public types do not declare. The native `SocketConfig` applies them
   // to the hostname and unix forms. It parses them for the fd form too, where they have no effect: the fd is

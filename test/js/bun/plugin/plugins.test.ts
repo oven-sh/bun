@@ -3307,7 +3307,8 @@ describe.concurrent("script that has replaced the methods of Promise sees nothin
     // The name of the native class: it is safe to ask for that of a cell script should never hold.
     export function kind(value) {
       const text = describeCell(value);
-      const name = /^(?:Object|Cell): .*?\\[0x[0-9a-f]+\\/\\d+, (\\w+),/.exec(text)?.[1] ?? /^\\w+/.exec(text)[0];
+      // The digits are those of the C library's %p: upper case on Windows.
+      const name = /^(?:Object|Cell): .*?\\[0x[0-9a-f]+\\/\\d+, (\\w+),/i.exec(text)?.[1] ?? /^\\w+/.exec(text)[0];
       if (name !== "Promise") return name;
       return "Promise<" + (Bun.peek.status(value) === "pending" ? "pending" : kind(Bun.peek(value))) + ">";
     }

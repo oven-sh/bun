@@ -528,7 +528,9 @@ impl Stringifier {
                         let by_alias = (dep.name, dep.name_hash);
                         let checked = res.trusted_name(by_alias, (pkg_name, pkg_name_hash));
                         // The alias still matches, so a recorded section does not lose a name.
-                        for (name, name_hash) in [checked, by_alias] {
+                        let alias_too = (checked.1 != by_alias.1).then_some(by_alias);
+                        // One insert per name: a repeat can grow the map, and that reorders the section.
+                        for (name, name_hash) in std::iter::once(checked).chain(alias_too) {
                             if let Some(trusted_name) =
                                 trusted_dependencies.get(&(name_hash as TruncatedPackageNameHash))
                             {

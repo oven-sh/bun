@@ -533,7 +533,30 @@ describe("writes trustedDependencies and patchedDependencies in the order earlie
   // flip them back. The second shape uses a larger trusted map (13 entries
   // instead of 7) and fills the patched map up to its growth threshold (6 of
   // 8 slots), so a change to how the maps size themselves shows up here too.
+  // The first shape fills the trusted map up to that threshold too, where one
+  // more insert of a name it already holds grows the map and reorders it
+  // (its block is what the 1.4.3 canary 367d939d9 writes).
   const shapes = [
+    {
+      trusted: ["esbuild", "sharp", "@prisma/client", "prisma", "bcrypt", "core-js"],
+      patched: ["esbuild", "sharp", "prisma", "bcrypt", "core-js"],
+      expected: `  "trustedDependencies": [
+    "bcrypt",
+    "core-js",
+    "esbuild",
+    "sharp",
+    "@prisma/client",
+    "prisma",
+  ],
+  "patchedDependencies": {
+    "prisma@1.0.0": "patches/prisma.patch",
+    "bcrypt@1.0.0": "patches/bcrypt.patch",
+    "core-js@1.0.0": "patches/core-js.patch",
+    "esbuild@1.0.0": "patches/esbuild.patch",
+    "sharp@1.0.0": "patches/sharp.patch",
+  },
+`,
+    },
     {
       trusted: ["esbuild", "sharp", "@prisma/client", "prisma", "bcrypt", "core-js", "@prisma/engines"],
       patched: ["esbuild", "sharp", "prisma", "bcrypt", "core-js"],

@@ -832,6 +832,9 @@ pub(crate) fn run_scripts_with_filter(
         &mut this_transpiler.resolver,
         fsinstance.top_level_dir,
     )?;
+    if let Some(root) = selected.workspace_root(fsinstance.top_level_dir) {
+        this_transpiler.env_mut().local_prefix = root;
+    }
 
     let mut scripts: Vec<ScriptConfig> = Vec::new();
     for package in &selected.packages {
@@ -925,7 +928,7 @@ pub(crate) fn run_scripts_with_filter(
         selected.error_script_not_found(&*ctx, &quoted);
     }
 
-    this_transpiler.env_mut().set_init_cwd()?;
+    this_transpiler.env_mut().set_run_dirs()?;
 
     // SAFETY: Transpiler::init always sets `env` to the process-lifetime singleton.
     let env_ptr: *mut bun_dotenv::Loader = this_transpiler.env;

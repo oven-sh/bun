@@ -46,12 +46,13 @@ type GlobWalker = glob::GlobWalker<bun_resolver::DirEntryAccessor, false>;
 // Borrows the `OwnedWalker` stored next to it in `ActiveWalk`, with the lifetime erased.
 type GlobWalkerIterator = glob::walk::Iterator<'static, bun_resolver::DirEntryAccessor, false>;
 
+/// Returns the root directory, and whether it is the directory of a package.json with "workspaces".
 fn get_candidate_package_patterns<'a>(
     log: &mut Log,
     out_patterns: &mut Vec<Box<[u8]>>,
     workdir_: &[u8],
     root_buf: &'a mut PathBuffer,
-) -> Result<&'a [u8], crate::Error> {
+) -> Result<(&'a [u8], bool), crate::Error> {
     bun_ast::expr::data::Store::create();
     bun_ast::stmt::data::Store::create();
     let _store_guard = bun_ast::StoreResetGuard::new();
@@ -125,7 +126,7 @@ fn get_candidate_package_patterns<'a>(
 
             let parent_trimmed = strings::without_trailing_slash(workdir);
             root_buf[0..parent_trimmed.len()].copy_from_slice(parent_trimmed);
-            return Ok(&root_buf[0..parent_trimmed.len()]);
+            return Ok((&root_buf[0..parent_trimmed.len()], true));
         }
 
         workdir = match bun_core::dirname(workdir) {
@@ -138,7 +139,7 @@ fn get_candidate_package_patterns<'a>(
     out_patterns.push(Box::<[u8]>::from(b"**/package.json".as_slice()));
     let root_dir = strings::without_trailing_slash(workdir_);
     root_buf[0..root_dir.len()].copy_from_slice(root_dir);
-    Ok(&root_buf[0..root_dir.len()])
+    Ok((&root_buf[0..root_dir.len()], false))
 }
 
 pub(crate) struct WorkspacePackage {
@@ -149,6 +150,8 @@ pub(crate) struct WorkspacePackage {
 
 pub(crate) struct SelectedPackages {
     pub(crate) root_dir: Box<[u8]>,
+    /// `root_dir` has the package.json whose "workspaces" the packages are. Otherwise it is the start directory.
+    pub(crate) root_has_workspaces: bool,
     pub(crate) packages: Vec<WorkspacePackage>,
 }
 
@@ -166,14 +169,14 @@ pub(crate) fn select_packages(
 
     let mut glob_patterns: Vec<Box<[u8]>> = Vec::new();
     let mut root_buf = bun_paths::path_buffer_pool::get();
-    let root_dir: Box<[u8]> = get_candidate_package_patterns(
+    let (root_dir, root_has_workspaces) = get_candidate_package_patterns(
         // SAFETY: `ctx.log` is the process-static `Cli::LOG_`; CLI dispatch is single-threaded and no other `&mut Log` is live.
         unsafe { ctx.log_mut() },
         &mut glob_patterns,
         cwd,
         &mut root_buf,
-    )?
-    .into();
+    )?;
+    let root_dir: Box<[u8]> = root_dir.into();
 
     let mut iter = PackageFilterIterator::init(&glob_patterns, &root_dir)?;
     let mut discovered: Vec<WorkspacePackage> = Vec::new();
@@ -262,7 +265,11 @@ pub(crate) fn select_packages(
         workspace_selection::error_unmatched(&patterns);
     }
     workspace_selection::warn_unmatched(&patterns, &selection.unmatched_patterns);
-    Ok(SelectedPackages { root_dir, packages })
+    Ok(SelectedPackages {
+        root_dir,
+        root_has_workspaces,
+        packages,
+    })
 }
 
 impl WorkspacePackage {
@@ -279,6 +286,16 @@ impl WorkspacePackage {
 }
 
 impl SelectedPackages {
+    /// `root_dir` for `npm_config_local_prefix`, when the packages are its workspaces. It is `cwd` or above it.
+    pub(crate) fn workspace_root(&self, cwd: &'static [u8]) -> Option<&'static [u8]> {
+        if !self.root_has_workspaces {
+            return None;
+        }
+        // One byte more than `root_dir`: the trim keeps the separator of a drive root.
+        let root = cwd.get(..(self.root_dir.len() + 1).min(cwd.len()))?;
+        Some(bun_paths::string_paths::without_trailing_slash_windows_path(root))
+    }
+
     /// `error: Script "x" not found in package "a"` / `... in 3 packages matching "a*"` /
     /// `... in 3 workspace packages`, then exit 1. `scripts` is already quoted.
     pub(crate) fn error_script_not_found(&self, ctx: &Command::ContextData, scripts: &[u8]) -> ! {

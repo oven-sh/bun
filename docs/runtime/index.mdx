@@ -133,6 +133,8 @@ Bun respects lifecycle hooks. For instance, `bun run clean` runs `preclean` and 
 
 A script runs in the directory of its `package.json`. Bun sets the `INIT_CWD` environment variable to the directory that `bun` was started in, so a script can tell where you ran it from. `--cwd` does not change `INIT_CWD`.
 
+Bun also sets `npm_config_local_prefix` to the project root: the directory of the nearest `package.json`, or the workspace root when that package is one of its workspaces.
+
 ### `--bun`
 
 It's common for `package.json` scripts to reference locally-installed CLIs like `vite` or `next`. These CLIs are often JavaScript files marked with a [shebang](<https://en.wikipedia.org/wiki/Shebang_(Unix)>) to indicate that they should be executed with `node`.

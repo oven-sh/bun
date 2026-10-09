@@ -147,6 +147,9 @@ pub struct Loader {
 
     pub quiet: bool,
 
+    /// `npm_config_local_prefix` for a script or a bin that bun spawns. `configure_env_for_run` sets it.
+    pub local_prefix: &'static [u8],
+
     pub(crate) did_load_process: bool,
     pub(crate) reject_unauthorized: Cell<Option<bool>>,
 
@@ -477,6 +480,27 @@ impl Loader {
         self.set_init_cwd_to(launch_dir)
     }
 
+    /// [`Self::set_init_cwd`] and `npm_config_local_prefix`, for a script or bin that bun spawns.
+    pub fn set_run_dirs(&mut self) -> Result<(), AllocError> {
+        self.set_init_cwd()?;
+        self.replace_local_prefix(false).map(drop)
+    }
+
+    /// Writes [`Self::local_prefix`] over another value. With `keep`, returns that value or its absence.
+    fn replace_local_prefix(
+        &mut self,
+        keep: bool,
+    ) -> Result<Option<Option<Box<[u8]>>>, AllocError> {
+        let before = self.map.get(b"npm_config_local_prefix");
+        if self.local_prefix.is_empty() || before == Some(self.local_prefix) {
+            return Ok(None);
+        }
+        let before = before.filter(|_| keep).map(Box::<[u8]>::from);
+        self.map
+            .put(b"npm_config_local_prefix", self.local_prefix)?;
+        Ok(Some(before))
+    }
+
     /// `bun install` gives its lifecycle scripts the project root.
     #[inline(never)]
     pub fn set_init_cwd_to(&mut self, dir: &[u8]) -> Result<(), AllocError> {
@@ -487,19 +511,28 @@ impl Loader {
         self.map.put(b"INIT_CWD", dir)
     }
 
-    /// [`Self::set_init_cwd`] while `with` runs, for a loader that also serves a file run.
-    pub fn with_init_cwd<R>(
+    /// [`Self::set_run_dirs`] while `with` runs, for a loader that also serves a file run.
+    pub fn with_run_dirs<R>(
         &mut self,
         with: impl FnOnce(&mut Self) -> Result<R, AllocError>,
     ) -> Result<R, AllocError> {
-        let before = self.map.get(b"INIT_CWD").map(Box::<[u8]>::from);
+        let init_cwd = self.map.get(b"INIT_CWD").map(Box::<[u8]>::from);
         self.set_init_cwd()?;
+        let local_prefix = self.replace_local_prefix(true)?;
         let result = with(self);
-        match before {
-            Some(before) => self.map.put(b"INIT_CWD", &before)?,
-            None => self.map.remove(b"INIT_CWD"),
+        self.put_back(b"INIT_CWD", init_cwd)?;
+        if let Some(local_prefix) = local_prefix {
+            self.put_back(b"npm_config_local_prefix", local_prefix)?;
         }
         result
+    }
+
+    fn put_back(&mut self, key: &[u8], before: Option<Box<[u8]>>) -> Result<(), AllocError> {
+        match before {
+            Some(before) => self.map.put(key, &before)?,
+            None => self.map.remove(key),
+        }
+        Ok(())
     }
 
     pub(crate) fn get_as_bool(&self, key: &[u8]) -> Option<bool> {
@@ -568,6 +601,7 @@ impl Loader {
             default_files_loaded: EnumSet::empty(),
             custom_files_loaded: StringSet::new(),
             quiet: false,
+            local_prefix: b"",
             did_load_process: false,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
@@ -581,6 +615,7 @@ impl Loader {
             default_files_loaded: EnumSet::empty(),
             custom_files_loaded: self.custom_files_loaded.clone()?,
             quiet: false,
+            local_prefix: b"",
             did_load_process: false,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,

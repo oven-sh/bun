@@ -76,6 +76,8 @@ pub struct PackageJSON {
     pub scripts: Option<Box<ScriptsMap>>,
     // Values borrow the source buffer (lifetime-erased; owned by `source_contents`).
     pub config: Option<Box<StringArrayHashMap<&'static [u8]>>>,
+    /// The `(first, count)` span on `json_tape` of the "workspaces" items. Kept when `scripts` is.
+    pub(crate) workspaces: (u32, u32),
 
     pub(crate) arch: Architecture,
     pub(crate) os: OperatingSystem,
@@ -133,6 +135,7 @@ impl Default for PackageJSON {
             version: Box::default(),
             scripts: None,
             config: None,
+            workspaces: (0, 0),
             arch: Architecture::all(),
             os: OperatingSystem::all(),
             package_manager_package_id: INVALID_PACKAGE_ID,
@@ -195,6 +198,109 @@ impl PackageJSON {
         bun_paths::slashes_to_posix_in_place(&mut normalized[..]);
         Ok(normalized)
     }
+
+    #[inline]
+    pub(crate) fn has_workspaces(&self) -> bool {
+        self.workspaces.1 != 0
+    }
+
+    fn workspace_patterns(&self) -> impl Iterator<Item = &[u8]> {
+        let (first, count) = self.workspaces;
+        self.json_tape
+            .iter()
+            .flat_map(move |tape| tape.string_items(first, count))
+    }
+
+    /// Whether "workspaces" lists `dir`, below `root`, from the two paths alone. The last pattern that matches decides.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn lists_workspace(&self, root: &[u8], dir: &[u8]) -> bool {
+        let Some(relative) = dir.get(root.len()..) else {
+            return false;
+        };
+        let relative = strings::without_trailing_slash(relative);
+        if strings::split_any(relative, NAME_SEPARATORS).any(|name| name == b"node_modules") {
+            return false;
+        }
+
+        let mut listed = false;
+        let mut pattern_spill = Vec::new();
+        for mut pattern in self.workspace_patterns() {
+            let mut negated = false;
+            while let [b'!', rest @ ..] = pattern {
+                negated = !negated;
+                pattern = rest;
+            }
+            // A pattern is a path: `./packages/*`, `packages//*/` and `packages\*` all name `packages/*`.
+            let pattern = resolve_path::resolve_path::normalize_string_spill::<
+                true,
+                resolve_path::platform::Loose,
+            >(&mut pattern_spill, pattern);
+            // In `./!x` the `!` is part of a name. The matcher reads it as a negation.
+            if pattern.first() == Some(&b'!') {
+                continue;
+            }
+            if pattern_matches_directory(pattern, relative, negated) {
+                listed = !negated;
+            }
+        }
+        listed
+    }
+}
+
+/// The separators of a `DirInfo::abs_path`. The glob matcher takes both on Windows.
+const NAME_SEPARATORS: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+
+/// Whether a "workspaces" pattern matches the directory `relative`. As for npm, `packages/**` also matches `packages`.
+fn pattern_matches_directory(mut pattern: &[u8], relative: &[u8], dot: bool) -> bool {
+    loop {
+        if glob::r#match(pattern, relative).matches()
+            && (dot || !wildcard_matches_dot_name(pattern, relative))
+        {
+            return true;
+        }
+        match pattern.strip_suffix(b"/**") {
+            Some(directory) => pattern = directory,
+            None => return false,
+        }
+    }
+}
+
+/// Whether a wildcard of `pattern` matched a name of `relative` that starts with a dot. Only a `!` pattern can do that.
+fn wildcard_matches_dot_name(pattern: &[u8], relative: &[u8]) -> bool {
+    let is_dot = |name: &[u8]| name.first() == Some(&b'.');
+    let names = || strings::split_any(relative, NAME_SEPARATORS);
+    if !names().any(is_dot) {
+        return false;
+    }
+    let pattern_names = || strings::split(pattern, b"/");
+    let is_globstar = |name: &[u8]| name == b"**";
+    let total = pattern_names().count();
+    let first = pattern_names().position(is_globstar).unwrap_or(total);
+    let last =
+        pattern_names().enumerate().fold(
+            total,
+            |last, (index, name)| if is_globstar(name) { index } else { last },
+        );
+    let name_count = names().count();
+    names().enumerate().any(|(index, name)| {
+        if !is_dot(name) {
+            return false;
+        }
+        // Up to the first `**` and after the last one, the names pair with the pattern names from each end.
+        let from_end = name_count - index;
+        let pattern_name = if index < first {
+            pattern_names().nth(index)
+        } else if from_end < total - last {
+            pattern_names().nth(total - from_end)
+        } else {
+            pattern_names()
+                .take(last)
+                .skip(first + 1)
+                .find(|pattern_name| *pattern_name == name)
+        };
+        !pattern_name.is_some_and(is_dot)
+    })
 }
 
 #[derive(Default)]
@@ -492,6 +598,7 @@ impl PackageJSON {
             main_fields: MainFieldMap::default(),
             scripts: None,
             config: None,
+            workspaces: (0, 0),
             arch: Architecture::all(),
             os: OperatingSystem::all(),
             package_manager_package_id: INVALID_PACKAGE_ID,
@@ -980,6 +1087,7 @@ impl PackageJSON {
             if let Some(config) = property_string_map(b"config") {
                 package_json.config = Some(config);
             }
+            package_json.workspaces = workspaces_item_span(&json);
         }
         let _ = (include_scripts, package_id);
 
@@ -998,6 +1106,27 @@ impl PackageJSON {
         package_json.source_contents = entry_contents;
         package_json.json_tape = parsed_json.tape;
         Some(package_json)
+    }
+}
+
+/// The span on the item tape of the "workspaces" array of a package.json, or of the "packages" array in it.
+fn workspaces_item_span(json: &js_ast::Expr) -> (u32, u32) {
+    let Some(prop) = json.as_property(b"workspaces") else {
+        return (0, 0);
+    };
+    let array = match &prop.expr.data {
+        js_ast::ExprData::EArrayJSON(array) => array.get(),
+        js_ast::ExprData::EObjectJSON(object) => match object.get().get(b"packages") {
+            Some(js_ast::E::JsonValue::Array(array)) => array.get(),
+            _ => return (0, 0),
+        },
+        _ => return (0, 0),
+    };
+    // `bun install` and `--filter` stop at an item that is not a string: such an array lists nothing.
+    if array.items().iter().all(|item| item.as_str().is_some()) {
+        array.item_span()
+    } else {
+        (0, 0)
     }
 }
 

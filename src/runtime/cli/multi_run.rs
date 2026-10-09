@@ -45,7 +45,7 @@ struct ScriptConfig {
     cwd: Box<[u8]>,
     /// PATH env var value for this script
     path: Box<[u8]>,
-    /// `command` runs a file with bun: no script and no bin, so no `INIT_CWD` is set for it.
+    /// `command` runs a file with bun: no script and no bin, so `set_run_dirs` is not for it.
     is_file: bool,
 }
 
@@ -178,7 +178,7 @@ impl<'a> ProcessHandle<'a> {
                     if self.config.is_file {
                         return env.map.create_null_delimited_env_map();
                     }
-                    env.with_init_cwd(|env| env.map.create_null_delimited_env_map())
+                    env.with_run_dirs(|env| env.map.create_null_delimited_env_map())
                 },
             )?;
             // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
@@ -954,6 +954,9 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     if !ctx.filters.is_empty() || ctx.workspaces {
         // Workspace-aware mode: iterate over matching workspace packages
         let selected = FilterArg::select_packages(&*ctx, &mut this_transpiler.resolver, cwd)?;
+        if let Some(root) = selected.workspace_root(cwd) {
+            this_transpiler.env_mut().local_prefix = root;
+        }
         let resolve_root: &[u8] = &selected.root_dir;
 
         // Phase 1: collect packages; `scripts` is deep-copied so MatchedPackage sorts independently of `selected`.

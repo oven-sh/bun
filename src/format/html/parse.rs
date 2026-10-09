@@ -206,7 +206,8 @@ impl<'a> Context<'a, '_> {
             let second = match &second {
                 Some(second) => second,
                 None => {
-                    let second = second.insert(self.angular_html_parser_parse(range, &options, false)?);
+                    let second =
+                        second.insert(self.angular_html_parser_parse(range, &options, false)?);
                     second.errors.sort_unstable();
                     candidate = self.tree.first_child(second.root);
                     &*second
@@ -223,11 +224,14 @@ impl<'a> Context<'a, '_> {
                 return Err(ParseError::Syntax);
             }
             // `getElementWithSameLocation`. Both lists are in the order of the text.
-            while let Some(other) = candidate.filter(|&it| self.tree[it].span.start < start_span.start) {
+            while let Some(other) =
+                candidate.filter(|&it| self.tree[it].span.start < start_span.start)
+            {
                 candidate = self.tree.next(other);
             }
             if let Some(same) = candidate.filter(|&it| {
-                self.tree[it].kind == Kind::Element && self.tree[it].start_span.start == start_span.start
+                self.tree[it].kind == Kind::Element
+                    && self.tree[it].start_span.start == start_span.start
             }) {
                 candidate = self.tree.next(same);
                 self.tree.remove(same);
@@ -303,11 +307,14 @@ impl<'a> Context<'a, '_> {
         };
         let node = &mut self.tree[id];
         let (name, has_explicit_namespace) = restored(node.namespace, node.name_span);
-        node.name = Cow::Borrowed(name);
+        let old_name = std::mem::replace(&mut node.name, Cow::Borrowed(name));
         node.flags
             .set(Flags::HAS_EXPLICIT_NAMESPACE, has_explicit_namespace);
-        // `addTagDefinition`
-        let definition = parser::definition_of(name, options.is_tag_name_case_sensitive);
+        // `addTagDefinition`. Without a namespace, the parser has looked for the same name.
+        let definition = match node.namespace.is_empty() && *old_name == *name {
+            true => node.tag_definition,
+            false => parser::definition_of(name, options.is_tag_name_case_sensitive),
+        };
         let is_plain = node.namespace.is_empty()
             || Some(node.namespace) == definition.implicit_namespace_prefix
             || is_unknown_namespace(node);

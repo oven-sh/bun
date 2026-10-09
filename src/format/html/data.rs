@@ -61,6 +61,38 @@ impl TagDefinition {
     }
 }
 
+/// `name` and its length as a number. 0: it is empty, or has more than 15 bytes.
+const fn key(name: &[u8]) -> u128 {
+    let mut bytes = [0; 16];
+    if name.len() < bytes.len() {
+        bytes.split_at_mut(name.len()).0.copy_from_slice(name);
+        bytes[15] = name.len() as u8;
+    }
+    u128::from_be_bytes(bytes)
+}
+
+/// Whether the keys of `table` grow, and none is 0.
+const fn is_sorted<T>(table: &[(u128, T)]) -> bool {
+    let (mut at, mut previous) = (0, 0);
+    while at < table.len() {
+        if table[at].0 <= previous {
+            return false;
+        }
+        previous = table[at].0;
+        at += 1;
+    }
+    true
+}
+
+/// What `table`, which is sorted, has for `name`.
+fn lookup<T: Copy>(table: &[(u128, T)], name: &[u8]) -> Option<T> {
+    let at = table
+        .binary_search_by_key(&key(name), |entry| entry.0)
+        .ok()?;
+    table.get(at).map(|entry| entry.1)
+}
+
+/// Of an element that Angular's schema has, and that has no definition of its own.
 const KNOWN: TagDefinition = TagDefinition {
     closed_by_children: &[],
     implicit_namespace_prefix: None,
@@ -77,117 +109,227 @@ pub(crate) static DEFAULT_TAG_DEFINITION: TagDefinition = TagDefinition {
     ..KNOWN
 };
 
+const fn closed_by(children: &'static [&'static [u8]], closed_by_parent: bool) -> TagDefinition {
+    TagDefinition {
+        closed_by_children: children,
+        closed_by_parent,
+        ..KNOWN
+    }
+}
+
+const fn namespace(prefix: &'static [u8], prevent_namespace_inheritance: bool) -> TagDefinition {
+    TagDefinition {
+        implicit_namespace_prefix: Some(prefix),
+        prevent_namespace_inheritance,
+        ..KNOWN
+    }
+}
+
+const fn content(content_type: ContentType, ignore_first_lf: bool) -> TagDefinition {
+    TagDefinition {
+        content_type,
+        ignore_first_lf,
+        ..KNOWN
+    }
+}
+
+const VOID: TagDefinition = TagDefinition {
+    is_void: true,
+    closed_by_parent: true,
+    ..KNOWN
+};
+const P: TagDefinition = closed_by(
+    &[
+        b"address",
+        b"article",
+        b"aside",
+        b"blockquote",
+        b"div",
+        b"dl",
+        b"fieldset",
+        b"footer",
+        b"form",
+        b"h1",
+        b"h2",
+        b"h3",
+        b"h4",
+        b"h5",
+        b"h6",
+        b"header",
+        b"hgroup",
+        b"hr",
+        b"main",
+        b"nav",
+        b"ol",
+        b"p",
+        b"pre",
+        b"section",
+        b"table",
+        b"ul",
+    ],
+    true,
+);
+const THEAD: TagDefinition = closed_by(&[b"tbody", b"tfoot"], false);
+const TBODY: TagDefinition = closed_by(&[b"tbody", b"tfoot"], true);
+const TFOOT: TagDefinition = closed_by(&[b"tbody"], true);
+const TR: TagDefinition = closed_by(&[b"tr"], true);
+const TD: TagDefinition = closed_by(&[b"td", b"th"], true);
+const SVG: TagDefinition = namespace(b"svg", false);
+const FOREIGN_OBJECT: TagDefinition = namespace(b"svg", true);
+const MATH: TagDefinition = namespace(b"math", false);
+const LI: TagDefinition = closed_by(&[b"li"], true);
+const DT: TagDefinition = closed_by(&[b"dt", b"dd"], false);
+const DD: TagDefinition = closed_by(&[b"dt", b"dd"], true);
+const RB: TagDefinition = closed_by(&[b"rb", b"rt", b"rtc", b"rp"], true);
+const RTC: TagDefinition = closed_by(&[b"rb", b"rtc", b"rp"], true);
+const OPTGROUP: TagDefinition = closed_by(&[b"optgroup"], true);
+const OPTION: TagDefinition = closed_by(&[b"option", b"optgroup"], true);
+const PRE: TagDefinition = content(ContentType::ParsableData, true);
+const RAW: TagDefinition = content(ContentType::RawText, false);
+const TITLE: TagDefinition = content(ContentType::EscapableRawText, false);
+const TEXTAREA: TagDefinition = content(ContentType::EscapableRawText, true);
+
+/// What `getHtmlTagDefinition` knows, sorted by the keys.
+const TAG_DEFINITIONS: &[(u128, &TagDefinition)] = &[
+    (key(b"[element]"), &KNOWN),
+    (key(b"[htmlelement]"), &KNOWN),
+    (key(b"a"), &KNOWN),
+    (key(b"abbr"), &KNOWN),
+    (key(b"address"), &KNOWN),
+    (key(b"area"), &VOID),
+    (key(b"article"), &KNOWN),
+    (key(b"aside"), &KNOWN),
+    (key(b"audio"), &KNOWN),
+    (key(b"b"), &KNOWN),
+    (key(b"base"), &VOID),
+    (key(b"bdi"), &KNOWN),
+    (key(b"bdo"), &KNOWN),
+    (key(b"blockquote"), &KNOWN),
+    (key(b"body"), &KNOWN),
+    (key(b"br"), &VOID),
+    (key(b"button"), &KNOWN),
+    (key(b"canvas"), &KNOWN),
+    (key(b"caption"), &KNOWN),
+    (key(b"cite"), &KNOWN),
+    (key(b"code"), &KNOWN),
+    (key(b"col"), &VOID),
+    (key(b"colgroup"), &KNOWN),
+    (key(b"content"), &KNOWN),
+    (key(b"data"), &KNOWN),
+    (key(b"datalist"), &KNOWN),
+    (key(b"dd"), &DD),
+    (key(b"del"), &KNOWN),
+    (key(b"details"), &KNOWN),
+    (key(b"dfn"), &KNOWN),
+    (key(b"dialog"), &KNOWN),
+    (key(b"dir"), &KNOWN),
+    (key(b"div"), &KNOWN),
+    (key(b"dl"), &KNOWN),
+    (key(b"dt"), &DT),
+    (key(b"em"), &KNOWN),
+    (key(b"embed"), &VOID),
+    (key(b"fieldset"), &KNOWN),
+    (key(b"figcaption"), &KNOWN),
+    (key(b"figure"), &KNOWN),
+    (key(b"font"), &KNOWN),
+    (key(b"footer"), &KNOWN),
+    (key(b"foreignObject"), &FOREIGN_OBJECT),
+    (key(b"form"), &KNOWN),
+    (key(b"frame"), &KNOWN),
+    (key(b"frameset"), &KNOWN),
+    (key(b"geolocation"), &KNOWN),
+    (key(b"h1"), &KNOWN),
+    (key(b"h2"), &KNOWN),
+    (key(b"h3"), &KNOWN),
+    (key(b"h4"), &KNOWN),
+    (key(b"h5"), &KNOWN),
+    (key(b"h6"), &KNOWN),
+    (key(b"head"), &KNOWN),
+    (key(b"header"), &KNOWN),
+    (key(b"hgroup"), &KNOWN),
+    (key(b"hr"), &VOID),
+    (key(b"html"), &KNOWN),
+    (key(b"i"), &KNOWN),
+    (key(b"iframe"), &KNOWN),
+    (key(b"img"), &VOID),
+    (key(b"input"), &VOID),
+    (key(b"ins"), &KNOWN),
+    (key(b"kbd"), &KNOWN),
+    (key(b"keygen"), &KNOWN),
+    (key(b"label"), &KNOWN),
+    (key(b"legend"), &KNOWN),
+    (key(b"li"), &LI),
+    (key(b"link"), &VOID),
+    (key(b"listing"), &PRE),
+    (key(b"main"), &KNOWN),
+    (key(b"map"), &KNOWN),
+    (key(b"mark"), &KNOWN),
+    (key(b"marquee"), &KNOWN),
+    (key(b"math"), &MATH),
+    (key(b"media"), &KNOWN),
+    (key(b"menu"), &KNOWN),
+    (key(b"menuitem"), &KNOWN),
+    (key(b"meta"), &VOID),
+    (key(b"meter"), &KNOWN),
+    (key(b"nav"), &KNOWN),
+    (key(b"noscript"), &KNOWN),
+    (key(b"object"), &KNOWN),
+    (key(b"ol"), &KNOWN),
+    (key(b"optgroup"), &OPTGROUP),
+    (key(b"option"), &OPTION),
+    (key(b"output"), &KNOWN),
+    (key(b"p"), &P),
+    (key(b"param"), &VOID),
+    (key(b"picture"), &KNOWN),
+    (key(b"pre"), &PRE),
+    (key(b"progress"), &KNOWN),
+    (key(b"q"), &KNOWN),
+    (key(b"rb"), &RB),
+    (key(b"rp"), &RB),
+    (key(b"rt"), &RB),
+    (key(b"rtc"), &RTC),
+    (key(b"ruby"), &KNOWN),
+    (key(b"s"), &KNOWN),
+    (key(b"samp"), &KNOWN),
+    (key(b"script"), &RAW),
+    (key(b"search"), &KNOWN),
+    (key(b"section"), &KNOWN),
+    (key(b"select"), &KNOWN),
+    (key(b"selectedcontent"), &KNOWN),
+    (key(b"slot"), &KNOWN),
+    (key(b"small"), &KNOWN),
+    (key(b"source"), &VOID),
+    (key(b"span"), &KNOWN),
+    (key(b"strong"), &KNOWN),
+    (key(b"style"), &RAW),
+    (key(b"sub"), &KNOWN),
+    (key(b"summary"), &KNOWN),
+    (key(b"sup"), &KNOWN),
+    (key(b"svg"), &SVG),
+    (key(b"table"), &KNOWN),
+    (key(b"tbody"), &TBODY),
+    (key(b"td"), &TD),
+    (key(b"template"), &KNOWN),
+    (key(b"textarea"), &TEXTAREA),
+    (key(b"tfoot"), &TFOOT),
+    (key(b"th"), &TD),
+    (key(b"thead"), &THEAD),
+    (key(b"time"), &KNOWN),
+    (key(b"title"), &TITLE),
+    (key(b"tr"), &TR),
+    (key(b"track"), &VOID),
+    (key(b"u"), &KNOWN),
+    (key(b"ul"), &KNOWN),
+    (key(b"unknown"), &KNOWN),
+    (key(b"var"), &KNOWN),
+    (key(b"video"), &KNOWN),
+    (key(b"wbr"), &VOID),
+];
+const _: () = assert!(is_sorted(TAG_DEFINITIONS));
+
 /// `getHtmlTagDefinition`
 pub(crate) fn tag_definition(name: &[u8]) -> &'static TagDefinition {
-    const fn closed_by(
-        children: &'static [&'static [u8]],
-        closed_by_parent: bool,
-    ) -> TagDefinition {
-        TagDefinition {
-            closed_by_children: children,
-            closed_by_parent,
-            ..KNOWN
-        }
-    }
-    const fn namespace(
-        prefix: &'static [u8],
-        prevent_namespace_inheritance: bool,
-    ) -> TagDefinition {
-        TagDefinition {
-            implicit_namespace_prefix: Some(prefix),
-            prevent_namespace_inheritance,
-            ..KNOWN
-        }
-    }
-    const fn content(content_type: ContentType, ignore_first_lf: bool) -> TagDefinition {
-        TagDefinition {
-            content_type,
-            ignore_first_lf,
-            ..KNOWN
-        }
-    }
-    static KNOWN_ELEMENT: TagDefinition = KNOWN;
-    static VOID: TagDefinition = TagDefinition {
-        is_void: true,
-        closed_by_parent: true,
-        ..KNOWN
-    };
-    static P: TagDefinition = closed_by(
-        &[
-            b"address",
-            b"article",
-            b"aside",
-            b"blockquote",
-            b"div",
-            b"dl",
-            b"fieldset",
-            b"footer",
-            b"form",
-            b"h1",
-            b"h2",
-            b"h3",
-            b"h4",
-            b"h5",
-            b"h6",
-            b"header",
-            b"hgroup",
-            b"hr",
-            b"main",
-            b"nav",
-            b"ol",
-            b"p",
-            b"pre",
-            b"section",
-            b"table",
-            b"ul",
-        ],
-        true,
-    );
-    static THEAD: TagDefinition = closed_by(&[b"tbody", b"tfoot"], false);
-    static TBODY: TagDefinition = closed_by(&[b"tbody", b"tfoot"], true);
-    static TFOOT: TagDefinition = closed_by(&[b"tbody"], true);
-    static TR: TagDefinition = closed_by(&[b"tr"], true);
-    static TD: TagDefinition = closed_by(&[b"td", b"th"], true);
-    static SVG: TagDefinition = namespace(b"svg", false);
-    static FOREIGN_OBJECT: TagDefinition = namespace(b"svg", true);
-    static MATH: TagDefinition = namespace(b"math", false);
-    static LI: TagDefinition = closed_by(&[b"li"], true);
-    static DT: TagDefinition = closed_by(&[b"dt", b"dd"], false);
-    static DD: TagDefinition = closed_by(&[b"dt", b"dd"], true);
-    static RB: TagDefinition = closed_by(&[b"rb", b"rt", b"rtc", b"rp"], true);
-    static RTC: TagDefinition = closed_by(&[b"rb", b"rtc", b"rp"], true);
-    static OPTGROUP: TagDefinition = closed_by(&[b"optgroup"], true);
-    static OPTION: TagDefinition = closed_by(&[b"option", b"optgroup"], true);
-    static PRE: TagDefinition = content(ContentType::ParsableData, true);
-    static RAW: TagDefinition = content(ContentType::RawText, false);
-    static TITLE: TagDefinition = content(ContentType::EscapableRawText, false);
-    static TEXTAREA: TagDefinition = content(ContentType::EscapableRawText, true);
-    match name {
-        b"base" | b"meta" | b"area" | b"embed" | b"link" | b"img" | b"input" | b"param" | b"hr"
-        | b"br" | b"source" | b"track" | b"wbr" | b"col" => &VOID,
-        b"p" => &P,
-        b"thead" => &THEAD,
-        b"tbody" => &TBODY,
-        b"tfoot" => &TFOOT,
-        b"tr" => &TR,
-        b"td" | b"th" => &TD,
-        b"svg" => &SVG,
-        b"foreignObject" => &FOREIGN_OBJECT,
-        b"math" => &MATH,
-        b"li" => &LI,
-        b"dt" => &DT,
-        b"dd" => &DD,
-        b"rb" | b"rt" | b"rp" => &RB,
-        b"rtc" => &RTC,
-        b"optgroup" => &OPTGROUP,
-        b"option" => &OPTION,
-        b"pre" | b"listing" => &PRE,
-        b"style" | b"script" => &RAW,
-        b"title" => &TITLE,
-        b"textarea" => &TEXTAREA,
-        _ if KNOWN_ELEMENTS.binary_search(&name).is_ok() => &KNOWN_ELEMENT,
-        _ => &DEFAULT_TAG_DEFINITION,
-    }
+    lookup(TAG_DEFINITIONS, name).unwrap_or(&DEFAULT_TAG_DEFINITION)
 }
 
 /// `HTML_TAGS.has(name)`
@@ -197,7 +339,7 @@ pub(crate) fn is_html_tag(name: &[u8]) -> bool {
 
 /// `htmlEventAttributes.has(name)`
 pub(crate) fn is_event_attribute(name: &[u8]) -> bool {
-    HTML_EVENT_ATTRIBUTES.binary_search(&name).is_ok()
+    name.starts_with(b"on") && HTML_EVENT_ATTRIBUTES.binary_search(&name).is_ok()
 }
 
 /// Whether the element with the name `element` is known, and has an attribute with the name `attribute`.
@@ -209,28 +351,98 @@ pub(crate) fn is_attribute_of_element(element: &[u8], attribute: &[u8]) -> bool 
     })
 }
 
+/// `CSS_DISPLAY_TAGS`, sorted by the keys.
+const CSS_DISPLAY_TAGS: &[(u128, Display)] = &[
+    (key(b"address"), Display::Block),
+    (key(b"area"), Display::None),
+    (key(b"article"), Display::Block),
+    (key(b"aside"), Display::Block),
+    (key(b"audio"), Display::InlineBlock),
+    (key(b"base"), Display::None),
+    (key(b"basefont"), Display::None),
+    (key(b"blockquote"), Display::Block),
+    (key(b"body"), Display::Block),
+    (key(b"button"), Display::InlineBlock),
+    (key(b"caption"), Display::Table),
+    (key(b"center"), Display::Block),
+    (key(b"col"), Display::Table),
+    (key(b"colgroup"), Display::Table),
+    (key(b"datalist"), Display::None),
+    (key(b"dd"), Display::Block),
+    (key(b"details"), Display::Block),
+    (key(b"dialog"), Display::Block),
+    (key(b"dir"), Display::Block),
+    (key(b"div"), Display::Block),
+    (key(b"dl"), Display::Block),
+    (key(b"dt"), Display::Block),
+    (key(b"fieldset"), Display::Block),
+    (key(b"figcaption"), Display::Block),
+    (key(b"figure"), Display::Block),
+    (key(b"footer"), Display::Block),
+    (key(b"form"), Display::Block),
+    (key(b"h1"), Display::Block),
+    (key(b"h2"), Display::Block),
+    (key(b"h3"), Display::Block),
+    (key(b"h4"), Display::Block),
+    (key(b"h5"), Display::Block),
+    (key(b"h6"), Display::Block),
+    (key(b"head"), Display::None),
+    (key(b"header"), Display::Block),
+    (key(b"hgroup"), Display::Block),
+    (key(b"hr"), Display::Block),
+    (key(b"html"), Display::Block),
+    (key(b"input"), Display::InlineBlock),
+    (key(b"legend"), Display::Block),
+    (key(b"li"), Display::ListItem),
+    (key(b"link"), Display::None),
+    (key(b"listing"), Display::Block),
+    (key(b"main"), Display::Block),
+    (key(b"marquee"), Display::InlineBlock),
+    (key(b"menu"), Display::Block),
+    (key(b"meta"), Display::None),
+    (key(b"meter"), Display::InlineBlock),
+    (key(b"nav"), Display::Block),
+    (key(b"noembed"), Display::None),
+    (key(b"noframes"), Display::None),
+    (key(b"object"), Display::InlineBlock),
+    (key(b"ol"), Display::Block),
+    (key(b"optgroup"), Display::Block),
+    (key(b"option"), Display::Block),
+    (key(b"p"), Display::Block),
+    (key(b"param"), Display::Block),
+    (key(b"plaintext"), Display::Block),
+    (key(b"pre"), Display::Block),
+    (key(b"progress"), Display::InlineBlock),
+    (key(b"rp"), Display::None),
+    (key(b"rt"), Display::Inline),
+    (key(b"ruby"), Display::Inline),
+    (key(b"script"), Display::Block),
+    (key(b"search"), Display::Block),
+    (key(b"section"), Display::Block),
+    (key(b"select"), Display::InlineBlock),
+    (key(b"slot"), Display::Inline),
+    (key(b"source"), Display::Block),
+    (key(b"style"), Display::None),
+    (key(b"summary"), Display::Block),
+    (key(b"table"), Display::Table),
+    (key(b"tbody"), Display::Table),
+    (key(b"td"), Display::TableCell),
+    (key(b"template"), Display::Inline),
+    (key(b"tfoot"), Display::Table),
+    (key(b"th"), Display::TableCell),
+    (key(b"thead"), Display::Table),
+    (key(b"title"), Display::None),
+    (key(b"tr"), Display::Table),
+    (key(b"track"), Display::Block),
+    (key(b"ul"), Display::Block),
+    (key(b"video"), Display::InlineBlock),
+    (key(b"xmp"), Display::Block),
+];
+const _: () = assert!(is_sorted(CSS_DISPLAY_TAGS));
+
 /// `CSS_DISPLAY_TAGS[name]`
 pub(crate) fn css_display_of_tag(name: &[u8]) -> Option<Display> {
-    Some(match name {
-        b"area" | b"base" | b"basefont" | b"datalist" | b"head" | b"link" | b"meta"
-        | b"noembed" | b"noframes" | b"rp" | b"style" | b"title" => Display::None,
-        b"address" | b"article" | b"aside" | b"blockquote" | b"body" | b"center" | b"dd"
-        | b"details" | b"dialog" | b"dir" | b"div" | b"dl" | b"dt" | b"fieldset"
-        | b"figcaption" | b"figure" | b"footer" | b"form" | b"h1" | b"h2" | b"h3" | b"h4"
-        | b"h5" | b"h6" | b"header" | b"hgroup" | b"hr" | b"html" | b"legend" | b"listing"
-        | b"main" | b"menu" | b"nav" | b"ol" | b"optgroup" | b"option" | b"p" | b"param"
-        | b"plaintext" | b"pre" | b"script" | b"search" | b"section" | b"source" | b"summary"
-        | b"track" | b"ul" | b"xmp" => Display::Block,
-        b"rt" | b"ruby" | b"slot" | b"template" => Display::Inline,
-        b"li" => Display::ListItem,
-        b"caption" | b"col" | b"colgroup" | b"table" | b"tbody" | b"tfoot" | b"thead" | b"tr" => {
-            Display::Table
-        }
-        b"td" | b"th" => Display::TableCell,
-        b"audio" | b"button" | b"input" | b"marquee" | b"meter" | b"object" | b"progress"
-        | b"select" | b"video" => Display::InlineBlock,
-        _ => return None,
-    })
+    lookup(CSS_DISPLAY_TAGS, name)
 }
 
 /// Whether `CSS_WHITE_SPACE_TAGS[name]` starts with `pre`.
@@ -488,104 +700,6 @@ const HTML_EVENT_ATTRIBUTES: [&[u8]; 90] = [
     b"onvolumechange",
     b"onwaiting",
     b"onwheel",
-];
-
-/// The names of elements that Angular's schema has and that have no definition of their own, sorted.
-const KNOWN_ELEMENTS: [&[u8]; 94] = [
-    b"[element]",
-    b"[htmlelement]",
-    b"a",
-    b"abbr",
-    b"address",
-    b"article",
-    b"aside",
-    b"audio",
-    b"b",
-    b"bdi",
-    b"bdo",
-    b"blockquote",
-    b"body",
-    b"button",
-    b"canvas",
-    b"caption",
-    b"cite",
-    b"code",
-    b"colgroup",
-    b"content",
-    b"data",
-    b"datalist",
-    b"del",
-    b"details",
-    b"dfn",
-    b"dialog",
-    b"dir",
-    b"div",
-    b"dl",
-    b"em",
-    b"fieldset",
-    b"figcaption",
-    b"figure",
-    b"font",
-    b"footer",
-    b"form",
-    b"frame",
-    b"frameset",
-    b"geolocation",
-    b"h1",
-    b"h2",
-    b"h3",
-    b"h4",
-    b"h5",
-    b"h6",
-    b"head",
-    b"header",
-    b"hgroup",
-    b"html",
-    b"i",
-    b"iframe",
-    b"ins",
-    b"kbd",
-    b"keygen",
-    b"label",
-    b"legend",
-    b"main",
-    b"map",
-    b"mark",
-    b"marquee",
-    b"media",
-    b"menu",
-    b"menuitem",
-    b"meter",
-    b"nav",
-    b"noscript",
-    b"object",
-    b"ol",
-    b"output",
-    b"picture",
-    b"progress",
-    b"q",
-    b"ruby",
-    b"s",
-    b"samp",
-    b"search",
-    b"section",
-    b"select",
-    b"selectedcontent",
-    b"slot",
-    b"small",
-    b"span",
-    b"strong",
-    b"sub",
-    b"summary",
-    b"sup",
-    b"table",
-    b"template",
-    b"time",
-    b"u",
-    b"ul",
-    b"unknown",
-    b"var",
-    b"video",
 ];
 
 /// `html-element-attributes`: the attributes of the element with the name, sorted. `*`: of all elements.

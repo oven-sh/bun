@@ -79,17 +79,10 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         (self.peek().kind == kind).then(|| self.advance())
     }
 
-    /// The definition of what has the full name `:prefix:name`: there is none with a colon in the name.
-    fn definition(&self, name: FullName<'_>) -> &'static TagDefinition {
-        match name.prefix {
-            b"" => definition_of(name.name, self.is_tag_name_case_sensitive),
-            _ => &data::DEFAULT_TAG_DEFINITION,
-        }
-    }
-
     /// `_getTagDefinition(node)`
     fn definition_of_node(&self, id: Id) -> Option<&'static TagDefinition> {
-        (self.tree[id].kind == Kind::Element).then(|| self.definition(self.full_name_of(id)))
+        let node = &self.tree[id];
+        (node.kind == Kind::Element).then_some(node.tag_definition)
     }
 
     /// While the tree is built, the name of an element is a part of the text, and so is its namespace.
@@ -366,32 +359,35 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         }
     }
 
-    /// `_getElementFullName`
-    fn full_name(&self, token: Token, parent: Option<Id>) -> FullName<'a> {
+    /// `_getElementFullName`, and the definition of what has that name, `:prefix:name`: there is none with a colon in
+    /// the name.
+    fn full_name(
+        &self,
+        token: Token,
+        parent: Option<Id>,
+    ) -> (FullName<'a>, &'static TagDefinition) {
         let Parts::Name(prefix, name) = token.parts else {
-            return FullName {
-                prefix: b"",
-                name: b"",
-            };
+            let (prefix, name) = (&b""[..], &b""[..]);
+            return (FullName { prefix, name }, &data::DEFAULT_TAG_DEFINITION);
         };
-        let name = name.of(self.text);
-        let mut prefix = prefix.of(self.text);
-        if prefix.is_empty() {
-            prefix = definition_of(name, self.is_tag_name_case_sensitive)
-                .implicit_namespace_prefix
-                .unwrap_or_default();
+        let (prefix, name) = (prefix.of(self.text), name.of(self.text));
+        if !prefix.is_empty() {
+            return (FullName { prefix, name }, &data::DEFAULT_TAG_DEFINITION);
         }
+        let definition = definition_of(name, self.is_tag_name_case_sensitive);
+        let mut prefix = definition.implicit_namespace_prefix.unwrap_or_default();
         if prefix.is_empty()
-            && let Some(parent) = parent
-        {
-            let parent = self.full_name_of(parent);
-            if !definition_of(parent.name, self.is_tag_name_case_sensitive)
+            && let Some(parent) = parent.map(|parent| self.full_name_of(parent))
+            && !parent.prefix.is_empty()
+            && !definition_of(parent.name, self.is_tag_name_case_sensitive)
                 .prevent_namespace_inheritance
-            {
-                prefix = parent.prefix;
-            }
+        {
+            prefix = parent.prefix;
         }
-        FullName { prefix, name }
+        match prefix {
+            b"" => (FullName { prefix, name }, definition),
+            _ => (FullName { prefix, name }, &data::DEFAULT_TAG_DEFINITION),
+        }
     }
 
     fn consume_element_start_tag(&mut self, start_tag_token: Token) {
@@ -417,8 +413,8 @@ impl<'a> TreeBuilder<'a, '_, '_> {
                 _ => break,
             }
         }
-        let full_name = self.full_name(start_tag_token, self.closest_element_like_parent());
-        let definition = self.definition(full_name);
+        let (full_name, definition) =
+            self.full_name(start_tag_token, self.closest_element_like_parent());
         let mut is_self_closing = false;
         if self.peek().kind == TokenType::TagOpenEndVoid {
             self.advance();
@@ -439,6 +435,7 @@ impl<'a> TreeBuilder<'a, '_, '_> {
         node.name_span = Span::new(start_tag_token.span.start + 1, start_tag_token.span.end);
         node.name = Cow::Borrowed(full_name.name);
         node.namespace = full_name.prefix;
+        node.tag_definition = definition;
         node.attrs = (first_attr, self.tree.attrs.len() as u32);
         node.start_tag_comments = (first_comment, self.tree.start_tag_comments.len() as u32);
         let is_closed_by_child = self
@@ -474,8 +471,12 @@ impl<'a> TreeBuilder<'a, '_, '_> {
                 true => None,
                 false => Some(self.full_name(end_tag_token, self.closest_element_like_parent())),
             };
-        if full_name.is_some_and(|it| self.definition(it).is_void)
-            || !self.pop_container(full_name, Kind::Element, Some(end_tag_token.span))
+        if full_name.is_some_and(|(_, definition)| definition.is_void)
+            || !self.pop_container(
+                full_name.map(|(name, _)| name),
+                Kind::Element,
+                Some(end_tag_token.span),
+            )
         {
             self.errors.push(end_tag_token.span.start);
         }
@@ -659,6 +660,8 @@ pub(crate) fn parse<'a>(
     };
     let get_tag_content_type: GetTagContentType<'_> = &get_tag_content_type;
     let (tokens, mut errors) = lexer::tokenize(text, start, get_tag_content_type, options.lexer);
+    // As a rule a node is three or four tokens.
+    tree.nodes.reserve(tokens.len() / 3);
     let root = tree.add(Node::new(Kind::Root, Span::new(0, text.len() as u32)));
     let end = tokens.len().saturating_sub(1);
     let mut builder = TreeBuilder {

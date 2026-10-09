@@ -1238,22 +1238,20 @@ pub(crate) fn tokenize(
         expansion_case_stack: Vec::new(),
         full_name_stack: Vec::new(),
         attributes: Vec::new(),
-        tokens: Vec::new(),
+        // As a rule a token is ten bytes or so.
+        tokens: Vec::with_capacity(text.len().saturating_sub(start) / 8),
         errors: Vec::new(),
     };
     tokenizer.tokenize();
     // `mergeTextTokens`
-    let mut merged: Vec<Token> = Vec::with_capacity(tokenizer.tokens.len());
-    for token in tokenizer.tokens {
-        match merged.last_mut() {
-            Some(last)
-                if last.kind == token.kind
-                    && matches!(token.kind, TokenType::Text | TokenType::AttrValueText) =>
-            {
-                last.span.end = token.span.end;
-            }
-            _ => merged.push(token),
+    let mut tokens = tokenizer.tokens;
+    tokens.dedup_by(|token, last| {
+        let is_merged = last.kind == token.kind
+            && matches!(token.kind, TokenType::Text | TokenType::AttrValueText);
+        if is_merged {
+            last.span.end = token.span.end;
         }
-    }
-    (merged, tokenizer.errors)
+        is_merged
+    });
+    (tokens, tokenizer.errors)
 }

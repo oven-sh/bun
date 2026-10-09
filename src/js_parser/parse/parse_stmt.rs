@@ -782,7 +782,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 }
 
                 // So it may have an initializer. `checkCatchClause` reports it (1197).
-                if p.lexer.token == T::TEquals && p.is_tolerant() {
+                if p.lexer.token == T::TEquals && p.is_tolerant() && !p.is_ecmascript() {
                     p.lexer.next()?;
                     let initializer = p.parse_expr(Level::Comma)?;
                     p.note_expr(&mut value.loc, crate::sema::Mark::Initializer, initializer);

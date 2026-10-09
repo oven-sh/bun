@@ -636,6 +636,9 @@ impl<'a> Parser<'a> {
         file.has_errors = has_errors;
         // What the parser of the dialect accepts does not make it refuse the file.
         let (is_ecmascript, is_typescript_5) = (p.is_ecmascript(), p.is_typescript_5());
+        if is_ecmascript && !has_errors {
+            bun_sema::ecmascript::report_misplaced_modifiers(&mut file);
+        }
         let is_accepted = |d: &Diagnostic| match d.code {
             // Octal literals and escapes, `\8`, `08`: errors in strict mode only. `a?.#b`
             1121 | 1487 | 1488 | 1489 | 18030 => is_ecmascript,

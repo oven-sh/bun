@@ -769,6 +769,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         && !opts.is_class
                         && kind == PropertyKind::Normal
                         && p.is_tolerant()
+                        && !p.is_ecmascript()
                     {
                         p.note_loc(&mut key.loc, crate::sema::Mark::PostfixToken, p.lexer.loc());
                         if p.lexer.token == T::TQuestion {

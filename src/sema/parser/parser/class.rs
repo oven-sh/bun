@@ -99,7 +99,10 @@ impl Parser<'_> {
                 _ => 0,
             };
             if misplaced != 0 && !heritage.has_error {
-                self.flag(DiagnosticKind::Grammar, misplaced, keyword, &[]);
+                match self.is_ecmascript {
+                    true => self.report(),
+                    false => self.flag(DiagnosticKind::Grammar, misplaced, keyword, &[]),
+                }
                 heritage.has_error = true;
             }
             self.next();

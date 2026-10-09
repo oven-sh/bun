@@ -410,7 +410,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 _ => 0,
             };
             if order_error != 0 && !stop_checking {
-                p.lexer.ts_grammar_error(keyword, order_error);
+                match p.is_ecmascript() {
+                    true => p.lexer.ts_error(keyword, order_error),
+                    false => p.lexer.ts_grammar_error(keyword, order_error),
+                }
                 stop_checking = true;
             }
             p.lexer.next_token()?;

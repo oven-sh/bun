@@ -1658,7 +1658,10 @@ impl Parser<'_> {
         // "Disallowing of optional property assignments and definite assignment assertion happens in
         // the grammar checker."
         let mut postfix_token = 0;
-        if kind == PropKind::Init && matches!(self.token(), T::Question | T::Exclamation) {
+        if kind == PropKind::Init
+            && matches!(self.token(), T::Question | T::Exclamation)
+            && !self.is_ecmascript
+        {
             postfix_token = self.pos();
             self.next();
         }

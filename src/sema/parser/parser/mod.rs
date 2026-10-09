@@ -335,6 +335,9 @@ impl<'a> Parser<'a> {
         if self.unclaimed_nullable_types > 0 {
             self.refuse(Refusal::Reported);
         }
+        if self.is_ecmascript && !self.is_flow && !self.has_failed() {
+            bun_sema::ecmascript::report_misplaced_modifiers(&mut self.f);
+        }
         if self.f.diagnostics.len() > 1 {
             self.f.diagnostics.sort_by_key(|it| (it.start, it.code));
         }

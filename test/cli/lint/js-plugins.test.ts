@@ -971,6 +971,84 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
+  // As `@cspell/eslint-plugin` does it. With types the threads that lint begin anew for every project and every step of the
+  // checker, while the workers have Bun's pool read files.
+  test(
+    "a rule waits for a worker of its own, which reads files, in projects with types",
+    async () => {
+      const files: Record<string, string> = {
+        "eslint.config.mjs": `
+          import demo from "./plugin.mjs";
+          export default [{
+            files: ["**/*.ts"],
+            plugins: { demo, "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
+            languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } }, parserOptions: { projectService: true } },
+            rules: { "demo/length": "error", "@typescript-eslint/no-floating-promises": "error" },
+          }];`,
+        "plugin.mjs": `
+          import { MessageChannel, receiveMessageOnPort, Worker } from "node:worker_threads";
+          let state = null;
+          function lengthOf(text) {
+            if (state === null) {
+              const shared = new SharedArrayBuffer(4);
+              const { port1, port2 } = new MessageChannel();
+              const options = { workerData: { port: port2, shared }, transferList: [port2] };
+              const worker = new Worker(new URL("./worker.mjs", import.meta.url), options);
+              worker.unref();
+              state = { worker, port: port1, flag: new Int32Array(shared) };
+            }
+            const before = Atomics.load(state.flag, 0);
+            state.worker.postMessage(text);
+            Atomics.wait(state.flag, 0, before);
+            return receiveMessageOnPort(state.port).message;
+          }
+          export default {
+            rules: {
+              length: {
+                create: context => ({
+                  Program(node) {
+                    context.report({ node, message: String(lengthOf(context.sourceCode.text)) });
+                  },
+                }),
+              },
+            },
+          };`,
+        "worker.mjs": `
+          import { readFile } from "node:fs/promises";
+          import { parentPort, workerData } from "node:worker_threads";
+          const flag = new Int32Array(workerData.shared);
+          const here = new URL(import.meta.url);
+          (async () => {
+            for (;;) await readFile(here);
+          })();
+          parentPort.on("message", async text => {
+            await readFile(here);
+            workerData.port.postMessage(text.length);
+            Atomics.add(flag, 0, 1);
+            Atomics.notify(flag, 0);
+          });`,
+      };
+      for (let project = 0; project < 16; project++) {
+        files[`${project}/tsconfig.json`] = JSON.stringify({ compilerOptions: { noLib: true, types: [] } });
+        for (let i = 0; i < 8; i++) files[`${project}/${i}.ts`] = "foo;\n";
+      }
+      using dir = tempDir("bun-lint-js-plugins", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "lint", "-f", "unix", "--threads", "4"],
+        // As many threads in a pool, however many cores there are.
+        env: { ...env, GOMAXPROCS: "8" },
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.split("\n").filter(it => it.endsWith(": 5 [Error/demo/length]"))).toHaveLength(128);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
   test(
     'a rule written for ESLint 8, and a plugin that is an ES module with an export "module.exports"',
     async () => {

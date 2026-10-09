@@ -478,7 +478,7 @@ impl Run<'_> {
             pool.threads.store(threads, Ordering::Relaxed);
         }
         if has_processors || context.js_plugins.has_plugins() {
-            bun_sema_driver::keep_to_the_same_threads();
+            bun_sema_driver::use_threads_of_their_own("Bun Lint");
         }
         if is_oxlint
             && self.options.error_on_unmatched_pattern

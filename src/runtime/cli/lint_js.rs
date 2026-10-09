@@ -183,7 +183,7 @@ fn start_vm() -> Result<(), Vec<u8>> {
     .map_err(|error| failed(error.name()))?;
     debug_assert!(core::ptr::eq(vm, VirtualMachine::get_mut_ptr()));
     let vm = VirtualMachine::get().as_mut();
-    // The threads that would transpile are the ones that lint, and wait for it.
+    // This thread has nothing else to do meanwhile, and the other cores lint.
     vm.transpiler_store.enabled = false;
     vm.transpiler.resolver.env_loader = NonNull::new(vm.transpiler.env);
     vm.transpiler.options.env.behavior =
@@ -278,21 +278,10 @@ fn end_vm() {
 impl ThreadVms {
     /// Ends every VM on its thread. Nothing is being linted any more.
     pub(crate) fn end_all(&self) {
-        use bun_threading::thread_pool::{CountedTask, Task};
-        unsafe fn end(task: *mut Task) {
-            // SAFETY: allocated below, and queued once.
-            drop(unsafe { bun_core::heap::take(task.cast::<CountedTask>()) });
-            end_vm();
-        }
         if !self.initialize.is_completed() {
             return;
         }
-        let group = bun_threading::WaitGroup::init();
-        bun_threading::WorkPool::get().push_idle_task_to_each_thread(|| {
-            group.add_one();
-            bun_core::heap::into_raw(Box::new(CountedTask::new(end, &group))).cast::<Task>()
-        });
-        group.wait();
+        bun_sema_driver::on_each_thread_of_regions(&end_vm);
         end_vm();
     }
 }
@@ -323,19 +312,10 @@ impl Engine for ThreadVms {
     fn expect(&self, realms: usize) {
         self.expected
             .store(realms, core::sync::atomic::Ordering::Relaxed);
-        // See `most_realms`. The pool takes a thread that lints for an idle one, so it would not start another by itself.
-        bun_threading::WorkPool::get().warm(u16::try_from(realms + 1).unwrap_or(u16::MAX));
     }
 
-    /// Half of the memory is for them. And one thread of the pool is without: a plugin can wait, on the thread that lints, for a
-    /// `Worker` of its own, which loads its modules and reads files on the threads of the pool.
+    /// Half of the memory is for them.
     fn most_realms(&self) -> usize {
-        (bun_core::get_total_memory_size() / 2 / MEMORY_OF_A_VM)
-            .min(
-                bun_threading::WorkPool::get()
-                    .max_threads()
-                    .saturating_sub(1),
-            )
-            .max(1)
+        (bun_core::get_total_memory_size() / 2 / MEMORY_OF_A_VM).max(1)
     }
 }

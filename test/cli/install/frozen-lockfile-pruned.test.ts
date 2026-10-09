@@ -757,6 +757,43 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
       expect(await lockText(fullDir)).toBe(full);
     },
   );
+
+  // bun.lockb stores the list as hashes without names, and a hash without a name trusts nothing.
+  // So a named list of the missing workspace cannot be kept: the default list applies, and it has electron.
+  test.concurrent.each([
+    ["[]", "absent", [], false],
+    ["[]", "intact", [], false],
+    ['["electron"]', "absent", ["electron"], true],
+  ] as const)(
+    "bun.lockb: a missing workspace that declared trustedDependencies %s (node_modules %s)",
+    async (_list, nodeModules, trustedDependencies, runs) => {
+      const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker, saveTextLockfile: false } });
+      const tree: Tree = {
+        root: { name: "mono", workspaces: ["packages/*"] },
+        packages: {
+          "packages/declares": { name: "declares", trustedDependencies },
+          "packages/uses": { name: "uses", dependencies: { electron: "1.0.0" } },
+        },
+      };
+      await writeTree(packageDir, tree);
+      await install(packageDir, linker);
+      const electron = dirname(installedPath(packageDir, linker, "electron", "1.0.0"));
+      const lockb = await file(join(packageDir, "bun.lockb")).bytes();
+      expect(await exists(join(electron, "preinstall.txt"))).toBe(runs);
+
+      await rm(join(packageDir, "packages", "declares"), { recursive: true, force: true });
+      if (nodeModules === "absent") {
+        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+        await rm(join(packageDir, "packages", "uses", "node_modules"), { recursive: true, force: true });
+      }
+
+      await frozen(packageDir, linker, 0);
+
+      expect(await exists(join(electron, "package.json"))).toBeTrue();
+      expect(await exists(join(electron, "preinstall.txt"))).toBe(runs);
+      expect(await file(join(packageDir, "bun.lockb")).bytes()).toEqual(lockb);
+    },
+  );
 });
 
 describe("hoisted", () => {

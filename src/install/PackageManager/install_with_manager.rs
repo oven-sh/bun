@@ -357,8 +357,7 @@ pub fn install_with_manager(
                     // `Option::clone` won't see it — map by hand.
                     match &lockfile.trusted_dependencies {
                         Some(td) => *lf.trusted_dependencies = Some(td.clone()?),
-                        // Keep the list that bun.lock records.
-                        None if summary.manifests_incomplete() => {}
+                        None if summary.keeps_recorded_trusted_dependencies => {}
                         None => *lf.trusted_dependencies = None,
                     }
 

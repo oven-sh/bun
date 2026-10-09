@@ -405,23 +405,32 @@ impl<'t> Parser<'t> {
         Ok(())
     }
 
+    fn is_before_namespace_separator(&self) -> bool {
+        self.next_token()
+            .is_some_and(|next| self.text_of(next) == b"|")
+    }
+
+    /// At a `|`. In `a|b|c`, `b` is the namespace of `c`, and `a` is lost.
     fn namespace(&mut self) -> Result<(), ParseError> {
-        let before = match self.prev_token() {
-            Some(prev) if prev.end > prev.start => {
-                Namespace::Name((self.base + prev.start, self.base + prev.end))
+        loop {
+            let before = match self.prev_token() {
+                Some(prev) if prev.end > prev.start => {
+                    Namespace::Name((self.base + prev.start, self.base + prev.end))
+                }
+                _ => Namespace::Empty,
+            };
+            let kind = self.next_token().ok_or(ParseError)?.kind;
+            if !matches!(kind, TokenKind::Word | TokenKind::Control(b'*')) {
+                return Ok(());
             }
-            _ => Namespace::Empty,
-        };
-        match self.next_token().ok_or(ParseError)?.kind {
-            TokenKind::Word => {
-                self.position += 1;
-                self.word(Some(before))
+            self.position += 1;
+            if !self.is_before_namespace_separator() {
+                return match kind {
+                    TokenKind::Word => self.word(Some(before)),
+                    _ => self.universal(Some(before)),
+                };
             }
-            TokenKind::Control(b'*') => {
-                self.position += 1;
-                self.universal(Some(before))
-            }
-            _ => Ok(()),
+            self.position += 1;
         }
     }
 
@@ -509,10 +518,7 @@ impl<'t> Parser<'t> {
     }
 
     fn universal(&mut self, namespace: Option<Namespace>) -> Result<(), ParseError> {
-        if self
-            .next_token()
-            .is_some_and(|next| self.text_of(next) == b"|")
-        {
+        if self.is_before_namespace_separator() {
             self.position += 1;
             return self.namespace();
         }
@@ -523,10 +529,7 @@ impl<'t> Parser<'t> {
     }
 
     fn word(&mut self, namespace: Option<Namespace>) -> Result<(), ParseError> {
-        if self
-            .next_token()
-            .is_some_and(|next| self.text_of(next) == b"|")
-        {
+        if self.is_before_namespace_separator() {
             self.position += 1;
             return self.namespace();
         }

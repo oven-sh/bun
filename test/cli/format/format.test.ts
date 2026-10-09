@@ -562,6 +562,16 @@ describe.concurrent("bun format", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test("100,000 namespaces before a name in a selector do not take the stack", async () => {
+    for (const prefix of ["a|", "*|"]) {
+      const result = await format({ "a.css": `${Buffer.alloc(200_000, prefix).toString()}a {\n}\n` }, [], {
+        reads: ["a.css"],
+      });
+      expect(result.files["a.css"]).toBe(`${prefix}a {\n}\n`);
+      expect(result.exitCode).toBe(0);
+    }
+  });
+
   test("100,000 comments on a line of JSON do not take quadratic time", async () => {
     const comments = Buffer.alloc(400_000, "/**/").toString();
     const result = await format({ "a.json": `${comments}1\n`, "b.json": `[1${comments}, 2]\n` }, [], {

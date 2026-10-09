@@ -312,7 +312,12 @@ describe.concurrent("an .oxlintrc.json", () => {
     [{ jasmine: true }, [1, 2, 3, 4, 5, 6]],
   ])("the environments are oxlint's: %j", async (env, lines) => {
     const { problems } = await lint({
-      ".oxlintrc.json": JSON.stringify({ plugins: [], categories: { correctness: "off" }, rules: { "no-undef": "error" }, env }),
+      ".oxlintrc.json": JSON.stringify({
+        plugins: [],
+        categories: { correctness: "off" },
+        rules: { "no-undef": "error" },
+        env,
+      }),
       "a.js":
         "QuotaExceededError;\nTemporal;\nnavigator;\n$0;\nBun;\nregisterProcessor;\nexpect;\nthrowUnless;\nexport {};\n",
     });

@@ -105,6 +105,12 @@ const PROBED_FIXES: [(Plugin, &str, &str, SuggestionKind); 4] = [
     ),
 ];
 
+/// Rules for which tsgolint 7.0 has neither a fix nor a suggestion, whatever `oxlint --rules` says. Each was tried.
+const PROBED_WITHOUT_FIX: [(Plugin, &str); 2] = [
+    (Plugin::TypeScript, "strict-boolean-expressions"),
+    (Plugin::TypeScript, "strict-void-return"),
+];
+
 /// The rules of ESLint whose suggestions oxlint 1.87 makes with `--fix-dangerously` only. Each was tried.
 const DANGEROUS_SUGGESTIONS: [&str; 3] = ["eqeqeq", "radix", "require-await"];
 
@@ -137,7 +143,9 @@ pub(crate) fn oxlint_changes(meta: &Meta, message_id: &str) -> OxlintChanges {
         || is_in(categories::ONLY_SUGGESTIONS).then_some(SuggestionKind::Suggestion);
     let is_dangerous = meta.plugin == Plugin::Eslint && DANGEROUS_SUGGESTIONS.contains(&meta.name);
     OxlintChanges {
-        are_dropped: probed.is_none() && is_in(categories::WITHOUT_FIX),
+        are_dropped: probed.is_none()
+            && (is_in(categories::WITHOUT_FIX)
+                || PROBED_WITHOUT_FIX.contains(&(meta.plugin, meta.name))),
         fix: probed.map(|it| it.3).or_else(only_suggests),
         suggestions: is_dangerous.then_some(SuggestionKind::DangerousFix),
     }
@@ -542,14 +550,15 @@ impl Rc<'_, '_> {
                 }
                 continue;
             }
-            let Some(extended) = (self.load)(directory, name) else {
+            let portable = path::portable(directory, name);
+            let Some(extended) = (self.load)(directory, &portable) else {
                 return Err(ConfigError::new(&[
                     b"Failed to load config \"",
                     name,
                     b"\" to extend from.",
                 ]));
             };
-            let file = path::resolve(directory, name);
+            let file = path::resolve(directory, &portable);
             let read = self.file(&extended, path::dirname(&file), true, depth + 1);
             read.map_err(|error| {
                 ConfigError::new(&[

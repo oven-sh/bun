@@ -283,7 +283,8 @@ impl NoUnmodifiedLoopCondition {
         state: &mut State<'a>,
         functions: &mut Functions<'a>,
     ) -> Option<Condition<'a>> {
-        if reference.is_init() {
+        // oxlint does not look at types.
+        if reference.is_init() || state.is_oxlint && !reference.is_value() {
             return None;
         }
         let child = reference.node();

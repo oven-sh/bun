@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
@@ -90,16 +91,19 @@ fn compare_keys_as_oxlint(a: &[u8], b: &[u8], is_natural: bool, is_insensitive: 
     }
 }
 
-/// oxlint's fix for each object literal that was asked about: what is replaced, and by what.
-type Fixes<'a> = FxHashMap<Expr<'a>, Option<(Span, Vec<u8>)>>;
+/// What oxlint's fix replaces in an object literal, and by what.
+type ObjectFix = Option<(Span, Vec<u8>)>;
+
+/// [`ObjectFix`] for each object literal that was asked about.
+type Fixes<'a> = FxHashMap<Expr<'a>, ObjectFix>;
 
 /// oxlint's `FixableProperty`.
-struct FixableProperty<'a> {
+struct FixableProperty<'a, 'k> {
     key: Cow<'a, [u8]>,
     /// [`lift_property_span`]
     span: Span,
-    /// The text at `span`, with the object literal that is the value sorted.
-    text: Cow<'a, [u8]>,
+    /// The fix of the object literal that is the value.
+    nested: Option<&'k (Span, Vec<u8>)>,
     /// `span` goes on to a comment after the `,`.
     has_comma: bool,
 }
@@ -143,157 +147,121 @@ fn lift_property_span<'a>(file: &'a File<'a>, prop: Prop<'a>, boundary: u32) -> 
         && comment.kind() == TokenKind::Line
     {
         let between = file.slice(whole.between(comment.span()));
-        if between.contains(&b',') && !between.contains(&b'\n') {
+        if strings::contains_char(between, b',') && !strings::contains_char(between, b'\n') {
             lifted.end = comment.end();
         }
     }
     lifted
 }
 
-/// The object literals that are values of properties of `object`, without parentheses.
-fn nested_objects<'a>(object: Expr<'a>) -> impl Iterator<Item = Expr<'a>> {
-    let props = match object.kind() {
-        ExprKind::Object(props) => Some(props),
-        _ => None,
-    };
-    let values = props.into_iter().flatten().filter_map(Prop::value);
-    values.filter(|it| it.tag() == ExprTag::Object && !it.is_parenthesized())
-}
-
 impl SortKeys {
-    /// oxlint's `count_static_groups`: how many runs of properties with known names there are between spreads and, with
-    /// `allowLineSeparatedGroups`, empty lines.
+    /// oxlint's `collect_fixable_properties`: `None` unless the names of all properties are known, they are one group,
+    /// spreads are only before and after them, and every comment moves with a property. `known`: the fixes of the
+    /// object literals in `props`.
     #[cold]
     #[inline(never)]
-    fn count_static_groups<'a>(&self, file: &'a File<'a>, props: List<'a, Prop<'a>>) -> usize {
-        let (mut count, mut is_in_group) = (0, false);
-        let mut rest = props.iter().peekable();
-        while let Some(prop) = rest.next() {
-            let Some(key) = prop.key() else {
-                is_in_group = false;
-                continue;
-            };
-            if get_property_name(key, true).is_none() {
-                continue;
-            }
-            count += usize::from(!is_in_group);
-            is_in_group = !(self.allows_line_separated_groups
-                && rest.peek().is_some_and(|next| has_empty_line(file.slice(prop.span().between(next.span())))));
-        }
-        count
-    }
-
-    /// oxlint's `collect_fixable_properties`. `known`: the fixes of the [`nested_objects`].
-    #[cold]
-    #[inline(never)]
-    fn collect_fixable_properties<'a>(&self, object: Expr<'a>, known: &Fixes<'a>) -> Option<Vec<FixableProperty<'a>>> {
-        let ExprKind::Object(props) = object.kind() else {
-            return None;
-        };
-        let (file, whole) = (object.file(), object.span());
-        if self.count_static_groups(file, props) != 1 {
-            return None;
-        }
-        let starts = props.iter().skip(1).map(|it| it.span().start).chain([whole.end]);
-        let lifted: Vec<Span> = props.iter().zip(starts).map(|(it, next)| lift_property_span(file, it, next)).collect();
+    fn collect_fixable_properties<'a, 'k>(
+        &self,
+        (whole, props): (Span, List<'a, Prop<'a>>),
+        known: &'k Fixes<'a>,
+    ) -> Option<Vec<FixableProperty<'a, 'k>>> {
+        let file = props.first()?.file();
         let has_comments = |at: Span| file.comments_in(at).next().is_some();
-        let (first, last) = (*lifted.first()?, *lifted.last()?);
-        if has_comments(Span::before(whole.start, first)) || has_comments(Span::after(last, whole.end)) {
-            return None;
-        }
-        // Spreads can only be before all the others, and after them.
-        let (mut has_properties, mut has_spread_after) = (false, false);
-        let mut found = Vec::with_capacity(props.len());
-        let gaps = lifted.iter().zip(lifted.iter().skip(1)).map(|(it, next)| Some(it.between(*next))).chain([None]);
-        let mut rest = props.iter().zip(&lifted).zip(gaps).peekable();
-        while let Some(((prop, &span), gap)) = rest.next() {
-            let has_comments_after = gap.is_some_and(has_comments);
-            let Some(key) = prop.key() else {
-                let is_before_property = rest.peek().is_some_and(|it| it.0.0.key().is_some());
-                if is_before_property && has_comments_after {
-                    return None;
-                }
-                has_spread_after = has_properties;
-                continue;
-            };
-            if has_spread_after || has_comments_after {
+        let (mut has_spread_after, mut is_group_over) = (false, false);
+        let mut found: Vec<FixableProperty<'a, 'k>> = Vec::with_capacity(props.len());
+        // What is before the property, and whether that is a spread.
+        let (mut before, mut is_after_spread) = (Span::empty(whole.start), false);
+        for (index, prop) in props.iter().enumerate() {
+            let next = props.get(index + 1);
+            let span = lift_property_span(file, prop, next.map_or(whole.end, |it| it.span().start));
+            // Between two spreads there can be comments.
+            if has_comments(before.between(span)) && !(is_after_spread && prop.key().is_none()) {
                 return None;
             }
-            has_properties = true;
+            (before, is_after_spread) = (span, prop.key().is_none());
+            let Some(key) = prop.key() else {
+                has_spread_after = !found.is_empty();
+                continue;
+            };
+            if has_spread_after || is_group_over {
+                return None;
+            }
+            is_group_over = self.allows_line_separated_groups
+                && next.is_some_and(|next| has_empty_line(file.slice(prop.span().between(next.span()))));
             let value = prop.value().filter(|it| !it.is_parenthesized());
-            let nested = value.and_then(|it| known.get(&it)?.as_ref());
             found.push(FixableProperty {
                 key: get_property_name(key, true)?,
                 span,
-                text: match nested {
-                    Some((replaced, text)) => {
-                        let (before, after) = (Span::before(span.start, *replaced), Span::after(*replaced, span.end));
-                        Cow::Owned([file.slice(before), text, file.slice(after)].concat())
-                    }
-                    None => Cow::Borrowed(file.slice(span)),
-                },
+                nested: value.and_then(|it| known.get(&it)?.as_ref()),
                 has_comma: span.end > prop.span().end,
             });
         }
-        Some(found)
+        (!has_comments(Span::after(before, whole.end))).then_some(found)
     }
 
     /// oxlint's `build_object_fix`.
     #[cold]
     #[inline(never)]
-    fn build_object_fix<'a>(&self, object: Expr<'a>, known: &Fixes<'a>) -> Option<(Span, Vec<u8>)> {
-        let (file, props) = (object.file(), self.collect_fixable_properties(object, known)?);
+    fn build_object_fix<'a>(&self, object: Expr<'a>, known: &Fixes<'a>) -> ObjectFix {
+        let ExprKind::Object(list) = object.kind() else {
+            return None;
+        };
+        let (file, props) = (object.file(), self.collect_fixable_properties((object.span(), list), known)?);
         let (first, last) = (props.first()?, props.last()?);
-        let mut sorted: Vec<&FixableProperty<'a>> = props.iter().collect();
+        let mut sorted: Vec<&FixableProperty> = props.iter().collect();
         utils::sort::sort_by(&mut sorted, |a, b| {
             let order = compare_keys_as_oxlint(&a.key, &b.key, self.is_natural, self.is_insensitive);
             if self.is_descending { order.reverse() } else { order }
         });
         let is_in_order = sorted.iter().zip(&props).all(|(a, b)| a.span == b.span);
-        if is_in_order && props.iter().all(|it| matches!(it.text, Cow::Borrowed(_))) {
+        if is_in_order && props.iter().all(|it| it.nested.is_none()) {
             return None;
         }
         // What is between the first two, without the `,`, comes between all.
-        let between: Vec<u8> = match props.get(1) {
-            Some(second) => {
-                let raw = file.slice(first.span.between(second.span));
-                let comma = raw.iter().position(|it| *it == b',');
-                raw.iter().enumerate().filter(|it| Some(it.0) != comma).map(|it| *it.1).collect()
-            }
-            None => b" ".to_vec(),
-        };
+        let raw = props.get(1).map_or(&b" "[..], |second| file.slice(first.span.between(second.span)));
+        let between = strings::split_once_char(raw, b',').unwrap_or((raw, &[]));
         let mut text = Vec::new();
         for (index, prop) in sorted.iter().enumerate() {
-            text.extend_from_slice(&prop.text);
-            if index + 1 < sorted.len() {
-                if !prop.has_comma {
-                    text.push(b',');
-                }
-                text.extend_from_slice(&between);
+            let mut from = prop.span.start;
+            if let Some((replaced, inner)) = prop.nested {
+                text.extend_from_slice(file.slice(Span::before(from, *replaced)));
+                text.extend_from_slice(inner);
+                from = replaced.end;
             }
-        }
-        if last.has_comma && !sorted.last()?.has_comma {
-            text.push(b',');
+            text.extend_from_slice(file.slice(Span::new(from, prop.span.end)));
+            let is_last = index + 1 == sorted.len();
+            if !prop.has_comma && (!is_last || last.has_comma) {
+                text.push(b',');
+            }
+            if !is_last {
+                text.extend_from_slice(between.0);
+                text.extend_from_slice(between.1);
+            }
         }
         Some((Span::new(first.span.start, last.span.end), text))
     }
 
-    /// [`SortKeys::build_object_fix`] of `root`, after those of the object literals in it.
+    /// [`SortKeys::build_object_fix`] of `root`, after those of the object literals that are values in it.
     #[cold]
     #[inline(never)]
-    fn fix_as_oxlint<'a>(&self, root: Expr<'a>, known: &mut Fixes<'a>) -> Option<(Span, Vec<u8>)> {
-        let mut pending = vec![root];
+    fn fix_as_oxlint<'a>(&self, root: Expr<'a>, known: &mut Fixes<'a>) -> ObjectFix {
+        let mut pending = Vec::new();
+        if !known.contains_key(&root) {
+            pending.push(root);
+        }
         while let Some(&object) = pending.last() {
             let count = pending.len();
-            if !known.contains_key(&object) {
-                pending.extend(nested_objects(object).filter(|it| !known.contains_key(it)));
+            if let ExprKind::Object(props) = object.kind() {
+                for value in props.iter().filter_map(Prop::value) {
+                    if value.tag() == ExprTag::Object && !value.is_parenthesized() && !known.contains_key(&value) {
+                        pending.push(value);
+                    }
+                }
             }
             if pending.len() == count {
                 pending.pop();
-                if !known.contains_key(&object) {
-                    let fix = self.build_object_fix(object, known);
-                    known.insert(object, fix);
-                }
+                let fix = self.build_object_fix(object, known);
+                known.insert(object, fix);
             }
         }
         known.get(&root)?.clone()

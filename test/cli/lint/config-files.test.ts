@@ -2003,3 +2003,133 @@ describe.concurrent("what the configuration asks for and cannot be done", () => 
     expect((await lint(files, ["--allow-unsupported", "."])).exitCode).toBe(1);
   });
 });
+
+// ───────────── paths, as each system writes and compares them ─────────────
+
+// `bun lint --run-path-tests` is compiled into debug and canary builds only.
+const hasRunner = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
+
+const quiet = { categories: { correctness: "off" } };
+
+// A configuration goes by what a base path looks like, so what it makes of the paths of Windows is tested on every system. What is
+// expected of the flat ones is what `ConfigArray` of @eslint/config-array 0.23.5 answers, which goes by that too.
+describe.skipIf(!hasRunner)("the paths of Windows, on every system", () => {
+  async function configurations(cases: object[]) {
+    using dir = tempDir("bun-lint-paths", { "cases.json": JSON.stringify(cases) });
+    await using proc = Bun.spawn({
+      cmd: [...command, "--run-path-tests", "configurations", join(String(dir), "cases.json")],
+      env,
+      // Not where a `package.json` has a script `lint`.
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  test("what is in a directory is in it however the two are spelled", async () => {
+    expect(
+      await configurations([
+        {
+          basePath: "c:/proj",
+          config: [noVar],
+          files: ["C:/proj/src/a.js", "c:/PROJ/src/a.js", "D:/proj/src/a.js", "C:/project/a.js"],
+        },
+        {
+          basePath: "C:/proj",
+          config: [
+            { basePath: String.raw`c:\Proj\SRC`, files: ["*.js"], ...noVar },
+            { basePath: "C:/PROJ", ignores: ["src/ignored.js"] },
+          ],
+          files: ["C:/proj/src/a.js", "C:/proj/src/ignored.js", "C:/proj/src/deep/a.js", "C:/proj/SRC/a.js"],
+        },
+        { basePath: "C:/proj/Ünï", config: [noVar], files: ["C:/proj/üNÏ/a.js"] },
+        // Elsewhere it is not.
+        { basePath: "/proj", config: [noVar], files: ["/proj/a.js", "/PROJ/a.js"] },
+      ]),
+    ).toEqual([
+      { files: [["no-var"], ["no-var"], "external", "external"], directories: [] },
+      { files: [["no-var"], "ignored", [], ["no-var"]], directories: [] },
+      { files: [["no-var"]], directories: [] },
+      { files: [["no-var"], "external"], directories: [] },
+    ]);
+  });
+
+  test("a share, and the root of a drive", async () => {
+    const proj = "//server/share/proj";
+    const onShare = (basePath: string) => ({
+      basePath: proj,
+      config: [{ basePath, ...noVar }, { ignores: ["dist/"] }],
+      files: [`${proj}/src/a.js`, `${proj}/a.js`, "//server/share/other/a.js", `${proj}/dist/a.js`],
+      directories: [`${proj}/dist`, `${proj}/src`],
+    });
+    const atRoot = (basePath: string) => ({
+      basePath,
+      config: [
+        { basePath: "src", ...noVar },
+        { files: ["lib/*.js"], ...eqeqeq },
+      ],
+      files: ["X:/src/a.js", "X:/lib/a.js", "x:/lib/a.js", "X:/a.js"],
+    });
+    const share = { files: [["no-var"], [], "external", "ignored"], directories: [true, false] };
+    const root = { files: [["no-var"], ["eqeqeq"], ["eqeqeq"], []], directories: [] };
+    expect(
+      await configurations([
+        onShare(String.raw`\\SERVER\Share\proj\src`),
+        onShare("//server/share/proj/src"),
+        onShare("src"),
+        atRoot("X:/"),
+        atRoot("X:"),
+        // What has no configuration file has one in which everything is.
+        { basePath: "/", config: [noVar], files: ["C:/a/b.js", "D:/a/b.js", `${proj}/a.js`] },
+      ]),
+    ).toEqual([share, share, share, root, root, { files: [["no-var"], ["no-var"], ["no-var"]], directories: [] }]);
+  });
+
+  test("`ignorePatterns` of oxlint say nothing about what is outside", async () => {
+    const config = { ...quiet, ...noVar, ignorePatterns: ["*.js"] };
+    const expected = { files: [["no-var"], "ignored"], directories: [] };
+    expect(
+      await configurations([
+        { basePath: "/proj/config", flavor: "oxlint", config, files: ["/proj/src/a.js", "/proj/config/a.js"] },
+        { basePath: "C:/proj/config", flavor: "oxlint", config, files: ["C:/proj/src/a.js", "C:/proj/config/a.js"] },
+      ]),
+    ).toEqual([expected, expected]);
+  });
+
+  test.each(["oxlint", "eslintrc"])("`extends` of %s with `\\`", async flavor => {
+    const [{ error, files }] = await configurations([
+      {
+        basePath: "C:/proj",
+        flavor,
+        config: { ...(flavor === "oxlint" ? quiet : { root: true }), extends: [String.raw`..\shared\base.json`] },
+        // What it extends in turn is next to it.
+        extended: {
+          "C:/shared/base.json": { extends: [String.raw`.\more.json`], ...eqeqeq },
+          "C:/shared/more.json": noVar,
+          "C:/proj/more.json": { rules: { "no-debugger": "error" } },
+        },
+        files: ["C:/proj/a.js"],
+      },
+    ]);
+    expect(error).toBeUndefined();
+    expect(files.map((it: string[]) => it.toSorted())).toEqual([["eqeqeq", "no-var"]]);
+  });
+});
+
+describe.concurrent("paths", () => {
+  test("`ignorePatterns` of a file that --config names say nothing about what is beside its directory", async () => {
+    const { problems, exitCode } = await lint(
+      {
+        "config/.oxlintrc.json": JSON.stringify({ ...quiet, ...noVar, ignorePatterns: ["*.js"] }),
+        "config/a.js": code,
+        "src/a.js": code,
+      },
+      ["-c", "config/.oxlintrc.json", "src", "config"],
+    );
+    expect(problems).toEqual(["src/a.js:1:1 no-var"]);
+    expect(exitCode).toBe(1);
+  });
+});

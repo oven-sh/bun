@@ -142,9 +142,10 @@ enum Needs {
     Nothing,
     /// A rule or a processor in JavaScript.
     Engine,
-    /// One for which the engine has to run the configuration file, with all that it imports. These come first, so that what the
-    /// start of an engine is measured to take has that in it.
+    /// One for which the engine has to run the configuration file, with all that it imports.
     Configuration,
+    /// ESLint's own `Linter`, with a parser that makes a TypeScript program: gigabytes, in each engine that is given such a file.
+    Program,
 }
 
 fn needs(target: &Target) -> Needs {
@@ -153,6 +154,9 @@ fn needs(target: &Target) -> Needs {
     };
     let mut on = (config.js_rules.iter()).filter(|it| it.severity != Severity::Off);
     let route = target.route();
+    if route != Route::Native && config.language.wants_types {
+        return Needs::Program;
+    }
     let processor = config
         .processor_location
         .as_ref()
@@ -692,7 +696,8 @@ impl Run<'_> {
         let most_engines = (pool.threads())
             .min(MOST_ENGINES)
             .min(context.js_plugins.most_realms());
-        let size: u64 = with_engine.clone().map(|it| it.size).sum();
+        let shared = with_engine.clone().filter(|it| needs(it) != Needs::Program);
+        let size: u64 = shared.map(|it| it.size).sum();
         (context.js_plugins).expect(with_engine.count(), size, most_engines);
         if !with_types.is_empty() {
             let (targets, files): (Vec<&Target>, Vec<Typed>) = with_types.into_iter().unzip();
@@ -714,6 +719,7 @@ impl Run<'_> {
         });
         let count = |least: Needs| without_types.partition_point(|target| needs(target) >= least);
         let (with_engine, plain) = without_types.split_at(count(Needs::Engine));
+        let (with_program, with_engine) = with_engine.split_at(count(Needs::Program));
         let (taken, first, last) = (
             AtomicUsize::new(0),
             AtomicUsize::new(0),
@@ -743,6 +749,12 @@ impl Run<'_> {
                     }
                 }
             };
+            if worker == 0 && !with_program.is_empty() {
+                let mut lint_all = || with_program.iter().for_each(|target| lint(target));
+                if context.js_plugins.keep_a_realm(&mut lint_all).is_err() {
+                    lint_all();
+                }
+            }
             // A thread can have to wait for an engine, so every other one begins with what needs none.
             if worker % 2 == 0 {
                 lint_with_engine();
@@ -1323,7 +1335,7 @@ struct Phases {
 fn warn_about_circular_fixes(loader: &Loader, path: &[u8]) {
     loader.warn(&[
         b"Circular fixes detected while fixing ",
-        path,
+        &paths::to_native(path.to_vec()),
         b". It is likely that you have conflicting rules in your configuration.",
     ]);
 }

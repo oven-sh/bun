@@ -121,9 +121,13 @@ fn fix_as_oxlint<'a>(fixer: Fixer<'a>, else_node: Stmt<'a>, consequent: Stmt<'a>
         StmtKind::Fn(_) => return None,
         StmtKind::Block(body) => {
             let (scope, else_scope) = (else_node.parent().scope(), Node::Stmt(else_node).scope());
-            if else_scope.node() == Node::Stmt(else_node)
-                && else_scope.symbols().any(|it| scope.get_name(it.name()).is_some())
-            {
+            // For oxc nothing declares `arguments`, and the parameter of a `catch` is in the scope of its block.
+            let of_catch = scope.parent().filter(|it| it.kind() == ScopeKind::Catch);
+            let is_taken = |name: Name<'a>| {
+                scope.get_name(name).is_some_and(|it| !it.is_implicit_arguments())
+                    || of_catch.is_some_and(|it| it.get_name(name).is_some())
+            };
+            if else_scope.node() == Node::Stmt(else_node) && else_scope.symbols().any(|it| is_taken(it.name())) {
                 return None;
             }
             (else_node.span().shrink(1, 1), body.last())

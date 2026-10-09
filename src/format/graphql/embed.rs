@@ -244,7 +244,9 @@ pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
     else {
         return false;
     };
-    is_candidate(quasi, template, f) && !is_blank_template(template) && parse(template).is_some()
+    is_candidate(quasi, template, f)
+        && (crate::css::embed::tag_alone_decides_what_is_around_a_template(f)
+            || (!is_blank_template(template) && parse(template).is_some()))
 }
 
 /// The line breaks between what Prettier's `printEmbedGraphQL` joins.

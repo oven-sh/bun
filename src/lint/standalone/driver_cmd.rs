@@ -63,6 +63,11 @@ pub(crate) fn run(args: &[String]) {
     let args: Vec<&[u8]> = args.iter().map(String::as_bytes).collect();
     let command = match &args[..] {
         [b"--run-eslint-tests", ..] => Command::Lint(Box::default()),
+        [b"--run-path-tests", rest @ ..] => {
+            let answers = bun_lint_driver::for_tests::run_path_tests(rest);
+            let _ = std::io::stdout().write_all(answers.as_deref().unwrap_or_default());
+            std::process::exit(i32::from(answers.is_none()));
+        }
         [b"@format", rest @ ..] => Command::Format(Box::new(or_exit(
             bun_lint_driver::fmt::cli::Options::parse(rest),
         ))),

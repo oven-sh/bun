@@ -89,7 +89,7 @@ fn replace_with_literal<'a>(fixer: Fixer<'a>, e: Expr<'a>, call: Call<'a>, chang
 }
 
 /// oxlint's fix: all from the first argument on. None for `Array(...a)` and `Array(a, ...b)`.
-fn replace_as_oxlint<'a>(fixer: Fixer<'a>, e: Expr<'a>, call: Call<'a>) -> Option<Fix> {
+pub fn replace_as_oxlint<'a>(fixer: Fixer<'a>, e: Expr<'a>, call: Call<'a>) -> Option<Fix> {
     let args = call.args();
     if args.len() <= 2 && args.last().is_some_and(|it| it.tag() == ExprTag::Spread) {
         return None;

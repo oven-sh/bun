@@ -149,6 +149,9 @@ impl SSABuilder {
         block_id: BlockId,
         env: &mut Environment,
     ) -> IdentifierId {
+        if !env.has_stack() {
+            return old_place.identifier;
+        }
         if let Some(state) = &self.states[block_id.0 as usize] {
             if let Some(&new_id) = state.defs.get(old_place.identifier) {
                 return new_id;
@@ -272,6 +275,9 @@ pub(crate) fn enter_ssa(
     let mut builder = SSABuilder::new(&func.body.blocks, num_blocks);
     let root_entry = func.body.entry;
     enter_ssa_impl(func, &mut builder, env, root_entry)?;
+    if !env.has_stack() {
+        return Err(crate::lowering::nested_too_deeply());
+    }
 
     // Apply all pending phis to the actual blocks
     apply_pending_phis(func, env, &mut builder);

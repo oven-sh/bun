@@ -1375,6 +1375,47 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   );
 
   test(
+    "a plugin that waits for what never comes is an error",
+    async () => {
+      const { stderr, exitCode } = await lint(
+        {
+          ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "waits/for": "error" } }),
+          "plugin.mjs": `await new Promise(() => {});\nexport default { meta: { name: "waits" }, rules: { for: { create: () => ({}) } } };`,
+          "a.js": "1;\n",
+        },
+        ["a.js"],
+      );
+      expect(stderr).toContain("plugin.mjs");
+      expect(exitCode).not.toBe(0);
+    },
+    timeout,
+  );
+
+  // ESLint in Node.js gives up at 740: "Not enough stack space to parse input".
+  test(
+    "a rule goes through a tree that is 2,000 deep",
+    async () => {
+      const { stdout, exitCode } = await lint(
+        {
+          "eslint.config.mjs": `
+          const deep = {
+            create(context) {
+              let seen = 0;
+              return { ArrayExpression: () => void seen++, "Program:exit": node => context.report({ node, message: "arrays " + seen }) };
+            },
+          };
+          export default [{ files: ["a.js"], plugins: { own: { rules: { deep } } }, rules: { "own/deep": "error" } }];`,
+          "a.js": `x = ${Buffer.alloc(2000, "[")}${Buffer.alloc(2000, "]")};\n`,
+        },
+        ["-f", "unix", "a.js"],
+      );
+      expect(stdout).toContain("<dir>/a.js:1:1: arrays 2000 [Error/own/deep]");
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
     "without rules in JavaScript there is no engine",
     async () => {
       const { stderr, exitCode } = await lint(
@@ -1433,6 +1474,62 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       expect(few).toEqual([expect.stringMatching(/^[1-9]/)]);
       expect(many).toEqual(["0"]);
       expect(asked).toEqual(["2"]);
+    },
+    timeout,
+  );
+
+  // The other tests name a number of threads. A user does not.
+  test(
+    "a thread for each core, and more files than that",
+    async () => {
+      const count = 2 * availableParallelism() + 1;
+      const files: Record<string, string> = {
+        ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "demo/no-foo": "error" } }),
+        "plugin.mjs": noFoo,
+      };
+      for (let i = 0; i < count; i++) files[`src/${i}.js`] = "foo();\n";
+      const { raw, exitCode } = await lint(files, ["--threads", "0", "-f", "json"]);
+      const names = JSON.parse(raw).diagnostics.map((it: { filename: string }) => it.filename.replaceAll("\\", "/"));
+      expect(names.sort()).toEqual(Array.from({ length: count }, (_, i) => `src/${i}.js`).sort());
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "no registry is asked for what a plugin imports or requires",
+    async () => {
+      const asked: string[] = [];
+      using registry = Bun.serve({
+        port: 0,
+        fetch(request) {
+          asked.push(new URL(request.url).pathname);
+          return new Response("{}", { status: 404 });
+        },
+      });
+      const variables = { BUN_CONFIG_REGISTRY: registry.url.href, NPM_CONFIG_REGISTRY: registry.url.href };
+      const run = (plugin: string) =>
+        lint(
+          {
+            ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "demo/x": "error" } }),
+            "plugin.mjs": plugin,
+            "a.js": "1;\n",
+          },
+          ["a.js"],
+          [],
+          variables,
+        );
+      const rules = (create: string) =>
+        `export default { meta: { name: "demo" }, rules: { x: { create: () => ${create} } } };`;
+      const [imported, required, awaited] = await Promise.all([
+        run(`import "is-not-installed-anywhere";\n${rules("({})")}`),
+        run(rules(`(require("is-not-installed-anywhere"), {})`)),
+        run(`await import("is-not-installed-anywhere").catch(() => {});\n${rules("({})")}`),
+      ]);
+      expect(imported.stdout).toContain("Cannot find package 'is-not-installed-anywhere'");
+      expect(required.stdout).toContain("Cannot find module 'is-not-installed-anywhere'");
+      expect(awaited.exitCode).toBe(0);
+      expect(asked).toEqual([]);
     },
     timeout,
   );

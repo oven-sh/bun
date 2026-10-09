@@ -127,6 +127,12 @@ fn needs_semicolon<'a>(file: &'a File<'a>, closing: Token<'a>) -> bool {
 /// The block `body` without its braces.
 fn remove_braces<'a>(fixer: Fixer<'a>, body: Stmt<'a>) -> Option<Fix> {
     let (file, span) = (fixer.file(), body.span());
+    // oxlint takes the braces away, and puts a space after a `do`.
+    if file.language().is_oxlint {
+        let is_after_do = matches!(body.parent(), Node::Stmt(parent) if parent.tag() == StmtTag::DoWhile);
+        let space: &[u8] = if is_after_do { b" " } else { b"" };
+        return Some(fixer.replace(body, [space, file.slice(span.shrink(1, 1))].concat()));
+    }
     let needs_preceding_space = file.token_before(body)?.end() == span.start
         && !ast_utils::can_tokens_be_adjacent(file.token_before(body)?, file.tokens_in(body).nth(1)?);
     if needs_semicolon(file, file.last_token(body)?) {

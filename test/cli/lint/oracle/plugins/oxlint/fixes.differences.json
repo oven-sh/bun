@@ -1,9 +1,5 @@
 {
  "21-no-unused-vars": [
   "dangerously"
- ],
- "145-no-empty-object-type": [
-  "suggestions",
-  "dangerously"
  ]
 }

@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint_eslint::rules::no_array_constructor::{
-    as_array_call, get_arguments_text, is_reported_by_oxlint,
+    as_array_call, get_arguments_text, is_reported_by_oxlint, replace_as_oxlint,
 };
 
 /// Disallow generic `Array` constructors.
@@ -23,8 +23,10 @@ impl NoArrayConstructor {
         if !is_reported {
             return;
         }
-        cx.report(e, USE_LITERAL)
-            .fix(|fixer| fixer.replace(e, [&b"["[..], get_arguments_text(e, call), b"]"].concat()));
+        cx.report(e, USE_LITERAL).fix(|fixer| match fixer.file().language().is_oxlint {
+            true => replace_as_oxlint(fixer, e, call),
+            false => Some(fixer.replace(e, [&b"["[..], get_arguments_text(e, call), b"]"].concat())),
+        });
     }
 }
 

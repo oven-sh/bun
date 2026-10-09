@@ -14,7 +14,9 @@ fn is_within_declare_global(statement: Stmt) -> bool {
     Node::Stmt(statement).ancestors().any(|ancestor| match ancestor {
         Node::Stmt(outer) => match outer.kind() {
             StmtKind::Module(module) => {
-                matches!(module.name(), ModuleName::Global) && outer.flags().contains(Flags::AMBIENT)
+                // oxlint does not ask for the `declare`.
+                matches!(module.name(), ModuleName::Global)
+                    && (outer.flags().contains(Flags::AMBIENT) || outer.file().language().is_oxlint)
             }
             _ => false,
         },
@@ -82,9 +84,13 @@ impl Rule for ConsistentTypeDefinitions {
                     return;
                 };
                 let report = cx.report(place(interface.name(), "interface", cx), TYPE_OVER_INTERFACE);
-                if !is_within_declare_global(statement) {
-                    report.fix(|fixer| fix_interface(fixer, statement, interface));
-                }
+                let fix = |fixer: Fixer<'a>| fix_interface(fixer, statement, interface);
+                match is_within_declare_global(statement) {
+                    false => report.fix(fix),
+                    // For oxlint the fix is dangerous there.
+                    true if cx.language().is_oxlint => report.fix_dangerously(fix),
+                    true => report,
+                };
             });
         } else {
             on.stmts([StmtTag::TypeAlias], |_, statement, cx| {

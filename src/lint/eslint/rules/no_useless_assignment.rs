@@ -2,6 +2,7 @@ use bun_lint::code_path::{CurrentSegments, Event, Step, starts_code_path, steps_
 use bun_lint::prelude::*;
 use bun_lint::semantic::DeclarationKinds;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
+use bun_lint::utils::ts_scope::is_type_only_reference;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 use std::collections::hash_map::Entry;
@@ -1945,6 +1946,11 @@ impl NoUselessAssignment {
                     && code_path_scope(reference.scope(), nearest) == scope
             });
         if !is_unknown {
+            return;
+        }
+        // For oxlint `typeof a` in a type reads nothing, and what is never read is left to `no-unused-vars`.
+        let is_read = |it: &Reference<'a>| it.is_read() && !is_type_only_reference(variable.symbol, *it);
+        if variable.symbol.file().language().is_oxlint && !references.iter().any(is_read) {
             return;
         }
         let Some(scope) = scope else {

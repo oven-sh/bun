@@ -329,7 +329,8 @@ impl Reader<'_> {
         let entries = json.as_object().unwrap_or_default();
         let mut object = ConfigObject::default();
         if let Some(base_path) = json.get(b"basePath").and_then(Json::as_str) {
-            object.base_path = Some(path::resolve(&self.base_path, base_path));
+            let base_path = path::portable(&self.base_path, base_path);
+            object.base_path = Some(path::resolve(&self.base_path, &base_path));
         }
         if let Some(files) = json.get(b"files").and_then(Json::as_array) {
             let mut alternatives = Vec::with_capacity(files.len());

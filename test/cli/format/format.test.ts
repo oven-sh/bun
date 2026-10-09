@@ -1,6 +1,16 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { chmodSync, chownSync, existsSync, linkSync, readdirSync, readFileSync, statSync, symlinkSync } from "node:fs";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import {
+  chmodSync,
+  chownSync,
+  existsSync,
+  linkSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { endChildren, spawn } from "../children";
@@ -923,6 +933,40 @@ exports.format = async (text, options) => {
       );
       const sorted = 'import b from "b";\nimport a from "a";\n';
       expect(result.files).toEqual({ "a.svelte": "<p >a</p>\n", "c.ts": sorted, "d.ts": sorted });
+      expect(result.exitCode).toBe(0);
+    });
+
+    // It runs in this process.
+    test("a Prettier that ends the process ends the run, and every file is whole", async () => {
+      const names = Array.from({ length: 8 }, (_, index) => `${index}.svelte`);
+      const exits = packages["node_modules/prettier/index.cjs"].replace(
+        "exports.format = async (text, options) => {",
+        'exports.format = async (text, options) => {\n  if (text.includes("ends")) process.exit(7);',
+      );
+      using dir = tempDir("bun-format-exit", {
+        ...files,
+        "node_modules/prettier/index.cjs": exits,
+        "many/ends.svelte": "<p   >ends</p>\n",
+        ...Object.fromEntries(names.map(name => [`many/${name}`, "<p   >a</p>\n"])),
+      });
+      await using proc = spawn({ cmd: [...command, "many"], env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 7 });
+      // Another thread may be between writing a file under another name and giving it its name.
+      const left = readdirSync(join(String(dir), "many")).filter(name => !name.endsWith(".tmp"));
+      expect(left.sort()).toEqual([...names, "ends.svelte"]);
+      expect(readFileSync(join(String(dir), "many/ends.svelte"), "utf8")).toBe("<p   >ends</p>\n");
+      for (const name of names) {
+        expect(["<p   >a</p>\n", "<p >a</p>\n"]).toContain(readFileSync(join(String(dir), "many", name), "utf8"));
+      }
+    });
+
+    test("what Prettier leaves running does not keep the run from ending", async () => {
+      const leaves = `setInterval(() => {}, 1000);
+require("node:net").createServer(() => {}).listen(0, "127.0.0.1");
+${packages["node_modules/prettier/index.cjs"]}`;
+      const result = await format({ ...files, "node_modules/prettier/index.cjs": leaves }, [], { reads });
+      expect(result.files["a.svelte"]).toBe("<p >a</p>\n");
       expect(result.exitCode).toBe(0);
     });
 
@@ -2763,4 +2807,143 @@ describe.concurrent("a format script in package.json", () => {
     expect(result.files).toEqual({ "a.js": formatted });
     expect(result.exitCode).toBe(0);
   });
+});
+
+// What the formatter takes from the process that it runs in: the terminal, the arguments, the streams, the stack, a way to run a
+// configuration file that is a program. Where `bun format` is developed something else is in Bun's place for each of these.
+describe.concurrent("what bun format takes from Bun", () => {
+  /** `bun ...args` in a directory with `files`. */
+  async function bun(files: Record<string, string>, args: string[], variables: Record<string, string> = {}) {
+    using dir = tempDir("bun-format-process", files);
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      env: { ...env, ...variables },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("colors are Bun's to decide: FORCE_COLOR, NO_COLOR, and none in a pipe", async () => {
+    const files = { "a.js": ugly };
+    const [forced, refused, piped, asOxfmt] = await Promise.all([
+      format(files, ["--check"], { env: { FORCE_COLOR: "1" } }),
+      format(files, ["--check"], { env: { NO_COLOR: "1" } }),
+      format(files, ["--check"]),
+      format({ ...files, ".oxfmtrc.json": "{}\n" }, ["--check", "a.js"], { env: { FORCE_COLOR: "1" } }),
+    ]);
+    expect(forced.stderr.split("\n")[0]).toBe("[\x1b[33mwarn\x1b[0m] a.js");
+    expect(refused.stderr.split("\n")[0]).toBe("[warn] a.js");
+    expect(piped.stderr.split("\n")[0]).toBe("[warn] a.js");
+    expect(asOxfmt.raw.split("\n")[2]).toMatch(/^\x1b\[33ma\.js\x1b\[0m \(\d+ms\)$/);
+  });
+
+  test("--cwd behind format, before it, and in BUN_OPTIONS, whose other flags are not the formatter's", async () => {
+    const files = { "a.js": ugly, "sub/b.js": ugly };
+    const results = await Promise.all([
+      bun(files, ["format", "--cwd", "sub", "-l"]),
+      bun(files, ["format", "--cwd=sub", "-l"]),
+      bun(files, ["--cwd=sub", "format", "-l"]),
+      bun(files, ["format", "-l"], { BUN_OPTIONS: "--cwd=sub" }),
+      bun(files, ["--silent", "format", "-l", "sub"]),
+      bun(files, ["format", "-l", "sub"], { BUN_OPTIONS: "--silent --no-install" }),
+    ]);
+    expect(results.map(it => [it.stdout.replaceAll("\\", "/"), it.stderr, it.exitCode])).toEqual([
+      ...Array(4).fill(["b.js\n", "", 1]),
+      ...Array(2).fill(["sub/b.js\n", "", 1]),
+    ]);
+  });
+
+  // The process that runs the configuration file starts in that directory. With BUN_OPTIONS it would look for `sub` in `sub`.
+  test("--cwd in BUN_OPTIONS, with a configuration file that is a program", async () => {
+    const files = { "sub/.prettierrc.mjs": "export default { semi: false };\n", "sub/b.js": "b;\n" };
+    const result = await bun(files, ["format", "-l", "b.js"], { BUN_OPTIONS: "--cwd=sub" });
+    expect(result).toEqual({ stdout: "b.js\n", stderr: "", exitCode: 1 });
+  });
+
+  test("the bunfig.toml of the project is not read", async () => {
+    const result = await bun({ "bunfig.toml": "[install]\nglobalDir = 1\n", "a.js": ugly }, ["format", "-l"]);
+    expect(result).toEqual({ stdout: "a.js\n", stderr: "", exitCode: 1 });
+  });
+
+  const count = isDebug || isASAN ? 20_000 : 300_000;
+  const long = `a(${Array.from({ length: count }, (_, i) => `"x${i}"`).join(",")});\n`;
+
+  test("more is printed than a pipe holds", async () => {
+    const result = await format({}, ["--stdin-filepath", "a.js"], { stdin: long });
+    const expected = `a(\n${Array.from({ length: count }, (_, i) => `  "x${i}",\n`).join("")});\n`;
+    expect(result.raw.length).toBe(expected.length);
+    expect(Bun.hash(result.raw)).toBe(Bun.hash(expected));
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("nobody reads what is printed to its end", async () => {
+    using dir = tempDir("bun-format-process", {});
+    await using proc = spawn({
+      cmd: [...command, "--stdin-filepath", "a.js"],
+      env,
+      cwd: String(dir),
+      stdin: Buffer.from(long),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const reader = proc.stdout.getReader();
+    expect((await reader.read()).done).toBe(false);
+    await reader.cancel();
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(!isLinux)("a name that is not UTF-8, found in a directory and as an argument", async () => {
+    using dir = tempDir("bun-format-process", { "ok.js": formatted });
+    const name = Buffer.concat([Buffer.from(String(dir) + "/n"), Buffer.from([0xff]), Buffer.from(".js")]);
+    writeFileSync(name, ugly);
+    const run = async (argument: string) => {
+      await using proc = spawn({
+        cmd: ["sh", "-c", `exec "$0" format ${argument}`, bunExe()],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+      return { stdout: Buffer.from(stdout).toString("latin1"), stderr, exitCode };
+    };
+    expect(await run("-l .")).toEqual({ stdout: "n\xff.js\n", stderr: "", exitCode: 1 });
+    expect(await run(`-l "$(printf 'n\\377.js')"`)).toEqual({ stdout: "n\xff.js\n", stderr: "", exitCode: 1 });
+    expect((await run(`"$(printf 'n\\377.js')"`)).exitCode).toBe(0);
+    expect(readFileSync(name, "utf8")).toBe(formatted);
+  });
+
+  test("a configuration file that is a program in each of many directories, asked for by all threads at once", async () => {
+    const directories = Array.from({ length: isDebug || isASAN ? 6 : 24 }, (_, i) => i);
+    const files = Object.fromEntries(
+      directories.flatMap(i => [
+        [`d${i}/.prettierrc.mjs`, `export default { semi: ${i % 2 === 0}, tabWidth: ${(i % 4) + 1} };\n`],
+        [`d${i}/a.js`, "if (a) {\nb;\n}\n"],
+      ]),
+    );
+    const reads = directories.map(i => `d${i}/a.js`);
+    const result = await format(files, reads, { reads });
+    expect(result.files).toEqual(
+      Object.fromEntries(
+        directories.map(i => [`d${i}/a.js`, `if (a) {\n${" ".repeat((i % 4) + 1)}b${i % 2 === 0 ? ";" : ""}\n}\n`]),
+      ),
+    );
+    expect(result.exitCode).toBe(0);
+  });
+
+  // Standard input is formatted on the main thread, whose stack is not that of a thread of the pool.
+  test.each(["[", "a(", "{a:", "<a>"])(
+    "standard input that is nested too deeply is refused: 100,000 times `%s`",
+    async open => {
+      const result = await format({}, ["--stdin-filepath", "deep.jsx"], { stdin: open.repeat(100_000) + "\n" });
+      expect(result.raw).toBe("");
+      expect(result.stderr).toStartWith("[error] deep.jsx:");
+      expect(result.exitCode).toBe(2);
+    },
+  );
 });

@@ -139,7 +139,7 @@ Types are not there for a rule in JavaScript. `parserServices.program` is `null`
 
 ### Other languages
 
-A file for which the configuration has a `language` of a plugin, such as `json/json` of `@eslint/json`, `markdown/gfm` or `css/css`, or a parser for another kind of file, such as `yaml-eslint-parser` or `vue-eslint-parser`, or `eslint-plugin-html`, is linted by the `Linter` of the `eslint` package that the project has installed. `bun lint` finds the files, works out the configuration, applies the fixes and prints the report. All rules for such a file run in JavaScript, also those that are built in. Keep `eslint`, 8.57 or later, in `devDependencies` for these files. Without it they [cannot be linted](#what-cannot-be-linted).
+A file for which the configuration has a `language` of a plugin, such as `json/json` of `@eslint/json`, `markdown/gfm` or `css/css`, or a parser for another kind of file, such as `yaml-eslint-parser` or `vue-eslint-parser`, or `eslint-plugin-html`, is linted by the `Linter` of the `eslint` package that the project has installed. `bun lint` finds the files, works out the configuration, applies the fixes and prints the report. All rules for such a file run in JavaScript, also those that are built in. If its parser is asked for types, all such files are linted on one thread: each thread would make a TypeScript program of its own. Keep `eslint`, 8.57 or later, in `devDependencies` for these files. Without it they [cannot be linted](#what-cannot-be-linted).
 
 ### Processors
 

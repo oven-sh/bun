@@ -1159,7 +1159,7 @@ impl<'c> Legacy<'_, '_, 'c> {
             };
         }
         let request = if is_file_path(name) {
-            name.to_vec()
+            path::portable(&context.path, name)
         } else if name.starts_with(b".") {
             [b"./", name].concat()
         } else {

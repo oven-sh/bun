@@ -181,15 +181,22 @@ fn dfs_postorder(
     visited: &mut HashSet<BlockId>,
     postorder: &mut Vec<BlockId>,
 ) {
-    if !visited.insert(id) {
-        return;
-    }
-    if let Some(node) = nodes.get(id) {
-        for &succ in &node.succs {
-            dfs_postorder(succ, nodes, visited, postorder);
+    let mut stack = vec![(id, false)];
+    while let Some((id, is_after_successors)) = stack.pop() {
+        if is_after_successors {
+            postorder.push(id);
+            continue;
+        }
+        if !visited.insert(id) {
+            continue;
+        }
+        stack.push((id, true));
+        if let Some(node) = nodes.get(id) {
+            let first = stack.len();
+            stack.extend(node.succs.iter().map(|&succ| (succ, false)));
+            stack[first..].reverse();
         }
     }
-    postorder.push(id);
 }
 
 // =============================================================================

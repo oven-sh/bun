@@ -51,11 +51,34 @@ fn cwd_before(command: &[u8]) -> Option<&'static [u8]> {
     found
 }
 
+/// What steers a `bun` process and is not meant for the one that runs a configuration file. All else is passed on: ESLint and
+/// Prettier run the file in their own process, so it sees what they were started with.
+const NOT_FOR_SCRIPTS: [&[u8]; 7] = [
+    // This process has applied these flags. `--cwd=sub` would be applied once more, in `sub`.
+    b"BUN_OPTIONS",
+    // A debugger in every such process, which can wait for its client for ever. Editors set these for all that their terminals start.
+    b"BUN_INSPECT",
+    b"BUN_INSPECT_CONNECT_TO",
+    b"BUN_INSPECT_NOTIFY",
+    b"BUN_INSPECT_PRELOAD",
+    // The channel to what has started this process. The descriptor is not passed on.
+    b"NODE_CHANNEL_FD",
+    b"NODE_CHANNEL_SERIALIZATION_MODE",
+];
+
 /// Runs `script` with this executable, to its end.
 fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     use crate::api::bun::process::sync::{Options as SpawnOptions, SyncStdio, spawn};
     let Ok(exe) = bun_core::self_exe_path() else {
         return Err(b"Could not find the path of the running executable.".to_vec());
+    };
+    let mut variables = bun_dotenv::Loader::init();
+    let read = variables.load_process();
+    for name in NOT_FOR_SCRIPTS {
+        variables.map.remove(name);
+    }
+    let Ok(envp) = read.and_then(|()| variables.map.create_null_delimited_env_map()) else {
+        return Err(b"Could not start a process: out of memory".to_vec());
     };
     let mut argv: Vec<Box<[u8]>> = vec![
         Box::from(exe.as_bytes()),
@@ -71,7 +94,7 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
         stderr: SyncStdio::Buffer,
         stdin: SyncStdio::Ignore,
         cwd: Box::<[u8]>::from(script.cwd),
-        envp: None,
+        envp: Some(envp.as_ptr()),
         #[cfg(windows)]
         windows: crate::api::bun::process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
@@ -153,6 +176,14 @@ impl LintCommand {
                     rest,
                     environment,
                 )),
+                ..Outcome::default()
+            })
+        }
+        if HAS_TEST_RUNNER && let [b"--run-path-tests", rest @ ..] = &args[..] {
+            let answers = bun_lint_driver::for_tests::run_path_tests(rest);
+            run_and_exit(b"lint", None, |_| Outcome {
+                exit_code: u8::from(answers.is_none()),
+                stdout: answers.unwrap_or_default(),
                 ..Outcome::default()
             })
         }

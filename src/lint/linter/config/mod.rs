@@ -501,7 +501,7 @@ impl Config {
     fn relative(&self, path: &[u8]) -> Vec<u8> {
         let relative = path::relative(&self.base_path, path);
         match self.prefers_typescript_rules && path::is_external(&relative) {
-            true => path::resolve(b"/", path),
+            true => path::rooted(path),
             false => relative,
         }
     }

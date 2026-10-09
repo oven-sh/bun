@@ -32,15 +32,19 @@ pub fn get_reverse_postordered_blocks(
     let mut used_fallthroughs: IndexSet<BlockId> = IndexSet::new();
     let mut postorder: Vec<BlockId> = Vec::new();
 
-    fn visit(
-        hir: &HIR,
-        block_id: BlockId,
-        is_used: bool,
-        visited: &mut IndexSet<BlockId>,
-        used: &mut IndexSet<BlockId>,
-        used_fallthroughs: &mut IndexSet<BlockId>,
-        postorder: &mut Vec<BlockId>,
-    ) {
+    enum Step {
+        Enter(BlockId, bool),
+        Exit(BlockId),
+    }
+    let mut stack = vec![Step::Enter(hir.entry, true)];
+    while let Some(step) = stack.pop() {
+        let (block_id, is_used) = match step {
+            Step::Enter(block_id, is_used) => (block_id, is_used),
+            Step::Exit(block_id) => {
+                postorder.push(block_id);
+                continue;
+            }
+        };
         let was_used = used.contains(&block_id);
         let was_visited = visited.contains(&block_id);
         visited.insert(block_id);
@@ -48,7 +52,10 @@ pub fn get_reverse_postordered_blocks(
             used.insert(block_id);
         }
         if was_visited && (was_used || !is_used) {
-            return;
+            continue;
+        }
+        if !was_visited {
+            stack.push(Step::Exit(block_id));
         }
 
         let block = hir
@@ -58,45 +65,19 @@ pub fn get_reverse_postordered_blocks(
 
         // Visit successors in reverse order so that when we reverse the
         // postorder list, sibling edges come out in program order.
-        let mut successors = each_terminal_successor(&block.terminal);
-        successors.reverse();
-
-        let fallthrough = terminal_fallthrough(&block.terminal);
+        for successor in each_terminal_successor(&block.terminal) {
+            stack.push(Step::Enter(successor, is_used));
+        }
 
         // Visit fallthrough first (marking as not-yet-used) to ensure its
         // block ID is emitted in the correct position.
-        if let Some(ft) = fallthrough {
+        if let Some(ft) = terminal_fallthrough(&block.terminal) {
             if is_used {
                 used_fallthroughs.insert(ft);
             }
-            visit(hir, ft, false, visited, used, used_fallthroughs, postorder);
-        }
-        for successor in successors {
-            visit(
-                hir,
-                successor,
-                is_used,
-                visited,
-                used,
-                used_fallthroughs,
-                postorder,
-            );
-        }
-
-        if !was_visited {
-            postorder.push(block_id);
+            stack.push(Step::Enter(ft, false));
         }
     }
-
-    visit(
-        hir,
-        hir.entry,
-        true,
-        &mut visited,
-        &mut used,
-        &mut used_fallthroughs,
-        &mut postorder,
-    );
 
     let mut blocks = IndexMap::new();
     for block_id in postorder.into_iter().rev() {
@@ -254,23 +235,19 @@ pub fn mark_predecessors(hir: &mut HIR) {
 
     let mut visited: IndexSet<BlockId> = IndexSet::new();
 
-    fn visit(
-        hir: &mut HIR,
-        block_id: BlockId,
-        prev_block_id: Option<BlockId>,
-        visited: &mut IndexSet<BlockId>,
-    ) {
+    let mut stack = vec![(hir.entry, None)];
+    while let Some((block_id, prev_block_id)) = stack.pop() {
         // Add predecessor
         if let Some(prev_id) = prev_block_id {
             if let Some(block) = hir.blocks.get_mut(&block_id) {
                 block.preds.insert(prev_id);
             } else {
-                return;
+                continue;
             }
         }
 
         if visited.contains(&block_id) {
-            return;
+            continue;
         }
         visited.insert(block_id);
 
@@ -278,15 +255,13 @@ pub fn mark_predecessors(hir: &mut HIR) {
         let successors = if let Some(block) = hir.blocks.get(&block_id) {
             each_terminal_successor(&block.terminal)
         } else {
-            return;
+            continue;
         };
 
-        for successor in successors {
-            visit(hir, successor, Some(block_id), visited);
+        for successor in successors.into_iter().rev() {
+            stack.push((successor, Some(block_id)));
         }
     }
-
-    visit(hir, hir.entry, None, &mut visited);
 }
 
 /// Create a temporary Place with a fresh identifier allocated in the arena.

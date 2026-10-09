@@ -110,7 +110,7 @@ pub(super) fn write_with_metadata(out: &mut Vec<u8>, results: &[FileResult], met
         );
     }
     out.extend_from_slice(b"\"cwd\":");
-    write_string(out, meta.cwd);
+    write_string(out, &crate::paths::to_native(meta.cwd.to_vec()));
     out.extend_from_slice(b",\"rulesMeta\":{");
     let mut seen: Vec<Vec<u8>> = Vec::new();
     for message in results

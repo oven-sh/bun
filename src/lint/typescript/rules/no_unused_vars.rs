@@ -115,18 +115,22 @@ fn is_exported(variable: Variable) -> bool {
     })
 }
 
-/// The variables that are named somewhere.
+/// The variables that are named somewhere, each once.
 #[derive(Default)]
-struct Named(SymbolSet, bool);
+struct Named<'a> {
+    seen: SymbolSet,
+    all: Vec<Symbol<'a>>,
+}
 
-impl<'a> Visitor<'a> for Named {
+impl<'a> Visitor<'a> for Named<'a> {
     fn enter(&mut self, node: Node<'a>) {
         if let Node::Expr(e) = node
             && e.tag() == ExprTag::Ident
             && let Some(symbol) = e.reference().and_then(Reference::symbol)
+            && !self.seen.contains(symbol)
         {
-            self.0.insert(symbol);
-            self.1 = true;
+            self.seen.insert(symbol);
+            self.all.push(symbol);
         }
     }
 
@@ -134,11 +138,10 @@ impl<'a> Visitor<'a> for Named {
 }
 
 /// The variables that typescript-eslint takes for used and oxlint may not: what a logical assignment changes, as in
-/// `a ||= 1;`, and what is named where a value is discarded, as in `(a, 0)`. `None` if there are none, as in most
-/// files.
+/// `a ||= 1;`, and what is named where a value is discarded, as in `(a, 0)`. Most files have none.
 ///
 /// `discarded`: the left operands of the comma operators.
-fn oxlint_may_be_unused_after_all<'a>(file: &'a File<'a>, mut discarded: Vec<Expr<'a>>) -> Option<SymbolSet> {
+fn oxlint_may_be_unused_after_all<'a>(file: &'a File<'a>, mut discarded: Vec<Expr<'a>>) -> Vec<Symbol<'a>> {
     let mut named = Named::default();
     for e in file.exprs_of_kind(ExprTag::Assign) {
         if let ExprKind::Assign { op: Some(BinOp::And | BinOp::Or | BinOp::Nullish), target, .. } = e.kind() {
@@ -154,7 +157,7 @@ fn oxlint_may_be_unused_after_all<'a>(file: &'a File<'a>, mut discarded: Vec<Exp
             walk_node(Node::Expr(operand), &mut named);
         }
     }
-    named.1.then_some(named.0)
+    named.all
 }
 
 /// [`oxlint_used_beside_infer`]
@@ -1271,19 +1274,15 @@ impl NoUnusedVars {
         let discarded = std::mem::take(&mut cx.state.discarded);
         let candidates = match file.language().is_oxlint {
             true => oxlint_may_be_unused_after_all(file, discarded),
-            false => None,
+            false => Vec::new(),
         };
         let is_added = |it: &Variable<'a>| {
-            candidates.as_ref().is_some_and(|candidates| candidates.contains(it.symbol()))
-                && it.class_scope().is_none()
+            !analysis.is_unused(it.symbol())
                 && !analysis.is_eslint_used(*it)
                 && !is_exported(*it)
                 && !oxlint_counts_as_used(*it, self.reports_vars_only_used_as_types)
         };
-        let added: Vec<Variable<'a>> = match &candidates {
-            Some(_) => analysis.used_variables().iter().copied().filter(is_added).collect(),
-            None => Vec::new(),
-        };
+        let added: Vec<Variable<'a>> = candidates.into_iter().map(Variable::new).filter(is_added).collect();
         let mut unused_for_oxlint = SymbolSet::default();
         for variable in &added {
             unused_for_oxlint.insert(variable.symbol());

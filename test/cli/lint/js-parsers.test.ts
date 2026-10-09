@@ -21,7 +21,7 @@ const env = {
 async function lint(files: Record<string, string>, args: string[], reads: string[] = []) {
   using dir = tempDir("bun-lint-js-parsers", files);
   await using proc = spawn({
-    cmd: [bunExe(), "lint", "--threads", "2", ...args],
+    cmd: [bunExe(), "lint", ...(args.includes("--threads") ? [] : ["--threads", "2"]), ...args],
     env,
     cwd: String(dir),
     stdin: "ignore",
@@ -533,6 +533,43 @@ describe.concurrent("bun lint with languages", () => {
         1 problem"
       `);
       expect(result.exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "files for which the parser is asked for types all go to one engine",
+    async () => {
+      const files: Record<string, string> = {
+        ...eslintPackage,
+        "node_modules/eslint/index.js": `
+          const realm = Math.random();
+          exports.Linter = class {
+            verify = () => [{ ruleId: "own/seen", severity: 2, message: String(realm), line: 1, column: 1 }];
+            getSuppressedMessages = () => [];
+          };`,
+        "plugin.mjs": `export default { rules: { seen: { create: () => ({}) } } };`,
+        "parser.cjs": `module.exports = { meta: { name: "vue-eslint-parser" }, parseForESLint() {} };`,
+        "eslint.config.mjs": `
+          import own from "./plugin.mjs";
+          import parser from "./parser.cjs";
+          const typed = { parser, parserOptions: { projectService: true } };
+          export default [
+            { files: ["typed/*.vue"], plugins: { own }, languageOptions: typed, rules: { "own/seen": "error" } },
+            { files: ["plain/*.vue"], plugins: { own }, languageOptions: { parser }, rules: { "own/seen": "error" } },
+          ];`,
+      };
+      // 6 MB, which three engines are for.
+      const text = Buffer.alloc(250_000, "<!-- comment -->\n").toString();
+      for (let i = 0; i < 24; i++) files[`typed/${i}.vue`] = files[`plain/${i}.vue`] = text;
+      const realms = async (directory: string) => {
+        const result = await lint(files, ["-f", "json", "--threads", "8", directory]);
+        expect(result.exitCode).toBe(1);
+        const messages = JSON.parse(result.raw).flatMap((it: any) => it.messages.map((it: any) => it.message));
+        return [messages.length, new Set(messages).size];
+      };
+      expect(await realms("typed")).toEqual([24, 1]);
+      expect((await realms("plain"))[1]).toBeGreaterThan(1);
     },
     timeout,
   );

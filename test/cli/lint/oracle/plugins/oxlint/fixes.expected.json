@@ -689,6 +689,51 @@
   "suggestions": "type A = {\n  /** b */\n  [C in D]: E;\n};\ninterface F { [g: string]: H /* i */ }\n",
   "dangerously": "type A = Record<D, E>;\ntype F = Record<string, H>;\n"
  },
+ "147-sort-keys": {
+  "fix": "a = { a: 3, b: { d: 2, e: 1 }, c: 1 };\nf = {\n  g: 2,\n  /** h */\n  h: 1, // i,\n};\nj = { ...k, l: 2, m: 1, ...n };\no = { q: 1, /* r */ p: 2 };\n",
+  "suggestions": "a = { c: 1, b: { e: 1, d: 2 }, a: 3 };\nf = {\n  /** h */\n  h: 1, // i\n  g: 2,\n};\nj = { ...k, m: 1, l: 2, ...n };\no = { q: 1, /* r */ p: 2 };\n",
+  "dangerously": "a = { a: 3, b: { d: 2, e: 1 }, c: 1 };\nf = {\n  g: 2,\n  /** h */\n  h: 1, // i,\n};\nj = { ...k, l: 2, m: 1, ...n };\no = { q: 1, /* r */ p: 2 };\n"
+ },
+ "148-func-names": {
+  "fix": "var a = function  a() {}; b.c = function*  c() {}; d = { e: function  e() { e; }, 'f': async function  f() {}, g: h(function  g() {}) }; (function () {})();\n",
+  "suggestions": "var a = function () {}; b.c = function* () {}; d = { e: function () { e; }, 'f': async function () {}, g: h(function () {}) }; (function () {})();\n",
+  "dangerously": "var a = function  a() {}; b.c = function*  c() {}; d = { e: function  e() { e; }, 'f': async function  f() {}, g: h(function  g() {}) }; (function () {})();\n"
+ },
+ "149-no-plusplus": {
+  "fix": "a++; --b.c; d['e']++; f[g]--; for (;; h++) {}\n",
+  "suggestions": "a += 1; b.c -= 1; d['e'] += 1; f[g]--; for (;; h += 1) {}\n",
+  "dangerously": "a += 1; b.c -= 1; d['e'] += 1; f[g]--; for (;; h += 1) {}\n"
+ },
+ "150-no-void": {
+  "fix": "a = void 0; void b(); c(void (d));\n",
+  "suggestions": "a = undefined; undefined; c(undefined);\n",
+  "dangerously": "a = undefined; undefined; c(undefined);\n"
+ },
+ "151-no-eq-null": {
+  "fix": "a == null; null != (b); c /* d */ == /* e */ null;\n",
+  "suggestions": "a == null; null != (b); c /* d */ == /* e */ null;\n",
+  "dangerously": "a === null; null !== (b); c === null;\n"
+ },
+ "152-no-throw-literal": {
+  "fix": "function a() { throw 'b'; } function c() { throw (`d`); } function e() { throw 1; }\n",
+  "suggestions": "function a() { throw new Error('b'); } function c() { throw new Error((`d`)); } function e() { throw 1; }\n",
+  "dangerously": "function a() { throw new Error('b'); } function c() { throw new Error((`d`)); } function e() { throw 1; }\n"
+ },
+ "153-no-unexpected-multiline": {
+  "fix": "a\n(b || c).d();\ne\n[f].g();\nh\n`i`;\n",
+  "suggestions": "a\n(b || c).d();\ne\n[f].g();\nh\n`i`;\n",
+  "dangerously": "a\n;(b || c).d();\ne\n;[f].g();\nh\n;`i`;\n"
+ },
+ "154-no-extraneous-class": {
+  "fix": "export class A {}\nclass B {}\n@c class D {}\ne = class {};\n",
+  "suggestions": "\n\n@c class D {}\ne = class {};\n",
+  "dangerously": "\n\n@c class D {}\ne = class {};\n"
+ },
+ "155-no-unnecessary-parameter-property-assignment": {
+  "fix": "class A { constructor(public b: number, private c: string) { this.b = b; d(this.c = c); } }\n",
+  "suggestions": "class A { constructor(public b: number, private c: string) {  d(this.c = c); } }\n",
+  "dangerously": "class A { constructor(public b: number, private c: string) {  d(this.c = c); } }\n"
+ },
  "9-non-nullable-type-assertion-style": {
   "fix": "declare const a: string | null; export const b = a as string;\n",
   "suggestions": "declare const a: string | null; export const b = a!;\n",
@@ -733,5 +778,20 @@
   "fix": "declare const a: string[]; a.includes(\"b\");\n",
   "suggestions": "declare const a: string[]; a.indexOf(\"b\") !== -1;\n",
   "dangerously": "declare const a: string[]; a.includes(\"b\");\n"
+ },
+ "156-no-unnecessary-boolean-literal-compare": {
+  "fix": "declare const b: boolean, n: boolean | null, x: unknown, f: (a?: boolean) => boolean, o: { p?: boolean }; let r;\nif (b) {}\nif (!b) {}\nif (!b) {}\nif (b) {}\nif ( b) {}\nif ( b) {}\nif (! b) {}\nif (! (x instanceof Error)) {}\nr =  b;\nr = ! b;\nr = !b;\nr = b;\nr = b;\nr = b;\nr = ! (x instanceof Error);\nr = !( x instanceof Error);\nr = ! f();\nif (n === true) {}\nif (n !== true) {}\nif (n === false) {}\nif (n !== false) {}\nr = n === true;\nr = n !== true;\nr = n === false;\nr = n !== false;\nr = !(n === true);\nr = !(n !== true);\nr = !(n === false);\nr =  (n ?? b);\nr = ! (n ?? b);\nr = n === true && b;\nr = n === true ? 1 : 2;\nwhile (n === true) {}\nr =  b;\nr =  /* d */ b;\nr =  b;\nr = \n  b;\nr = !!(n === true);\nfor (; n === true; ) {}\ndo {} while (n === true);\nr = [n === true];\nr = f(n === true);\nexport {};\n",
+  "suggestions": "declare const b: boolean, n: boolean | null, x: unknown, f: (a?: boolean) => boolean, o: { p?: boolean }; let r;\nif (b === true) {}\nif (b !== true) {}\nif (b === false) {}\nif (b !== false) {}\nif (true === b) {}\nif (false !== b) {}\nif (true !== b) {}\nif (false === (x instanceof Error)) {}\nr = b === true;\nr = b === false;\nr = !(b === true);\nr = !(b !== true);\nr = !(b === false);\nr = !((b === false));\nr = (x instanceof Error) === false;\nr = x instanceof Error === false;\nr = f() === false;\nif (n === true) {}\nif (n !== true) {}\nif (n === false) {}\nif (n !== false) {}\nr = n === true;\nr = n !== true;\nr = n === false;\nr = n !== false;\nr = !(n === true);\nr = !(n !== true);\nr = !(n === false);\nr = (n ?? b) === true;\nr = (n ?? b) === false;\nr = n === true && b;\nr = n === true ? 1 : 2;\nwhile (n === true) {}\nr = b /* c */ === /* d */ true;\nr = true /* c */ === /* d */ b;\nr = b\n  === true;\nr = true ===\n  b;\nr = !!(n === true);\nfor (; n === true; ) {}\ndo {} while (n === true);\nr = [n === true];\nr = f(n === true);\nexport {};\n",
+  "dangerously": "declare const b: boolean, n: boolean | null, x: unknown, f: (a?: boolean) => boolean, o: { p?: boolean }; let r;\nif (b) {}\nif (!b) {}\nif (!b) {}\nif (b) {}\nif ( b) {}\nif ( b) {}\nif (! b) {}\nif (! (x instanceof Error)) {}\nr =  b;\nr = ! b;\nr = !b;\nr = b;\nr = b;\nr = b;\nr = ! (x instanceof Error);\nr = !( x instanceof Error);\nr = ! f();\nif (n === true) {}\nif (n !== true) {}\nif (n === false) {}\nif (n !== false) {}\nr = n === true;\nr = n !== true;\nr = n === false;\nr = n !== false;\nr = !(n === true);\nr = !(n !== true);\nr = !(n === false);\nr =  (n ?? b);\nr = ! (n ?? b);\nr = n === true && b;\nr = n === true ? 1 : 2;\nwhile (n === true) {}\nr =  b;\nr =  /* d */ b;\nr =  b;\nr = \n  b;\nr = !!(n === true);\nfor (; n === true; ) {}\ndo {} while (n === true);\nr = [n === true];\nr = f(n === true);\nexport {};\n"
+ },
+ "157-no-unnecessary-boolean-literal-compare": {
+  "fix": "declare const b: boolean, n: boolean | null, x: unknown, f: (a?: boolean) => boolean, o: { p?: boolean }; let r;\nif (n) {}\nif (!n) {}\nif (!(n ?? true)) {}\nif ((n ?? true)) {}\nr = (!!n);\nr = ! n;\nr = !( n ?? true);\nr = ( n ?? true);\nr = !n;\nr = (!!n);\nr = (n ?? true);\nr =  (n ?? b);\nr = ! (n ?? b);\nr = (!!n) && b;\nr =  n ? 1 : 2;\nwhile (n) {}\nr = !!n;\nfor (;  n; ) {}\ndo {} while (n);\nr = [(!!n)];\nr = f((!!n));\nr = (!!n);\nr = !( n ?? true);\nr = ( n ?? true);\nr = (!!o.p);\nr = !( o.p ?? true);\nr = (!!(b ? n : null));\nr = !( (b ? n : null) ?? true);\nr = !( !(b ? n : null));\nif ((n ?? true)) {}\nif ((n)) {}\nr = (!!n) || b;\nif (n || b) {}\nr = !(n ?? true);\nr =  n!;\nr = !( (n as boolean | null) ?? true);\nr = (!!(n as boolean | null));\nexport {};\n",
+  "suggestions": "declare const b: boolean, n: boolean | null, x: unknown, f: (a?: boolean) => boolean, o: { p?: boolean }; let r;\nif (n === true) {}\nif (n !== true) {}\nif (n === false) {}\nif (n !== false) {}\nr = n === true;\nr = n !== true;\nr = n === false;\nr = n !== false;\nr = !(n === true);\nr = !(n !== true);\nr = !(n === false);\nr = (n ?? b) === true;\nr = (n ?? b) === false;\nr = n === true && b;\nr = n === true ? 1 : 2;\nwhile (n === true) {}\nr = !!(n === true);\nfor (; n === true; ) {}\ndo {} while (n === true);\nr = [n === true];\nr = f(n === true);\nr = true === n;\nr = false === n;\nr = false !== n;\nr = o.p === true;\nr = o.p === false;\nr = (b ? n : null) === true;\nr = (b ? n : null) === false;\nr = !(b ? n : null) === false;\nif (!(n === false)) {}\nif ((n === true)) {}\nr = n === true || b;\nif (n === true || b) {}\nr = !(n !== false);\nr = n! === true;\nr = (n as boolean | null) === false;\nr = (n as boolean | null) === true;\nexport {};\n",
+  "dangerously": "declare const b: boolean, n: boolean | null, x: unknown, f: (a?: boolean) => boolean, o: { p?: boolean }; let r;\nif (n) {}\nif (!n) {}\nif (!(n ?? true)) {}\nif ((n ?? true)) {}\nr = (!!n);\nr = ! n;\nr = !( n ?? true);\nr = ( n ?? true);\nr = !n;\nr = (!!n);\nr = (n ?? true);\nr =  (n ?? b);\nr = ! (n ?? b);\nr = (!!n) && b;\nr =  n ? 1 : 2;\nwhile (n) {}\nr = !!n;\nfor (;  n; ) {}\ndo {} while (n);\nr = [(!!n)];\nr = f((!!n));\nr = (!!n);\nr = !( n ?? true);\nr = ( n ?? true);\nr = (!!o.p);\nr = !( o.p ?? true);\nr = (!!(b ? n : null));\nr = !( (b ? n : null) ?? true);\nr = !( !(b ? n : null));\nif ((n ?? true)) {}\nif ((n)) {}\nr = (!!n) || b;\nif (n || b) {}\nr = !(n ?? true);\nr =  n!;\nr = !( (n as boolean | null) ?? true);\nr = (!!(n as boolean | null));\nexport {};\n"
+ },
+ "158-no-meaningless-void-operator": {
+  "fix": "let r;\n (() => {})();\nfunction g() {}\n g();\n  g2();\nfunction g2() {}\n/* c */g3();\nfunction g3() {}\n\ng4();\nfunction g4() {}\nfunction g5(): never { throw 1; }\nvoid g5();\nr =  g6();\nfunction g6() {}\n  g7();\nfunction g7() {}\n (g8());\nfunction g8() {}\ndeclare const u: undefined;\n u;\nexport {};\n",
+  "suggestions": "let r;\nvoid (() => {})();\nfunction g() {}\nvoid g();\nvoid  g2();\nfunction g2() {}\nvoid/* c */g3();\nfunction g3() {}\nvoid\ng4();\nfunction g4() {}\nfunction g5(): never { throw 1; }\nvoid g5();\nr = void g6();\nfunction g6() {}\nvoid void g7();\nfunction g7() {}\nvoid (g8());\nfunction g8() {}\ndeclare const u: undefined;\nvoid u;\nexport {};\n",
+  "dangerously": "let r;\n (() => {})();\nfunction g() {}\n g();\n  g2();\nfunction g2() {}\n/* c */g3();\nfunction g3() {}\n\ng4();\nfunction g4() {}\nfunction g5(): never { throw 1; }\nvoid g5();\nr =  g6();\nfunction g6() {}\n  g7();\nfunction g7() {}\n (g8());\nfunction g8() {}\ndeclare const u: undefined;\n u;\nexport {};\n"
  }
 }

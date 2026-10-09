@@ -233,8 +233,18 @@ impl Vm for ThreadVm {
             let mut returned = (state.handle.get().call(global, JSValue::UNDEFINED, &[kind]))
                 .map_err(|error| message_of(global, global.take_exception(error)))?;
             if let Some(promise) = returned.as_any_promise() {
-                if vm.as_mut().wait_for_promise(promise).is_err() {
-                    return Err(b"JavaScript was stopped.".to_vec());
+                // As `wait_for_promise`, which waits for ever for a promise that nothing is going to settle. Node.js ends then.
+                while promise.status() == jsc::js_promise::Status::Pending {
+                    vm.as_mut().event_loop_mut().tick();
+                    if promise.status() != jsc::js_promise::Status::Pending {
+                        break;
+                    }
+                    if !vm.is_event_loop_alive() {
+                        return Err(
+                            b"A promise is not settled, and nothing is left to wait for.".to_vec(),
+                        );
+                    }
+                    vm.as_mut().auto_tick();
                 }
                 returned = promise.result(global.vm());
                 if promise.status() == jsc::js_promise::Status::Rejected {
@@ -448,6 +458,8 @@ struct State {
     idle: Vec<usize>,
     /// Who has borrowed which.
     borrowed: Vec<(ThreadId, usize)>,
+    /// How many are kept: [`Engine::keep_vm`]. They are not there for the files by which the others are counted.
+    kept: usize,
 }
 
 /// The engines. None is started before it is needed.
@@ -492,7 +504,7 @@ impl Engines {
                 state.all[at].1 = me;
                 break at;
             }
-            if self.demand.is_worth_another(state.all.len()) {
+            if (self.demand).is_worth_another(state.all.len() - state.kept) {
                 let (at, desk) = (state.all.len(), Arc::<Desk>::default());
                 let (start, for_thread) = (Arc::clone(&self.start), Arc::clone(&desk));
                 // SAFETY: no VM or JS state crosses: a number, a `Once` with a flag, and a `Desk`, whose turns are bytes. This
@@ -520,6 +532,16 @@ impl Engines {
 impl Engine for Engines {
     fn with_vm(&self, size: usize, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>> {
         then(&mut self.borrow(size)?);
+        Ok(())
+    }
+
+    fn keep_vm(&self, then: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
+        let borrowed = self.borrow(0)?;
+        self.state.lock().kept += 1;
+        self.is_idle.notify_all();
+        then();
+        self.state.lock().kept -= 1;
+        drop(borrowed);
         Ok(())
     }
 

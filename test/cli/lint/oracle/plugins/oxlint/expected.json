@@ -4140,5 +4140,22 @@
   "a.ts:11:11 eslint(no-unused-vars)",
   "a.ts:4:40 eslint(no-unused-vars)",
   "a.ts:4:46 eslint(no-unused-vars)"
+ ],
+ "no-unnecessary-type-assertion/what-a-call-infers-from-the-assertion": [
+  "a.ts:11:18 typescript(no-unnecessary-type-assertion)",
+  "a.ts:13:18 typescript(no-unnecessary-type-assertion)",
+  "a.ts:8:18 typescript(no-unnecessary-type-assertion)",
+  "a.ts:8:20 typescript(no-unnecessary-type-assertion)",
+  "a.ts:9:18 typescript(no-unnecessary-type-assertion)"
+ ],
+ "no-unnecessary-type-assertion/the-assertion-gives-the-context": [
+  "c.ts:2:31 typescript(no-unnecessary-type-assertion)",
+  "c.ts:3:47 typescript(no-unnecessary-type-assertion)",
+  "d.ts:12:8 typescript(no-unnecessary-type-assertion)",
+  "d.ts:13:3 typescript(no-unnecessary-type-assertion)",
+  "d.ts:15:18 typescript(no-unnecessary-type-assertion)",
+  "d.ts:5:24 typescript(no-unnecessary-type-assertion)",
+  "d.ts:7:26 typescript(no-unnecessary-type-assertion)",
+  "z.ts:2:18 typescript(no-unnecessary-type-assertion)"
  ]
 }

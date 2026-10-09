@@ -250,6 +250,11 @@ impl<'e> Host<'e> {
         self.engine.expect(files, size, most);
     }
 
+    /// [`Engine::keep_vm`]
+    pub fn keep_a_realm(&self, then: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
+        self.engine.keep_vm(then)
+    }
+
     /// [`Engine::most_realms`]
     pub fn most_realms(&self) -> usize {
         self.engine.most_realms()

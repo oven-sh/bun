@@ -19,6 +19,11 @@ pub trait Engine: Sync {
     /// `size`: that of the file which the realm is for, 0 if it is for none. `Err`: there is none, and `then` was not called.
     fn with_vm(&self, size: usize, then: &mut dyn FnMut(&mut dyn Vm)) -> Result<(), Vec<u8>>;
 
+    /// Calls `then`. Whatever asks for a realm meanwhile, on this thread, has the same one. `Err`: as of [`Engine::with_vm`].
+    fn keep_vm(&self, then: &mut dyn FnMut()) -> Result<(), Vec<u8>> {
+        self.with_vm(0, &mut |_| then())
+    }
+
     /// Says how many files are going to need a realm, how large they are together, and how many realms there can be at most.
     /// Nobody says so if a realm is needed to find out.
     fn expect(&self, _files: usize, _size: u64, _most: usize) {}

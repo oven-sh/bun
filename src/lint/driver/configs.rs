@@ -702,9 +702,9 @@ impl<'l> Loader<'l> {
             _ => b"recommended",
         };
         let text = strings::replace_owned(BUILT_IN, b"TYPESCRIPT", preset);
-        let root = paths::ancestors(self.cwd()).last().unwrap_or(b"/");
         Ok(Arc::new(Loaded {
-            config: self.flat(root, bun_lint::json::parse(&text).unwrap_or(Json::Null))?,
+            // Every file is in it, on whatever drive.
+            config: self.flat(b"/", bun_lint::json::parse(&text).unwrap_or(Json::Null))?,
             flavor: Flavor::BuiltIn,
             wants_types: Some(false),
             denies_warnings: false,
@@ -1033,19 +1033,30 @@ impl<'l> Loader<'l> {
         names.map(|it| it.0).chain(of_vite.copied())
     }
 
-    /// The name of the configuration file among `names`, which are those of a directory, and whether one of these can be a file
-    /// of ESLint 8.
-    fn pick<'n>(&self, names: impl Iterator<Item = &'n [u8]>) -> (Option<&'static [u8]>, bool) {
+    /// The name of the configuration file among `names`, those of `directory`, and whether one of these can be a file of ESLint 8.
+    /// ESLint asks the file system, and one that folds case has `ESLint.config.js` for `eslint.config.js`. oxlint compares the names.
+    fn pick<'n>(
+        &self,
+        directory: &[u8],
+        names: impl Iterator<Item = &'n [u8]>,
+    ) -> (Option<&'static [u8]>, bool) {
         let (mut best, mut has_legacy) = (None, false);
         for name in names.filter(|name| {
-            name.starts_with(b"eslint.")
+            (name.get(..7)).is_some_and(|it| it.eq_ignore_ascii_case(b"eslint."))
                 || name.starts_with(b".")
                 || name.starts_with(b"oxlint.")
                 || name.starts_with(b"vite.")
                 || *name == b"package.json"
         }) {
-            has_legacy |= eslintrc::NAMES.contains(&name);
-            let position = self.names().position(|it| it == name);
+            // Whoever is told so asks the file system.
+            has_legacy |= (eslintrc::NAMES.iter()).any(|it| it.eq_ignore_ascii_case(name));
+            let position = self.names().position(|it| it == name).or_else(|| {
+                self.names().position(|it| {
+                    it.starts_with(b"eslint.")
+                        && it.eq_ignore_ascii_case(name)
+                        && fs::is_file(&paths::join(directory, it))
+                })
+            });
             best = match (best, position) {
                 (Some(best), Some(position)) => Some(position.min(best)),
                 (best, position) => best.or(position),
@@ -1165,7 +1176,7 @@ impl<'l> Loader<'l> {
         let config = Config::from_legacy(
             self.linter.registry(),
             &LegacyOptions {
-                root: paths::ancestors(cwd).last().unwrap_or(b"/"),
+                root: b"/",
                 cwd,
                 ignore: options.ignore,
                 extensions: options.ext.as_deref(),
@@ -1296,7 +1307,7 @@ impl<'l> Loader<'l> {
             return Ok(Arc::clone(inherited));
         }
         let is_legacy = matches!(inherited.flavor, Flavor::EslintRc | Flavor::BuiltIn);
-        match self.pick(names) {
+        match self.pick(directory, names) {
             (Some(name), _) if !self.is_command_line_of_eslint_8() => {
                 let loaded = self.load_the_only_one(directory, name);
                 match has_no_lint_field(&loaded) {

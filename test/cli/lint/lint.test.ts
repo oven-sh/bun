@@ -10,8 +10,9 @@ import {
   readFileSync,
   statSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, parse } from "node:path";
+import { basename, dirname, join, parse, posix, win32 } from "node:path";
 import { endChildren, spawn } from "../children";
 import { configurations } from "./oracle/plugins/oxlint/compare-options";
 import whatOxlintReports from "./oracle/plugins/oxlint/expected.json";
@@ -82,6 +83,17 @@ async function lint(files: Record<string, string>, args: string[], options: Opti
     files: Object.fromEntries((options.reads ?? []).map(name => [name, read(name)])),
   };
 }
+
+/** The same in a directory that is there, with nothing in the output replaced. */
+async function run(cwd: string, args: string[]) {
+  const stdio = { stdin: "ignore", stdout: "pipe", stderr: "pipe" } as const;
+  await using proc = Bun.spawn({ cmd: [...command, ...args], env, cwd, ...stdio });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, lines: stdout.split("\n").filter(Boolean), stderr, exitCode };
+}
+
+// `bun lint --run-path-tests` is compiled into debug and canary builds only.
+const hasRunner = isDebug || Bun.spawnSync({ cmd: [bunExe(), "--revision"], env: bunEnv }).stdout.includes("canary");
 
 describe.concurrent("bun lint", () => {
   test("prints problems like ESLint's stylish formatter and exits with 1", async () => {
@@ -273,6 +285,127 @@ describe.concurrent("bun lint", () => {
         ],
         exitCode: 0,
       });
+    });
+
+    // A junction takes no privilege on Windows. Elsewhere it is a link like any other.
+    test("a link to a directory is not followed, on Windows neither", async () => {
+      const before = (dir: string) => symlinkSync(join(dir, "src", "deep"), join(dir, "src", "linked"), "junction");
+      expect(await listed(["src"], { before })).toEqual({
+        files: ["<dir>/src/.hidden/e.js", "<dir>/src/b.mjs", "<dir>/src/c.cjs", "<dir>/src/deep/f.js"],
+        exitCode: 0,
+      });
+    });
+
+    // Every snapshot above has `/` for `\\`, so none of them can tell.
+    test("paths are printed as the system writes them", async () => {
+      const inDirectory = async (args: string[]) => {
+        let root = "";
+        const { raw } = await lint(files, args, { before: dir => void (root = dir) });
+        return { raw, root, file: join(root, "src", "deep", "f.js") };
+      };
+      const [json, unix, stylish, list] = await Promise.all([
+        inDirectory(["-f", "json-with-metadata", "src/deep"]),
+        inDirectory(["-f", "unix", "src/deep"]),
+        inDirectory(["src/deep"]),
+        inDirectory(["--list-files", "src/deep"]),
+      ]);
+      const { results, metadata } = JSON.parse(json.raw);
+      expect(results.map((it: { filePath: string }) => it.filePath)).toEqual([json.file]);
+      expect(metadata.cwd).toBe(json.root);
+      expect(unix.raw).toStartWith(`${unix.file}:1:1: `);
+      expect(stylish.raw).toStartWith(`\n${stylish.file}\n`);
+      expect(list.raw).toBe(`${list.file}\n`);
+    });
+
+    test.skipIf(!hasRunner)("paths are computed as by node:path, those of Windows on every system", async () => {
+      // Not where a `package.json` has a script `lint`.
+      using dir = tempDir("bun-lint", {});
+      const cases = {
+        windows: {
+          resolve: [
+            ["C:/proj", "."],
+            ["C:/", "."],
+            ["C:/proj", ".."],
+            ["C:/proj", "../.."],
+            ["C:/proj", "src/../a.js"],
+            ["C:/proj", "D:/x"],
+            ["C:/proj", "/src/a.js"],
+            ["C:/proj", "C:src/a.js"],
+            ["C:/proj", "c:src"],
+            ["//server/share/proj", "."],
+            ["//server/share/proj", "../.."],
+            ["//server/share/", "a.js"],
+            ["//server/share/proj", "/a.js"],
+            ["C:/proj", "//server/share"],
+            ["C:/proj", "//server//share/a"],
+            ["C:/proj", "//server"],
+            ["C:/proj", "//?/C:/a"],
+          ],
+          relative: [
+            ["c:/proj", "C:/proj/a.js"],
+            ["C:/Proj/Src", "c:/proj/lib/x.js"],
+            ["C:/proj", "C:/proj"],
+            ["C:/proj", "C:/project/a.js"],
+            ["C:/proj", "D:/x/a.js"],
+            ["C:/", "C:/a.js"],
+            ["//server/share/a", "//SERVER/share/b/c.js"],
+            ["//server/share/", "//server/share/a.js"],
+            ["//server/share/a", "//server/other/a"],
+            ["//server/share/a", "//other/share/a"],
+          ],
+          dirname: [["C:/a/b"], ["C:/a"], ["C:/"], ["//server/share/a"], ["//server/share/"]],
+          namespaced: [
+            ["C:/a/b"],
+            ["C:\\a\\b"],
+            ["C:/"],
+            ["C:/a/../b/./c"],
+            ["//server/share/a"],
+            ["//server/share/"],
+            ["\\\\?\\C:\\a"],
+          ],
+        },
+        posix: {
+          resolve: [
+            ["/proj", "../a"],
+            ["/", "."],
+            ["/proj", "C:/x"],
+            ["/proj", "//server/share"],
+            ["/proj", "/a/./b/.."],
+          ],
+          relative: [
+            ["/Proj", "/proj/a.js"],
+            ["/proj", "/proj/a.js"],
+            ["/", "/a.js"],
+            ["/a/b", "/a/c/d"],
+            ["/a", "/a"],
+          ],
+          dirname: [["/a/b"], ["/a"], ["/"]],
+        },
+      };
+      for (const [style, path] of [
+        ["windows", win32],
+        ["posix", posix],
+      ] as const) {
+        const all = Object.entries(cases[style]).flatMap(([name, list]) => list.map(([a, b = "."]) => [name, a, b]));
+        const expected = all.map(([name, a, b]) => {
+          if (name === "namespaced") return path.toNamespacedPath(a);
+          const answer = name === "dirname" ? path.dirname(a) : path[name as "resolve" | "relative"](a, b);
+          return answer.replaceAll("\\", "/");
+        });
+        const { stdout, exitCode } = await run(String(dir), ["--run-path-tests", style, ...all.flat()]);
+        const answers = stdout.split("\n").slice(0, -1);
+        expect(all.map((it, i) => [...it, answers[i]])).toEqual(all.map((it, i) => [...it, expected[i]]));
+        expect(exitCode).toBe(0);
+      }
+      const inside = ["c:/proj", "C:/PROJ/a.js", "C:/proj", "C:/project/a.js", "C:/", "c:/a.js"].flatMap((it, i) =>
+        i % 2 ? [it] : ["inside", it],
+      );
+      const [onWindows, onPosix] = await Promise.all([
+        run(String(dir), ["--run-path-tests", "windows", ...inside]),
+        run(String(dir), ["--run-path-tests", "posix", "inside", "/proj", "/PROJ/a.js", "inside", "/", "/a.js"]),
+      ]);
+      expect(onWindows.lines).toEqual(["inside: a.js", "outside", "inside: a.js"]);
+      expect(onPosix.lines).toEqual(["outside", "inside: a.js"]);
     });
 
     test("an argument that matches nothing fails with 2", async () => {
@@ -663,6 +796,23 @@ describe.concurrent("bun lint", () => {
         expect(await after("--fix-suggestions")).toBe("fixed; done;\n");
         expect(await after("--fix", "--fix-suggestions")).toBe("done; done;\n");
         expect(await after("--fix-dangerously")).toBe("done; done;\n");
+      });
+
+      // oxlint 1.87 with tsgolint 7.0 changes nothing.
+      test("rules that have suggestions for typescript-eslint and none for oxlint", async () => {
+        const rules = { "typescript/strict-boolean-expressions": "error", "typescript/strict-void-return": "error" };
+        const text =
+          "declare const a: string | null;\nif (a) {}\ndeclare function f(cb: () => void): void;\nf(async () => {});\nexport {};\n";
+        const files = {
+          ".oxlintrc.json": JSON.stringify({ plugins: ["typescript"], categories: { correctness: "off" }, rules }),
+          "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] } }),
+          "a.ts": text,
+        };
+        for (const flags of [["--fix"], ["--fix-suggestions"], ["--fix", "--fix-suggestions"], ["--fix-dangerously"]]) {
+          const result = await lint(files, ["--type-aware", ...flags, "a.ts"], { reads: ["a.ts"] });
+          expect(result.files).toEqual({ "a.ts": text });
+          expect(result.exitCode).toBe(1);
+        }
       });
 
       // What oxlint 1.87 writes.
@@ -1820,6 +1970,18 @@ describe.concurrent("bun lint", () => {
       });
     });
 
+    // Windows takes no more than that, unless it is asked in a special way.
+    test("a file whose path has more than 260 characters", async () => {
+      const name = `${Array(14).fill("d".repeat(20)).join("/")}/c.js`;
+      const fixed = "let a = 1;\nif (a == 2) { debugger; }\n";
+      const [named, found] = await Promise.all([
+        lint({ ...files, [name]: bad }, ["--fix", name], { reads: [name] }),
+        lint({ ...files, [name]: bad }, ["--fix", "."], { reads: [name] }),
+      ]);
+      expect([named.stderr, found.stderr].join("\n")).not.toContain("error: ");
+      expect([named.files, found.files]).toEqual([{ [name]: fixed }, { [name]: fixed }]);
+    });
+
     test("flags that contradict each other fail with 2", async () => {
       const results = await Promise.all([
         lint(files, ["--fix", "--fix-dry-run"]),
@@ -2825,6 +2987,156 @@ describe.concurrent("a lint script in package.json", () => {
       [],
     );
     expect(stdout).toContain("[Error/no-debugger]");
+    expect(exitCode).toBe(1);
+  });
+});
+
+// What the linter takes from the process that it runs in. Where `bun lint` is developed something else is in Bun's place for each
+// of these. See "what bun format takes from Bun" in test/cli/format/format.test.ts.
+describe.concurrent("what bun lint takes from Bun", () => {
+  const files = {
+    "eslint.config.js": basic,
+    "a.js": "debugger;\n",
+    "sub/eslint.config.js": basic,
+    "sub/b.js": "debugger;\n",
+  };
+
+  /** `bun ...args` in a directory with `files`. */
+  async function bun(files: Record<string, string>, args: string[], variables: Record<string, string> = {}) {
+    using dir = tempDir("bun-lint-process", files);
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      env: { ...env, ...variables },
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stdout: normalizeBunSnapshot(stdout, String(dir)), exitCode };
+  }
+
+  test("--cwd before lint, and the flags of BUN_OPTIONS, which are not the linter's", async () => {
+    const results = await Promise.all([
+      bun(files, ["--cwd=sub", "lint", "-f", "unix"]),
+      bun(files, ["--silent", "lint", "-f", "unix", "sub"]),
+      bun(files, ["lint", "-f", "unix", "sub"], { BUN_OPTIONS: "--silent --no-install" }),
+    ]);
+    const expected = "<dir>/sub/b.js:1:1: Unexpected 'debugger' statement. [Error/no-debugger]\n\n1 problem";
+    expect(results).toEqual(results.map(() => ({ stdout: expected, exitCode: 1 })));
+  });
+
+  // The process that runs the configuration file starts in that directory. With BUN_OPTIONS it would look for `sub` in `sub`.
+  test("--cwd in BUN_OPTIONS, with a configuration file that is a program", async () => {
+    const result = await bun(files, ["lint", "-f", "unix"], { BUN_OPTIONS: "--cwd=sub" });
+    expect(result.stdout).toStartWith("<dir>/sub/b.js:1:1: Unexpected 'debugger' statement.");
+    expect(result.exitCode).toBe(1);
+  });
+
+  test.each([
+    // It would wait for a client, for ever.
+    { BUN_INSPECT: "ws://127.0.0.1:0/x?wait=1" },
+    { BUN_INSPECT_PRELOAD: "./nowhere.js" },
+    { BUN_OPTIONS: "--preload=./nowhere.js" },
+  ])("%j is not for the process that runs the configuration file", async variables => {
+    const result = await bun(files, ["lint", "-f", "unix", "--no-config-cache", "sub"], variables);
+    expect(result.stdout).toStartWith("<dir>/sub/b.js:1:1: Unexpected 'debugger' statement.");
+    expect(result.exitCode).toBe(1);
+  });
+
+  test("what else this process was started with is", async () => {
+    const config = `export default [{ rules: { [process.env.THE_RULE]: "error" } }];`;
+    const all = { "eslint.config.mjs": config, "a.js": "debugger;\n" };
+    const result = await bun(all, ["lint", "-f", "unix", "a.js"], { THE_RULE: "no-debugger" });
+    expect(result.stdout).toStartWith("<dir>/a.js:1:1: Unexpected 'debugger' statement.");
+  });
+
+  test("the bunfig.toml of the project is not read", async () => {
+    const result = await bun({ ...files, "bunfig.toml": "[install]\nglobalDir = 1\n" }, ["lint", "-f", "unix", "a.js"]);
+    expect(result.stdout).toStartWith("<dir>/a.js:1:1: Unexpected 'debugger' statement.");
+    expect(result.exitCode).toBe(1);
+  });
+
+  test("colors are Bun's to decide: FORCE_COLOR, NO_COLOR, and none in a pipe", async () => {
+    const line = (text: string) => text.split("\n").find(it => it.includes("no-debugger"));
+    const [forced, refused, piped] = await Promise.all([
+      lint(files, ["a.js"], { env: { FORCE_COLOR: "1" } }),
+      lint(files, ["a.js"], { env: { NO_COLOR: "1" } }),
+      lint(files, ["a.js"]),
+    ]);
+    expect(line(forced.raw)).toContain("\x1b[");
+    expect(line(refused.raw)).toBe("  1:1  error  Unexpected 'debugger' statement  no-debugger");
+    expect(line(piped.raw)).toBe(line(refused.raw));
+  });
+
+  test("more is printed than a pipe holds, and nobody reads it to its end", async () => {
+    const many = { "eslint.config.js": basic, "a.js": "debugger;\n".repeat(20_000) };
+    const whole = await lint(many, ["-f", "unix", "a.js"]);
+    expect(whole.raw.split("\n").filter(it => it.endsWith("[Error/no-debugger]")).length).toBe(20_000);
+    expect(whole.exitCode).toBe(1);
+
+    using dir = tempDir("bun-lint-process", many);
+    await using proc = spawn({
+      cmd: [...command, "-f", "unix", "a.js"],
+      env,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const reader = proc.stdout.getReader();
+    expect((await reader.read()).done).toBe(false);
+    await reader.cancel();
+    expect(await proc.exited).toBe(1);
+  });
+
+  test.skipIf(!isLinux)("a name that is not UTF-8, found in a directory and as an argument", async () => {
+    using dir = tempDir("bun-lint-process", { "eslint.config.js": basic });
+    writeFileSync(
+      Buffer.concat([Buffer.from(String(dir) + "/n"), Buffer.from([0xff]), Buffer.from(".js")]),
+      "debugger;\n",
+    );
+    const run = async (argument: string) => {
+      await using proc = spawn({
+        cmd: ["sh", "-c", `exec "$0" lint -f unix ${argument}`, bunExe()],
+        env,
+        cwd: String(dir),
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.bytes(), proc.exited]);
+      return { line: Buffer.from(stdout).toString("latin1").split("\n")[0].slice(String(dir).length), exitCode };
+    };
+    const expected = { line: "/n\xff.js:1:1: Unexpected 'debugger' statement. [Error/no-debugger]", exitCode: 1 };
+    expect(await run(".")).toEqual(expected);
+    expect(await run(`"$(printf 'n\\377.js')"`)).toEqual(expected);
+  });
+
+  // `String(number)` and the value of a literal are WebKit's.
+  test("numbers are read and written as JavaScript does", async () => {
+    const keys = [
+      ["1e21", '"1e+21"'],
+      ["1e-7", '"1e-7"'],
+      ["0.000001", '"0.000001"'],
+      ["123456789012345680000", '"123456789012345680000"'],
+      ["5e-324", '"5e-324"'],
+      ["1.7976931348623157e308", '"1.7976931348623157e+308"'],
+      ["0x1fffffffffffff", '"9007199254740991"'],
+      ["9007199254740993", '"9007199254740992"'],
+      ["0.1e1", '"1"'],
+      [".5", '"0.5"'],
+      ["4.35", '"4.35"'],
+      ["2.5e-7", '"2.5e-7"'],
+    ];
+    const code = keys.map(([number, text], i) => `export const k${i} = { ${number}: 1, ${text}: 2 };\n`).join("");
+    const { raw, exitCode } = await lint({ "eslint.config.js": config({ "no-dupe-keys": "error" }), "a.js": code }, [
+      "-f",
+      "unix",
+      "a.js",
+    ]);
+    const lines = raw.split("\n").filter(it => it.endsWith("[Error/no-dupe-keys]"));
+    expect(lines.map(it => Number(/:(\d+):\d+: /.exec(it)?.[1]))).toEqual(keys.map((_, i) => i + 1));
     expect(exitCode).toBe(1);
   });
 });

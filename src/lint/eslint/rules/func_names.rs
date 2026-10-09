@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint_oxlint::ast_util::static_property_name;
@@ -40,7 +41,7 @@ fn is_valid_identifier_name(name: &[u8]) -> bool {
         const continue debugger default delete do else enum export extends false finally for function if import in \
         instanceof new null return super switch this throw true try typeof var void while with yield Infinity NaN \
         globalThis undefined arguments eval constructor async";
-    !TAKEN.split(|it| *it == b' ').any(|it| it == name) && text::is_identifier_name(name)
+    !strings::split(TAKEN, b" ").any(|it| it == name) && text::is_identifier_name(name)
 }
 
 /// oxlint's `guess_function_name`: that of the first assignment, declarator, property or field around the function,

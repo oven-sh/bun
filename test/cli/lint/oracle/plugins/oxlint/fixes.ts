@@ -10,6 +10,8 @@ export interface Case {
   text: string;
   /** It is linted with `--type-aware`. */
   typed?: boolean;
+  /** The options of the rule. */
+  options?: object;
 }
 
 export const flagSets = { fix: ["--fix"], suggestions: ["--fix-suggestions"], dangerously: ["--fix-dangerously"] };
@@ -175,13 +177,30 @@ export const cases: Case[] = [
   ts("prefer-function-type", "interface A { (): void }\nexport interface B<C> { (d: C): void; }\ntype E = { (): void };"),
   ts("no-empty-object-type", "interface A<B> extends C<B> {}\ninterface A<B> { d: B }\ninterface E extends F {}"),
   ts("consistent-indexed-object-style", "type A = {\n  /** b */\n  [C in D]: E;\n};\ninterface F { [g: string]: H /* i */ }"),
+  // oxlint has a fix, ESLint and typescript-eslint have none.
+  js("sort-keys", "a = { c: 1, b: { e: 1, d: 2 }, a: 3 };\nf = {\n  /** h */\n  h: 1, // i\n  g: 2,\n};\nj = { ...k, m: 1, l: 2, ...n };\no = { q: 1, /* r */ p: 2 };"),
+  js("func-names", "var a = function () {}; b.c = function* () {}; d = { e: function () { e; }, 'f': async function () {}, g: h(function () {}) }; (function () {})();"),
+  js("no-plusplus", "a++; --b.c; d['e']++; f[g]--; for (;; h++) {}"),
+  js("no-void", "a = void 0; void b(); c(void (d));"),
+  js("no-eq-null", "a == null; null != (b); c /* d */ == /* e */ null;"),
+  js("no-throw-literal", "function a() { throw 'b'; } function c() { throw (`d`); } function e() { throw 1; }"),
+  js("no-unexpected-multiline", "a\n(b || c).d();\ne\n[f].g();\nh\n`i`;"),
+  ts("no-extraneous-class", "export class A {}\nclass B {}\n@c class D {}\ne = class {};"),
+  ts("no-unnecessary-parameter-property-assignment", "class A { constructor(public b: number, private c: string) { this.b = b; d(this.c = c); } }"),
+  // The bytes that the fixes of tsgolint leave: what it puts in begins where the token before ends, what it takes out ends there.
+  typed("no-unnecessary-boolean-literal-compare", "declare const b: boolean, n: boolean | null, x: unknown, f: (a?: boolean) => boolean, o: { p?: boolean }; let r;\nif (b === true) {}\nif (b !== true) {}\nif (b === false) {}\nif (b !== false) {}\nif (true === b) {}\nif (false !== b) {}\nif (true !== b) {}\nif (false === (x instanceof Error)) {}\nr = b === true;\nr = b === false;\nr = !(b === true);\nr = !(b !== true);\nr = !(b === false);\nr = !((b === false));\nr = (x instanceof Error) === false;\nr = x instanceof Error === false;\nr = f() === false;\nif (n === true) {}\nif (n !== true) {}\nif (n === false) {}\nif (n !== false) {}\nr = n === true;\nr = n !== true;\nr = n === false;\nr = n !== false;\nr = !(n === true);\nr = !(n !== true);\nr = !(n === false);\nr = (n ?? b) === true;\nr = (n ?? b) === false;\nr = n === true && b;\nr = n === true ? 1 : 2;\nwhile (n === true) {}\nr = b /* c */ === /* d */ true;\nr = true /* c */ === /* d */ b;\nr = b\n  === true;\nr = true ===\n  b;\nr = !!(n === true);\nfor (; n === true; ) {}\ndo {} while (n === true);\nr = [n === true];\nr = f(n === true);\nexport {};"),
+  {
+    ...typed("no-unnecessary-boolean-literal-compare", "declare const b: boolean, n: boolean | null, x: unknown, f: (a?: boolean) => boolean, o: { p?: boolean }; let r;\nif (n === true) {}\nif (n !== true) {}\nif (n === false) {}\nif (n !== false) {}\nr = n === true;\nr = n !== true;\nr = n === false;\nr = n !== false;\nr = !(n === true);\nr = !(n !== true);\nr = !(n === false);\nr = (n ?? b) === true;\nr = (n ?? b) === false;\nr = n === true && b;\nr = n === true ? 1 : 2;\nwhile (n === true) {}\nr = !!(n === true);\nfor (; n === true; ) {}\ndo {} while (n === true);\nr = [n === true];\nr = f(n === true);\nr = true === n;\nr = false === n;\nr = false !== n;\nr = o.p === true;\nr = o.p === false;\nr = (b ? n : null) === true;\nr = (b ? n : null) === false;\nr = !(b ? n : null) === false;\nif (!(n === false)) {}\nif ((n === true)) {}\nr = n === true || b;\nif (n === true || b) {}\nr = !(n !== false);\nr = n! === true;\nr = (n as boolean | null) === false;\nr = (n as boolean | null) === true;\nexport {};"),
+    options: { allowComparingNullableBooleansToTrue: false, allowComparingNullableBooleansToFalse: false },
+  },
+  typed("no-meaningless-void-operator", "let r;\nvoid (() => {})();\nfunction g() {}\nvoid g();\nvoid  g2();\nfunction g2() {}\nvoid/* c */g3();\nfunction g3() {}\nvoid\ng4();\nfunction g4() {}\nfunction g5(): never { throw 1; }\nvoid g5();\nr = void g6();\nfunction g6() {}\nvoid void g7();\nfunction g7() {}\nvoid (g8());\nfunction g8() {}\ndeclare const u: undefined;\nvoid u;\nexport {};"),
 ];
 
 /** The directory of a case, which has a configuration file of its own. */
 export const directoryOf = (index: number) => `${index}-${cases[index].rule.replace(/^.*\//, "")}`;
 
-export const filesOf = ({ rule, file, text, typed }: Case): Record<string, string> => ({
-  ".oxlintrc.json": JSON.stringify({ plugins: ["typescript"], categories: { correctness: "off" }, rules: { [rule]: "error" } }),
+export const filesOf = ({ rule, file, text, typed, options }: Case): Record<string, string> => ({
+  ".oxlintrc.json": JSON.stringify({ plugins: ["typescript"], categories: { correctness: "off" }, rules: { [rule]: options ? ["error", options] : "error" } }),
   [file]: text,
   ...(typed && {
     "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, target: "esnext", module: "esnext", lib: ["esnext", "dom"] } }),

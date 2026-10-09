@@ -538,6 +538,12 @@ pub(crate) fn has_embed_label<'a>(e: Expr<'a>, f: &Formatter<'a>) -> bool {
         return false;
     };
     is_candidate(quasi, template, f.options())
-        && !is_blank(template)
-        && print_embed_css(template, f.options(), Action::Check)
+        && (tag_alone_decides_what_is_around_a_template(f)
+            || (!is_blank(template) && print_embed_css(template, f.options(), Action::Check)))
+}
+
+/// oxc's `embed_hug`: for oxfmt a template with the tag of a language is laid out in a call or behind `=>` like one that
+/// is written as that language, also if it cannot be read as such and stays as it is.
+pub(crate) fn tag_alone_decides_what_is_around_a_template(f: &Formatter<'_>) -> bool {
+    f.options().flavor.is_oxfmt()
 }

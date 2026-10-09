@@ -20,6 +20,15 @@ fn terminated<'b>(path: &[u8], buffer: &'b mut PathBuffer) -> &'b ZStr {
     }
 }
 
+/// The same for the calls that are libuv's on Windows (`stat`, `lstat`, `realpath`, `rename`), which hands the path to the system
+/// as it is. There 260 characters are the most, unless the path is written as Node writes every path.
+fn for_libuv<'b>(path: &[u8], buffer: &'b mut PathBuffer) -> &'b ZStr {
+    match cfg!(windows) && path.len() >= 240 {
+        true => terminated(&paths::namespaced(path), buffer),
+        false => terminated(path, buffer),
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum Kind {
     File,
@@ -29,7 +38,7 @@ pub(crate) enum Kind {
 /// What is at `path`, following links, and its size. `None`: nothing, or neither a file nor a
 /// directory.
 pub(crate) fn kind_and_size(path: &[u8]) -> Option<(Kind, u64)> {
-    let found = bun_sys::stat(terminated(path, &mut path_buffer_pool::get())).ok()?;
+    let found = bun_sys::stat(for_libuv(path, &mut path_buffer_pool::get())).ok()?;
     let kind = match bun_sys::kind_from_mode(found.st_mode as _) {
         EntryKind::File => Kind::File,
         EntryKind::Directory => Kind::Directory,
@@ -47,7 +56,7 @@ pub(crate) enum LinkKind {
 
 /// What is at `path`, which can be a link, and its size.
 pub(crate) fn link_kind_and_size(path: &[u8]) -> Option<(LinkKind, u64)> {
-    let found = bun_sys::lstat(terminated(path, &mut path_buffer_pool::get())).ok()?;
+    let found = bun_sys::lstat(for_libuv(path, &mut path_buffer_pool::get())).ok()?;
     let kind = match bun_sys::kind_from_mode(found.st_mode as _) {
         EntryKind::File => LinkKind::File,
         EntryKind::Directory => LinkKind::Directory,
@@ -64,7 +73,7 @@ pub(crate) fn kind(path: &[u8]) -> Option<Kind> {
 /// The time of the last change of what is at `path` and its size, as text, and that time in
 /// seconds.
 pub(crate) fn stamp(path: &[u8]) -> Option<(Vec<u8>, i64)> {
-    let found = bun_sys::stat(terminated(path, &mut path_buffer_pool::get())).ok()?;
+    let found = bun_sys::stat(for_libuv(path, &mut path_buffer_pool::get())).ok()?;
     let changed = bun_sys::stat_mtime(&found);
     let text = format!("{}.{:09} {}", changed.sec, changed.nsec, found.st_size);
     Some((text.into_bytes(), changed.sec))
@@ -165,7 +174,7 @@ pub(crate) fn list(path: &[u8]) -> Option<Listing> {
 /// `path` without links, with every name as its directory has it.
 pub(crate) fn real_path(path: &[u8]) -> Option<Vec<u8>> {
     let mut buffer = path_buffer_pool::get();
-    let real = bun_sys::realpath(terminated(path, &mut path_buffer_pool::get()), &mut buffer);
+    let real = bun_sys::realpath(for_libuv(path, &mut path_buffer_pool::get()), &mut buffer);
     Some(paths::from_native(real.ok()?))
 }
 
@@ -192,8 +201,8 @@ fn rename(from: &[u8], to: &[u8]) -> bun_sys::Result<()> {
     )
     .or_else(|error| match cfg!(windows) {
         true => bun_sys::rename(
-            terminated(&from, &mut path_buffer_pool::get()),
-            terminated(&to, &mut path_buffer_pool::get()),
+            for_libuv(&from, &mut path_buffer_pool::get()),
+            for_libuv(&to, &mut path_buffer_pool::get()),
         ),
         false => Err(error),
     })
@@ -260,7 +269,7 @@ fn repository(cwd: &[u8]) -> Option<Vec<u8>> {
 /// A link below `cwd`, the working directory, is not followed out of the repository: nobody reads the links of a checkout.
 pub(crate) fn write_atomically(cwd: &[u8], path: &[u8], text: &[u8]) -> Result<(), Vec<u8>> {
     let mut buffer = path_buffer_pool::get();
-    let real = bun_sys::realpath(terminated(path, &mut path_buffer_pool::get()), &mut buffer)
+    let real = bun_sys::realpath(for_libuv(path, &mut path_buffer_pool::get()), &mut buffer)
         .map_err(|error| describe(&error))?
         .to_vec();
     // `bun lint` has the path as the system writes it.

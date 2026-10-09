@@ -2,6 +2,7 @@
 // point, or on the command: every kind of project, with every kind of entry point, with and without a type error.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { availableParallelism } from "node:os";
 import { join } from "node:path";
 
 // Disable AI agent and CI detection regardless of the environment the tests run in.
@@ -393,3 +394,49 @@ test("Bun.build: the check has the conditions and the loaders of the build, not 
     expect([flags, stderr, JSON.parse(stdout), exitCode]).toEqual([flags, "", expected, 0]);
   }
 });
+
+// The check runs on the pool of threads that the bundler parses on, and reads on the pool that it reads on. With a file or
+// a build more than there are threads, one that waited on a thread for what only that pool can do would wait for ever.
+test("a check in a bundle of more files than there are threads, and more such builds at once", async () => {
+  const count = availableParallelism() + 1;
+  const names = Array.from({ length: count }, (_, i) => `f${i}`);
+  using dir = tempDir("bun-check", {
+    "tsconfig.json": config({ noEmit: true }),
+    ...Object.fromEntries(names.map((name, i) => [`${name}.ts`, `export const ${name}: number = ${i};\n`])),
+    "index.ts": names.map(name => `import { ${name} } from "./${name}";\n`).join("") + `export default [${names}];\n`,
+    "wrong.ts": `import all from "./index";\nexport const wrong: string = all[0];\n`,
+    "build.ts": `
+      const builds = Array.from({ length: ${isDebug || isASAN ? 4 : count} }, (_, i) =>
+        Bun.build({ entrypoints: [i === 0 ? "wrong.ts" : "index.ts"], outdir: "out" + i, throw: false, check: true }));
+      console.log(JSON.stringify((await Promise.all(builds)).map(it => it.success)));
+    `,
+  });
+  const run = async (cmd: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...cmd],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+      // Less than the test has: one that hangs does not outlive it.
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { codes: (stdout + stderr).match(/TS\d+/g) ?? [], stdout, exitCode };
+  };
+  const [right, wrong, builds] = await Promise.all([
+    run(["build", "--check", "index.ts", "--outdir", "out"]),
+    run(["build", "--check", "wrong.ts", "--outdir", "out-wrong"]),
+    run(["build.ts"]),
+  ]);
+  expect([right.codes, right.exitCode]).toEqual([[], 0]);
+  expect([wrong.codes, wrong.exitCode]).toEqual([["TS2322"], 1]);
+  const succeeded: boolean[] = JSON.parse(builds.stdout);
+  expect([succeeded.length > 3, succeeded.indexOf(false), succeeded.lastIndexOf(false), builds.exitCode]).toEqual([
+    true,
+    0,
+    0,
+    0,
+  ]);
+}, 60_000);

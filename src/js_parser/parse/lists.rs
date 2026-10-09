@@ -42,6 +42,16 @@ pub(crate) enum ListKind {
     JsxChildren,
 }
 
+/// What `is_start_of_declaration` has found for a long run of modifiers: `answer` holds at every
+/// token that starts from `from` to `to`.
+pub(crate) struct DeclarationScan {
+    from: usize,
+    to: usize,
+    /// What decides whether `await` and `yield` are identifiers.
+    context: (AwaitOrYield, AwaitOrYield, bool, bool),
+    answer: bool,
+}
+
 /// How the token at the top of a list's loop relates to the list.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum ListStep {
@@ -292,8 +302,43 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     #[cold]
     #[inline(never)]
     pub(crate) fn is_start_of_declaration(&mut self) -> bool {
+        // The scan steps over one modifier at a time and remembers nothing, so it ends the same way
+        // from each of them. Without this a run of n modifiers that starts no declaration is
+        // scanned n times.
+        let from = self.lexer.start;
+        let data = &self.fn_or_arrow_data_parse;
+        let context = (
+            data.allow_await,
+            data.allow_yield,
+            data.is_top_level,
+            self.lexer.await_name_seen,
+        );
+        // `step` reads a keyword with an escape as the keyword, which it is not at the first token.
+        if let Some(scan) = &self.declaration_scan
+            && scan.context == context
+            && (scan.from..=scan.to).contains(&from)
+            && self.lexer.token != T::TEscapedKeyword
+        {
+            return scan.answer;
+        }
+        let mut to = from;
+        let answer = self.scan_start_of_declaration(&mut to);
+        if to - from > 64 {
+            self.declaration_scan = Some(DeclarationScan {
+                from,
+                to,
+                context,
+                answer,
+            });
+        }
+        answer
+    }
+
+    /// `last`: set to the start of the last token at which the loop was.
+    fn scan_start_of_declaration(&mut self, last: &mut usize) -> bool {
         self.look_ahead(|p| {
             loop {
+                *last = p.lexer.start;
                 match p.lexer.token {
                     T::TVar | T::TConst | T::TFunction | T::TClass | T::TEnum => return true,
                     T::TImport => {

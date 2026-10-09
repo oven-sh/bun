@@ -35,6 +35,16 @@ pub(crate) fn modifier_flag(token: T) -> Flags {
     }
 }
 
+/// What `is_start_of_declaration` has found for a long run of modifiers: `answer` holds at every
+/// token that starts from `from` to `to`, in `context`.
+#[derive(Copy, Clone)]
+pub(crate) struct DeclarationScan {
+    pub(crate) from: u32,
+    pub(crate) to: u32,
+    pub(crate) context: u32,
+    pub(crate) answer: bool,
+}
+
 /// What `parseModifiersEx` is told, by what has the modifiers.
 #[derive(Copy, Clone, PartialEq)]
 pub(crate) enum ModifiersOf {
@@ -214,12 +224,31 @@ impl Parser<'_> {
 
     /// `isStartOfDeclaration`
     pub(crate) fn is_start_of_declaration(&mut self) -> bool {
-        self.look_ahead(Self::is_declaration)
+        // The scan steps over one modifier at a time and remembers nothing, so it ends the same way
+        // from each of them. Without this `declare declare ..` is scanned once from each word.
+        let from = self.pos();
+        let context = self.context & (ctx::YIELD | ctx::AWAIT);
+        let known = self.declaration_scan;
+        if known.context == context && known.from <= from && from <= known.to {
+            return known.answer;
+        }
+        let mut to = from;
+        let answer = self.look_ahead(|p| p.is_declaration(&mut to));
+        if to - from > 64 {
+            self.declaration_scan = DeclarationScan {
+                from,
+                to,
+                context,
+                answer,
+            };
+        }
+        answer
     }
 
-    /// `isDeclaration`
-    fn is_declaration(&mut self) -> bool {
+    /// `isDeclaration`. `last`: set to the start of the last token at which the loop was.
+    fn is_declaration(&mut self, last: &mut u32) -> bool {
         loop {
+            *last = self.pos();
             match self.token() {
                 T::Var | T::Let | T::Const | T::Function | T::Class | T::Enum => return true,
                 T::Using => return self.is_using_declaration(),

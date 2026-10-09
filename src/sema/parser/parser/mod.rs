@@ -162,6 +162,7 @@ pub(crate) struct Parser<'a> {
     pub(crate) recovers: bool,
     /// `parsingContexts`: a bit for each `ListKind` of which a list is open.
     pub(crate) lists: u32,
+    pub(crate) declaration_scan: stmt::DeclarationScan,
     /// The start of the token at which the last error was reported, and how many have been there.
     pub(crate) errors_at: (u32, u32),
     /// `Dialect::ecmascript`, in a JavaScript file.
@@ -236,6 +237,13 @@ impl<'a> Parser<'a> {
             options,
             recovers: options.recovers,
             lists: 0,
+            // No token is in it.
+            declaration_scan: stmt::DeclarationScan {
+                from: 1,
+                to: 0,
+                context: 0,
+                answer: false,
+            },
             errors_at: (u32::MAX, 0),
             is_ecmascript,
             is_flow,

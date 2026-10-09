@@ -274,6 +274,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
     pub(crate) await_was_refused: bool,
     /// Tolerant mode: the loop of `reparseTopLevelAwait` continues to the end of the file.
     pub(crate) reparses_rest_of_file: bool,
+    /// Tolerant mode: see `is_start_of_declaration`.
+    pub(crate) declaration_scan: Option<crate::parse::lists::DeclarationScan>,
     /// Tolerant mode: an `await` in the top-level statement being parsed was read outside the
     /// [Await] context, as an identifier.
     pub(crate) await_read_as_identifier: bool,
@@ -9950,6 +9952,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             has_es_module_syntax: false,
             await_was_refused: false,
             reparses_rest_of_file: false,
+            declaration_scan: None,
             await_read_as_identifier: false,
             statements_with_await_in_names: Vec::new(),
             stray_decorators: Vec::new(),

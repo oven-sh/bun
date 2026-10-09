@@ -221,6 +221,9 @@ ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags);
 #endif
 ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length);
 #if !defined(_WIN32)
+/* Zero-byte send(): needs no send-buffer space, so it fails only when the
+ * write side is down. Deliberately not a fault-injection point. */
+int bsd_send_probe(LIBUS_SOCKET_DESCRIPTOR fd);
 ssize_t bsd_sendmsg(LIBUS_SOCKET_DESCRIPTOR fd, const struct msghdr *msg, int flags);
 #endif
 struct us_iovec_t;

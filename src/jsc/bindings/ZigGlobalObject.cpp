@@ -304,7 +304,11 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
         // useWasmFaultSignalHandler/FastMemory when ASAN_OPTIONS lacks
         // allow_user_segv_handler=1, so we don't force it off here.
         JSC::initialize([&] {
+#if defined(BUN_DISABLE_WEBASSEMBLY)
+            JSC::Options::useWasm() = false;
+#else
             JSC::Options::useWasm() = true;
+#endif
             JSC::Options::useJIT() = true;
             JSC::Options::useBBQJIT() = true;
             JSC::Options::useConcurrentJIT() = true;
@@ -386,6 +390,10 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // that are not Bun's, where eval is on. After the loop: BUN_JSC_useDollarVM does not bring it back.
             if (Bun::codeGenerationFromStrings() != Bun::CodeGenerationFromStrings::Allowed) [[unlikely]]
                 JSC::Options::useDollarVM() = false;
+#if defined(BUN_DISABLE_WEBASSEMBLY)
+            // After the loop: BUN_JSC_useWasm=1 does not bring it back, and BUN_JSC_useWasm=0 stays a valid name.
+            JSC::Options::useWasm() = false;
+#endif
             JSC::Options::assertOptionsAreCoherent();
         }); // end JSC::initialize lambda
 

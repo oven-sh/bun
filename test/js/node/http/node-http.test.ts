@@ -37,7 +37,7 @@ const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test 
 function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject("Timed out"), 5000).unref();
-    server.listen({ port: 0 }, (err, hostname, port) => {
+    server.listen({ port: 0 }, (err?: any, hostname?: string, port?: number) => {
       clearTimeout(timeout);
 
       if (err) {
@@ -64,13 +64,13 @@ describe("node:http", () => {
       } catch (e) {
         throw e;
       } finally {
-        server.close();
+        server!.close();
       }
     });
     it("is not marked encrypted (#5867)", async () => {
       try {
         var server = createServer((req, res) => {
-          expect(req.connection.encrypted).toBe(false);
+          expect((req.connection as any).encrypted).toBe(false);
           res.writeHead(200, { "Content-Type": "text/plain" });
           res.end("Hello World");
         });
@@ -80,7 +80,7 @@ describe("node:http", () => {
       } catch (e) {
         throw e;
       } finally {
-        server.close();
+        server!.close();
       }
     });
     it("request & response body streaming (large)", async () => {
@@ -105,7 +105,7 @@ describe("node:http", () => {
         const out = await res.text();
         expect(out).toBe(input.toString());
       } finally {
-        server.close();
+        server!.close();
       }
     });
 
@@ -134,7 +134,7 @@ describe("node:http", () => {
         const out = await res.text();
         expect(out).toBe(input);
       } finally {
-        server.close();
+        server!.close();
       }
     });
 
@@ -338,11 +338,11 @@ describe("node:http", () => {
           const random_port = randomPort();
           server.listen(random_port);
           await once(server, "listening");
-          const { port } = server.address();
+          const { port } = server.address() as AddressInfo;
           expect(port).toEqual(random_port);
           server.close();
           break;
-        } catch (err) {
+        } catch (err: any) {
           // Address in use try another port
           if (err.code === "EADDRINUSE") {
             continue;
@@ -357,8 +357,8 @@ describe("node:http", () => {
       const server2 = http.createServer(() => {});
       server1.listen(undefined);
       server2.listen(undefined);
-      const { port: port1 } = server1.address();
-      const { port: port2 } = server2.address();
+      const { port: port1 } = server1.address() as AddressInfo;
+      const { port: port2 } = server2.address() as AddressInfo;
       expect(port1).not.toEqual(port2);
       expect(port1).toBeWithin(1024, 65535);
       server1.close();
@@ -378,19 +378,19 @@ describe("node:http", () => {
         });
         expect(res.status).toBe(204);
       } finally {
-        server.close();
+        server!.close();
       }
     });
   });
 
   describe("response", () => {
     test("set-cookie works with getHeader", () => {
-      const res = new ServerResponse({});
+      const res = new ServerResponse({} as any);
       res.setHeader("Set-Cookie", ["swag=true", "yolo=true"]);
       expect(res.getHeader("Set-Cookie")).toEqual(["swag=true", "yolo=true"]);
     });
     test("set-cookie works with getHeaders", () => {
-      const res = new ServerResponse({});
+      const res = new ServerResponse({} as any);
       res.setHeader("Set-Cookie", ["swag=true", "yolo=true"]);
       res.setHeader("test", "test");
       expect(res.getHeaders()).toEqual({
@@ -406,10 +406,10 @@ describe("node:http", () => {
       await using server = http.createServer((req, res) => {
         try {
           if (method === "write") {
-            res.write(body, "");
+            res.write(body, "" as any);
             res.end();
           } else {
-            res.end(body, "");
+            res.end(body, "" as any);
           }
         } catch (e: any) {
           res.statusCode = 500;
@@ -429,7 +429,7 @@ describe("node:http", () => {
       await using server = http.createServer((req, res) => {
         for (const encoding of ["bogus", 123, {}]) {
           try {
-            res[method]("x", encoding);
+            res[method]("x", encoding as any);
           } catch (e: any) {
             errors.push(`${e.code}: ${e.message}`);
           }
@@ -461,7 +461,7 @@ describe("node:http", () => {
           if (reqUrl.pathname === "/redirect") {
             // Temporary redirect
             res.writeHead(301, {
-              Location: `http://localhost:${server.port}/redirected`,
+              Location: `http://localhost:${(server as any).port}/redirected`,
             });
             res.end("Got redirect!\n");
             return;
@@ -583,12 +583,12 @@ describe("node:http", () => {
           res.end("Hello World");
         }
       });
-      server.listen({ port: 0 }, (_, __, port) => {
+      server.listen({ port: 0 }, (_?: any, __?: any, port?: number) => {
         var _done = (...args) => {
           server.close();
           done(...args);
         };
-        callback(server, port, _done);
+        callback(server, port!, _done);
       });
     }
 
@@ -631,7 +631,7 @@ describe("node:http", () => {
       } catch (e) {
         done(e);
       } finally {
-        server.close();
+        server!.close();
       }
     });
 
@@ -1032,7 +1032,7 @@ describe("node:http", () => {
               expect(responseData).toEqual(
                 Buffer.concat([Buffer.from(formDataBegin), fileData, Buffer.from(formDataEnd)]),
               );
-            } catch (e) {
+            } catch (e: any) {
               return done(e);
             }
             done();
@@ -1203,7 +1203,7 @@ describe("node:http", () => {
       await using httpsServer = exampleSite();
 
       const { promise, resolve, reject } = Promise.withResolvers();
-      const options: https.RequestOptions = {
+      const options: https.RequestOptions & { url: string } = {
         method: "GET",
         url: httpsServer.url.href as string,
         port: httpsServer.url.port,
@@ -1323,10 +1323,10 @@ describe("node:http", () => {
     });
 
     it("can be constructed with new", () => {
-      expect(new Agent().protocol).toBe("http:");
+      expect((new Agent() as any).protocol).toBe("http:");
     });
     it("can be constructed with apply", () => {
-      expect(Agent.apply({}).protocol).toBe("http:");
+      expect((Agent as any).apply({}).protocol).toBe("http:");
     });
 
     it("should have a default maxSockets of Infinity", () => {
@@ -1346,8 +1346,10 @@ describe("node:http", () => {
         res.writeHead(200, { "Content-Type": "text/plain" });
         res.end("Hello World");
 
-        agent.keepSocketAlive(request({ host: "localhost", port: server.address().port, method: "GET" }));
-        server.end();
+        agent.keepSocketAlive(
+          request({ host: "localhost", port: (server.address() as AddressInfo).port, method: "GET" }) as any,
+        );
+        (server as any).end();
       });
     });
 
@@ -1368,7 +1370,7 @@ describe("node:http", () => {
 
       const server = createServer((req, res) => {});
 
-      server.listen({ port: 0 }, (_err, host, port) => {
+      server.listen({ port: 0 }, (_err?: any, host?: string, port?: number) => {
         server_port = port;
         server_host = host;
 
@@ -1408,11 +1410,11 @@ describe("node:http", () => {
 
   test("req.req = req", done => {
     const server = createServer((req, res) => {
-      req.req = req;
-      res.write(req.req === req ? "ok" : "fail");
+      (req as any).req = req;
+      res.write((req as any).req === req ? "ok" : "fail");
       res.end();
     });
-    server.listen({ port: 0 }, async (_err, host, port) => {
+    server.listen({ port: 0 }, async (_err?: any, host?: string, port?: number) => {
       try {
         const x = await fetch(`http://${host}:${port}`).then(res => res.text());
         expect(x).toBe("ok");
@@ -1466,7 +1468,7 @@ describe("node:http", () => {
         });
       },
     });
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve } = Promise.withResolvers<Buffer>();
     https
       .request(server.url, { ca: tlsCert.cert, headers: { "accept-encoding": "gzip" } }, res => {
         res.on("data", function cb(chunk) {
@@ -1483,7 +1485,7 @@ describe("node:http", () => {
     const server = createServer((req, res) => {
       res.end();
     });
-    server.listen({ port: "0" }, async (_err, host, port) => {
+    server.listen({ port: "0" }, async (_err?: any, host?: string, port?: number) => {
       try {
         await fetch(`http://${host}:${port}`).then(res => {
           expect(res.status).toBe(200);
@@ -1498,7 +1500,7 @@ describe("node:http", () => {
   });
 
   test("error event not fired, issue#4651", async () => {
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve } = Promise.withResolvers<NodeJS.ErrnoException>();
     const server = createServer((req, res) => {
       res.end();
     });
@@ -1509,7 +1511,7 @@ describe("node:http", () => {
       server2.on("error", err => {
         resolve(err);
       });
-      server2.listen({ port: server.address().port }, () => {});
+      server2.listen({ port: (server.address() as AddressInfo).port }, () => {});
     });
     const err = await promise;
     expect(err.code).toBe("EADDRINUSE");
@@ -1522,7 +1524,7 @@ describe("node https server", async () => {
     cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "cert.pem")),
   };
   const createServer = onRequest => {
-    return new Promise(resolve => {
+    return new Promise<{ server: https.Server; done: () => void; url: URL }>(resolve => {
       const server = createHttpsServer(httpsOptions, (req, res) => {
         onRequest(req, res);
       });
@@ -1562,7 +1564,7 @@ describe("server.address should be valid IP", () => {
   });
   it("should return null after close", done => {
     const server = createServer((req, res) => {});
-    server.listen(0, async (_err, host, port) => {
+    server.listen(0, async (_err?: any, host?: string, port?: number) => {
       try {
         expect(server.address()).not.toBeNull();
         server.close();
@@ -1575,9 +1577,9 @@ describe("server.address should be valid IP", () => {
   });
   it("test default hostname, issue#5850", done => {
     const server = createServer((req, res) => {});
-    server.listen(0, async (_err, host, port) => {
+    server.listen(0, async (_err?: any, host?: string, port?: number) => {
       try {
-        const { address, family, port } = server.address();
+        const { address, family, port } = server.address() as AddressInfo;
         expect(port).toBeInteger();
         expect(port).toBeGreaterThan(0);
         expect(port).toBeLessThan(65536);
@@ -1597,9 +1599,9 @@ describe("server.address should be valid IP", () => {
   });
   it.each([["localhost"], ["127.0.0.1"]])("test %s", (hostname, done) => {
     const server = createServer((req, res) => {});
-    server.listen(0, hostname, async (_err, host, port) => {
+    server.listen(0, hostname, async (_err?: any, host?: string, port?: number) => {
       try {
-        const { address, family } = server.address();
+        const { address, family } = server.address() as AddressInfo;
         expect(port).toBeInteger();
         expect(port).toBeGreaterThan(0);
         expect(port).toBeLessThan(65536);
@@ -1620,7 +1622,7 @@ describe("server.address should be valid IP", () => {
   it("test unix socket, issue#6413", done => {
     const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
     const server = createServer((req, res) => {});
-    server.listen(socketPath, async (_err, host, port) => {
+    server.listen(socketPath, async (_err?: any, host?: string, port?: number) => {
       try {
         expect(server.address()).toStrictEqual(socketPath);
         done();
@@ -1633,7 +1635,7 @@ describe("server.address should be valid IP", () => {
   });
   test("ServerResponse init", done => {
     try {
-      const req = {};
+      const req: any = {};
       const res = new ServerResponse(req);
       expect(res.req).toBe(req);
       done();
@@ -1643,7 +1645,7 @@ describe("server.address should be valid IP", () => {
   });
 
   test("ServerResponse instanceof OutgoingMessage", () => {
-    expect(new ServerResponse({}) instanceof OutgoingMessage).toBe(true);
+    expect(new ServerResponse({} as any) instanceof OutgoingMessage).toBe(true);
   });
   test("ServerResponse assign assignSocket", async done => {
     const createDone = createDoneDotAll(done);
@@ -1651,10 +1653,10 @@ describe("server.address should be valid IP", () => {
     const waitSocket = createDone();
     const doneSocket = createDone();
     try {
-      const socket = new EventEmitter();
-      const res = new ServerResponse({});
-      res.once("socket", socket => {
-        expect(socket).toBe(socket);
+      const socket: any = new EventEmitter();
+      const res = new ServerResponse({} as any);
+      res.once("socket", emitted => {
+        expect(emitted).toBe(socket);
         waitSocket();
       });
       res.once("close", () => {
@@ -1668,7 +1670,7 @@ describe("server.address should be valid IP", () => {
       expect(() => res.assignSocket(socket)).toThrow("Socket already assigned");
       socket.emit("close");
       doneSocket();
-    } catch (err) {
+    } catch (err: any) {
       doneRequest(err);
     }
   });
@@ -1796,10 +1798,10 @@ it.skip("should be able to stream huge amounts of data", async () => {
   await listen;
 
   try {
-    const response = await fetch(`http://localhost:${server.address().port}`);
+    const response = await fetch(`http://localhost:${(server.address() as AddressInfo).port}`);
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("text/plain");
-    const reader = response.body.getReader();
+    const reader = response.body!.getReader();
     while (true) {
       const { done, value } = await reader.read();
       received += value ? value.byteLength : 0;
@@ -1838,7 +1840,7 @@ describe("HTTP Server Security Tests - Advanced", () => {
 
   // Helper that returns a promise with the server response
   const sendRequest = message => {
-    return new Promise((resolve, reject) => {
+    return new Promise<string>((resolve, reject) => {
       const client = connect(port, "localhost");
       let response = "";
       client.setEncoding("utf8");
@@ -1849,7 +1851,7 @@ describe("HTTP Server Security Tests - Advanced", () => {
       client.on("error", reject);
 
       client.on("end", () => {
-        resolve(response.toString("utf8"));
+        resolve((response as any).toString("utf8"));
       });
 
       client.write(message);
@@ -3172,7 +3174,7 @@ describe("bytes after a message that forbade keep-alive", () => {
       const chunks: Buffer[] = [];
       const socket = connect(port, "127.0.0.1");
       socket.on("error", () => {});
-      socket.on("data", c => chunks.push(c));
+      socket.on("data", (c: Buffer) => chunks.push(c));
       socket.write(payload);
       await once(socket, "close");
       return { requests, clientErrors, raw: Buffer.concat(chunks).toString("latin1") };
@@ -3566,7 +3568,7 @@ it("standalone ServerResponse flushes the header block before a non-chunked Buff
   const res = new ServerResponse(new IncomingMessage(null as any));
   let sawPrefinish = false;
   res.on("prefinish", () => (sawPrefinish = true));
-  res.assignSocket(ws);
+  res.assignSocket(ws as any);
   res.setHeader("Content-Length", "5");
   res.write(Buffer.from("hello"));
   res.end();
@@ -3593,7 +3595,7 @@ it("standalone ServerResponse buffers writes made before assignSocket and flushe
   });
   const res = new ServerResponse(http11Req());
   res.write("hello");
-  res.assignSocket(ws);
+  res.assignSocket(ws as any);
   res.end();
   await once(res, "finish");
 
@@ -3618,7 +3620,7 @@ it("standalone ServerResponse discards body writes to a no-body response without
     },
   });
   const res = new ServerResponse(new IncomingMessage(null as any));
-  res.assignSocket(ws);
+  res.assignSocket(ws as any);
   res.writeHead(204);
   expect(res.write("body")).toBe(true);
   res.end();
@@ -3719,7 +3721,7 @@ it("standalone ServerResponse flushHeaders pushes the header block immediately",
     },
   });
   const res = new ServerResponse(http11Req());
-  res.assignSocket(ws);
+  res.assignSocket(ws as any);
   res.flushHeaders();
 
   // The header block reaches the socket before any body is written.
@@ -3809,7 +3811,7 @@ it("standalone ServerResponse answers 204 + explicit chunked TE with Connection:
     },
   });
   const res = new ServerResponse(new IncomingMessage(null as any));
-  res.assignSocket(ws);
+  res.assignSocket(ws as any);
   res.setHeader("Transfer-Encoding", "chunked");
   res.writeHead(204);
   res.end();
@@ -4055,18 +4057,18 @@ it("req.upgrade is true inside shouldUpgradeCallback like Node.js", async () => 
   const server = createServer(
     {
       shouldUpgradeCallback: req => {
-        seen.push(["shouldUpgradeCallback", req.url, req.upgrade]);
+        seen.push(["shouldUpgradeCallback", req.url, (req as any).upgrade]);
         return req.url === "/accept";
       },
     },
     (req, res) => {
-      seen.push(["request", req.url, req.upgrade]);
+      seen.push(["request", req.url, (req as any).upgrade]);
       res.writeHead(200, { Connection: "close" });
       res.end("ok");
     },
   );
   server.on("upgrade", (req, socket) => {
-    seen.push(["upgrade", req.url, req.upgrade]);
+    seen.push(["upgrade", req.url, (req as any).upgrade]);
     socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
   });
   try {
@@ -4101,12 +4103,12 @@ it("req.upgrade reflects the upgrade dispatch decision like Node.js", async () =
   const { promise: sawUpgrade, resolve: onUpgrade } = Promise.withResolvers<void>();
   const { promise: sawRequest, resolve: onRequest } = Promise.withResolvers<void>();
   const server = createServer((req, res) => {
-    requestValue = req.upgrade;
+    requestValue = (req as any).upgrade;
     res.end("ok");
     onRequest();
   });
   server.on("upgrade", (req, socket) => {
-    upgradeValue = req.upgrade;
+    upgradeValue = (req as any).upgrade;
     socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
     onUpgrade();
   });
@@ -4154,11 +4156,11 @@ it("'upgrade' fires only when llhttp would flag the request as an upgrade", asyn
   const results: Record<string, string> = {};
   const expected: Record<string, string> = {};
   const server = createServer((req, res) => {
-    res.end(`request (req.upgrade=${req.upgrade})`);
+    res.end(`request (req.upgrade=${(req as any).upgrade})`);
   });
   server.on("upgrade", (req, socket) => {
     socket.end(
-      `HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\nupgrade (req.upgrade=${req.upgrade})`,
+      `HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: x\r\n\r\nupgrade (req.upgrade=${(req as any).upgrade})`,
     );
   });
   try {
@@ -4171,7 +4173,7 @@ it("'upgrade' fires only when llhttp would flag the request as an upgrade", asyn
       client.on("error", () => {});
       client.write(`GET / HTTP/1.1\r\nHost: x\r\n${headers}Connection: close\r\n\r\n`);
       const chunks: Buffer[] = [];
-      client.on("data", chunk => chunks.push(chunk));
+      client.on("data", (chunk: Buffer) => chunks.push(chunk));
       await once(client, "close");
       const body = Buffer.concat(chunks).toString();
       results[name] = body.slice(body.indexOf("\r\n\r\n") + 4);
@@ -4246,7 +4248,7 @@ it("standalone ServerResponse end() honors rejectNonStandardBodyWrites for no-bo
       cb();
     },
   });
-  const res = new ServerResponse({ method: "HEAD" } as any, { rejectNonStandardBodyWrites: true } as any);
+  const res = new (ServerResponse as any)({ method: "HEAD" } as any, { rejectNonStandardBodyWrites: true } as any);
   res.assignSocket(ws);
   expect(() => res.end("body")).toThrow(
     expect.objectContaining({
@@ -4308,10 +4310,10 @@ it("standalone ServerResponse writeContinue reaches the assigned socket", async 
     },
   });
   const res = new ServerResponse(new IncomingMessage(null as any));
-  res.assignSocket(ws);
+  res.assignSocket(ws as any);
   res.writeContinue();
   expect(Buffer.concat(chunks).toString()).toBe("HTTP/1.1 100 Continue\r\n\r\n");
-  expect(res._sent100).toBe(true);
+  expect((res as any)._sent100).toBe(true);
 
   res.end("hello");
   await once(res, "finish");
@@ -4376,7 +4378,7 @@ it("server.close(cb) completes after a raw upgrade once both sockets are destroy
   const server = createServer();
   let serverSocket: import("node:net").Socket;
   server.on("upgrade", (req, socket) => {
-    serverSocket = socket;
+    serverSocket = socket as import("node:net").Socket;
     socket.write("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: WebSocket\r\n\r\n");
   });
   server.listen(0, "127.0.0.1");
@@ -4403,7 +4405,7 @@ it("req.upgrade is true inside the 'connect' listener", async () => {
   const { promise: sawConnect, resolve: onConnect } = Promise.withResolvers<void>();
   const server = createServer((req, res) => res.end("ok"));
   server.on("connect", (req, socket) => {
-    upgradeValue = req.upgrade;
+    upgradeValue = (req as any).upgrade;
     socket.end("HTTP/1.1 200 Connection Established\r\n\r\n");
     onConnect();
   });
@@ -4935,7 +4937,7 @@ it.each([
   // validated. _storeHeader prints Math.floor(keepAliveTimeout / 1000) without a range check
   // (Node v26.3.0 answers with exactly these lines). The first four do not fit the integer the
   // native header writer takes: -5 used to go out as 4294967291 and 2^31 as 2147483647.
-  const expected = [
+  const expected: [number, string][] = [
     [-5000, "Keep-Alive: timeout=-5"],
     [-0.5, "Keep-Alive: timeout=-1"],
     [2 ** 31 * 1000, "Keep-Alive: timeout=2147483648"],
@@ -5070,7 +5072,7 @@ it("setHeaders stores an empty set-cookie array (nodejs/node#59734)", () => {
   expect(msg.hasHeader("set-cookie")).toBe(true);
   expect(msg.getHeaders()["set-cookie"]).toEqual([]);
   expect(msg.getHeaderNames()).toContain("set-cookie");
-  expect(msg.getRawHeaderNames()).toContain("set-cookie");
+  expect((msg as any).getRawHeaderNames()).toContain("set-cookie");
   msg.removeHeader("set-cookie");
   expect(msg.getHeader("set-cookie")).toBeUndefined();
   expect(msg.hasHeader("set-cookie")).toBe(false);
@@ -5084,22 +5086,22 @@ it("setHeaders stores an empty set-cookie array (nodejs/node#59734)", () => {
   // getRawHeaderNames preserves the original casing, like Node.
   const msg3 = new OutgoingMessage();
   msg3.setHeader("Set-Cookie", []);
-  expect(msg3.getRawHeaderNames()).toEqual(["Set-Cookie"]);
+  expect((msg3 as any).getRawHeaderNames()).toEqual(["Set-Cookie"]);
   expect(msg3.getHeaderNames()).toEqual(["set-cookie"]);
 
   // Appending a cookie supersedes the present-but-empty array (no duplicate
   // name in getRawHeaderNames, value visible everywhere).
   msg3.appendHeader("Set-Cookie", "a=1");
   expect(msg3.getHeader("set-cookie")).toEqual(["a=1"]);
-  expect(msg3.getRawHeaderNames().filter(n => n.toLowerCase() === "set-cookie")).toHaveLength(1);
+  expect((msg3 as any).getRawHeaderNames().filter(n => n.toLowerCase() === "set-cookie")).toHaveLength(1);
   expect(msg3.getHeaders()["set-cookie"]).toEqual(["a=1"]);
 });
 
 it("https.Agent applies defaultPort/protocol through options (nodejs/node#58980)", () => {
   const a = new https.Agent();
   try {
-    expect(a.defaultPort).toBe(443);
-    expect(a.protocol).toBe("https:");
+    expect((a as any).defaultPort).toBe(443);
+    expect((a as any).protocol).toBe("https:");
     // v26 sets the defaults on the (null-prototype) options object before
     // calling the base constructor.
     expect(a.options.defaultPort).toBe(443);
@@ -5111,8 +5113,8 @@ it("https.Agent applies defaultPort/protocol through options (nodejs/node#58980)
 
   const b = new https.Agent({ defaultPort: 8443 });
   try {
-    expect(b.defaultPort).toBe(8443);
-    expect(b.protocol).toBe("https:");
+    expect((b as any).defaultPort).toBe(8443);
+    expect((b as any).protocol).toBe("https:");
   } finally {
     b.destroy();
   }
@@ -5231,10 +5233,10 @@ it("http.Agent with proxyEnv does not write to a literal 'undefined' property", 
 });
 
 it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () => {
-  expect(typeof OutgoingMessage.prototype._flushOutput).toBe("function");
+  expect(typeof (OutgoingMessage.prototype as any)._flushOutput).toBe("function");
 
-  const a = new OutgoingMessage();
-  const b = new OutgoingMessage();
+  const a: any = new OutgoingMessage();
+  const b: any = new OutgoingMessage();
   expect(a.outputData).not.toBe(b.outputData);
 
   // Buffered writes on one message must not leak into other instances
@@ -5242,14 +5244,14 @@ it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () 
   a.outputData.push({ data: "x", encoding: "utf8", callback: null });
   expect(a.outputData.length).toBe(1);
   expect(b.outputData.length).toBe(0);
-  expect(new OutgoingMessage().outputData.length).toBe(0);
+  expect((new OutgoingMessage() as any).outputData.length).toBe(0);
 
   // Like Node, the prototype has no outputData property at all; reading it off
   // the prototype must not materialize shared state on the prototype.
   expect(Object.getOwnPropertyDescriptor(OutgoingMessage.prototype, "outputData")).toBeUndefined();
   void (OutgoingMessage.prototype as any).outputData;
-  const c = new OutgoingMessage();
-  const d = new OutgoingMessage();
+  const c: any = new OutgoingMessage();
+  const d: any = new OutgoingMessage();
   c.outputData.push({ data: "y", encoding: "utf8", callback: null });
   expect(d.outputData.length).toBe(0);
 });
@@ -5298,7 +5300,7 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
 
   {
     const server = createServer((req, res) => {
-      res.end("normal:" + req.upgrade);
+      res.end("normal:" + (req as any).upgrade);
     });
     const [clientSide, serverSide] = duplexPair();
     server.emit("connection", serverSide);
@@ -5363,7 +5365,7 @@ test("https 'clientError' for a connection whose handshake completes after close
         raw.write(chunk, cb);
       },
     });
-    raw.on("data", d => (hold ? held.push(d) : wire.push(d)));
+    raw.on("data", (d: Buffer) => (hold ? held.push(d) : wire.push(d)));
     raw.on("close", () => wire.push(null));
     const c = (client = tlsConnect({ socket: wire, rejectUnauthorized: false }));
     c.on("error", () => {});
@@ -5732,7 +5734,7 @@ describe("HTTP server transport shutdown", () => {
             raw.write(chunk, callback);
           },
         });
-        raw.on("data", chunk => (hold ? held.push(chunk) : wire.push(chunk)));
+        raw.on("data", (chunk: Buffer) => (hold ? held.push(chunk) : wire.push(chunk)));
         raw.on("close", () => wire.push(null));
         const client = tlsConnect({ socket: wire, rejectUnauthorized: false });
         client.on("error", () => {});
@@ -5807,7 +5809,7 @@ describe("HTTP server transport shutdown", () => {
     const clientError = Promise.withResolvers<import("node:net").Socket>();
     const closed = Promise.withResolvers<Error | undefined>();
     const server = createServer();
-    server.on("clientError", (_error, socket) => clientError.resolve(socket));
+    server.on("clientError", (_error, socket) => clientError.resolve(socket as import("node:net").Socket));
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
@@ -5996,7 +5998,7 @@ describe("HTTP server transport shutdown", () => {
     const chunks: Buffer[] = [];
     const closed = Promise.withResolvers<void>();
     client.pause();
-    client.on("data", chunk => chunks.push(chunk));
+    client.on("data", (chunk: Buffer) => chunks.push(chunk));
     client.on("error", () => {});
     client.on("close", closed.resolve);
 
@@ -6524,7 +6526,7 @@ describe("request body still flows after res.end() was called in the handler", (
     expect({
       body: Buffer.concat(chunks).toString(),
       events,
-      dumped: reqRef!._dumped,
+      dumped: (reqRef as any)._dumped,
     }).toEqual({
       body: "testing-body",
       events: ["req-end", "out-finish", "req-close"],
@@ -6588,14 +6590,14 @@ describe("request body still flows after res.end() was called in the handler", (
       res.end("ok");
       // emitResponseFinish is registered before the 'request' event, so by the
       // time this listener runs req._dump() has already been called.
-      res.on("finish", () => (dumpedAtFinish = req._dumped));
+      res.on("finish", () => (dumpedAtFinish = (req as any)._dumped));
     });
     await once(server.listen(0, "127.0.0.1"), "listening");
     const { port } = server.address() as AddressInfo;
     const resp = await fetch(`http://127.0.0.1:${port}/`, { method: "POST", body: "testing-body" });
     expect(await resp.text()).toBe("ok");
     await closed;
-    expect({ dumpedAtFinish, dumped: reqRef!._dumped }).toEqual({ dumpedAtFinish: true, dumped: true });
+    expect({ dumpedAtFinish, dumped: (reqRef as any)._dumped }).toEqual({ dumpedAtFinish: true, dumped: true });
   });
 
   it("req.resume() after res.end() in the same tick prevents _dump()", async () => {
@@ -6606,7 +6608,7 @@ describe("request body still flows after res.end() was called in the handler", (
       res.end("ok");
       req.resume();
       req.once("end", () => {
-        dumped = req._dumped;
+        dumped = (req as any)._dumped;
         resolve();
       });
     });

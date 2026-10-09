@@ -8,7 +8,7 @@ test("jest.mock() with non-string first argument should throw TypeError", () => 
   // Passing the jest object itself as the first argument should throw
   // a TypeError, not crash with stack-buffer-overflow
   expect(() => {
-    jestObj.mock(jestObj);
+    (jestObj as any).mock(jestObj);
   }).toThrow(TypeError);
 });
 
@@ -16,7 +16,7 @@ test("jest.mock() with object as first argument should throw TypeError", () => {
   const jestObj = Bun.jest(import.meta.path).jest;
 
   expect(() => {
-    jestObj.mock({});
+    (jestObj as any).mock({});
   }).toThrow(TypeError);
 });
 
@@ -24,7 +24,7 @@ test("jest.mock() with a callback that is not a function should throw TypeError"
   const jestObj = Bun.jest(import.meta.path).jest;
 
   expect(() => {
-    jestObj.mock("some-module", 123);
+    (jestObj as any).mock("some-module", 123);
   }).toThrow(TypeError);
 });
 
@@ -32,6 +32,6 @@ test("mock.module() with missing callback should throw TypeError", () => {
   const { mock } = Bun.jest(import.meta.path);
 
   expect(() => {
-    mock.module("some-module");
+    (mock as any).module("some-module");
   }).toThrow(TypeError);
 });

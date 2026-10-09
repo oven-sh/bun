@@ -22,7 +22,7 @@ const files = {
 const ifRangeValidators = { "ETag": '"v1"', "Last-Modified": "Wed, 21 Oct 2015 07:28:00 GMT" };
 
 describe("Bun.file in serve routes", () => {
-  let server: Server;
+  let server: Server<undefined>;
   let tempDir: string;
   let handler = mock(req => {
     return new Response(`fallback: ${req.url}`, {
@@ -1327,7 +1327,7 @@ test.skipIf(isWindows)("Response(Bun.file(FIFO)) frames the body as chunked, not
     let wire = "";
     const client = await Bun.connect({
       hostname: "127.0.0.1",
-      port: server.port,
+      port: server.port!,
       socket: {
         open(s) {
           s.write("GET /fifo HTTP/1.1\r\nHost: x\r\n\r\n");
@@ -1414,7 +1414,7 @@ test("file routes frame a slice that reaches or starts past EOF by the bytes the
     let captured = "";
     await Bun.connect({
       hostname: "127.0.0.1",
-      port: server.port,
+      port: server.port!,
       socket: {
         open(socket) {
           socket.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);

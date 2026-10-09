@@ -272,12 +272,12 @@ describe("vm", () => {
 
       try {
         compileFunction("Object.prototype.polluted = true; return 'done';")();
-        expect(Object.prototype.polluted).toBeUndefined();
+        expect((Object.prototype as any).polluted).toBeUndefined();
       } catch (e) {
         // Throwing is acceptable
       } finally {
         // Clean up just in case
-        delete Object.prototype.polluted;
+        delete (Object.prototype as any).polluted;
         Object.prototype.hasOwnProperty = originalHasOwnProperty;
       }
     });
@@ -368,7 +368,7 @@ describe("Script", () => {
     for (const opts of [undefined, { displayErrors: true }, { displayErrors: false }]) {
       let err: any;
       try {
-        new Script("%%", opts);
+        new Script("%%", opts as any);
       } catch (e) {
         err = e;
       }
@@ -615,14 +615,12 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
     });
     test("cannot access global scope", () => {
       const prop = randomProp();
-      // @ts-expect-error
       globalThis[prop] = "fizz";
       try {
         const context = createContext({});
         const result = fn(`typeof ${prop};`, context);
         expect(result).toBe("undefined");
       } finally {
-        // @ts-expect-error
         delete globalThis[prop];
       }
     });
@@ -636,38 +634,29 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
   } else {
     test("can access global context", () => {
       const props = randomProps(2);
-      // @ts-expect-error
       globalThis[props[0]] = "bar";
-      // @ts-expect-error
       globalThis[props[1]] = (n: number) => "buzz".repeat(n);
       try {
         const result = fn(`${props[0]} + ${props[1]}(2);`);
         expect(result).toBe("barbuzzbuzz");
       } finally {
         for (const prop of props) {
-          // @ts-expect-error
           delete globalThis[prop];
         }
       }
     });
     test("can modify global context", () => {
       const props = randomProps(3);
-      // @ts-expect-error
       globalThis[props[0]] = ["a", "b", "c"];
-      // @ts-expect-error
       globalThis[props[1]] = "initial value";
       try {
         const result = fn(`${props[1]} = 'baz'; ${props[2]} = 'bunny'; delete ${props[0]}[0];`);
-        // @ts-expect-error
         expect(globalThis[props[1]]).toBe("baz");
-        // @ts-expect-error
         expect(globalThis[props[2]]).toBe("bunny");
-        // @ts-expect-error
         expect(globalThis[props[0]]).toEqual([undefined, "b", "c"]);
         expect(result).toBe(true);
       } finally {
         for (const prop of props) {
-          // @ts-expect-error
           delete globalThis[prop];
         }
       }
@@ -678,13 +667,11 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
     });
     test("can access this context", () => {
       const prop = randomProp();
-      // @ts-expect-error
       globalThis[prop] = "fizz";
       try {
         const result = fn(`${prop};`);
         expect(result).toBe("fizz");
       } finally {
-        // @ts-expect-error
         delete globalThis[prop];
       }
     });
@@ -743,7 +730,7 @@ function randomProp() {
   return "prop" + crypto.randomUUID().replace(/-/g, "");
 }
 function randomProps(propsNumber = 0) {
-  const props = [];
+  const props: string[] = [];
   for (let i = 0; i < propsNumber; i++) {
     props.push(randomProp());
   }
@@ -876,9 +863,9 @@ resp.text().then((a) => {
 });
 
   `;
-    URL.prototype.ok = true;
+    (URL.prototype as any).ok = true;
     await runInContext(code, context);
-    delete URL.prototype.ok;
+    delete (URL.prototype as any).ok;
   }
 });
 
@@ -1033,7 +1020,7 @@ test("can't use bytecode from a different script", () => {
 
 test("SourceTextModule accepts the cachedData it produced", () => {
   const source = `{ function inBlock() { return 1; } }\nexport default await Promise.resolve(inBlock);`; // module-only syntax, and a block function (strict semantics)
-  const cachedData = new SourceTextModule(source, { identifier: "m" }).createCachedData();
+  const cachedData = (new SourceTextModule(source, { identifier: "m" }) as any).createCachedData();
   expect(cachedData.length).toBeGreaterThan(0);
   expect(() => new SourceTextModule(source, { identifier: "m", cachedData })).not.toThrow(); // ERR_VM_MODULE_CACHED_DATA_REJECTED otherwise
   expect(() => new SourceTextModule("export default 2;", { identifier: "m", cachedData })).toThrow(
@@ -3165,7 +3152,7 @@ test("SourceTextModule applies lineOffset and columnOffset to reported positions
       fromScript = position(e);
     }
     const module = new SourceTextModule(code, { identifier: "offset.mjs", ...options });
-    await module.link(() => {});
+    await module.link((() => {}) as any);
     try {
       await module.evaluate();
     } catch (e) {

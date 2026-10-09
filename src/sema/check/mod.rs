@@ -3285,16 +3285,15 @@ impl<'p, 's> Checker<'p, 's> {
         self.note_taint_event(depth);
         // `getTypeOfVariableOrParameterOrProperty` stores what `getQuickTypeOfExpression` returns,
         // which checks the callee with the loops visible, and the type of a `...rest`.
-        let quick = &self.quick_initializers;
-        for (i, frame) in self.frames[depth..].iter_mut().enumerate() {
-            if quick
-                .iter()
-                .any(|&(from, to)| (from..to).contains(&(depth + i)))
-            {
+        // Not the type of a pattern around a binding element, which nothing stores: it is computed
+        // again for the next element.
+        for at in depth..self.frames.len() {
+            let is_quick = |&(from, to): &(usize, usize)| (from..to).contains(&at);
+            if self.quick_initializers.iter().any(is_quick) && self.is_resolution(self.stack[at]) {
                 continue;
             }
-            frame.tainted = true;
-            frame.incomplete_flow = true;
+            self.frames[at].tainted = true;
+            self.frames[at].incomplete_flow = true;
         }
         self.taints += 1;
         self.note_cycle();

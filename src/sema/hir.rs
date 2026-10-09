@@ -297,6 +297,17 @@ pub struct Lazy<'s> {
     pub(crate) keyword_identifiers: OnceLock<ArenaBox<'s, [Node]>>,
 }
 
+impl<'s> Lazy<'s> {
+    pub(crate) fn new(session: &'s Session) -> Lazy<'s> {
+        Lazy {
+            session,
+            parents: OnceLock::new(),
+            ambient_or_type_places: OnceLock::new(),
+            keyword_identifiers: OnceLock::new(),
+        }
+    }
+}
+
 /// Copies `list` to a block of exactly its size in `arena`, and empties it. It retains its capacity.
 pub(crate) fn copy_to_arena<'s, T: Copy>(list: &mut Vec<T>, arena: &'s Arena) -> ArenaVec<'s, T> {
     let mut exact = ArenaVec::new_in(arena);
@@ -2385,12 +2396,7 @@ impl FileBuilder {
             bases: self.bases,
             fn_nodes: copy_to_arena(&mut self.fn_nodes, arena),
             class_nodes: copy_to_arena(&mut self.class_nodes, arena),
-            lazy: Lazy {
-                session,
-                parents: OnceLock::new(),
-                ambient_or_type_places: OnceLock::new(),
-                keyword_identifiers: OnceLock::new(),
-            },
+            lazy: Lazy::new(session),
             keyword_identifier_positions: few_to_arena(self.keyword_identifier_positions, arena),
         };
         let mut emptied = FileBuilder::default();

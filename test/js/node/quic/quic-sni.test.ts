@@ -3,7 +3,7 @@ import { bunEnv, bunExe } from "harness";
 import { createPrivateKey, X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { connect, listen, QuicEndpoint } from "node:quic";
+import { connect, listen, QuicEndpoint, type SessionOptions } from "node:quic";
 
 // The vendored Node suite exercises `sni` / `setSNIContexts()` but cannot
 // observe which certificate was served (both fixtures are self-signed and the
@@ -27,11 +27,11 @@ async function servedCommonName(address, servername: string): Promise<string> {
     alpn: "quic-test",
     servername,
     verifyPeer: "manual",
-  });
+  } as SessionOptions);
   try {
     await session.opened;
     const cert = session.peerCertificate;
-    const x509 = cert instanceof X509Certificate ? cert : new X509Certificate(Buffer.from(cert));
+    const x509 = cert instanceof X509Certificate ? cert : new X509Certificate(Buffer.from(cert as any));
     return x509.subject.match(/CN=([^\s,]+)/)![1];
   } finally {
     await session.close();
@@ -129,15 +129,15 @@ test("opened reports the X509 code name for validationErrorCode", async () => {
   await using server = await listen(ignoreErrors, { sni: { "*": identity1 }, alpn: ["quic-test"] });
 
   // No `ca` on the client, so the self-signed agent1 chain cannot be verified.
-  const session = await connect(server.address, {
+  const session = await connect(server.address!, {
     alpn: "quic-test",
     servername: "agent1",
     verifyPeer: "manual",
-  });
+  } as SessionOptions);
   const info = await session.opened;
   await session.close();
 
-  expect({ code: info.validationErrorCode, reason: info.validationErrorReason }).toEqual({
+  expect({ code: info.validationErrorCode as unknown as string, reason: info.validationErrorReason }).toEqual({
     code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
     reason: "unable to get local issuer certificate",
   });

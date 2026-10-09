@@ -404,6 +404,7 @@ impl<'p, 's> Checker<'p, 's> {
                         flags,
                         source: PropSource::Type(ty),
                         mapper: MapperId::IDENTITY,
+                        name_type: TypeId::UNRESOLVED,
                     };
                     match shape.props.iter_mut().find(|p| p.name == name) {
                         Some(earlier) => *earlier = implied,

@@ -1992,6 +1992,7 @@ impl<'p, 's> Checker<'p, 's> {
                 flags: PropFlags::empty(),
                 source: PropSource::Type(ty),
                 mapper: MapperId::IDENTITY,
+                name_type: TypeId::UNRESOLVED,
             };
             let wrapper = self.synth(Shape {
                 props: vec_from_iter_in([default], self.arena),
@@ -3624,6 +3625,7 @@ impl<'p, 's> Checker<'p, 's> {
                 flags: flags | written,
                 source,
                 mapper: literal_mapper,
+                name_type: TypeId::UNRESOLVED,
             });
         }
         self.check_spread_overrides(file, props);
@@ -4792,6 +4794,7 @@ impl<'p, 's> Checker<'p, 's> {
                 flags: flags | written,
                 source,
                 mapper: MapperId::IDENTITY,
+                name_type: TypeId::UNRESOLVED,
             });
         }
         // FOR SPEED: in any other literal every member is the first declaration of its symbol. The binder adds a declaration to the

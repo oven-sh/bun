@@ -116,7 +116,7 @@ async function writeFakeReleaseZip(outPath: string, version: string): Promise<vo
   }
 }
 
-type ReleaseServer = Bun.Server & { env: Record<string, string> };
+type ReleaseServer = Bun.Server<undefined> & { env: Record<string, string> };
 
 function startReleaseServer(opts: {
   tagName: string;

@@ -972,6 +972,7 @@ impl Checker<'_, '_> {
                     flags,
                     source: PropSource::Symbol(self.symbol_of_member(f, m)),
                     mapper: MapperId::IDENTITY,
+                    name_type: TypeId::UNRESOLVED,
                 };
                 let prop_type = self.type_of_prop_as_read(&prop, members.mapper);
                 self.check_index_constraint_for_property(&cx, &prop, Some(name_type), prop_type);

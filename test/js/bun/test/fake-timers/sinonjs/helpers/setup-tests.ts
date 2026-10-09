@@ -3,8 +3,10 @@ import { promisify } from "util";
 
 let active = false;
 export class FakeTimers {
+  static [key: string]: any;
+  [key: string]: any;
   private constructor() {}
-  static install(opts: { now?: number | Date; toFake?: FakeableAPI[] } = {}) {
+  static install(opts: { now?: number | Date; toFake?: FakeableAPI[]; [key: string]: any } = {}) {
     if (active) {
       vi.useRealTimers();
     }
@@ -56,7 +58,7 @@ export function NOOP() {
   return undefined;
 }
 
-export const assert = (value: boolean) => {
+export const assert: any = (value: boolean) => {
   expect(value).toBeTrue();
 };
 Object.assign(assert, {
@@ -79,13 +81,13 @@ Object.assign(assert, {
     expect(a.calls.length).toBe(2);
   },
   alwaysCalledWith(a, arg) {
-    expect(a.calls.every(c => c.includes(arg))).toBeTrue(2);
+    (expect(a.calls.every(c => c.includes(arg))) as any).toBeTrue(2);
   },
 });
-export const refute = {};
-export const sinon = {
+export const refute: any = {};
+export const sinon: any = {
   stub() {
-    let calls = [];
+    let calls: any[] = [];
     const result = (...args) => {
       calls.push(args);
     };

@@ -57,8 +57,8 @@ const mockImplementation: Parameters<typeof mock>[0] = () => 1;
 const jestImplementation: Parameters<typeof jest.fn>[0] = () => 1;
 const viImplementation: Parameters<typeof vi.fn>[0] = () => 1;
 expectType<Parameters<typeof vi.mock>[0]>().is<string>();
-expectType<Parameters<typeof test.each>>().is<[table: unknown[]]>();
-expectType<Parameters<typeof describe.each>>().is<[table: unknown[]]>();
+expectType<Parameters<typeof test.each>>().is<[table: readonly unknown[]]>();
+expectType<Parameters<typeof describe.each>>().is<[table: readonly unknown[]]>();
 
 // a table that is `any` is not taken for a tagged template
 test.each({} as any)("%s", (a, b, c) => {});

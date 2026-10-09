@@ -48,7 +48,7 @@ describe.concurrent("WebSocket close() argument validation", () => {
     });
   }
 
-  async function open(server: Bun.Server) {
+  async function open(server: Bun.Server<undefined>) {
     const ws = new WebSocket(`ws://127.0.0.1:${server.port}/`);
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     ws.onopen = () => resolve();

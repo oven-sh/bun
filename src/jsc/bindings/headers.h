@@ -101,7 +101,6 @@ CPP_DECL BunString JSC__JSString__view(JSC::JSString* arg0, JSC::JSGlobalObject*
 
 #pragma mark - JSC::JSModuleLoader
 
-CPP_DECL JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* arg0, const unsigned char* arg1, size_t arg2, const unsigned char* arg3, size_t arg4, const unsigned char* arg5, size_t arg6, JSC::EncodedJSValue JSValue7, JSC::EncodedJSValue* arg8);
 CPP_DECL JSC::JSPromise* JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* arg0, const BunString* arg1);
 
 #pragma mark - WebCore::AbortSignal

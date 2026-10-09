@@ -20,8 +20,8 @@ afterAll(() => {
 
 test("fetch(request subclass with headers)", async () => {
   class MyRequest extends Request {
-    constructor(input: RequestInfo, init?: RequestInit) {
-      super(input, init);
+    constructor(input: string | URL | Request, init?: RequestInit) {
+      super(input as string, init);
       this.headers.set("hello", "world");
     }
   }
@@ -44,7 +44,7 @@ test("fetch(RequestInit, headers)", async () => {
     },
     url: server!.url,
   };
-  const { headers } = await fetch(myRequest, {
+  const { headers } = await fetch(myRequest as any, {
     headers: {
       "hello": "world2",
     },
@@ -55,8 +55,8 @@ test("fetch(RequestInit, headers)", async () => {
 
 test("fetch(url, RequestSubclass)", async () => {
   class MyRequest extends Request {
-    constructor(input: RequestInfo, init?: RequestInit) {
-      super(input, init);
+    constructor(input: string | URL | Request, init?: RequestInit) {
+      super(input as string, init);
       this.headers.set("hello", "world");
     }
   }
@@ -76,7 +76,7 @@ test("fetch({toString throwing}, {headers} isn't accessed)", async () => {
       throw new Error("bad2");
     }),
   };
-  expect(async () => await fetch(str, obj)).toThrow("bad2");
+  expect(async () => await fetch(str as any, obj as any)).toThrow("bad2");
   expect(mocked).not.toHaveBeenCalled();
   expect(str.toString).toHaveBeenCalledTimes(1);
 });
@@ -276,8 +276,8 @@ describe.concurrent("fetch() early rejections are reported when unhandled", () =
 
 test("fetch(RequestSubclass, undefined)", async () => {
   class MyRequest extends Request {
-    constructor(input: RequestInfo, init?: RequestInit) {
-      super(input, init);
+    constructor(input: string | URL | Request, init?: RequestInit) {
+      super(input as string, init);
       this.headers.set("hello", "world");
     }
   }
@@ -337,7 +337,7 @@ describe("does not send a request when", () => {
 
   test("Invalid redirect", async () => {
     const prevCount = requestCount;
-    expect(async () => await fetch(url, { redirect: "😀" })).toThrow("redirect must be");
+    expect(async () => await fetch(url, { redirect: "😀" as any })).toThrow("redirect must be");
     // Give it a chance to possibly send the request.
     await Bun.sleep(2);
     expect(requestCount).toBe(prevCount);
@@ -355,7 +355,7 @@ describe("does not send a request when", () => {
 
   test("Invalid ca in tls", async () => {
     const prevCount = requestCount;
-    expect(async () => await fetch(url, { tls: { ca: 123 } })).toThrow("TLSOptions.ca");
+    expect(async () => await fetch(url, { tls: { ca: 123 as any } })).toThrow("TLSOptions.ca");
     // Give it a chance to possibly send the request.
     await Bun.sleep(2);
     expect(requestCount).toBe(prevCount);
@@ -416,7 +416,7 @@ describe("does not send a request when", () => {
             get [propertyName]() {
               throw new Error("boom");
             },
-          }),
+          } as any),
       ).toThrow("boom");
       // Give it a chance to possibly send the request.
       await Bun.sleep(2);

@@ -1722,6 +1722,7 @@ impl Checker<'_, '_> {
                 flags: PropFlags::empty(),
                 source: PropSource::Type(ty),
                 mapper: MapperId::IDENTITY,
+                name_type: TypeId::UNRESOLVED,
             });
         }
         Some(self.synth(Shape {

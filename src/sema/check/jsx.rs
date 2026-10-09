@@ -677,6 +677,7 @@ impl<'p, 's> Checker<'p, 's> {
                 flags,
                 source,
                 mapper: MapperId::IDENTITY,
+                name_type: TypeId::UNRESOLVED,
             };
             // Attributes of one name are declarations of one symbol, and `compareSymbols` orders
             // by the first declaration.
@@ -734,6 +735,7 @@ impl<'p, 's> Checker<'p, 's> {
                 flags,
                 source: PropSource::Type(ty),
                 mapper: MapperId::IDENTITY,
+                name_type: TypeId::UNRESOLVED,
             });
         }
         flush(self, &mut spread, &mut pending);

@@ -18,7 +18,7 @@ test("mock.module async", async () => {
     return { a: 123 };
   });
 
-  expect((await import("i-am-async-and-mocked")).a).toBe(123);
+  expect((await import("i-am-async-and-mocked" as string)).a).toBe(123);
 });
 
 test("mock.restore", () => {
@@ -134,7 +134,7 @@ test.todo("adding a default on a module with no default", async () => {
       default: 42,
     };
   });
-  expect((await import("./re-export-fixture")).default).toBe(42);
+  expect(((await import("./re-export-fixture")) as any).default).toBe(42);
 });
 
 test("mocking a package", async () => {
@@ -143,7 +143,7 @@ test("mocking a package", async () => {
       wow: () => 42,
     };
   });
-  const hahaha = await import("ha-ha-ha");
+  const hahaha = await import("ha-ha-ha" as string);
   expect(hahaha.wow()).toBe(42);
   expect(require("ha-ha-ha").wow()).toBe(42);
   mock.module("ha-ha-ha", () => {
@@ -174,7 +174,7 @@ test("a factory export getter that throws throws when the export is read, not fr
     },
     b: 2,
   }));
-  const ns = await import("mock-module-getter-throws");
+  const ns = await import("mock-module-getter-throws" as string);
   expect(ns.b).toBe(2);
   expect(() => ns.a).toThrow("export getter");
 });

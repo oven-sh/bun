@@ -29,13 +29,57 @@ const leftOutDirectories = /infer-plugins|config\/plugins/;
 const takesValue = /^--(config|parser|config-precedence|log-level|end-of-line|ignore-path|stdin-filepath|tab-width|print-width|trailing-comma|range-start|range-end|cursor-offset)$/;
 const hasPattern = args => args.some((arg, index) => !arg.startsWith("-") && !takesValue.test(args[index - 1] ?? ""));
 
+/**
+ * What the text of a list or an object in JavaScript stands for, if it has nothing in it but lists, objects, texts, numbers, `true`,
+ * `false` and `null`. It throws for all else: a name, a call, a template with a hole.
+ */
+function literal(text) {
+  let at = 0;
+  const skip = () => (at += /^(?:\s|\/\/.*|\/\*[^]*?\*\/)*/.exec(text.slice(at))[0].length);
+  const take = pattern => {
+    skip();
+    const match = pattern.exec(text.slice(at));
+    if (match) at += match[0].length;
+    return match;
+  };
+  const expect = pattern => take(pattern) ?? fail();
+  const fail = () => {
+    throw new SyntaxError(`not a literal at ${at}`);
+  };
+  const escapes = { n: "\n", t: "\t", r: "\r", b: "\b", f: "\f", v: "\v", 0: "\0", "\n": "" };
+  const unescape = body => body.replace(/\\(?:u\{([\da-f]+)\}|u([\da-f]{4})|x([\da-f]{2})|([^]))/gi, (_, a, b, c, one) => (one === undefined ? String.fromCodePoint(parseInt(a ?? b ?? c, 16)) : (escapes[one] ?? one)));
+  function members(close, member) {
+    const all = [];
+    while (!take(close)) {
+      all.push(member());
+      if (!take(/^,/)) {
+        expect(close);
+        break;
+      }
+    }
+    return all;
+  }
+  function value() {
+    let match;
+    if ((match = take(/^"((?:[^"\\\n]|\\[^])*)"|^'((?:[^'\\\n]|\\[^])*)'|^`((?:[^`\\$]|\\[^])*)`/))) return unescape(match[1] ?? match[2] ?? match[3]);
+    if ((match = take(/^-?\d+(?:\.\d+)?\b/))) return Number(match[0]);
+    if ((match = take(/^(?:true|false|null)\b/))) return JSON.parse(match[0]);
+    if (take(/^\[/)) return members(/^\]/, value);
+    if (take(/^\{/)) return Object.fromEntries(members(/^\}/, () => [take(/^[\w$]+/)?.[0] ?? value(), (expect(/^:/), value())]));
+    return fail();
+  }
+  const result = value();
+  skip();
+  return at === text.length ? result : fail();
+}
+
 function commandLines() {
   const found = [];
   for (const name of fs.readdirSync(path.join(integration, "__tests__")).filter(it => it.endsWith(".js")).sort()) {
     const text = fs.readFileSync(path.join(integration, "__tests__", name), "utf8");
     for (const [, directory, args, options] of text.matchAll(/runCli\(\s*"([^"]*)",\s*(\[[^\]]*\])\s*(?:,\s*(\{[^}]*\}))?,?\s*\)/g)) {
       try {
-        found.push({ test: name, directory, args: new Function(`return ${args}`)(), options: options ? new Function(`return ${options}`)() : {} });
+        found.push({ test: name, directory, args: literal(args), options: options ? literal(options) : {} });
       } catch {}
     }
   }

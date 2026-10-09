@@ -3,7 +3,7 @@
 //
 //   bun rules.ts --bin <bun-lint> --eslint <checkout of eslint> --files <directory> [--count N] [--scratch <dir>]
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { option } from "../tokens/corpus";
 
@@ -17,36 +17,32 @@ const NAMES = [
   "require-atomic-updates",
 ]; // prettier-ignore
 const rules = Object.fromEntries(NAMES.map(name => [name, "error"]));
-const config = join(option(args, "--scratch") ?? ".", "rules-config.json");
-writeFileSync(config, JSON.stringify({ categories: { correctness: "off" }, rules }));
+const languageOptions = { ecmaVersion: "latest", sourceType: "script" };
+const scratch = resolve(option(args, "--scratch") ?? ".");
+const config = join(scratch, "eslint.config.mjs");
+mkdirSync(scratch, { recursive: true });
+writeFileSync(config, `export default [${JSON.stringify({ languageOptions, rules })}];\n`);
 
 const files = readdirSync(directory).filter(it => it.endsWith(".js")).sort().slice(0, Number(option(args, "--count") ?? 1e9)); // prettier-ignore
 const paths = files.map(it => resolve(directory, it));
-const output = spawnSync(bin, ["cli", "-c", config, "-f", "json", "--no-ignore", ...paths], { maxBuffer: 1 << 30 });
-const ours = new Map<string, string[]>(paths.map(it => [it, []]));
-let lost = 0;
-for (const it of JSON.parse(output.stdout.toString()).diagnostics) {
-  const { line, column } = it.labels[0].span;
-  // `filename` is relative to the working directory.
-  const list = ours.get(resolve(it.filename));
-  list ? list.push(`${line}:${column} ${it.code?.replace(/^.*\((.*)\)$/, "$1") ?? "rejected"}`) : lost++;
+// With `-c` the working directory is what the patterns of a configuration start from.
+const output = spawnSync(bin, ["cli", "-c", config, "-f", "json", ...paths], { cwd: directory, maxBuffer: 1 << 30 });
+const ours = new Map<string, string[]>();
+for (const { filePath, messages } of JSON.parse(output.stdout.toString())) {
+  ours.set(filePath, messages.map((it: any) => `${it.line}:${it.column} ${it.fatal ? "rejected" : it.ruleId}`)); // prettier-ignore
 }
-if (lost > 0) throw new Error(`${lost} of our messages are about files that were not asked for`);
 
 const linter = new Linter();
 const found = new Map<string, string[]>();
 let [same, differ, skipped, messages, own] = [0, 0, 0, 0, 0];
 for (const path of paths) {
-  const options = { languageOptions: { ecmaVersion: "latest", sourceType: "script" }, rules };
-  const theirs: any[] = linter.verify(readFileSync(path, "utf8"), options);
-  const actual = ours.get(path)!;
-  // The configuration is one of oxlint, which does not have this rule.
-  const alone = spawnSync(bin, ["run", "consistent-return", path]).stdout.toString();
-  if (theirs.some(it => it.fatal) || actual.some(it => it.endsWith(" rejected")) || alone.includes("the parser rejects")) {
+  const theirs: any[] = linter.verify(readFileSync(path, "utf8"), { languageOptions, rules });
+  const actual = ours.get(path);
+  if (actual === undefined) throw new Error(`${path} was not linted`);
+  if (theirs.some(it => it.fatal) || actual.some(it => it.endsWith(" rejected"))) {
     skipped++;
     continue;
   }
-  for (const [, line, column] of alone.matchAll(/:(\d+):(\d+): /g)) actual.push(`${line}:${column} consistent-return`);
   const expected = theirs.map(it => `${it.line}:${it.column} ${it.ruleId}`);
   messages += expected.length;
   own += actual.length;

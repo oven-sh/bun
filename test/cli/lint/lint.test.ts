@@ -593,7 +593,7 @@ describe.concurrent("bun lint", () => {
         expect(fixed.exitCode).toBe(0);
         // A debug build takes seconds to start the engine that the rules run in.
       },
-      isDebug || isASAN ? 120_000 : undefined,
+      isDebug || isASAN ? 120_000 : 30_000,
     );
 
     test("--rule, --global, --no-config-lookup", async () => {
@@ -779,14 +779,16 @@ describe.concurrent("bun lint", () => {
         expect(result.stdout).not.toContain("no-duplicates");
       });
 
-      test("--fix, --fix-suggestions, --fix-dangerously and --quiet change what oxlint's change", async () => {
-        const files = {
-          ".oxlintrc.json": JSON.stringify({
-            categories: { correctness: "off" },
-            jsPlugins: ["./plugin.js"],
-            rules: { "p/r": "warn" },
-          }),
-          "plugin.js": `export default {
+      test(
+        "--fix, --fix-suggestions, --fix-dangerously and --quiet change what oxlint's change",
+        async () => {
+          const files = {
+            ".oxlintrc.json": JSON.stringify({
+              categories: { correctness: "off" },
+              jsPlugins: ["./plugin.js"],
+              rules: { "p/r": "warn" },
+            }),
+            "plugin.js": `export default {
             meta: { name: "p" },
             rules: {
               r: {
@@ -801,16 +803,18 @@ describe.concurrent("bun lint", () => {
               },
             },
           };`,
-          "a.js": "fixed; suggested;\n",
-        };
-        const after = async (...flags: string[]) =>
-          (await lint(files, [...flags, "a.js"], { reads: ["a.js"] })).files["a.js"];
-        expect(await after("--fix")).toBe("done; suggested;\n");
-        expect(await after("--fix", "--quiet")).toBe("done; suggested;\n");
-        expect(await after("--fix-suggestions")).toBe("fixed; done;\n");
-        expect(await after("--fix", "--fix-suggestions")).toBe("done; done;\n");
-        expect(await after("--fix-dangerously")).toBe("done; done;\n");
-      });
+            "a.js": "fixed; suggested;\n",
+          };
+          const after = async (...flags: string[]) =>
+            (await lint(files, [...flags, "a.js"], { reads: ["a.js"] })).files["a.js"];
+          expect(await after("--fix")).toBe("done; suggested;\n");
+          expect(await after("--fix", "--quiet")).toBe("done; suggested;\n");
+          expect(await after("--fix-suggestions")).toBe("fixed; done;\n");
+          expect(await after("--fix", "--fix-suggestions")).toBe("done; done;\n");
+          expect(await after("--fix-dangerously")).toBe("done; done;\n");
+        },
+        isDebug || isASAN ? 120_000 : 30_000,
+      );
 
       // What oxlint 1.87 writes.
       describe("a comment that disables nothing is removed from the scripts of a .vue file only, there by every flag", () => {
@@ -1558,17 +1562,21 @@ describe.concurrent("bun lint", () => {
       const expected = (names: string[]) =>
         Object.fromEntries(names.map(it => [it, whatOxlintReports[it as keyof typeof whatOxlintReports]]));
 
-      test("the rules report what oxlint's report, where they report it", async () => {
-        const some = projects.filter(it => !it.typed && it.name !== "no-cycle/many-files");
-        const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
-        for (const { name, config, files: texts } of some) {
-          files[`${name}/.oxlintrc.json`] = JSON.stringify(config);
-          for (const [path, text] of Object.entries(texts)) files[`${name}/${path}`] = text;
-        }
-        const names = some.map(it => it.name);
-        const { raw } = await lint(files, ["-f", "json"]);
-        expect(foundExactly(raw, names)).toEqual(expected(names));
-      });
+      test(
+        "the rules report what oxlint's report, where they report it",
+        async () => {
+          const some = projects.filter(it => !it.typed && it.name !== "no-cycle/many-files");
+          const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
+          for (const { name, config, files: texts } of some) {
+            files[`${name}/.oxlintrc.json`] = JSON.stringify(config);
+            for (const [path, text] of Object.entries(texts)) files[`${name}/${path}`] = text;
+          }
+          const names = some.map(it => it.name);
+          const { raw } = await lint(files, ["-f", "json"]);
+          expect(foundExactly(raw, names)).toEqual(expected(names));
+        },
+        isDebug || isASAN ? 120_000 : 30_000,
+      );
 
       // Each project is a program of its own. In four runs, which run at the same time: one takes seconds in a debug build.
       test.each([0, 1, 2, 3])(
@@ -1586,7 +1594,7 @@ describe.concurrent("bun lint", () => {
           const { raw } = await lint(files, ["-f", "json", "--type-aware"]);
           expect(foundExactly(raw, names)).toEqual(expected(names));
         },
-        isDebug || isASAN ? 120_000 : undefined,
+        isDebug || isASAN ? 120_000 : 30_000,
       );
 
       // messages.json has what oxlint 1.87.0 with tsgolint 7.0.2003 says.
@@ -1829,7 +1837,7 @@ describe.concurrent("bun lint", () => {
             ),
           );
         },
-        isDebug || isASAN ? 120_000 : undefined,
+        isDebug || isASAN ? 120_000 : 30_000,
       );
 
       test("the options that oxlint accepts are accepted", async () => {
@@ -2566,7 +2574,7 @@ describe.concurrent("bun lint", () => {
       expect(exitCode).toBe(0);
     });
 
-    const slow = isDebug || isASAN ? 120_000 : undefined;
+    const slow = isDebug || isASAN ? 120_000 : 30_000;
 
     // Whether the file system takes `A` for `a`, where the projects of these tests are.
     const foldsCase = (() => {

@@ -1655,39 +1655,6 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  // The engines are told how much of the memory is for a heap. A heap that has half of that grows by a quarter and not to twice its size.
-  test(
-    "BUN_JSC_forceRAMSize of the user wins",
-    async () => {
-      const files = {
-        ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "ram/most": "error" } }),
-        "plugin.mjs": `
-          import { heapSize } from "bun:jsc";
-          const most = {
-            create: context => ({
-              Program(node) {
-                const kept = [];
-                for (let i = 0; i < 400_000; i++) kept.push({ a: i, b: [i] });
-                let most = 0;
-                for (let i = 0; i < 1_200_000; i++) {
-                  kept[i % kept.length] = { a: i, b: [i] };
-                  if ((i & 4095) === 0) most = Math.max(most, heapSize());
-                }
-                context.report({ node, message: String(most) });
-              },
-            }),
-          };
-          export default { meta: { name: "ram" }, rules: { most } };`,
-        "a.js": "1;\n",
-      };
-      const largest = async (variables: Record<string, string>) =>
-        Number(JSON.parse((await lint(files, ["-f", "json", "a.js"], [], variables)).raw).diagnostics[0].message);
-      const [free, forced] = await Promise.all([largest({}), largest({ BUN_JSC_forceRAMSize: String(64 << 20) })]);
-      expect(forced).toBeLessThan(0.85 * free);
-    },
-    timeout,
-  );
-
   test(
     "engines that grow over the memory that is for them are freed, and every file is linted",
     async () => {

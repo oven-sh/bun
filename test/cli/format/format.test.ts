@@ -3648,7 +3648,7 @@ describe("bun format on Windows, macOS and Linux", () => {
     // `subst` gives the directory a drive letter.
     test.skipIf(!isWindows)("a project at the root of a drive", async () => {
       using dir = tempDir("bun-format-platform", {
-        ".prettierrc": `{ "semi": false }`,
+        ".prettierrc": `{ "semi": false }\n`,
         ".prettierignore": "sub/ignored.js\n",
         "a.js": formatted,
         "sub/b.js": formatted,
@@ -3681,7 +3681,7 @@ describe("bun format on Windows, macOS and Linux", () => {
     // folders of a virtual machine.
     test.skipIf(!isWindows)("a project on a network share", async () => {
       using dir = tempDir("bun-format-platform", {
-        ".prettierrc": `{ "semi": false }`,
+        ".prettierrc": `{ "semi": false }\n`,
         ".prettierignore": "src/ignored.js\n",
         "src/a.js": formatted,
         "src/ignored.js": formatted,
@@ -3703,8 +3703,9 @@ describe("bun format on Windows, macOS and Linux", () => {
       expect(everythingIn(dir)).toEqual([".prettierignore", ".prettierrc", "src", "src/a.js", "src/ignored.js"]);
     });
 
-    // Apart from the test above: here a child is started in a directory on the share, and imports a `file://localhost/..`.
-    test.skipIf(!isWindows)(
+    // By its address: a file URL does not keep the name `localhost`, in Node.js neither, so Prettier cannot import from there either.
+    // For Windows alone, and never run: whether Bun imports `file://127.0.0.1/C$/..` nobody has seen.
+    test.todo(
       "a configuration file that is a program, on a network share",
       async () => {
         using dir = tempDir("bun-format-platform", {
@@ -3712,7 +3713,7 @@ describe("bun format on Windows, macOS and Linux", () => {
           "prettier.config.mjs": "export default { semi: false };\n",
         });
         const real = realpathSync(String(dir));
-        const { stderr, exitCode } = await format(`\\\\localhost\\${real[0]}$\\${real.slice(3)}`, ["a.js"]);
+        const { stderr, exitCode } = await format(`\\\\127.0.0.1\\${real[0]}$\\${real.slice(3)}`, ["a.js"]);
         expect(stderr).not.toContain("[error]");
         expect(read(dir, "a.js")).toBe("a\n");
         expect(exitCode).toBe(0);

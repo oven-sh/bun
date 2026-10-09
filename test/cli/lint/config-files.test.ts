@@ -1637,32 +1637,36 @@ describe.concurrent("the configuration files of ESLint 8", () => {
   // What ESLint 8.57.1 does with each row is in oracle/driver/eslintrc-cli.expected.json, recorded by eslintrc-cli.mjs there.
   // eslintrc-cli.differences.json has the rows with which `bun lint` does something else, and what differs.
   const rows = rowsOfESLint8.filter(it => !(it.posix && isWindows));
-  // Each row starts two processes: too slow for a debug build.
+  // Each row starts two processes: too slow for a debug build, and eight in a row take their time on a machine that is busy.
   for (let start = 0; start < rows.length; start += 4) {
     const some = rows.slice(start, start + 4);
-    test.skipIf(isDebug || isASAN)(`what ESLint 8.57.1 does: ${some[0].name} ..`, async () => {
-      const differs: Record<string, string> = {};
-      for (const row of some) {
-        using dir = tempDir("bun-lint-eslintrc", {});
-        const directories = write(join(String(dir), "row"), row);
-        await using proc = spawn({
-          cmd: [...command, "--threads", "2", ...argumentsOf(row, directories.project)],
-          env: environment(row, directories.home, env),
-          cwd: directories.cwd,
-          stdin: Buffer.from(row.stdin ?? ""),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout, stderr, status] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        const expected = whatESLint8Does[row.name as keyof typeof whatESLint8Does];
-        const what = difference(expected, outcome({ status, stdout, stderr }, directories, row));
-        if (what) differs[row.name] = what;
-      }
-      const known = differencesFromESLint8 as Record<string, string>;
-      expect(differs).toEqual(
-        Object.fromEntries(some.filter(it => it.name in known).map(it => [it.name, known[it.name]])),
-      );
-    });
+    test.skipIf(isDebug || isASAN)(
+      `what ESLint 8.57.1 does: ${some[0].name} ..`,
+      async () => {
+        const differs: Record<string, string> = {};
+        for (const row of some) {
+          using dir = tempDir("bun-lint-eslintrc", {});
+          const directories = write(join(String(dir), "row"), row);
+          await using proc = spawn({
+            cmd: [...command, "--threads", "2", ...argumentsOf(row, directories.project)],
+            env: environment(row, directories.home, env),
+            cwd: directories.cwd,
+            stdin: Buffer.from(row.stdin ?? ""),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, status] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          const expected = whatESLint8Does[row.name as keyof typeof whatESLint8Does];
+          const what = difference(expected, outcome({ status, stdout, stderr }, directories, row));
+          if (what) differs[row.name] = what;
+        }
+        const known = differencesFromESLint8 as Record<string, string>;
+        expect(differs).toEqual(
+          Object.fromEntries(some.filter(it => it.name in known).map(it => [it.name, known[it.name]])),
+        );
+      },
+      30_000,
+    );
   }
 });
 

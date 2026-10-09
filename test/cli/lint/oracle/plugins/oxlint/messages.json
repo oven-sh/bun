@@ -4811,6 +4811,42 @@
   "message": "'Missing<string>' is an 'error' type that acts as 'any' and overrides all other types in this union type."
  },
  {
+  "rule": "typescript/no-redundant-type-constituents",
+  "id": "errorTypeOverrides",
+  "file": "a.ts",
+  "code": "import type { Missing, Other } from \"nowhere\";\nexport type A = Partial<Missing> | 1;\n",
+  "options": [],
+  "typed": true,
+  "message": "'Missing' is an 'error' type that acts as 'any' and overrides all other types in this union type."
+ },
+ {
+  "rule": "typescript/no-redundant-type-constituents",
+  "id": "errorTypeOverrides",
+  "file": "a.ts",
+  "code": "import type { Missing, Other } from \"nowhere\";\nexport type A = Missing<\n  string,\n  Other\n> | 1;\n",
+  "options": [],
+  "typed": true,
+  "message": "'Missing<string, Other>' is an 'error' type that acts as 'any' and overrides all other types in this union type."
+ },
+ {
+  "rule": "typescript/no-redundant-type-constituents",
+  "id": "errorTypeOverrides",
+  "file": "a.ts",
+  "code": "import type { Missing, Other } from \"nowhere\";\nexport type A = Missing<{ a: 1 }> | 1;\n",
+  "options": [],
+  "typed": true,
+  "message": "'Missing<{ a: 1; }>' is an 'error' type that acts as 'any' and overrides all other types in this union type."
+ },
+ {
+  "rule": "typescript/no-redundant-type-constituents",
+  "id": "errorTypeOverrides",
+  "file": "a.ts",
+  "code": "import type * as NS from \"nowhere\";\nexport type A = Required<Partial<NS.Deep>> | 1;\n",
+  "options": [],
+  "typed": true,
+  "message": "'NS.Deep' is an 'error' type that acts as 'any' and overrides all other types in this union type."
+ },
+ {
   "rule": "typescript/no-require-imports",
   "id": "noRequireImports",
   "file": "a.ts",

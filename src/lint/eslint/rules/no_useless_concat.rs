@@ -43,7 +43,9 @@ impl Rule for NoUselessConcat {
                 && ast_utils::is_token_on_same_line(cx.file(), left, right)
                 && let Some(operator) = e.operator_span()
             {
-                cx.report(operator, UNEXPECTED_CONCAT);
+                // oxlint points at the two strings.
+                let both = Span::new(left.span().start, right.span().end);
+                cx.report(if cx.language().is_oxlint { both } else { operator }, UNEXPECTED_CONCAT);
             }
         });
     }

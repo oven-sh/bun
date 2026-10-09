@@ -59,7 +59,7 @@ unsafe extern "C" {
     /// How many instances of the engine's regular expression have been compiled so far. Only an experiment has it.
     #[linkage = "extern_weak"]
     static bun_yarr_instances_made: Option<unsafe extern "C" fn() -> usize>;
-    /// How often, so far: 1: all places were taken and one more instance was compiled; 2: an instance found no place and was
+    /// How often, so far: 0: a compilation was made to fail; 1: all places were taken and one more instance was compiled; 2: an instance found no place and was
     /// freed; 3: a thread yielded because it got none. Only an experiment has it.
     #[linkage = "extern_weak"]
     static bun_yarr_count: Option<unsafe extern "C" fn(usize) -> usize>;
@@ -134,10 +134,96 @@ fn stress(seconds: u64) {
         made_before.zip(instances_made()).map(|(before, after)| after - before)
     );
     eprintln!(
-        "STRESS: all places taken, one more compiled: {:?}; no place, freed: {:?}; yielded: {:?}",
+        "STRESS: made to fail: {:?}; all places taken, one more compiled: {:?}; no place, freed: {:?}; yielded: {:?}; counters 4 to 7 of the experiment: {:?}",
+        count(0),
         count(1),
         count(2),
-        count(3)
+        count(3),
+        [count(4), count(5), count(6), count(7)]
+    );
+}
+
+/// `FUZZ_MODE=births`: pairs of threads. One makes a regular expression, and both search with it for the first time at the same
+/// moment, a few times, and drop it: whichever is last frees it. `FUZZ_MODE=phases`: one thread searches with it alone, then both,
+/// then the first alone again.
+fn stress_in_pairs(seconds: u64, has_phases: bool) {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Barrier, RwLock};
+    let threads: usize = std::env::var("FUZZ_THREADS").ok().and_then(|it| it.parse().ok()).unwrap_or(THREADS_AT_MOST);
+    let make = |which: usize| Regex::new(SHARED[which].0, SHARED[which].1).expect("the pattern is valid");
+    let answer = |regex: &Regex, which: usize| {
+        let text = SHARED[which].2.as_bytes();
+        let all: Vec<String> = regex.find_iter(text).map(|it| format!("{},{}", it.start(), it.end())).collect();
+        format!("{} {} {} {}", regex.test(text), written(regex, text, 0), written(regex, text, 1), all.join(" "))
+    };
+    let expected: Vec<String> = (0..SHARED.len()).map(|which| answer(&make(which), which)).collect();
+    let (stops, answers, births) = (AtomicBool::new(false), AtomicUsize::new(0), AtomicUsize::new(0));
+    let made_before = instances_made();
+    let pairs: Vec<(RwLock<Option<Arc<Regex>>>, Barrier)> =
+        (0..(threads / 2).max(1)).map(|_| (RwLock::new(None), Barrier::new(2))).collect();
+    std::thread::scope(|scope| {
+        for (number, pair) in pairs.iter().enumerate() {
+            for is_first in [true, false] {
+                let (expected, stops, answers, births) = (&expected, &stops, &answers, &births);
+                scope.spawn(move || {
+                    let (slot, barrier) = pair;
+                    let ask = |regex: &Regex, which: usize, times: usize| {
+                        for _ in 0..times {
+                            assert_eq!(answer(regex, which), expected[which], "/{}/", SHARED[which].0);
+                        }
+                        answers.fetch_add(times, Ordering::Relaxed);
+                    };
+                    for turn in number.. {
+                        let (which, times) = (turn % SHARED.len(), 1 + turn % 3);
+                        if is_first {
+                            // The one who makes them says when it is over.
+                            let made = (!stops.load(Ordering::Relaxed)).then(|| Arc::new(make(which)));
+                            births.fetch_add(usize::from(made.is_some()), Ordering::Relaxed);
+                            if let Some(made) = made.as_ref().filter(|_| has_phases) {
+                                ask(made, which, times);
+                            }
+                            *slot.write().expect("nobody panics with the lock") = made;
+                        }
+                        barrier.wait();
+                        let Some(regex) = slot.read().expect("nobody panics with the lock").clone() else {
+                            break;
+                        };
+                        barrier.wait();
+                        // Every other time the slot lets go of it before the searches, so that either thread can be the last.
+                        if is_first && turn % 2 == 0 {
+                            *slot.write().expect("nobody panics with the lock") = None;
+                        }
+                        ask(&regex, which, times);
+                        if !is_first || !has_phases {
+                            drop(regex);
+                            barrier.wait();
+                            continue;
+                        }
+                        barrier.wait();
+                        ask(&regex, which, times);
+                    }
+                });
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_secs(seconds));
+        stops.store(true, Ordering::Relaxed);
+    });
+    drop(pairs);
+    eprintln!(
+        "STRESS in pairs, {}: {} threads, {} answers, all as expected; instances compiled meanwhile: {:?}; regular expressions made, each for one pair: {}",
+        if has_phases { "alone, shared, alone again" } else { "both from the first search on" },
+        (threads / 2).max(1) * 2,
+        answers.into_inner(),
+        made_before.zip(instances_made()).map(|(before, after)| after - before),
+        births.into_inner()
+    );
+    eprintln!(
+        "STRESS: made to fail: {:?}; all places taken, one more compiled: {:?}; no place, freed: {:?}; yielded: {:?}; counters 4 to 7 of the experiment: {:?}",
+        count(0),
+        count(1),
+        count(2),
+        count(3),
+        [count(4), count(5), count(6), count(7)]
     );
 }
 
@@ -146,7 +232,11 @@ fn run(data: &[u8]) {
     if let Some(seconds) = std::env::var("FUZZ_STRESS").ok().and_then(|it| it.parse().ok()) {
         // For what it does to a panic on another thread: it ends the process.
         let _ = Run::new(data);
-        STRESS.call_once(|| stress(seconds));
+        STRESS.call_once(|| match std::env::var("FUZZ_MODE").as_deref() {
+            Ok("births") => stress_in_pairs(seconds, false),
+            Ok("phases") => stress_in_pairs(seconds, true),
+            _ => stress(seconds),
+        });
         return;
     }
     let Some(input) = Input::new(data) else {

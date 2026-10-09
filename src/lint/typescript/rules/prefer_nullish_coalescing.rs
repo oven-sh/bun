@@ -422,7 +422,20 @@ impl PreferNullishCoalescing {
             .data("equals", equals)
             .suggest_with(SUGGEST_NULLISH, &[("equals", equals.as_bytes())], |fixer| {
                 let mut fixes = Vec::new();
-                if node.parent().as_expr().is_some_and(is_logical_or_operator) {
+                let is_in_logical_or = node.parent().as_expr().is_some_and(is_logical_or_operator);
+                if fixer.file().language().is_oxlint {
+                    // tsgolint puts into parentheses what is in a `||`, and each operand that is a logical expression.
+                    let is_logical = |it: Expr<'a>| {
+                        matches!(it.binary_op(), Some(BinOp::And | BinOp::Or | BinOp::Nullish)) && equals.is_empty()
+                    };
+                    for (it, needs_parentheses) in
+                        [(node, is_in_logical_or), (left, is_logical(left)), (right, is_logical(right))]
+                    {
+                        if needs_parentheses && !it.is_parenthesized() {
+                            fixes.extend([fixer.insert_before(it, "("), fixer.insert_after(it, ")")]);
+                        }
+                    }
+                } else if is_in_logical_or {
                     // `&&` and `??` cannot be mixed without parentheses.
                     fixes.push(match left.kind() {
                         ExprKind::Binary {
@@ -619,13 +632,17 @@ impl PreferNullishCoalescing {
                 } else {
                     b' '
                 };
-                let mut text =
-                    format_comments(file.comments_before(assignment_expression), separator);
+                // tsgolint keeps what is written from the first comment before it on, and nothing of what is after it.
+                let is_oxlint = file.language().is_oxlint;
+                let mut text = match file.comments_before(assignment_expression).next().filter(|_| is_oxlint) {
+                    Some(first) => file.slice(Span::before(first.start(), assignment_expression.span())).to_vec(),
+                    None => format_comments(file.comments_before(assignment_expression), separator),
+                };
                 text.extend_from_slice(get_text_with_parentheses(nullish_coalescing_left_node));
                 text.extend_from_slice(b" ??= ");
                 text.extend_from_slice(get_text_with_parentheses(nullish_coalescing_right_node));
                 text.push(b';');
-                if is_consequent_node_block_statement {
+                if is_consequent_node_block_statement && !is_oxlint {
                     let mut comments_after = format_comments(file.comments_after(statement), b'\n');
                     if comments_after.pop().is_some() {
                         text.push(b' ');

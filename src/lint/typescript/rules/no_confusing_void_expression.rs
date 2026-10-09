@@ -97,6 +97,19 @@ fn new_return_stmt_text(return_value: Expr, after: &str) -> Vec<u8> {
     text
 }
 
+/// What tsgolint makes of the `return` statement: all that is after the keyword, after a `;` if it begins with a `(` or
+/// a `[`, and `after`.
+fn tsgolint_return_stmt_text(statement: Stmt, return_value: Expr, after: &str) -> Vec<u8> {
+    let (file, whole) = (statement.file(), statement.span());
+    let mut text = Vec::new();
+    if matches!(file.text().get(return_value.outer_span().start as usize), Some(b'(' | b'[')) {
+        text.push(b';');
+    }
+    text.extend_from_slice(file.slice(Span::new(whole.start + "return".len() as u32, whole.end)));
+    text.extend_from_slice(after.as_bytes());
+    text
+}
+
 fn function_declaration_allows_empty_return(function_node: Func) -> bool {
     let Some(return_type) = function_node.return_type() else {
         return true;
@@ -113,7 +126,10 @@ fn function_declaration_allows_empty_return(function_node: Func) -> bool {
 
 /// `target_node`: the argument of the `return` statement, or the body of the arrow function.
 fn can_fix<'a>(target_node: Expr<'a>, function_node: Option<Func<'a>>) -> bool {
-    is_void_like_at(target_node) && function_node.is_some_and(function_declaration_allows_empty_return)
+    // tsgolint does not ask what the function is declared to return.
+    is_void_like_at(target_node)
+        && (target_node.file().language().is_oxlint
+            || function_node.is_some_and(function_declaration_allows_empty_return))
 }
 
 fn includes_void(ty: Type) -> bool {
@@ -221,7 +237,13 @@ impl NoConfusingVoidExpression {
             }
             let arrow_token = arrow_function.arrow_span()?;
             let (body, whole) = (body.span(), arrow_function.estree_span());
-            Some([
+            // For tsgolint a node begins where the token before it ends.
+            let file = fixer.file();
+            if file.language().is_oxlint {
+                let text = file.slice(Span::new(file.end_of_token_before(body.start), body.end));
+                return Some(vec![fixer.replace(Span::after(arrow_token, whole.end), [&b"{ "[..], text, b"; }"].concat())]);
+            }
+            Some(vec![
                 fixer.replace(arrow_token.between(body), " { "),
                 fixer.replace(Span::new(body.end, whole.end), "; }"),
             ])
@@ -247,14 +269,20 @@ impl NoConfusingVoidExpression {
         if is_final_return(statement) {
             // Remove the `return` keyword.
             cx.report(node, INVALID_VOID_EXPR_RETURN_LAST).fix(|fixer| {
-                can_fix(return_value, get_parent_function_node(statement))
-                    .then(|| fixer.replace(statement, new_return_stmt_text(return_value, ";")))
+                let text = || match fixer.file().language().is_oxlint {
+                    true => tsgolint_return_stmt_text(statement, return_value, ""),
+                    false => new_return_stmt_text(return_value, ";"),
+                };
+                can_fix(return_value, get_parent_function_node(statement)).then(|| fixer.replace(statement, text()))
             });
             return;
         }
         // Move it before the `return` keyword.
         cx.report(node, INVALID_VOID_EXPR_RETURN).fix(|fixer| {
-            let mut new_return_stmt_text = new_return_stmt_text(return_value, "; return;");
+            let mut new_return_stmt_text = match fixer.file().language().is_oxlint {
+                true => tsgolint_return_stmt_text(statement, return_value, "; return;"),
+                false => new_return_stmt_text(return_value, "; return;"),
+            };
             if !is_in_block_statement(statement) {
                 // `if (cond) return console.error();`
                 new_return_stmt_text = [&b"{ "[..], &new_return_stmt_text[..], b" }"].concat();

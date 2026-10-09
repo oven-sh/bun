@@ -182,21 +182,24 @@ fn dfs_postorder(
     visited: &mut HashSet<BlockId>,
     postorder: &mut Vec<BlockId>,
 ) {
-    let mut stack: SmallVec<[(BlockId, bool); 32]> = SmallVec::new();
-    stack.push((id, false));
-    while let Some((id, is_after_successors)) = stack.pop() {
-        if is_after_successors {
-            postorder.push(id);
-            continue;
-        }
-        if !visited.insert(id) {
-            continue;
-        }
-        stack.push((id, true));
-        if let Some(node) = nodes.get(id) {
-            let first = stack.len();
-            stack.extend(node.succs.iter().map(|&succ| (succ, false)));
-            stack[first..].reverse();
+    if !visited.insert(id) {
+        return;
+    }
+    let successors_of = |id| nodes.get(id).map(|node| node.succs.iter());
+    let mut stack = SmallVec::<[_; 32]>::new();
+    stack.push((id, successors_of(id)));
+    while let Some((id, successors)) = stack.last_mut() {
+        let id = *id;
+        match successors.as_mut().and_then(Iterator::next) {
+            Some(&successor) => {
+                if visited.insert(successor) {
+                    stack.push((successor, successors_of(successor)));
+                }
+            }
+            None => {
+                postorder.push(id);
+                stack.pop();
+            }
         }
     }
 }

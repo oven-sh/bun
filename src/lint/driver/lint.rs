@@ -50,6 +50,9 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) out_of_stack: &'c Guarded<Vec<Vec<u8>>>,
     /// The files that fixes would have left with a syntax error, each with the rules whose fixes are not applied for that.
     pub(crate) broken_fixes: &'c Guarded<Vec<(Vec<u8>, Vec<RuleId>)>>,
+    /// What oxlint says about the configuration files of TypeScript for which there is no program, so that no rule that
+    /// needs types ran on their files: `typescript(tsconfig-error)`.
+    pub(crate) invalid_tsconfigs: &'c Guarded<Vec<FileResult>>,
     /// Which file imports which, for the rules that are about several files.
     pub(crate) modules: &'c Graph<'m>,
     pub(crate) timing: &'c Timing,

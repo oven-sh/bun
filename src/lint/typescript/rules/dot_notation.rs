@@ -21,11 +21,10 @@ fn escaped_name_is(name: &[u8], value: &[u8]) -> bool {
 }
 
 impl DotNotation {
-    /// Whether what the types say about `obj[index]` allows the brackets.
+    /// Whether what the types say about `obj[index]`, which is `node`, allows the brackets.
     fn is_allowed_by_types<'a>(
         &self,
-        obj: Expr<'a>,
-        index: Expr<'a>,
+        (node, obj, index): (Expr<'a>, Expr<'a>, Expr<'a>),
         allow_index_signature_property_access: bool,
     ) -> bool {
         let property_symbol = index.ts_symbol().or_else(|| {
@@ -33,9 +32,22 @@ impl DotNotation {
             let properties = obj.ty().get_non_nullable_type().get_properties();
             properties.iter().find(|property| escaped_name_is(property.escaped_name(), value.bytes()))
         });
+        // Of a getter and a setter tsgolint asks the one that is used.
+        let is_updated = matches!(node.parent(), Node::Expr(parent) if matches!(
+            parent.kind(),
+            ExprKind::Unary { op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, .. }
+        ));
+        let accessor = match is_updated || utils::is_assignment_target(node) {
+            true => SyntaxKind::SetAccessor,
+            false => SyntaxKind::GetAccessor,
+        };
+        let is_oxlint = obj.file().language().is_oxlint;
         // The modifiers are the first children of a declaration.
         let modifier_kind = property_symbol
-            .and_then(|symbol| symbol.declarations().next())
+            .and_then(|symbol| {
+                let used = symbol.declarations().find(|it| is_oxlint && it.kind() == accessor);
+                used.or_else(|| symbol.declarations().next())
+            })
             .and_then(|declaration| declaration.children().find(|child| child.kind() != SyntaxKind::Decorator))
             .map(|modifier| modifier.kind());
         if (self.allow_private_class_property_access && modifier_kind == Some(SyntaxKind::PrivateKeyword))
@@ -75,7 +87,7 @@ impl DotNotation {
         if (self.allow_private_class_property_access
             || self.allow_protected_class_property_access
             || allow_index_signature_property_access)
-            && self.is_allowed_by_types(obj, index, allow_index_signature_property_access)
+            && self.is_allowed_by_types((node, obj, index), allow_index_signature_property_access)
         {
             return;
         }

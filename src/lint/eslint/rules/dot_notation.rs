@@ -24,8 +24,8 @@ fn report_keyword<'a, R: Rule>(cx: &Cx<'a, R>, name: Ident<'a>, is_optional: boo
     cx.report(name, USE_BRACKETS).data("key", name).fix(|fixer| {
         let file = fixer.file();
         let dot = file.token_before(name)?;
-        // A statement that starts with `let[` declares variables.
-        if (is_after_let && !is_optional) || file.comments_exist_between(dot, name) {
+        // A statement that starts with `let[` declares variables. tsgolint does not mind comments.
+        if (is_after_let && !is_optional) || file.comments_exist_between(dot, name) && !file.language().is_oxlint {
             return None;
         }
         let brackets = fixer.replace(name, [&b"[\""[..], name.bytes(), b"\"]"].concat());
@@ -65,7 +65,7 @@ impl DotNotation {
                 let file = fixer.file();
                 let left_bracket = file.tokens_after(obj).find(ast_utils::is_opening_bracket_token)?;
                 let right_bracket = file.last_token(e)?;
-                if file.comments_exist_between(left_bracket, right_bracket) {
+                if file.comments_exist_between(left_bracket, right_bracket) && !file.language().is_oxlint {
                     return None;
                 }
                 let mut text = Vec::with_capacity(value.len() + 3);

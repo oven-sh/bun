@@ -19,7 +19,12 @@ const scanned = new Set();
 let realPath;
 // Looks at those that were loaded since the last time: a plugin can load its rules when it is asked for them.
 function scan() {
-  realPath ??= fs.realpathSync(path);
+  try {
+    realPath ??= fs.realpathSync(path);
+  } catch {
+    // It is no file: a name stands in its place.
+    realPath = path;
+  }
   for (const [module, { exports }] of Object.entries(require.cache)) {
     // What only the configuration file has is not to be had without running it.
     if (scanned.has(module) || module === path || module === realPath) continue;

@@ -38,12 +38,22 @@ fn use_splice<'a>(fixer: Fixer<'a>, node: Expr<'a>, object: Expr<'a>, key: Span,
     fixer.replace(node, suggestion)
 }
 
+/// What tsgolint suggests: the `delete` goes, the `[` becomes `.splice(` and the `]` becomes `, 1)`.
+fn use_splice_as_tsgolint<'a>(fixer: Fixer<'a>, keyword: Span, object: Expr<'a>, argument: Expr<'a>) -> Option<[Fix; 3]> {
+    let open = fixer.file().token_after(object.outer_span()).filter(|it| it.is_punctuator("["))?;
+    let close = fixer.file().last_token(argument)?;
+    Some([fixer.remove(keyword), fixer.replace(open, ".splice("), fixer.replace(close, ", 1)")])
+}
+
 impl NoArrayDelete {
     fn check<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Unary { op: UnOp::Delete, operand: argument } = node.kind() else {
             return;
         };
+        let is_oxlint = cx.language().is_oxlint;
         let (object, key, is_sequence) = match argument.kind() {
+            // tsgolint looks at `a[b]` only.
+            ExprKind::Dot { .. } if is_oxlint => return,
             ExprKind::Dot { obj, name, .. } => (obj, name.span(), false),
             ExprKind::Index { obj, index, .. } => {
                 (obj, index.span(), matches!(index.kind(), ExprKind::Binary { op: BinOp::Comma, .. }))
@@ -59,9 +69,13 @@ impl NoArrayDelete {
         }
         // oxlint points at the array.
         let keyword = Span::new(node.span().start, node.span().start + "delete".len() as u32);
-        cx.report(if cx.language().is_oxlint { object.outer_span() } else { node.span() }, NO_ARRAY_DELETE)
-            .comments_apply_at(keyword)
-            .suggest(USE_SPLICE, |fixer| use_splice(fixer, node, object, key, is_sequence));
+        let report = cx
+            .report(if is_oxlint { object.outer_span() } else { node.span() }, NO_ARRAY_DELETE)
+            .comments_apply_at(keyword);
+        match is_oxlint {
+            true => report.suggest(USE_SPLICE, |fixer| use_splice_as_tsgolint(fixer, keyword, object, argument)),
+            false => report.suggest(USE_SPLICE, |fixer| use_splice(fixer, node, object, key, is_sequence)),
+        };
     }
 }
 

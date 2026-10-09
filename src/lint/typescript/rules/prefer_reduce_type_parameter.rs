@@ -43,7 +43,14 @@ impl PreferReduceTypeParameter {
         let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = callee.kind() else {
             return;
         };
-        if !is_static_member_access_of_value(callee, &["reduce"]) {
+        let is_reduce = match callee.kind() {
+            // tsgolint goes by the type of a name in the brackets, not by what it is initialized with.
+            ExprKind::Index { index, .. } if index.tag() == ExprTag::Ident && cx.language().is_oxlint => {
+                index.ty().string_value() == Some(&b"reduce"[..])
+            }
+            _ => is_static_member_access_of_value(callee, &["reduce"]),
+        };
+        if !is_reduce {
             return;
         }
         // The fix would be a type error.
@@ -53,7 +60,16 @@ impl PreferReduceTypeParameter {
             return;
         }
         cx.report(second_arg, PREFER_TYPE_PARAMETER).fix(|fixer| {
-            let (outer, inner) = (second_arg.span(), expression.span());
+            let (mut outer, inner) = (second_arg.span(), expression.span());
+            let mut type_annotation = type_annotation;
+            // For tsgolint a node begins where the token before it ends.
+            let file = fixer.file();
+            if file.language().is_oxlint {
+                type_annotation.start = file.end_of_token_before(type_annotation.start);
+                if outer.start < inner.start {
+                    outer.start = file.end_of_token_before(outer.start);
+                }
+            }
             let mut fixes = vec![
                 fixer.remove(Span::new(outer.start, inner.start)),
                 fixer.remove(Span::new(inner.end, outer.end)),

@@ -735,6 +735,7 @@ impl Run<'_> {
                     None => without_types.push(target),
                 }
             }
+            results.append(&mut context.invalid_tsconfigs.lock());
         }
         phases.checking = started.elapsed().as_secs_f64();
 
@@ -894,10 +895,12 @@ impl Run<'_> {
         let (skipped_in_comments, out_of_stack) =
             (Guarded::new(Vec::new()), Guarded::new(Vec::new()));
         let broken_fixes = Guarded::new(Vec::new());
+        let invalid_tsconfigs = Guarded::new(Vec::new());
         let context = Context {
             skipped_in_comments: &skipped_in_comments,
             out_of_stack: &out_of_stack,
             broken_fixes: &broken_fixes,
+            invalid_tsconfigs: &invalid_tsconfigs,
             memory: &memory,
             atoms: &atoms,
             linter: &linter,

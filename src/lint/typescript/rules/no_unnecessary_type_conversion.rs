@@ -31,6 +31,14 @@ fn does_underlying_type_match_flag(ty: Type, type_flag: TypeFlags) -> bool {
     union_constituents(ty).iter().all(|t| is_type_flag_set(t, type_flag))
 }
 
+/// The type of an operand. tsgolint takes the constraint of a type parameter for it.
+fn type_of_operand(e: Expr<'_>) -> Type<'_> {
+    match e.file().language().is_oxlint {
+        true => get_constrained_type_at_location(e),
+        false => e.ty(),
+    }
+}
+
 fn is_empty_string_literal(e: Expr) -> bool {
     e.as_string().is_some_and(|value| value.bytes().is_empty())
 }
@@ -93,7 +101,11 @@ fn check_assignment<'a>(node: Expr<'a>, cx: &Context<'a>) {
     else {
         return;
     };
-    if is_empty_string_literal(value) && does_underlying_type_match_flag(target.ty(), TypeFlags::STRING_LIKE) {
+    // tsgolint looks at a name only.
+    if cx.language().is_oxlint && (target.tag() != ExprTag::Ident || target.is_parenthesized()) {
+        return;
+    }
+    if is_empty_string_literal(value) && does_underlying_type_match_flag(type_of_operand(target), TypeFlags::STRING_LIKE) {
         report(
             cx,
             &Conversion {
@@ -116,7 +128,7 @@ fn check_binary<'a>(node: Expr<'a>, cx: &Context<'a>) {
     else {
         return;
     };
-    if is_empty_string_literal(right) && does_underlying_type_match_flag(left.ty(), TypeFlags::STRING_LIKE) {
+    if is_empty_string_literal(right) && does_underlying_type_match_flag(type_of_operand(left), TypeFlags::STRING_LIKE) {
         report(
             cx,
             &Conversion {
@@ -128,7 +140,7 @@ fn check_binary<'a>(node: Expr<'a>, cx: &Context<'a>) {
             },
         );
     } else if is_empty_string_literal(left)
-        && does_underlying_type_match_flag(right.ty(), TypeFlags::STRING_LIKE)
+        && does_underlying_type_match_flag(type_of_operand(right), TypeFlags::STRING_LIKE)
     {
         report(
             cx,
@@ -154,8 +166,8 @@ fn check_call<'a>(node: Expr<'a>, cx: &Context<'a>) {
         ExprKind::Index { obj, index, .. } if index.is_ident("toString") => (obj, index.span()),
         _ => return,
     };
-    // `(a?.toString)()` calls a `ChainExpression`.
-    if callee.is_chain_root() {
+    // `(a?.toString)()` calls a `ChainExpression`. tsgolint leaves a call with arguments alone.
+    if callee.is_chain_root() || cx.language().is_oxlint && !call.args().is_empty() {
         return;
     }
     let ty = get_constrained_type_at_location(object);
@@ -188,6 +200,10 @@ fn check_built_in_call<'a>(node: Expr<'a>, call: Call<'a>, name: Name<'a>, cx: &
     let Some(argument) = call.args().first() else {
         return;
     };
+    // tsgolint leaves a call with more arguments alone.
+    if cx.language().is_oxlint && call.args().len() > 1 {
+        return;
+    }
     if callee.symbol().is_some()
         || !does_underlying_type_match_flag(get_constrained_type_at_location(argument), type_flag)
         || Node::Expr(node).scope().resolve_name(name).is_some()
@@ -223,7 +239,7 @@ fn check_unary<'a>(outer_node: Expr<'a>, cx: &Context<'a>) {
         }
         _ => return,
     };
-    let ty = argument.ty();
+    let ty = type_of_operand(argument);
     let (is_unnecessary, type_string, violation) = match op {
         UnOp::Plus => (
             does_underlying_type_match_flag(ty, TypeFlags::NUMBER_LIKE),

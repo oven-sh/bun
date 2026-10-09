@@ -150,16 +150,18 @@ impl<'a> ClassScope<'a> {
         {
             return;
         }
+        let is_oxlint = match node {
+            ParameterOrPropertyDeclaration::Parameter(param) => param.file().language().is_oxlint,
+            ParameterOrPropertyDeclaration::Property(member) => member.file().language().is_oxlint,
+        };
+        // For tsgolint what is not initialized is no lambda either.
         if only_inline_lambdas
-            && initializer.is_some_and(|it| it.is_parenthesized() || !it.as_fn().is_some_and(Func::is_arrow))
+            && initializer.map_or(is_oxlint, |it| it.is_parenthesized() || !it.as_fn().is_some_and(Func::is_arrow))
         {
             return;
         }
         // tsgolint 7.0 leaves `private [a] = 1`.
-        if let ParameterOrPropertyDeclaration::Property(member) = node
-            && member.file().language().is_oxlint
-            && key.is_some_and(Key::is_computed)
-        {
+        if is_oxlint && key.is_some_and(Key::is_computed) {
             return;
         }
         let member_name = match node {
@@ -430,8 +432,10 @@ impl PreferReadonly {
     fn check_member_expression<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let is_modified = match node.kind() {
             ExprKind::Dot { .. } => is_modified_property_access(node),
+            // tsgolint does not see what is written to with brackets.
             ExprKind::Index { .. } => {
-                !node.is_parenthesized()
+                !cx.language().is_oxlint
+                    && !node.is_parenthesized()
                     && matches!(
                         node.parent(),
                         Node::Expr(parent) if matches!(parent.kind(), ExprKind::Assign { target, .. } if target == node)

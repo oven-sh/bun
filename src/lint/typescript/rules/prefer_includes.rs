@@ -223,8 +223,8 @@ impl PreferIncludes {
                 continue;
             }
             let report = cx.report(compare_node, PREFER_INCLUDES);
-            // `a?.indexOf(b) !== -1` is not the same as `a?.includes(b)`.
-            if call_node.is_chain_root() {
+            // `a?.indexOf(b) !== -1` is not the same as `a?.includes(b)`. tsgolint makes it that.
+            if call_node.is_chain_root() && !cx.language().is_oxlint {
                 continue;
             }
             report.fix(|fixer| {

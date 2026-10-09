@@ -258,6 +258,10 @@ pub struct PlanOptions {
     /// file or one that it references, or else the same for the configuration files further up
     /// (`findOrCreateDefaultConfiguredProjectWorker`). A file that none includes is not checked.
     pub only_in_a_project_that_includes: bool,
+    /// `CreateProgram` of tsgolint: there is no program for a configuration file that has an error, in itself or in what
+    /// the program says about its options and its files (`GetProgramDiagnostics`). No file is checked in it: see
+    /// `Report::refused`.
+    pub refuses_broken_configurations: bool,
 }
 
 impl Default for PlanOptions {
@@ -281,6 +285,7 @@ impl Default for PlanOptions {
             current_directory_is_of_the_project: false,
             reports_nothing_about_files: false,
             only_in_a_project_that_includes: false,
+            refuses_broken_configurations: false,
         }
     }
 }
@@ -885,6 +890,15 @@ impl Incomplete {
     }
 }
 
+/// A program that was not made: `PlanOptions::refuses_broken_configurations`.
+pub struct Refused {
+    pub config_path: Vec<u8>,
+    /// The errors of reading the configuration file, or else those of the program about its options and its files.
+    pub diagnostics: Vec<Diagnostic>,
+    /// The files of `Request::paths` that were to be checked in it, each a `tspath.Path`.
+    pub files: Vec<Vec<u8>>,
+}
+
 #[derive(Default)]
 pub struct Report {
     /// Sorted as TypeScript sorts them: diagnostics without a file first, then by path and
@@ -894,6 +908,7 @@ pub struct Report {
     pub incomplete: Vec<Incomplete>,
     /// `Host::take_unreadable`: the source files that could not be read. Each was checked as an empty file.
     pub unreadable: Vec<Vec<u8>>,
+    pub refused: Vec<Refused>,
     /// Whether `@types/bun` is installed where a checked project would resolve it.
     pub has_bun_types_installed: bool,
     /// By `package.json`.
@@ -956,6 +971,7 @@ impl Report {
         self.diagnostics.extend(other.diagnostics);
         self.incomplete.extend(other.incomplete);
         self.unreadable.extend(other.unreadable);
+        self.refused.extend(other.refused);
         self.listed_files.extend(other.listed_files);
         self.scripts_elsewhere.extend(other.scripts_elsewhere);
         self.resolution_trace.extend(other.resolution_trace);
@@ -1884,6 +1900,20 @@ fn check_project_of(
             Ok(project) => project,
             // `tscCompilation`: "these are unrecoverable errors--exit to report them as
             // diagnostics". To a build, `upToDateStatusTypeConfigFileNotFound`.
+            Err(errors) if request.plan_options.refuses_broken_configurations => {
+                let is_case_sensitive = disk.is_case_sensitive();
+                let files = of.named.map(|it| it.1).unwrap_or_default().iter();
+                report.refused.push(Refused {
+                    config_path: config.to_vec(),
+                    diagnostics: (errors.iter())
+                        .map(|it| of_config_error(disk, config, it))
+                        .collect(),
+                    files: files
+                        .map(|it| to_path(it, is_case_sensitive).into_owned())
+                        .collect(),
+                });
+                return report;
+            }
             Err(errors) => {
                 let errors = errors.iter().map(|it| of_config_error(disk, config, it));
                 match request.build {
@@ -2899,6 +2929,7 @@ fn check_named_files(
     let of_configuration = |error: &ConfigError| of_config_error(host, &config_path, error);
     // `GetDiagnosticsOfAnyProgram`: configuration file parsing errors are reported regardless of
     // any other diagnostics.
+    let before_its_own = report.diagnostics.len();
     report.diagnostics.extend(
         project
             .errors
@@ -2907,6 +2938,17 @@ fn check_named_files(
             .map(of_configuration),
     );
     let always_reported = report.diagnostics.len();
+    let refuses = request.plan_options.refuses_broken_configurations;
+    let refused = |diagnostics: Vec<Diagnostic>| Refused {
+        config_path: config_path.clone(),
+        diagnostics,
+        files: named.unwrap_or_default().to_vec(),
+    };
+    if refuses && always_reported > before_its_own {
+        let diagnostics = report.diagnostics.split_off(before_its_own);
+        report.refused.push(refused(diagnostics));
+        return report;
+    }
     let mut about_options: Vec<Diagnostic> = project
         .errors
         .iter()
@@ -2947,6 +2989,16 @@ fn check_named_files(
     host.loaded();
     if is_outdated.is_some_and(|is_outdated| is_outdated()) {
         return report;
+    }
+    if refuses {
+        let problems = files.program_problems();
+        let problems = (problems.iter())
+            .map(|problem| ConfigError::of_problem(host, &session, &config_path, problem));
+        about_options.extend(problems.map(|error| of_configuration(&error)));
+        if !about_options.is_empty() {
+            report.refused.push(refused(about_options));
+            return report;
+        }
     }
     // In an arena, so that no destructor runs for them: the session frees what they refer to all
     // at once. `Program::release` frees the little that is on the regular heap.

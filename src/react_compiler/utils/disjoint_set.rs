@@ -50,9 +50,13 @@ impl<K: Copy + Eq + Hash> DisjointSet<K> {
     /// use `find_opt()` instead.
     pub(crate) fn find(&mut self, item: K) -> K {
         let mut root = item;
+        let mut child_of_root = item;
         loop {
             match self.entries.get(&root) {
-                Some(&parent) if parent != root => root = parent,
+                Some(&parent) if parent != root => {
+                    child_of_root = root;
+                    root = parent;
+                }
                 Some(_) => break,
                 None => {
                     self.entries.insert(root, root);
@@ -61,8 +65,9 @@ impl<K: Copy + Eq + Hash> DisjointSet<K> {
             }
         }
         let mut current = item;
-        while current != root {
-            current = self.entries.insert(current, root).unwrap_or(root);
+        while current != child_of_root {
+            let parent = self.entries.insert(current, root);
+            current = parent.unwrap_or(child_of_root);
         }
         root
     }

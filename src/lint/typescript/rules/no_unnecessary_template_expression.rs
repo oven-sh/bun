@@ -110,18 +110,22 @@ fn interpolation_of_type(node: TypeNode<'_>) -> Option<Interpolation<'_>> {
     })
 }
 
-fn starts_with_new_line(x: &[u8]) -> bool {
-    line_break_len(x) > 0
+/// For tsgolint a line ends with `\n` or `\r\n`.
+fn starts_with_new_line(x: &[u8], is_oxlint: bool) -> bool {
+    match is_oxlint {
+        true => x.starts_with(b"\n") || x.starts_with(b"\r\n"),
+        false => line_break_len(x) > 0,
+    }
 }
 
 /// Whitespace before the end of a line is clearer in `${' '}`.
-fn is_trailing_whitespace(kind: Interpolation, next_raw: &[u8]) -> bool {
+fn is_trailing_whitespace(kind: Interpolation, next_raw: &[u8], is_oxlint: bool) -> bool {
     let is_whitespace = match kind {
         Interpolation::String(value) => is_blank(value.bytes()),
         Interpolation::Template { quasi_count, first_raw, .. } => quasi_count == 1 && is_blank(first_raw),
         _ => false,
     };
-    is_whitespace && starts_with_new_line(next_raw)
+    is_whitespace && starts_with_new_line(next_raw, is_oxlint)
 }
 
 fn backslashes_at_end(text: &[u8]) -> usize {
@@ -208,7 +212,7 @@ fn report_interpolations<'a>(
             continue;
         };
         let next_raw = template.raw_of_quasi(index + 1);
-        if is_trailing_whitespace(kind, next_raw) {
+        if is_trailing_whitespace(kind, next_raw, cx.language().is_oxlint) {
             continue;
         }
         let (prev_quasi, next_quasi) = (template.span_of_quasi(index), template.span_of_quasi(index + 1));

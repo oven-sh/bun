@@ -13,19 +13,19 @@
 //! on the disk, until none changes. The files that import them are not linted again.
 
 use crate::lint::Context;
-use crate::results::FileResult;
+use crate::results::{Counts, FileResult};
 use crate::run::Environment;
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::linter::{
-    LintMessage, LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, RuleId, apply_fixes,
+    Details, LintMessage, LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, RuleId, apply_fixes,
     grows_too_much, is_parse_error, max_fixed_len,
 };
 use bun_sema::program::FileId;
 use bun_sema::resolve::{inside, to_file_name_lower_case};
 use bun_sema::util::FxHashMap;
 use bun_sema_driver::host::{AlreadyRead, Provided, from_native, to_native};
-use bun_sema_driver::{Category, Diagnostic, Libs};
+use bun_sema_driver::{Category, Diagnostic, Libs, Refused};
 use bun_threading::Guarded;
 use std::sync::{Arc, OnceLock};
 
@@ -62,15 +62,17 @@ fn check_and_lint(
             indices,
             already_read,
             Project::Nearest,
-        );
+        )
+        .0;
     }
     let mut linted: Vec<Option<Linted>> = indices.iter().map(|_| None).collect();
     let mut check = |positions: &[usize], already_read: AlreadyRead, project: Project<'_>| {
         let some: Vec<usize> = positions.iter().map(|&at| indices[at]).collect();
-        let of_some = check_and_lint_in(context, environment, files, &some, already_read, project);
+        let (of_some, is_refused) =
+            check_and_lint_in(context, environment, files, &some, already_read, project);
         let mut left = Vec::new();
-        for (&at, of_one) in positions.iter().zip(of_some) {
-            if of_one.is_none() {
+        for ((&at, of_one), is_refused) in positions.iter().zip(of_some).zip(is_refused) {
+            if of_one.is_none() && !is_refused {
                 left.push(at);
             }
             linted[at] = of_one;
@@ -142,7 +144,7 @@ fn check_and_lint_in(
     indices: &[usize],
     already_read: AlreadyRead,
     project: Project<'_>,
-) -> Vec<Option<Linted>> {
+) -> (Vec<Option<Linted>>, Vec<bool>) {
     let by_path = ByPath {
         exact: indices
             .iter()
@@ -240,6 +242,7 @@ fn check_and_lint_in(
             current_directory_is_of_the_project: true,
             reports_nothing_about_files: !context.checks_types,
             only_in_a_project_that_includes: matches!(project, Project::Including),
+            refuses_broken_configurations: matches!(project, Project::Including),
             ..Default::default()
         },
         retains_everything: false,
@@ -256,15 +259,26 @@ fn check_and_lint_in(
         keeps_byte_order_marks: true,
         ..Default::default()
     };
-    let (is_case_sensitive, unreadable, diagnostics, incomplete) =
+    let (is_case_sensitive, unreadable, diagnostics, incomplete, refused) =
         bun_sema_driver::check_provided_then(&request, provided, |report| {
             (
                 report.is_case_sensitive,
                 report.unreadable,
                 report.diagnostics,
                 report.incomplete,
+                report.refused,
             )
         });
+    // They are of a project, so they are not of the program of those that no project includes. They are linted without types.
+    let mut is_refused = vec![false; indices.len()];
+    for refused in &refused {
+        for path in &refused.files {
+            if let Some(at) = by_path.get(path, is_case_sensitive) {
+                is_refused[at] = true;
+            }
+        }
+        note_invalid_tsconfig(context, refused);
+    }
     // Of code that is nested too deeply for the parser the linter says so itself.
     let out_of_stack = incomplete.into_iter().filter(|it| !it.is_nested_too_deeply);
     (context.out_of_stack.lock()).extend(out_of_stack.map(|it| it.path));
@@ -290,7 +304,65 @@ fn check_and_lint_in(
             LintMessage::sort(&mut result.messages);
         }
     }
-    results
+    (results, is_refused)
+}
+
+/// What oxlint makes of each error for which tsgolint makes no program (`CreateProgram`): "Invalid tsconfig", with TypeScript's
+/// text as the help, at TypeScript's place in the file that TypeScript names, or else in the configuration file without a place.
+fn note_invalid_tsconfig(context: &Context, refused: &Refused) {
+    let mut noted = context.invalid_tsconfigs.lock();
+    for diagnostic in &refused.diagnostics {
+        let has_place = !diagnostic.path.is_empty();
+        let path = to_native(match has_place {
+            true => &diagnostic.path,
+            false => &refused.config_path,
+        });
+        let mut help = String::from_utf8_lossy(&diagnostic.text).into_owned();
+        // `enhanceHelpDiagnosticMessage`
+        if strings::contains(
+            &diagnostic.text,
+            b"Please remove it from your configuration.",
+        ) {
+            help.push_str(
+                "\nSee https://github.com/oxc-project/tsgolint/issues/351 for more information.",
+            );
+        }
+        let message = LintMessage {
+            rule_id: Some(RuleId::Unknown(b"typescript/tsconfig-error"[..].into())),
+            severity: Severity::Error,
+            message: b"Invalid tsconfig".to_vec(),
+            line: diagnostic.line,
+            column: diagnostic.column,
+            end: has_place.then_some((diagnostic.end_line, diagnostic.end_column)),
+            details: Some(Box::new(Details {
+                help: help.into(),
+                ..Details::default()
+            })),
+            ..LintMessage::default()
+        };
+        let at = match noted.iter().position(|it| it.path == path) {
+            Some(at) => at,
+            None => {
+                noted.push(FileResult {
+                    messages: Vec::new(),
+                    text: crate::fs::read(path).ok(),
+                    ..FileResult::ignored(path.to_vec(), b"")
+                });
+                noted.len() - 1
+            }
+        };
+        let result = &mut noted[at];
+        // Each pass of `--fix` finds it again.
+        let help_of = |it: &LintMessage| it.details.as_ref().map(|it| it.help.clone());
+        let is_noted = (result.messages.iter()).any(|it| {
+            (it.line, it.column) == (message.line, message.column)
+                && help_of(it) == help_of(&message)
+        });
+        if !is_noted {
+            result.messages.push(message);
+            result.counts = Counts::of(&result.messages);
+        }
+    }
 }
 
 /// What oxlint makes of an error of the type checker: `typescript(TS2322)`, with the first line of the text. No comment disables it.

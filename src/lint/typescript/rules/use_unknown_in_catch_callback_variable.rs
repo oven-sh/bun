@@ -127,7 +127,15 @@ fn check_call<'a>(node: Expr<'a>, cx: &Cx<'a, UseUnknownInCatchCallbackVariable>
     if callee.is_chain_root() {
         return;
     }
-    let info = match get_static_member_access_value(callee).as_ref().and_then(|it| it.as_string()) {
+    let value = get_static_member_access_value(callee);
+    let method = match callee.kind() {
+        // tsgolint goes by the type of a name in the brackets, not by what it is initialized with.
+        ExprKind::Index { index, .. } if index.tag() == ExprTag::Ident && callee.file().language().is_oxlint => {
+            index.ty().string_value()
+        }
+        _ => value.as_ref().and_then(|it| it.as_string()),
+    };
+    let info = match method {
         Some(b"catch") => CATCH,
         Some(b"then") => THEN,
         _ => return,

@@ -223,18 +223,30 @@ impl NoMisusedSpread {
                 report.suggest(REPLACE_MAP_SPREAD_IN_OBJECT, |fixer| {
                     let inner = [argument];
                     let is_only_property = matches!(parent.kind(), ExprKind::Object(properties) if properties.len() == 1);
+                    // tsgolint takes the braces and a `,` away and leaves all else where it is.
+                    let file = fixer.file();
+                    if is_only_property && file.language().is_oxlint {
+                        let (whole, dots, spread) = (parent.span(), node.span().start, argument.outer_span());
+                        let comma = file.token_after(spread).filter(|it| it.is_punctuator(","));
+                        return vec![
+                            fixer.remove(Span::new(whole.start, whole.start + 1)),
+                            fixer.replace(Span::new(dots, dots + 3), "Object.fromEntries("),
+                            fixer.replace(Span::after(spread, comma.map_or(spread.end, |it| it.end())), ")"),
+                            fixer.remove(Span::new(whole.end - 1, whole.end)),
+                        ];
+                    }
                     let (node, inner_nodes): (Expr, &[Expr]) = match is_only_property {
                         true => (parent, &inner[..]),
                         false => (argument, &inner[..0]),
                     };
-                    get_wrapping_fixer(
+                    vec![get_wrapping_fixer(
                         fixer,
                         WrappingFixerParams {
                             node,
                             inner_nodes,
                             wrap: |code: &[&[u8]]| [&b"Object.fromEntries("[..], code[0], b")"].concat(),
                         },
-                    )
+                    )]
                 });
             }
             _ => {}

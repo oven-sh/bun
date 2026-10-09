@@ -41,7 +41,11 @@ impl Rule for NoImportTypeSideEffects {
             cx.report(statement, USE_TOP_LEVEL_QUALIFIER).fix(|fixer| {
                 let start = statement.span().start;
                 let keyword = Span::new(start, start + "import".len() as u32);
-                let mut fixes = vec![fixer.insert_after(keyword, " type")];
+                // The same text. The fix of oxlint starts at the keyword, which decides between it and another rule's.
+                let mut fixes = vec![match fixer.file().language().is_oxlint {
+                    true => fixer.replace(keyword, "import type"),
+                    false => fixer.insert_after(keyword, " type"),
+                }];
                 fixes.extend(named.iter().map(|specifier| {
                     fixer.remove(Span::new(specifier.span().start, specifier.imported().start()))
                 }));

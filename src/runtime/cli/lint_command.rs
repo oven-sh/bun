@@ -69,6 +69,8 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
         Box::from(exe.as_bytes()),
         // What is not installed is missing: nothing is fetched to read a configuration.
         Box::from(&b"--no-install"[..]),
+        // It ends with this process, however that ends: a configuration can wait, or spin, for ever.
+        Box::from(&b"--no-orphans"[..]),
         Box::from(&b"-e"[..]),
         Box::from(script.source.concat().as_bytes()),
     ];

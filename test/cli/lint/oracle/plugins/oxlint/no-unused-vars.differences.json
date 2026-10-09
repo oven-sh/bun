@@ -189,39 +189,6 @@
   "ours": []
  },
  {
-  "cause": "?",
-  "suite": "oxc",
-  "options": [],
-  "extension": "tsx",
-  "code": "const a = 0; new Foo((a++, 0));",
-  "oxlint": [
-   "1:7"
-  ],
-  "ours": []
- },
- {
-  "cause": "?",
-  "suite": "oxc",
-  "options": [],
-  "extension": "tsx",
-  "code": "const a = 0; new Foo(((a++, 0), 1));",
-  "oxlint": [
-   "1:7"
-  ],
-  "ours": []
- },
- {
-  "cause": "?",
-  "suite": "oxc",
-  "options": [],
-  "extension": "tsx",
-  "code": "const a = class {}; new (a ??= Fallback, Other)();",
-  "oxlint": [
-   "1:7"
-  ],
-  "ours": []
- },
- {
   "cause": "React and names with a colon in JSX",
   "suite": "oxc",
   "options": [],
@@ -232,49 +199,5 @@
    "3:19"
   ],
   "ours": []
- },
- {
-  "cause": "a type parameter that is called like a namespace or an import",
-  "suite": "oxc",
-  "options": [],
-  "extension": "ts",
-  "code": "\n        namespace Database {\n          export type Table<T> = T;\n        }\n\n        export function test<Database, Table extends Database.Table<Database>>(\n          database: Database,\n          table: Table\n        ): { database: Database; table: Table } {\n          return { database, table };\n        }\n            ",
-  "oxlint": [],
-  "ours": [
-   "2:19"
-  ]
- },
- {
-  "cause": "a type parameter that is called like a namespace or an import",
-  "suite": "oxc",
-  "options": [],
-  "extension": "ts",
-  "code": "\n        export namespace One {\n          namespace T {\n            export type Foo<U = 1> = U;\n          }\n          export type Bar<T> = T.Foo<T>;\n        }\n            ",
-  "oxlint": [],
-  "ours": [
-   "3:21"
-  ]
- },
- {
-  "cause": "a type parameter that is called like a namespace or an import",
-  "suite": "oxc",
-  "options": [],
-  "extension": "ts",
-  "code": "\n        namespace A {\n          export namespace B {\n            export type C<T> = T;\n          }\n        }\n        export type Test<A> = A.B.C<A>;\n            ",
-  "oxlint": [],
-  "ours": [
-   "2:19"
-  ]
- },
- {
-  "cause": "a type parameter that is called like a namespace or an import",
-  "suite": "oxc",
-  "options": [],
-  "extension": "ts",
-  "code": "\n        import type * as NS from 'foo';\n        export class Bar<NS> implements NS.Foo {\n          value: NS;\n        }\n            ",
-  "oxlint": [],
-  "ours": [
-   "2:26"
-  ]
  }
 ]

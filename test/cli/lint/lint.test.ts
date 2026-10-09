@@ -1,3 +1,4 @@
+import { dlopen } from "bun:ffi";
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import {
@@ -8,11 +9,13 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, parse, posix, win32 } from "node:path";
+import { basename, dirname, join, parse, posix, sep, win32 } from "node:path";
 import { endChildren, spawn } from "../children";
 import { configurations } from "./oracle/plugins/oxlint/compare-options";
 import whatOxlintReports from "./oracle/plugins/oxlint/expected.json";
@@ -863,6 +866,23 @@ describe.concurrent("bun lint", () => {
         const files = { ".oxlintrc.json": oxlintrc, "a.js": "a = 0xabcdef12;\n" };
         expect((await lint(files, ["--fix", "a.js"], { reads: ["a.js"] })).files).toEqual({
           "a.js": "a = 0xABCDEF12;\n",
+        });
+      });
+
+      // What oxlint 1.87 writes. The one rule replaces the declaration and prints it anew (`'a';`), the other the keyword.
+      test("of two fixes that start at the same place, the shorter one", async () => {
+        const rules = {
+          "import/consistent-type-specifier-style": "error",
+          "typescript/no-import-type-side-effects": "error",
+        };
+        const oxlintrc = JSON.stringify({
+          plugins: ["import", "typescript"],
+          categories: { correctness: "off" },
+          rules,
+        });
+        const files = { ".oxlintrc.json": oxlintrc, "a.ts": 'import { type A } from "a"\nexport type B = A;\n' };
+        expect((await lint(files, ["--fix", "a.ts"], { reads: ["a.ts"] })).files).toEqual({
+          "a.ts": 'import type { A } from "a"\nexport type B = A;\n',
         });
       });
 
@@ -3247,5 +3267,763 @@ describe.concurrent("what bun lint takes from Bun", () => {
     const lines = raw.split("\n").filter(it => it.endsWith("[Error/no-dupe-keys]"));
     expect(lines.map(it => Number(/:(\d+):\d+: /.exec(it)?.[1]))).toEqual(keys.map((_, i) => i + 1));
     expect(exitCode).toBe(1);
+  });
+});
+
+// What differs between Windows, macOS and Linux, for `bun lint`: how a path is written, which names are the same file, how a line
+// ends, what a link is, what can be written. Nothing here is passed through `normalizeBunSnapshot`, which makes `/` of every `\`
+// and `\n` of every `\r\n`: what is printed is compared as it is printed.
+//
+// A test that can only tell something on one system runs on all of them where it can: there it is a test that nothing else breaks.
+describe("bun lint on Windows, macOS and Linux", () => {
+  // What is printed must not depend on what the tests run in: `bun lint` looks at these.
+  const env = {
+    ...bunEnv,
+    AGENT: "0",
+    CLAUDECODE: undefined,
+    REPL_ID: undefined,
+    GITHUB_ACTIONS: undefined,
+    GITHUB_WORKSPACE: undefined,
+    NO_COLOR: "1",
+    FORCE_COLOR: undefined,
+    ESLINT_USE_FLAT_CONFIG: undefined,
+  };
+
+  // A drive letter that a test has taken would stay, for every process of the session, if the test ran out of time.
+  const drives = new Set<string>();
+  const subst = (...args: string[]) => Bun.spawnSync({ cmd: ["subst", ...args] }).exitCode === 0;
+  afterAll(() => {
+    endChildren();
+    for (const drive of drives) subst(drive, "/D");
+  });
+
+  /** `subst` gives `directory` a drive letter, for as long as `use` runs. */
+  async function withDrive(directory: string, use: (drive: string) => Promise<void>) {
+    const drive = [..."PONMLKJIHG"]
+      .map(letter => `${letter}:`)
+      .find(drive => !existsSync(`${drive}\\`) && subst(drive, directory));
+    if (drive === undefined) throw new Error("No drive letter is free.");
+    drives.add(drive);
+    try {
+      await use(drive);
+    } finally {
+      subst(drive, "/D");
+      drives.delete(drive);
+    }
+  }
+  const slow = isDebug || isASAN;
+
+  type Options = { stdin?: string; env?: Record<string, string | undefined>; before?: string[] };
+
+  /** Runs `bun <args>` in `cwd`. What it prints is returned as it is. */
+  async function bun(cwd: string | { toString(): string }, args: string[], options: Options = {}) {
+    const proc = spawn({
+      cmd: [...(options.before ?? []), bunExe(), ...args],
+      env: { ...env, ...options.env },
+      cwd: String(cwd),
+      stdin: options.stdin === undefined ? "ignore" : Buffer.from(options.stdin),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const lint = (cwd: string | { toString(): string }, args: string[], options?: Options) =>
+    bun(cwd, ["lint", "--threads", "2", ...args], options);
+
+  /** As ESLint, without a configuration file: to run one takes a process. */
+  const eslint = ["--no-config-lookup", "--rule", "no-debugger: error"];
+  /** As oxlint. */
+  const oxlintrc = (more: object = {}) =>
+    JSON.stringify({ categories: { correctness: "off" }, rules: { "no-debugger": "error" }, ...more });
+
+  /** The files that are reported about in ESLint's `json`, from `dir`, with `/`. That they are printed otherwise has a test. */
+  const reported = (stdout: string, dir: { toString(): string }) =>
+    (JSON.parse(stdout) as { filePath: string; messages: unknown[] }[])
+      .filter(it => it.messages.length > 0)
+      .map(it => it.filePath.slice(String(dir).length + 1).replaceAll(sep, "/"))
+      .sort();
+  /** The same for oxlint's `json`, which has the path from the working directory. */
+  const reportedToOxlint = (stdout: string) =>
+    [...new Set((JSON.parse(stdout).diagnostics as { filename: string }[]).map(it => it.filename))].sort();
+
+  const swapCase = (text: string) =>
+    text.replace(/[a-z]/gi, letter => (letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase()));
+  /** All names in `dir`, directories too, from `dir`, with `/`. */
+  const everythingIn = (dir: { toString(): string }) =>
+    (readdirSync(String(dir), { recursive: true }) as string[]).map(it => it.replaceAll(sep, "/")).sort();
+
+  const BOM = "\uFEFF";
+  const crlf = (text: string) => text.replaceAll("\n", "\r\n");
+
+  describe.concurrent("how a path is written", () => {
+    // `filePath` of a result is `path.resolve(..)`: lib/eslint/eslint-helpers.js, `findFiles`.
+    test("ESLint's formats print a path as the system writes it", async () => {
+      using dir = tempDir("bun-lint-platform", { "src/deep/a.js": "debugger;\n" });
+      const path = join(String(dir), "src", "deep", "a.js");
+      const [stylish, unix, json, listed] = await Promise.all([
+        lint(dir, [...eslint, "-f", "stylish", "src"]),
+        lint(dir, [...eslint, "-f", "unix", "src"]),
+        lint(dir, [...eslint, "-f", "json", "src"]),
+        lint(dir, [...eslint, "--list-files", "src"]),
+      ]);
+      expect({
+        stylish: stylish.stdout.trimStart().split("\n")[0],
+        unix: unix.stdout.split("\n")[0],
+        json: JSON.parse(json.stdout)[0].filePath,
+        listed: listed.stdout,
+      }).toEqual({
+        stylish: path,
+        unix: `${path}:1:1: Unexpected 'debugger' statement. [Error/no-debugger]`,
+        json: path,
+        listed: `${path}\n`,
+      });
+    });
+
+    // crates/oxc_diagnostics/src/service.rs: `relative_path.cow_replace('\\', "/")`
+    test("oxlint's formats, and those of Bun, print the path from the working directory with `/`", async () => {
+      using dir = tempDir("bun-lint-platform", { ".oxlintrc.json": oxlintrc(), "src/deep/a.js": "debugger;\n" });
+      const formats = ["json", "unix", "checkstyle", "junit", "gitlab", "sarif", "github", "pretty", "agent"];
+      const printed = await Promise.all(formats.map(format => lint(dir, ["-f", format])));
+      expect(
+        printed.map((it, index) => [formats[index], it.stdout.includes("src/deep/a.js"), /src\\+deep/.test(it.stdout)]),
+      ).toEqual(formats.map(format => [format, true, false]));
+    });
+
+    test("a line of what is printed ends with \\n", async () => {
+      using dir = tempDir("bun-lint-platform", { "a.js": "debugger;\n" });
+      const results = await Promise.all([
+        lint(dir, [...eslint, "-f", "stylish"]),
+        lint(dir, [...eslint, "-f", "unix", "-o", join("reports", "deep", "lint.txt")]),
+      ]);
+      const written = readFileSync(join(String(dir), "reports", "deep", "lint.txt"), "utf8");
+      expect(written).toEndWith("[Error/no-debugger]\n\n1 problem");
+      expect(
+        [results[0].stdout, results[0].stderr, results[1].stderr, written].filter(it => it.includes("\r")),
+      ).toEqual([]);
+    });
+
+    test("arguments can be written as the system writes paths", async () => {
+      using dir = tempDir("bun-lint-platform", {
+        "a.js": "debugger;\n",
+        "src/b.js": "debugger;\n",
+        "lib/c.js": "debugger;\n",
+        "pkg/one/d.js": "debugger;\n",
+        "pkg/one/e.mjs": "debugger;\n",
+        "deep/dir/f.js": "debugger;\n",
+        "other/g.js": "debugger;\n",
+      });
+      const args = [join("src", "b.js"), `.${sep}lib`, join("pkg", "**", "*.js"), join("deep", "dir") + sep];
+      const absolute = [join(String(dir), "src", "b.js"), join(String(dir), "deep") + sep];
+      const [relative, fromRoot] = await Promise.all([
+        lint(dir, [...eslint, "-f", "json", ...args]),
+        lint(dir, [...eslint, "-f", "json", ...absolute]),
+      ]);
+      expect({ relative: reported(relative.stdout, dir), fromRoot: reported(fromRoot.stdout, dir) }).toEqual({
+        relative: ["deep/dir/f.js", "lib/c.js", "pkg/one/d.js", "src/b.js"],
+        fromRoot: ["deep/dir/f.js", "src/b.js"],
+      });
+    });
+
+    test("arguments that lead out of the working directory", async () => {
+      using dir = tempDir("bun-lint-platform", {
+        ".oxlintrc.json": oxlintrc(),
+        "a.js": "debugger;\n",
+        "lib/c.js": "debugger;\n",
+        "pkg/one/d.js": "debugger;\n",
+      });
+      const { stdout } = await lint(join(String(dir), "pkg", "one"), [
+        "-f",
+        "json",
+        join("..", "..", "lib"),
+        `..${sep}..${sep}a.js`,
+      ]);
+      // crates/oxc_diagnostics/src/service.rs: `path.strip_prefix(cwd).unwrap_or(path)`. What is not in the working directory keeps
+      // its whole path. (oxlint itself refuses an argument with `..`. It prints this for the same files, named from the root.)
+      const whole = (...names: string[]) => join(String(dir), ...names).replaceAll("\\", "/");
+      expect(reportedToOxlint(stdout)).toEqual([whole("a.js"), whole("lib", "c.js")]);
+    });
+
+    test("so can the paths that flags take", async () => {
+      using dir = tempDir("bun-lint-platform", {
+        "configs/mine.json": oxlintrc({ overrides: [{ files: ["src/*.js"], rules: { "no-debugger": "off" } }] }),
+        // The patterns of a file that -c names are from its directory.
+        "configs/src/off.js": "debugger;\n",
+        "configs/ignored": "skipped.js\n",
+        "src/a.js": "debugger;\n",
+        "src/skipped.js": "debugger;\n",
+      });
+      const forms = [
+        join("configs", "mine.json"),
+        join(String(dir), "configs", "mine.json"),
+        `.${sep}configs${sep}mine.json`,
+      ];
+      const results = await Promise.all(
+        forms.map(config => lint(dir, ["-c", config, "--ignore-path", join("configs", "ignored"), "-f", "json"])),
+      );
+      expect(results.map(it => reportedToOxlint(it.stdout))).toEqual(forms.map(() => ["src/a.js"]));
+      const [before, after] = await Promise.all([
+        bun(dir, [`--cwd=${join(String(dir), "src")}`, "lint", ...eslint, "-f", "json"]),
+        lint(dir, ["--cwd", join("src") + sep, ...eslint, "-f", "json"]),
+      ]);
+      expect([reported(before.stdout, dir), reported(after.stdout, dir)]).toEqual([
+        ["src/a.js", "src/skipped.js"],
+        ["src/a.js", "src/skipped.js"],
+      ]);
+    });
+
+    test("--stdin-filename", async () => {
+      using dir = tempDir("bun-lint-platform", {
+        ".oxlintrc.json": oxlintrc({ rules: {} }),
+        "src/.oxlintrc.json": oxlintrc(),
+      });
+      const path = join(String(dir), "src", "new.js");
+      const asEslint = await Promise.all(
+        [join("src", "new.js"), path].map(name =>
+          lint(dir, [...eslint, "--stdin", "--stdin-filename", name, "-f", "json"], { stdin: "debugger;\n" }),
+        ),
+      );
+      expect(asEslint.map(it => JSON.parse(it.stdout)[0].filePath)).toEqual([path, path]);
+      // The name decides which configuration file counts.
+      const asOxlint = await Promise.all(
+        [join("src", "new.js"), path, "new.js"].map(name =>
+          lint(dir, ["--stdin", "--stdin-filename", name, "-f", "json"], { stdin: "debugger;\n" }),
+        ),
+      );
+      expect(asOxlint.map(it => reportedToOxlint(it.stdout))).toEqual([["src/new.js"], ["src/new.js"], []]);
+    });
+
+    // lib/services/suppressions-service.js, `getRelativeFilePath`: `.split(path.sep).join(path.posix.sep)`. The file is checked in.
+    test("eslint-suppressions.json has `/`, whoever writes it", async () => {
+      using dir = tempDir("bun-lint-platform", { "src/deep/a.js": "debugger;\n", "b.js": "debugger;\n" });
+      const written = await lint(dir, [...eslint, "--suppress-all"]);
+      expect(JSON.parse(readFileSync(join(String(dir), "eslint-suppressions.json"), "utf8"))).toEqual({
+        "b.js": { "no-debugger": { count: 1 } },
+        "src/deep/a.js": { "no-debugger": { count: 1 } },
+      });
+      expect(written.exitCode).toBe(0);
+      const applied = await lint(dir, [...eslint, "-f", "json", join("src", "deep", "a.js")]);
+      expect(JSON.parse(applied.stdout).map((it: any) => [it.messages.length, it.suppressedMessages.length])).toEqual([
+        [0, 1],
+      ]);
+      expect(applied.exitCode).toBe(0);
+    });
+
+    test("-f github counts from GITHUB_WORKSPACE, which is written as the system writes paths", async () => {
+      using dir = tempDir("bun-lint-platform", { "packages/a/src/b.js": "debugger;\n" });
+      const { stdout } = await lint(join(String(dir), "packages", "a"), [...eslint, "-f", "github"], {
+        env: { GITHUB_WORKSPACE: String(dir) },
+      });
+      expect(stdout).toStartWith("::error file=packages/a/src/b.js,line=1,col=1,");
+    });
+
+    // What a URL would take for something else: the file is imported by its URL.
+    test(
+      "a project in a directory with blanks, `#`, `%41` and letters that are not ASCII",
+      async () => {
+        using dir = tempDir("bun lint #1 %41 é 日本", {
+          "eslint.config.mjs": `import plugin from "./my plugins/p#1.mjs";
+          export default [{ ignores: ["my plugins/"] }, { plugins: { p: plugin }, rules: { "p/r": "error", "no-debugger": "error" } }];`,
+          "my plugins/p#1.mjs": `export default { rules: { r: { create: context => ({ Identifier: node => context.report({ node, message: "found" }) }) } } };`,
+          "sources é/ü 100%.js": "debugger; a;\n",
+        });
+        const { stdout, stderr } = await lint(dir, ["-f", "json", "sources é"]);
+        expect(stderr).not.toContain("error");
+        expect(JSON.parse(stdout).map((it: any) => [it.filePath, it.messages.map((it: any) => it.ruleId)])).toEqual([
+          [join(String(dir), "sources é", "ü 100%.js"), ["no-debugger", "p/r"]],
+        ]);
+      },
+      slow ? 120_000 : undefined,
+    );
+
+    test("rules that need types, with a project that is named as the system writes paths", async () => {
+      const compilerOptions = { strict: true, noEmit: true, types: [], lib: ["esnext"] };
+      using dir = tempDir("bun-lint-platform", {
+        ".oxlintrc.json": oxlintrc({ rules: { "typescript/no-floating-promises": "error" } }),
+        "packages/a/tsconfig.json": JSON.stringify({ compilerOptions, include: ["src"] }),
+        "packages/a/src/deep/b.ts": `import { later } from "../c";\nlater();\n`,
+        "packages/a/src/c.ts": "export async function later() {}\n",
+      });
+      const results = await Promise.all([
+        lint(dir, ["--type-aware", "-f", "json"]),
+        lint(dir, ["--type-aware", "-f", "json", join("packages", "a", "src", "deep", "b.ts")]),
+        lint(dir, ["--type-aware", "-f", "json", "--tsconfig", join("packages", "a", "tsconfig.json")]),
+        lint(dir, ["--type-aware", "-f", "json", "--tsconfig", join(String(dir), "packages", "a", "tsconfig.json")]),
+      ]);
+      expect(results.map(it => reportedToOxlint(it.stdout))).toEqual(results.map(() => ["packages/a/src/deep/b.ts"]));
+    });
+
+    // `subst` gives the directory a drive letter.
+    test.skipIf(!isWindows)("a project at the root of a drive", async () => {
+      using dir = tempDir("bun-lint-platform", {
+        ".oxlintrc.json": oxlintrc(),
+        "a.js": "debugger;\n",
+        "sub/b.js": "debugger;\n",
+      });
+      await withDrive(realpathSync(String(dir)), async drive => {
+        const [from, root, directory, file, asEslint] = await Promise.all([
+          lint(`${drive}\\`, ["-f", "json"]),
+          lint(dir, ["-f", "json", `${drive}\\`]),
+          lint(dir, ["-f", "json", `${drive}\\sub`]),
+          lint(`${drive}\\sub`, ["-f", "json", `${drive}\\a.js`]),
+          lint(`${drive}\\`, [...eslint, "-f", "json"]),
+        ]);
+        expect({
+          from: reportedToOxlint(from.stdout),
+          root: reportedToOxlint(root.stdout).map(it => it.slice(it.indexOf(":") + 1)),
+          directory: reportedToOxlint(directory.stdout).map(it => it.slice(it.indexOf(":") + 1)),
+          file: reportedToOxlint(file.stdout),
+          asEslint: JSON.parse(asEslint.stdout).map((it: any) => it.filePath),
+        }).toEqual({
+          from: ["a.js", "sub/b.js"],
+          root: ["/a.js", "/sub/b.js"],
+          directory: ["/sub/b.js"],
+          file: [`${drive}/a.js`],
+          asEslint: [`${drive}\\a.js`, `${drive}\\sub\\b.js`],
+        });
+      });
+    });
+
+    // The administrative share of the drive, as in test/js/node/fs/cp.test.ts. The same for `\\wsl.localhost\..` and the shared
+    // folders of a virtual machine.
+    test.skipIf(!isWindows)("a project on a network share", async () => {
+      using dir = tempDir("bun-lint-platform", { ".oxlintrc.json": oxlintrc(), "src/a.js": "debugger;\n" });
+      const real = realpathSync(String(dir));
+      const share = `\\\\localhost\\${real[0]}$\\${real.slice(3)}`;
+      const [from, named, asEslint] = await Promise.all([
+        lint(share, ["-f", "json"]),
+        lint(dir, ["-f", "json", `${share}\\src`]),
+        lint(share, [...eslint, "-f", "json"]),
+      ]);
+      expect(reportedToOxlint(from.stdout)).toEqual(["src/a.js"]);
+      expect(reportedToOxlint(named.stdout).map(it => it.slice(-"/src/a.js".length))).toEqual(["/src/a.js"]);
+      expect(JSON.parse(asEslint.stdout).map((it: any) => it.filePath)).toEqual([`${share}\\src\\a.js`]);
+    });
+
+    // `path.relative()` of Windows takes `c:\A` and `C:\a` for the same. An editor hands out `c:\..`, a shell `C:\..`.
+    test.skipIf(!isWindows)(
+      "a path whose drive and directories are written in the other case is in the project",
+      async () => {
+        using dir = tempDir("bun-lint-platform", {
+          "configs/mine.json": oxlintrc(),
+          ".gitignore": "ignored.js\n",
+          "src/a.js": "debugger;\n",
+          "src/ignored.js": "debugger;\n",
+        });
+        const other = swapCase(String(dir));
+        const [file, directory] = await Promise.all([
+          lint(dir, ["-c", join("configs", "mine.json"), "-f", "json", join(other, "src", "a.js")]),
+          lint(dir, ["-c", join("configs", "mine.json"), "-f", "json", join(other, "src")]),
+        ]);
+        expect(reportedToOxlint(file.stdout)).toEqual(["src/a.js"]);
+        expect(reportedToOxlint(directory.stdout)).toEqual(["src/a.js"]);
+      },
+    );
+
+    // `path.resolve("\\proj\\a.js")` is on the drive of the working directory.
+    test.skipIf(!isWindows)("a path from the root of the drive", async () => {
+      using dir = tempDir("bun-lint-platform", {
+        ".oxlintrc.json": oxlintrc(),
+        ".gitignore": "ignored.js\n",
+        "src/a.js": "debugger;\n",
+        "src/ignored.js": "debugger;\n",
+      });
+      const rooted = realpathSync(String(dir)).slice(2);
+      const [asOxlint, asEslint] = await Promise.all([
+        lint(dir, ["-f", "json", join(rooted, "src")]),
+        lint(dir, [...eslint, "-f", "json", join(rooted, "src", "a.js")]),
+      ]);
+      expect(reportedToOxlint(asOxlint.stdout)).toEqual(["src/a.js"]);
+      expect(JSON.parse(asEslint.stdout).map((it: any) => [it.filePath, it.messages.length])).toEqual([
+        [join(realpathSync(String(dir)), "src", "a.js"), 1],
+      ]);
+    });
+  });
+
+  describe.concurrent("which names are the same file", () => {
+    test("a file that is named in the other case is linted if the system finds it, and once for each way it is written", async () => {
+      using dir = tempDir("bun-lint-platform", { "src/Button.js": "var a = 1\nexport { a }\n" });
+      const foldsCase = existsSync(join(String(dir), "SRC", "bUTTON.JS"));
+      const rules = ["--no-config-lookup", "--rule", "semi: error"];
+      const { stdout, exitCode } = await lint(dir, [
+        ...rules,
+        "--fix",
+        "-f",
+        "json",
+        "--no-error-on-unmatched-pattern",
+        join("src", "Button.js"),
+        join("SRC", "bUTTON.JS"),
+      ]);
+      // As ESLint, to which a path is text.
+      expect(JSON.parse(stdout).map((it: any) => it.filePath)).toEqual(
+        foldsCase
+          ? [join(String(dir), "SRC", "bUTTON.JS"), join(String(dir), "src", "Button.js")]
+          : [join(String(dir), "src", "Button.js")],
+      );
+      expect(exitCode).toBe(0);
+      expect(everythingIn(dir)).toEqual(["src", "src/Button.js"]);
+      expect(readFileSync(join(String(dir), "src", "Button.js"), "utf8")).toBe("var a = 1;\nexport { a };\n");
+    });
+
+    // lib/config/config-loader.js looks with `findUp`, which asks the system for a file of that name. (oxlint lists the directory
+    // and compares the names: `find_unique_config_by_readdir`.)
+    test(
+      "an eslint.config.js whose name is written in other capitals counts where the system finds it",
+      async () => {
+        using dir = tempDir("bun-lint-platform", {
+          "eslint.config.cjs": `module.exports = [{ rules: {} }];`,
+          "a.js": "debugger;\n",
+          "packages/p/ESLint.Config.cjs": `module.exports = [{ rules: { "no-debugger": "error" } }];`,
+          "packages/p/b.js": "debugger;\n",
+        });
+        const foldsCase = existsSync(join(String(dir), "packages", "p", "eslint.config.cjs"));
+        // Come to by way of its directory, and asked for.
+        const [walked, named] = await Promise.all([
+          lint(dir, ["-f", "json"]),
+          lint(dir, ["-f", "json", join("packages", "p", "b.js")]),
+        ]);
+        const expected = foldsCase ? ["packages/p/b.js"] : [];
+        expect([reported(walked.stdout, dir), reported(named.stdout, dir)]).toEqual([expected, expected]);
+      },
+      slow ? 120_000 : undefined,
+    );
+
+    // macOS finds `é` whether it is written as one character or as `e` and an accent.
+    test("a file that is named in the other normalization form is linted if the system finds it", async () => {
+      using dir = tempDir("bun-lint-platform", { ["caf\u00e9.js"]: "debugger;\n" });
+      const decomposed = "cafe\u0301.js";
+      const isFound = existsSync(join(String(dir), decomposed));
+      const [named, walked] = await Promise.all([
+        lint(dir, [...eslint, "-f", "json", "--no-error-on-unmatched-pattern", decomposed]),
+        lint(dir, [...eslint, "-f", "json"]),
+      ]);
+      expect(JSON.parse(named.stdout).map((it: any) => it.messages.length)).toEqual(isFound ? [1] : []);
+      expect(JSON.parse(walked.stdout).map((it: any) => it.filePath.normalize("NFC"))).toEqual([
+        join(String(dir), "caf\u00e9.js"),
+      ]);
+    });
+  });
+
+  describe.concurrent("how a line ends, and what a file starts with", () => {
+    // What is expected is what ESLint 10.12.0 reports.
+    const source = `var a = 1
+if (a == 2) {
+  debugger
+}
+// eslint-disable-next-line no-debugger
+debugger;
+/* eslint-disable
+   no-var */
+var b = \`x
+y\`;
+
+
+
+foo(b)
+`;
+    const rules = [
+      "no-debugger: error",
+      "no-var: error",
+      "semi: error",
+      "eqeqeq: error",
+      "no-multiple-empty-lines: [error, { max: 1 }]",
+      "linebreak-style: [error, windows]",
+      "no-trailing-spaces: error",
+      "max-len: [error, 20]",
+    ].flatMap(rule => ["--rule", rule]);
+    const places = (stdout: string) =>
+      JSON.parse(stdout)[0]
+        .messages.map((it: any) => `${it.line}:${it.column}-${it.endLine}:${it.endColumn} ${it.ruleId}`)
+        .sort();
+
+    test("\\r\\n: lines, columns, comments that disable rules, and fixes", async () => {
+      using dir = tempDir("bun-lint-platform", { "a.js": crlf(source), "b.js": crlf(source) });
+      const [found, fixed] = await Promise.all([
+        lint(dir, ["--no-config-lookup", ...rules, "-f", "json", "a.js"]),
+        lint(dir, ["--no-config-lookup", ...rules, "--fix", "-f", "json", "b.js"]),
+      ]);
+      expect(places(found.stdout)).toEqual(
+        [
+          "1:1-1:10 no-var",
+          "1:10-2:1 semi",
+          "2:7-2:9 eqeqeq",
+          "3:3-3:11 no-debugger",
+          "3:11-4:1 semi",
+          "5:1-5:40 max-len",
+          "12:1-14:1 no-multiple-empty-lines",
+          "14:7-15:1 semi",
+        ].sort(),
+      );
+      expect(JSON.parse(found.stdout)[0].suppressedMessages.length).toBe(2);
+      expect(readFileSync(join(String(dir), "b.js"), "utf8")).toBe(
+        crlf(
+          source
+            .replace("var a = 1", "let a = 1;")
+            .replace("  debugger", "  debugger;")
+            .replace("\n\n\n\nfoo(b)", "\n\nfoo(b);"),
+        ),
+      );
+      expect(fixed.exitCode).toBe(1);
+    });
+
+    test("a byte order mark is not a column, and stays where it is", async () => {
+      using dir = tempDir("bun-lint-platform", { "a.js": `${BOM}debugger\r\nvar a\r\n`, "b.js": `${BOM}debugger\n` });
+      const some = ["no-debugger: error", "semi: error"].flatMap(rule => ["--rule", rule]);
+      const { stdout } = await lint(dir, ["--no-config-lookup", ...some, "--fix", "-f", "json", "a.js"]);
+      expect(places(stdout)).toEqual(["1:1-1:10 no-debugger"]);
+      expect(readFileSync(join(String(dir), "a.js"), "utf8")).toBe(`${BOM}debugger;\r\nvar a;\r\n`);
+      const removed = await lint(dir, ["--no-config-lookup", "--rule", "unicode-bom: error", "--fix", "b.js"]);
+      expect(readFileSync(join(String(dir), "b.js"), "utf8")).toBe("debugger\n");
+      expect(removed.exitCode).toBe(0);
+    });
+
+    // What oxlint 1.87.0 prints: its columns are bytes from the start of the line, and the mark is three.
+    test("to oxlint a byte order mark is three columns", async () => {
+      using dir = tempDir("bun-lint-platform", {
+        ".oxlintrc.json": oxlintrc(),
+        "a.js": `${BOM}debugger; debugger;\ndebugger;\n`,
+      });
+      const [unix, json] = await Promise.all([lint(dir, ["-f", "unix"]), lint(dir, ["-f", "json"])]);
+      expect(unix.stdout.split("\n").flatMap(line => /^a\.js:\d+:\d+/.exec(line) ?? [])).toEqual([
+        "a.js:1:4",
+        "a.js:1:14",
+        "a.js:2:1",
+      ]);
+      expect(JSON.parse(json.stdout).diagnostics.map((it: any) => it.labels[0].span)).toEqual([
+        { offset: 3, length: 9, line: 1, column: 4 },
+        { offset: 13, length: 9, line: 1, column: 14 },
+        { offset: 23, length: 9, line: 2, column: 1 },
+      ]);
+    });
+
+    test("\\r\\n and a byte order mark in configuration files", async () => {
+      const legacy = { root: true, rules: { "no-debugger": "error" }, ignorePatterns: ["ignored.js"] };
+      const files = { "a.js": "debugger;\n", "ignored.js": "debugger;\n" };
+      const configs: Record<string, string>[] = [
+        { ".oxlintrc.json": crlf(JSON.stringify(JSON.parse(oxlintrc({ ignorePatterns: ["ignored.js"] })), null, 2)) },
+        { ".eslintrc.json": crlf(JSON.stringify(legacy, null, 2)) },
+        { ".eslintrc.json": BOM + JSON.stringify(legacy) },
+        { ".eslintrc.yml": crlf("root: true\nrules:\n  no-debugger: error\nignorePatterns:\n  - ignored.js\n") },
+        { "package.json": crlf(JSON.stringify({ eslintConfig: legacy }, null, 2)) },
+      ];
+      const results = await Promise.all(
+        configs.map(async config => {
+          using dir = tempDir("bun-lint-platform", { ...files, ...config });
+          const { stdout, exitCode } = await lint(dir, ["-f", "unix", "."]);
+          return [
+            stdout.split("\n").filter(line => line.includes("debugger")).length,
+            stdout.includes("ignored.js"),
+            exitCode,
+          ];
+        }),
+      );
+      expect(results).toEqual(configs.map(() => [1, false, 1]));
+    });
+  });
+
+  describe.concurrent("links", () => {
+    // A junction needs no privilege on Windows. Elsewhere the third argument says nothing, and it is a link to a directory.
+    const link = (target: string, path: string) => symlinkSync(target, path, "junction");
+
+    test("oxlint follows a link to a directory, ESLint does not, and --fix writes a file once that is reached by two paths", async () => {
+      const files: Record<string, string> = {};
+      for (let i = 0; i < 16; i++) files[`real/${i}.js`] = "var a = 1;\nexport { a };\ndebugger;\n";
+      using forOxlint = tempDir("bun-lint-platform", {
+        ...files,
+        ".oxlintrc.json": oxlintrc({ rules: { "no-var": "error", "no-debugger": "error" } }),
+      });
+      using forEslint = tempDir("bun-lint-platform", files);
+      for (const dir of [forOxlint, forEslint]) link(join(String(dir), "real"), join(String(dir), "linked"));
+      const [asOxlint, asEslint] = await Promise.all([
+        lint(forOxlint, ["--threads", "8", "--fix", "-f", "json"]),
+        lint(forEslint, [...eslint, "-f", "json"]),
+      ]);
+      expect(asOxlint.stderr).not.toContain("Cannot write");
+      expect(reportedToOxlint(asOxlint.stdout).length).toBe(32);
+      expect(reported(asEslint.stdout, forEslint).length).toBe(16);
+      expect(everythingIn(join(String(forOxlint), "real")).length).toBe(16);
+      for (let i = 0; i < 16; i++) {
+        expect(readFileSync(join(String(forOxlint), "real", `${i}.js`), "utf8")).not.toStartWith("var ");
+      }
+    });
+
+    test("a link that leads nowhere is passed over", async () => {
+      using dir = tempDir("bun-lint-platform", { ".oxlintrc.json": oxlintrc(), "a.js": "debugger;\n" });
+      link(join(String(dir), "nowhere"), join(String(dir), "b.js"));
+      link(join(String(dir), "nowhere"), join(String(dir), "c"));
+      const { stdout, exitCode } = await lint(dir, ["-f", "json"]);
+      expect(reportedToOxlint(stdout)).toEqual(["a.js"]);
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  describe.concurrent("what --fix writes", () => {
+    const fixable = "var a = 1\nexport { a }\n";
+    const fixed = "var a = 1;\nexport { a };\n";
+    const semi = ["--no-config-lookup", "--rule", "semi: error"];
+
+    test("nothing but the file is left", async () => {
+      using dir = tempDir("bun-lint-platform", { "a.js": fixable, "src/b.js": fixable, "src/c.js": fixed });
+      const before = everythingIn(dir);
+      const { exitCode } = await lint(dir, [...semi, "--fix"]);
+      expect(everythingIn(dir)).toEqual(before);
+      expect(readFileSync(join(String(dir), "src", "b.js"), "utf8")).toBe(fixed);
+      expect(exitCode).toBe(0);
+    });
+
+    // As `fopen` of the C runtime opens a file, and so Python and many editors: others may read and write it, and not rename or
+    // delete it. ESLint writes into it.
+    test.skipIf(!isWindows)("a file that another program has open", async () => {
+      using dir = tempDir("bun-lint-platform", { "a.js": fixable });
+      const { symbols, close } = dlopen("kernel32.dll", {
+        CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "u64" },
+        CloseHandle: { args: ["u64"], returns: "i32" },
+      });
+      const [GENERIC_READ, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING] = [0x80000000, 1, 2, 3];
+      const name = Buffer.from(`${join(String(dir), "a.js")}\0`, "utf16le");
+      const handle = symbols.CreateFileW(
+        name,
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        null,
+        OPEN_EXISTING,
+        0,
+        null,
+      );
+      // `INVALID_HANDLE_VALUE`: without the handle the test would pass whatever is done.
+      expect(handle).not.toBe(0xffffffffffffffffn);
+      try {
+        const { stderr, exitCode } = await lint(dir, [...semi, "--fix", "a.js"]);
+        expect(stderr).not.toContain("Cannot write");
+        expect(readFileSync(join(String(dir), "a.js"), "utf8")).toBe(fixed);
+        expect(everythingIn(dir)).toEqual(["a.js"]);
+        expect(exitCode).toBe(0);
+      } finally {
+        symbols.CloseHandle(handle);
+        close();
+      }
+    });
+  });
+
+  describe.concurrent("a configuration file that is a program", () => {
+    const timeout = slow ? 240_000 : 30_000;
+    /** Makes the file as old as a file that nobody is working on: what depends on one that has just been written is not kept. */
+    const age = (path: string, seconds: number) => {
+      const time = new Date(Date.now() - seconds * 1000);
+      utimesSync(path, time, time);
+    };
+
+    test(
+      "what it exports is kept until the file, what it has read, or a variable of the environment changes",
+      async () => {
+        // Windows makes no difference between upper and lower case in the name of a variable.
+        const name = isWindows ? "bun_lint_platform_rule" : "BUN_LINT_PLATFORM_RULE";
+        const config = (comment: string) => `// ${comment}
+        const fs = require("node:fs");
+        fs.appendFileSync(__dirname + "/evaluated.txt", "x");
+        const { rule } = JSON.parse(fs.readFileSync(require("node:path").join(__dirname, "settings", "rule.json"), "utf8"));
+        module.exports = [{ rules: { [process.env.${name} ?? rule]: "error" } }];`;
+        using dir = tempDir("bun-lint-platform", {
+          "node_modules/.keep": "",
+          "eslint.config.cjs": config("one"),
+          "settings/rule.json": `{ "rule": "no-debugger" }`,
+          "a.js": "debugger;\nvar a;\n",
+        });
+        const at = (...names: string[]) => join(String(dir), ...names);
+        const run = async (variable?: string) => {
+          const { stdout } = await lint(dir, ["-f", "json", "a.js"], { env: { BUN_LINT_PLATFORM_RULE: variable } });
+          return [
+            JSON.parse(stdout)[0].messages.map((it: any) => it.ruleId),
+            readFileSync(at("evaluated.txt"), "utf8"),
+          ];
+        };
+        age(at("eslint.config.cjs"), 60);
+        age(at("settings", "rule.json"), 60);
+        expect(await run()).toEqual([["no-debugger"], "x"]);
+        expect(await run()).toEqual([["no-debugger"], "x"]);
+        // As long as before.
+        writeFileSync(at("settings", "rule.json"), `{ "rule": "no-var"      }`);
+        age(at("settings", "rule.json"), 30);
+        expect(await run()).toEqual([["no-var"], "xx"]);
+        expect(await run()).toEqual([["no-var"], "xx"]);
+        expect(await run("no-debugger")).toEqual([["no-debugger"], "xxx"]);
+        expect(await run("no-debugger")).toEqual([["no-debugger"], "xxx"]);
+        writeFileSync(at("eslint.config.cjs"), config("two"));
+        age(at("eslint.config.cjs"), 30);
+        expect(await run("no-debugger")).toEqual([["no-debugger"], "xxxx"]);
+      },
+      timeout,
+    );
+
+    // `timeout 10 bun lint`, an editor that ends what it has started, a step of CI that is cancelled.
+    test.each([
+      ["waits", "await new Promise(() => setInterval(() => {}, 1000));"],
+      // Elsewhere the end of the parent is an event, and a loop that never turns gets none.
+      ...(isLinux ? [["spins", "for (;;);"]] : []),
+    ])(
+      "the process that runs one that %s for ever ends with bun lint, however that ends",
+      async (_, forever) => {
+        using dir = tempDir("bun-lint-platform", {
+          "eslint.config.mjs": `import { writeFileSync } from "node:fs";
+            writeFileSync(new URL("./pid.txt", import.meta.url), String(process.pid));
+            ${forever}
+            export default [];`,
+          "a.js": "a;\n",
+        });
+        const deadline = Date.now() + (slow ? 60_000 : 15_000);
+        const until = async (condition: () => boolean) => {
+          while (!condition() && Date.now() < deadline) await new Promise(resolve => setImmediate(resolve));
+          return condition();
+        };
+        const isRunning = (pid: number) => {
+          try {
+            // One that has ended, and that nobody has asked about yet, still has its number.
+            if (isLinux) return !/^\d+ \(.*\) Z /s.test(readFileSync(`/proc/${pid}/stat`, "utf8"));
+            process.kill(pid, 0);
+            return true;
+          } catch {
+            return false;
+          }
+        };
+        const proc = spawn({ cmd: [bunExe(), "lint"], env, cwd: String(dir), stdout: "ignore", stderr: "ignore" });
+        const file = join(String(dir), "pid.txt");
+        expect(await until(() => existsSync(file) && readFileSync(file, "utf8") !== "")).toBe(true);
+        const pid = Number(readFileSync(file, "utf8"));
+        try {
+          expect(isRunning(pid)).toBe(true);
+          proc.kill("SIGKILL");
+          await proc.exited;
+          expect(await until(() => !isRunning(pid))).toBe(true);
+        } finally {
+          if (isRunning(pid)) process.kill(pid, "SIGKILL");
+        }
+      },
+      timeout,
+    );
+
+    // It is handed to the process as an argument. The command line of a process has at most 32,767 characters on Windows, with the
+    // path of the executable, that of the configuration file, and a `\` before every `"`. Elsewhere there is room for four times that.
+    test("the scripts that run one fit on the command line of Windows", () => {
+      const driver = join(import.meta.dir, "..", "..", "..", "src", "lint", "driver");
+      const read = (...names: string[]) => names.map(name => readFileSync(join(driver, name), "utf8")).join("");
+      const scripts = {
+        eslint: read("evaluate-track.js", "evaluate-describe.js", "evaluate-eslint.js"),
+        prettier: read("evaluate-track.js", join("fmt", "evaluate-prettier.js")),
+        tailwind: read("evaluate-track.js", join("fmt", "tailwind.js")),
+      };
+      // `quote_cmd_arg` of libuv.
+      const quoted = (text: string) =>
+        text.length + 2 + (text.match(/\\*"/g) ?? []).reduce((sum, it) => sum + it.length, 0);
+      // Two paths as long as they get, and the rest.
+      const others = 2 * 1024 + 64;
+      for (const [name, script] of Object.entries(scripts)) {
+        expect({ name, fits: quoted(script) + others < 32_767, hasCarriageReturn: script.includes("\r") }).toEqual({
+          name,
+          fits: true,
+          hasCarriageReturn: false,
+        });
+      }
+    });
   });
 });

@@ -1,3 +1,4 @@
+import { dlopen } from "bun:ffi";
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import {
@@ -5,14 +6,17 @@ import {
   chownSync,
   existsSync,
   linkSync,
+  mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { availableParallelism } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { endChildren, spawn } from "../children";
 import { inputs as lineEndingInputs } from "./line-endings.cases.ts";
 
@@ -3328,4 +3332,542 @@ describe.concurrent("what bun format takes from Bun", () => {
       expect(result.exitCode).toBe(2);
     },
   );
+});
+
+// What differs between Windows, macOS and Linux, for `bun format`: how a path is written, which names are the same file, how a line
+// ends, what a link is, what can be written. Nothing here is passed through `normalizeBunSnapshot`, which makes `/` of every `\`
+// and `\n` of every `\r\n`: what is printed is compared as it is printed.
+//
+// A test that can only tell something on one system runs on all of them where it can: there it is a test that nothing else breaks.
+describe("bun format on Windows, macOS and Linux", () => {
+  const env = { ...bunEnv, AGENT: "0", CLAUDECODE: undefined, NO_COLOR: "1", FORCE_COLOR: undefined };
+
+  // A drive letter that a test has taken would stay, for every process of the session, if the test ran out of time.
+  const drives = new Set<string>();
+  const subst = (...args: string[]) => Bun.spawnSync({ cmd: ["subst", ...args] }).exitCode === 0;
+  afterAll(() => {
+    endChildren();
+    for (const drive of drives) subst(drive, "/D");
+  });
+
+  /** `subst` gives `directory` a drive letter, for as long as `use` runs. */
+  async function withDrive(directory: string, use: (drive: string) => Promise<void>) {
+    const drive = [..."GHIJKLMNOP"]
+      .map(letter => `${letter}:`)
+      .find(drive => !existsSync(`${drive}\\`) && subst(drive, directory));
+    if (drive === undefined) throw new Error("No drive letter is free.");
+    drives.add(drive);
+    try {
+      await use(drive);
+    } finally {
+      subst(drive, "/D");
+      drives.delete(drive);
+    }
+  }
+  const slow = isDebug || isASAN;
+  const isRoot = process.getuid?.() === 0;
+
+  type Directory = string | { toString(): string };
+
+  /** Runs `bun format <args>` in `cwd`. What it prints is returned as it is. */
+  async function format(cwd: Directory, args: string[], stdin?: string, before: string[] = []) {
+    const proc = spawn({
+      cmd: [...before, bunExe(), "format", ...args],
+      env,
+      cwd: String(cwd),
+      stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  /** The files that are not formatted, according to `-l`, as they are printed. */
+  const different = async (cwd: Directory, args: string[]) =>
+    (await format(cwd, ["-l", ...args])).stdout.split("\n").filter(Boolean);
+  const read = (dir: Directory, ...names: string[]) => readFileSync(join(String(dir), ...names), "utf8");
+  /** All names in `dir`, directories too, from `dir`, with `/`. */
+  const everythingIn = (dir: Directory) =>
+    (readdirSync(String(dir), { recursive: true }) as string[]).map(it => it.replaceAll(sep, "/")).sort();
+  const swapCase = (text: string) =>
+    text.replace(/[a-z]/gi, letter => (letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase()));
+
+  const ugly = "a  ;\n";
+  const formatted = "a;\n";
+  const BOM = "\uFEFF";
+  const crlf = (text: string) => text.replaceAll("\n", "\r\n");
+
+  describe.concurrent("how a path is written", () => {
+    // src/cli/format.js: `const fileNameToDisplay = normalizeToPosix(path.relative(cwd, filename))`
+    test("a name is printed from the working directory, with `/`, and a line ends with \\n", async () => {
+      const files = { "a.js": ugly, "src/deep/b.ts": ugly, "src/c.js": formatted, "src/broken.js": "const = 1;\n" };
+      using listed = tempDir("bun-format-platform", files);
+      using checked = tempDir("bun-format-platform", files);
+      using written = tempDir("bun-format-platform", files);
+      const results = await Promise.all([format(listed, ["-l"]), format(checked, ["--check"]), format(written, [])]);
+      expect(results.map(it => it.stdout)).toEqual([
+        "a.js\nsrc/deep/b.ts\n",
+        "Checking formatting...\nError occurred when checking code style in the above file.\n",
+        "a.js\nsrc/deep/b.ts\n",
+      ]);
+      expect(results[1].stderr.split("\n").filter(line => line.startsWith("[warn] "))).toEqual([
+        "[warn] a.js",
+        "[warn] src/deep/b.ts",
+      ]);
+      for (const { stderr } of results) {
+        expect(stderr).toContain("[error] src/broken.js: SyntaxError: ");
+        expect(stderr).not.toContain("\r");
+      }
+    });
+
+    // src/cli/expand-patterns.js: `fixWindowsSlashes`
+    test("arguments can be written as the system writes paths", async () => {
+      using dir = tempDir("bun-format-platform", {
+        "a.js": ugly,
+        "src/b.js": ugly,
+        "lib/c.js": ugly,
+        "pkg/one/d.js": ugly,
+        "pkg/one/e.mjs": ugly,
+        "pkg/skip/f.js": ugly,
+        "deep/dir/g.js": ugly,
+        "other/h.js": ugly,
+      });
+      const at = (...names: string[]) => join(String(dir), ...names);
+      expect(
+        await Promise.all([
+          different(dir, [join("src", "b.js"), `.${sep}lib`, join("deep", "dir") + sep]),
+          different(dir, [join("pkg", "**", "*.js"), `!${join("pkg", "skip", "**")}`]),
+          different(dir, [at("src", "b.js"), at("deep") + sep]),
+          different(at("pkg", "one"), [join("..", "..", "lib"), `..${sep}..${sep}a.js`]),
+        ]),
+      ).toEqual([
+        ["src/b.js", "lib/c.js", "deep/dir/g.js"],
+        ["pkg/one/d.js"],
+        ["src/b.js", "deep/dir/g.js"],
+        ["../../lib/c.js", "../../a.js"],
+      ]);
+    });
+
+    test("so can the paths that flags take", async () => {
+      using dir = tempDir("bun-format-platform", {
+        "configs/mine.json": `{ "semi": false }\n`,
+        // The patterns are from the directory of the file.
+        "configs/ignored": "/src/skipped.js\n",
+        "configs/src/a.js": formatted,
+        "configs/src/skipped.js": ugly,
+        "src/.prettierrc": "{}\n",
+        "src/skipped.js": ugly,
+      });
+      const at = (...names: string[]) => join(String(dir), ...names);
+      for (const [config, ignored] of [
+        [join("configs", "mine.json"), join("configs", "ignored")],
+        [at("configs", "mine.json"), at("configs", "ignored")],
+        [`.${sep}configs${sep}mine.json`, `.${sep}configs${sep}ignored`],
+      ]) {
+        expect(await different(dir, ["--config", config, "--ignore-path", ignored, "src", "configs/src"])).toEqual([
+          "src/skipped.js",
+          "configs/src/a.js",
+        ]);
+      }
+      const found = await Promise.all(
+        [join("src", "a.js"), at("src", "a.js")].map(file => format(dir, ["--find-config-path", file])),
+      );
+      expect(found.map(it => it.stdout)).toEqual(["src/.prettierrc\n", "src/.prettierrc\n"]);
+    });
+
+    test("--stdin-filepath", async () => {
+      using dir = tempDir("bun-format-platform", {
+        "src/deep/.prettierrc": `{ "semi": false }`,
+        ".prettierignore": "src/ignored/\n",
+      });
+      const at = (...names: string[]) => join(String(dir), ...names);
+      const names = [
+        join("src", "deep", "new.js"),
+        at("src", "deep", "new.js"),
+        join("src", "ignored", "new.js"),
+        at("src", "ignored", "new.js"),
+      ];
+      const results = await Promise.all(names.map(name => format(dir, ["--stdin-filepath", name], ugly)));
+      expect(results.map(it => it.stdout)).toEqual(["a\n", "a\n", ugly, ugly]);
+    });
+
+    // What a URL would take for something else: a configuration file that is a program is imported by its URL.
+    test(
+      "a project in a directory with blanks, `#`, `%41` and letters that are not ASCII",
+      async () => {
+        using dir = tempDir("bun format #1 %41 é 日本", {
+          ".prettierrc.mjs": `import shared from "./my configs/shared#1.mjs";\nexport default { ...shared };\n`,
+          "my configs/shared#1.mjs": "export default { semi: false };\n",
+          "sources é/ü 100%.js": formatted,
+          "sources é/中文.js": formatted,
+        });
+        const { stdout, stderr, exitCode } = await format(dir, ["sources é"]);
+        expect(stderr).not.toContain("[error]");
+        expect(stdout).toBe("sources é/ü 100%.js\nsources é/中文.js\n");
+        expect(read(dir, "sources é", "ü 100%.js")).toBe("a\n");
+        expect(exitCode).toBe(0);
+      },
+      slow ? 120_000 : undefined,
+    );
+
+    // 300 characters from the project: more than the 260 of Windows' MAX_PATH, and with what is before it less than the 1024 of macOS.
+    test("a path of more than 260 characters", async () => {
+      using dir = tempDir("bun-format-platform", { ".prettierrc": `{ "semi": false }\n` });
+      const names = Array.from({ length: 12 }, (_, index) => `directory-number-${String(index).padStart(2, "0")}-xxxx`);
+      mkdirSync(join(String(dir), ...names), { recursive: true });
+      writeFileSync(join(String(dir), ...names, "a.js"), formatted);
+      writeFileSync(join(String(dir), ...names, "b.js"), formatted);
+      const walked = await format(dir, []);
+      expect(walked.stderr).not.toContain("[error]");
+      expect(walked.stdout).toBe(`${names.join("/")}/a.js\n${names.join("/")}/b.js\n`);
+      expect(read(dir, ...names, "a.js")).toBe("a\n");
+      writeFileSync(join(String(dir), ...names, "b.js"), formatted);
+      const named = await format(dir, [join(...names, "b.js")]);
+      expect(read(dir, ...names, "b.js")).toBe("a\n");
+      expect(named.exitCode).toBe(0);
+    });
+
+    // `subst` gives the directory a drive letter.
+    test.skipIf(!isWindows)("a project at the root of a drive", async () => {
+      using dir = tempDir("bun-format-platform", {
+        ".prettierrc": `{ "semi": false }`,
+        ".prettierignore": "sub/ignored.js\n",
+        "a.js": formatted,
+        "sub/b.js": formatted,
+        "sub/ignored.js": formatted,
+      });
+      await withDrive(realpathSync(String(dir)), async drive => {
+        expect(
+          await Promise.all([
+            different(`${drive}\\`, []),
+            different(`${drive}\\`, [`${drive}\\`]),
+            different(`${drive}\\`, [`${drive}\\sub`]),
+            // The ignore files are those of the working directory, which has none.
+            different(`${drive}\\sub`, [`${drive}\\a.js`, "ignored.js"]),
+            different(`${drive}\\sub`, ["--ignore-path", `${drive}\\.prettierignore`, `${drive}\\a.js`, "ignored.js"]),
+            // From another drive: `path.relative()` has nothing to leave out. The configuration is in the root, above the file.
+            different(dir, [`${drive}\\a.js`, `${drive}\\sub\\b.js`]),
+          ]),
+        ).toEqual([
+          ["a.js", "sub/b.js"],
+          ["a.js", "sub/b.js"],
+          ["sub/b.js"],
+          ["../a.js", "ignored.js"],
+          ["../a.js"],
+          [`${drive}/a.js`, `${drive}/sub/b.js`],
+        ]);
+      });
+    });
+
+    // The administrative share of the drive, as in test/js/node/fs/cp.test.ts. The same for `\\wsl.localhost\..` and the shared
+    // folders of a virtual machine.
+    test.skipIf(!isWindows)("a project on a network share", async () => {
+      using dir = tempDir("bun-format-platform", {
+        ".prettierrc": `{ "semi": false }`,
+        ".prettierignore": "src/ignored.js\n",
+        "src/a.js": formatted,
+        "src/ignored.js": formatted,
+      });
+      const real = realpathSync(String(dir));
+      const share = `\\\\localhost\\${real[0]}$\\${real.slice(3)}`;
+      expect(
+        await Promise.all([
+          different(share, []),
+          different(share, [`${share}\\src`]),
+          // From the drive, of which `path.relative()` does not know that it is the same.
+          different(dir, [`${share}\\src\\a.js`]),
+        ]),
+      ).toEqual([["src/a.js"], ["src/a.js"], [`${share}/src/a.js`.replaceAll("\\", "/")]]);
+      const written = await format(share, []);
+      expect(written.stderr).not.toContain("[error]");
+      expect(read(dir, "src", "a.js")).toBe("a\n");
+      expect(read(dir, "src", "ignored.js")).toBe(formatted);
+      expect(everythingIn(dir)).toEqual([".prettierignore", ".prettierrc", "src", "src/a.js", "src/ignored.js"]);
+    });
+
+    // Apart from the test above: here a child is started in a directory on the share, and imports a `file://localhost/..`.
+    test.skipIf(!isWindows)(
+      "a configuration file that is a program, on a network share",
+      async () => {
+        using dir = tempDir("bun-format-platform", {
+          "a.js": formatted,
+          "prettier.config.mjs": "export default { semi: false };\n",
+        });
+        const real = realpathSync(String(dir));
+        const { stderr, exitCode } = await format(`\\\\localhost\\${real[0]}$\\${real.slice(3)}`, ["a.js"]);
+        expect(stderr).not.toContain("[error]");
+        expect(read(dir, "a.js")).toBe("a\n");
+        expect(exitCode).toBe(0);
+      },
+      slow ? 120_000 : undefined,
+    );
+
+    // src/utilities/ignore.js asks `path.relative()`, which on Windows takes `c:\A` and `C:\a` for the same. An editor hands out
+    // `c:\..`, a shell `C:\..`. A file that is ignored must not be written.
+    test.skipIf(!isWindows)(
+      "a path whose drive and directories are written in the other case is in the project",
+      async () => {
+        using dir = tempDir("bun-format-platform", {
+          ".prettierignore": "src/ignored.js\ngenerated/\n",
+          "src/a.js": ugly,
+          "src/ignored.js": ugly,
+          "generated/b.js": ugly,
+        });
+        const other = swapCase(String(dir));
+        // The other way around, and what is not a file yet.
+        const [from, piped] = await Promise.all([
+          different(other, [join(String(dir), "src", "a.js"), join(String(dir), "src", "ignored.js")]),
+          format(dir, ["--stdin-filepath", join(other, "src", "ignored.js")], ugly),
+        ]);
+        expect([from, piped.stdout]).toEqual([["src/a.js"], ugly]);
+        const { stdout } = await format(dir, [
+          join(other, "src", "a.js"),
+          join(other, "src", "ignored.js"),
+          join(other, "generated"),
+        ]);
+        expect(stdout).toBe("src/a.js\n");
+        expect([read(dir, "src", "a.js"), read(dir, "src", "ignored.js"), read(dir, "generated", "b.js")]).toEqual([
+          formatted,
+          ugly,
+          ugly,
+        ]);
+      },
+    );
+
+    // `path.resolve("\\proj\\a.js")` is on the drive of the working directory.
+    test.skipIf(!isWindows)("a path from the root of the drive", async () => {
+      using dir = tempDir("bun-format-platform", {
+        "a.js": ugly,
+        "ignored.js": ugly,
+        ".prettierignore": "ignored.js\n",
+      });
+      const rooted = realpathSync(String(dir)).slice(2);
+      expect(await different(dir, [join(rooted, "a.js"), join(rooted, "ignored.js")])).toEqual(["a.js"]);
+    });
+  });
+
+  describe.concurrent("which names are the same file", () => {
+    test("a file that is named in the other case is formatted if the system finds it", async () => {
+      using dir = tempDir("bun-format-platform", { "src/Button.js": ugly });
+      const foldsCase = existsSync(join(String(dir), "SRC", "bUTTON.JS"));
+      const { stdout, exitCode } = await format(dir, [join("src", "Button.js"), join("SRC", "bUTTON.JS")]);
+      expect(stdout.split("\n")[0]).toBe("src/Button.js");
+      expect(read(dir, "src", "Button.js")).toBe(formatted);
+      expect(everythingIn(dir)).toEqual(["src", "src/Button.js"]);
+      expect(exitCode).toBe(foldsCase ? 0 : 2);
+    });
+
+    // macOS finds `é` whether it is written as one character or as `e` and an accent.
+    test("a file that is named in the other normalization form is formatted if the system finds it", async () => {
+      using dir = tempDir("bun-format-platform", { ["caf\u00e9.js"]: ugly });
+      const decomposed = "cafe\u0301.js";
+      const isFound = existsSync(join(String(dir), decomposed));
+      const { exitCode } = await format(dir, [decomposed]);
+      expect(read(dir, "caf\u00e9.js")).toBe(isFound ? formatted : ugly);
+      expect(exitCode).toBe(isFound ? 0 : 2);
+    });
+  });
+
+  describe.concurrent("how a line ends, and what a file starts with", () => {
+    const code = "function f() {\n  return `a\nb`;\n}\n";
+
+    // The default is `lf` on every system since Prettier 2.
+    test("\\r\\n becomes \\n, unless the options say otherwise", async () => {
+      const files = {
+        "a.js": crlf(code),
+        "b.css": crlf("a {\n  b: c;\n}\n"),
+        "c.md": crlf("# a\n\nb\n"),
+        "d.json": crlf('{\n  "a": 1\n}\n'),
+      };
+      const names = Object.keys(files);
+      const after = async (more: Record<string, string>, args: string[] = []) => {
+        using dir = tempDir("bun-format-platform", { ...files, ...more });
+        const { stdout } = await format(dir, [...args, ...names]);
+        return {
+          changed: stdout.split("\n").filter(Boolean),
+          isAsBefore: names.map(name => read(dir, name) === files[name as "a.js"]),
+        };
+      };
+      const all = (value: boolean) => names.map(() => value);
+      expect(
+        await Promise.all([
+          after({}),
+          after({}, ["--end-of-line", "auto"]),
+          after({ ".prettierrc": `{ "endOfLine": "crlf" }` }),
+          after({ ".editorconfig": crlf("root = true\n[*]\nend_of_line = crlf\n") }),
+        ]),
+      ).toEqual([
+        { changed: names, isAsBefore: all(false) },
+        { changed: [], isAsBefore: all(true) },
+        { changed: [], isAsBefore: all(true) },
+        { changed: [], isAsBefore: all(true) },
+      ]);
+      using dir = tempDir("bun-format-platform", files);
+      expect((await format(dir, ["--check", "a.js"])).exitCode).toBe(1);
+      await format(dir, ["a.js"]);
+      expect(read(dir, "a.js")).toBe(code);
+    });
+
+    test("a byte order mark stays where it is", async () => {
+      const files = {
+        "a.js": [`${BOM}a  ;\n`, `${BOM}a;\n`],
+        "b.css": [`${BOM}a{b:c}\n`, `${BOM}a {\n  b: c;\n}\n`],
+        "c.json": [`${BOM}{"a":1}\n`, `${BOM}{ "a": 1 }\n`],
+        "d.md": [`${BOM}#   a\n`, `${BOM}# a\n`],
+        "e.yaml": [`${BOM}a:   1\n`, `${BOM}a: 1\n`],
+        "f.html": [`${BOM}<p   >a</p>\n`, `${BOM}<p>a</p>\n`],
+        "g.ts": [`${BOM}a  ;\r\n`, `${BOM}a;\n`],
+      };
+      const inputs = Object.fromEntries(Object.entries(files).map(([name, texts]) => [name, texts[0]]));
+      for (const config of [{}, { ".oxfmtrc.json": "{}\n" }] as Record<string, string>[]) {
+        using dir = tempDir("bun-format-platform", { ...inputs, ...config });
+        const { exitCode } = await format(dir, Object.keys(files));
+        expect(Object.fromEntries(Object.keys(files).map(name => [name, read(dir, name)]))).toEqual(
+          Object.fromEntries(Object.entries(files).map(([name, texts]) => [name, texts[1]])),
+        );
+        expect(exitCode).toBe(0);
+      }
+    });
+
+    test.each([
+      [".prettierrc", '{\n  "semi": false\n}\n'],
+      [".prettierrc", "semi: false\n"],
+      [".prettierrc.json", '{\n  "semi": false\n}\n'],
+      [".prettierrc.yaml", "# a comment\nsemi: false\n"],
+      [".prettierrc.toml", "# a comment\nsemi = false\n"],
+      [".prettierrc.json5", "{\n  // a comment\n  semi: false,\n}\n"],
+      ["package.json", '{\n  "prettier": {\n    "semi": false\n  }\n}\n'],
+      [".oxfmtrc.json", '{\n  // a comment\n  "semi": false\n}\n'],
+      [".editorconfig", "root = true\n\n[*.js]\nindent_style = tab\n"],
+    ])("\\r\\n in %s: %j", async (name, text) => {
+      const [before, after] =
+        name === ".editorconfig" ? ["if (a) {\n  b;\n}\n", "if (a) {\n\tb;\n}\n"] : [formatted, "a\n"];
+      using dir = tempDir("bun-format-platform", { [name]: crlf(text), "a.js": before });
+      const { stderr } = await format(dir, ["a.js"]);
+      expect(stderr).not.toContain("[error]");
+      expect(read(dir, "a.js")).toBe(after);
+    });
+  });
+
+  describe.concurrent("links", () => {
+    // A junction needs no privilege on Windows. Elsewhere the third argument says nothing, and it is a link to a directory.
+    const link = (target: string, path: string) => symlinkSync(target, path, "junction");
+
+    test.each([
+      ["Prettier", {}],
+      ["oxfmt", { ".oxfmtrc.json": "{}\n" }],
+    ])("a link to a directory is not followed, wherever it leads: like %s", async (_, config) => {
+      using dir = tempDir("bun-format-platform", { ...config, "real/a.js": ugly, "pkg/deep/b.js": ugly });
+      const at = (...names: string[]) => join(String(dir), ...names);
+      link(at("real"), at("linked"));
+      link(String(dir), at("pkg", "deep", "up"));
+      link(at("nowhere"), at("broken"));
+      expect(await different(dir, [])).toEqual(["pkg/deep/b.js", "real/a.js"]);
+    });
+
+    test("a link to a directory that is named is an error, as for Prettier", async () => {
+      using dir = tempDir("bun-format-platform", { "real/a.js": ugly });
+      link(join(String(dir), "real"), join(String(dir), "linked"));
+      const { stderr, exitCode } = await format(dir, ["-l", "linked"]);
+      expect(stderr).toContain('[error] Explicitly specified pattern "linked" is a symbolic link.');
+      expect(exitCode).toBe(2);
+    });
+
+    test("from a working directory that is a link, the file is written that the link leads to", async () => {
+      using dir = tempDir("bun-format-platform", { "real/a.js": ugly });
+      link(join(String(dir), "real"), join(String(dir), "linked"));
+      const { exitCode } = await format(join(String(dir), "linked"), ["a.js"]);
+      expect(read(dir, "real", "a.js")).toBe(formatted);
+      expect(everythingIn(join(String(dir), "real"))).toEqual(["a.js"]);
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  describe.concurrent("what is written", () => {
+    test("nothing but the file is left, and a file that is formatted is not touched", async () => {
+      using dir = tempDir("bun-format-platform", { "a.js": ugly, "src/b.js": ugly, "src/c.js": formatted });
+      const before = everythingIn(dir);
+      const time = new Date(Date.now() - 60_000);
+      utimesSync(join(String(dir), "src", "c.js"), time, time);
+      const stamp = statSync(join(String(dir), "src", "c.js")).mtimeMs;
+      const { exitCode } = await format(dir, []);
+      expect(everythingIn(dir)).toEqual(before);
+      expect(statSync(join(String(dir), "src", "c.js")).mtimeMs).toBe(stamp);
+      expect(read(dir, "src", "b.js")).toBe(formatted);
+      expect(exitCode).toBe(0);
+    });
+
+    // As `fopen` of the C runtime opens a file, and so Python and many editors: others may read and write it, and not rename or
+    // delete it. Prettier writes into it.
+    test.skipIf(!isWindows)("a file that another program has open", async () => {
+      using dir = tempDir("bun-format-platform", { "a.js": ugly });
+      const { symbols, close } = dlopen("kernel32.dll", {
+        CreateFileW: { args: ["ptr", "u32", "u32", "ptr", "u32", "u32", "ptr"], returns: "u64" },
+        CloseHandle: { args: ["u64"], returns: "i32" },
+      });
+      const [GENERIC_READ, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING] = [0x80000000, 1, 2, 3];
+      const name = Buffer.from(`${join(String(dir), "a.js")}\0`, "utf16le");
+      const handle = symbols.CreateFileW(
+        name,
+        GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        null,
+        OPEN_EXISTING,
+        0,
+        null,
+      );
+      // `INVALID_HANDLE_VALUE`: without the handle the test would pass whatever is done.
+      expect(handle).not.toBe(0xffffffffffffffffn);
+      try {
+        const { stderr, exitCode } = await format(dir, []);
+        expect(stderr).not.toContain("[error]");
+        expect(read(dir, "a.js")).toBe(formatted);
+        expect(everythingIn(dir)).toEqual(["a.js"]);
+        expect(exitCode).toBe(0);
+      } finally {
+        symbols.CloseHandle(handle);
+        close();
+      }
+    });
+  });
+
+  describe.concurrent("a configuration file that is a program", () => {
+    /** Makes the file as old as a file that nobody is working on: what depends on one that has just been written is not kept. */
+    const age = (path: string, seconds: number) => {
+      const time = new Date(Date.now() - seconds * 1000);
+      utimesSync(path, time, time);
+    };
+
+    test(
+      "what it exports is kept until the file or what it has read changes",
+      async () => {
+        const config = (comment: string) => `// ${comment}
+        const fs = require("node:fs");
+        fs.appendFileSync(__dirname + "/evaluated.txt", "x");
+        module.exports = JSON.parse(fs.readFileSync(require("node:path").join(__dirname, "settings", "options.json"), "utf8"));`;
+        using dir = tempDir("bun-format-platform", {
+          "node_modules/.keep": "",
+          ".prettierrc.cjs": config("one"),
+          "settings/options.json": `{ "semi": false }`,
+          "a.js": formatted,
+        });
+        const at = (...names: string[]) => join(String(dir), ...names);
+        const run = async () => [await different(dir, ["a.js"]), read(dir, "evaluated.txt")];
+        age(at(".prettierrc.cjs"), 60);
+        age(at("settings", "options.json"), 60);
+        expect(await run()).toEqual([["a.js"], "x"]);
+        expect(await run()).toEqual([["a.js"], "x"]);
+        // As long as before.
+        writeFileSync(at("settings", "options.json"), `{ "semi": true  }`);
+        age(at("settings", "options.json"), 30);
+        expect(await run()).toEqual([[], "xx"]);
+        expect(await run()).toEqual([[], "xx"]);
+        writeFileSync(at(".prettierrc.cjs"), config("two"));
+        age(at(".prettierrc.cjs"), 30);
+        expect(await run()).toEqual([[], "xxx"]);
+      },
+      slow ? 240_000 : 30_000,
+    );
+  });
 });

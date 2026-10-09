@@ -512,9 +512,9 @@ impl<R: Rule> AnyRule for R {
         if on.entries.is_empty() {
             return None;
         }
-        // Here, which is code of the rule anyway: a `Box<dyn ..>` is made with a table that each rule has its own of.
-        let run = run_started(self, on, state, start)?;
-        Some(Box::new(run))
+        // It becomes a `Box<dyn ..>` here, in code of the rule: that takes a table of which each rule has its own.
+        let run: Box<dyn Running<'a> + 'r> = run_started(self, on, state, start)?;
+        Some(run)
     }
 }
 
@@ -526,7 +526,7 @@ fn run_started<'r, 'a: 'r, R: Rule>(
     on: Listeners<'a, R>,
     state: R::State<'a>,
     start: Start<'a>,
-) -> Option<Run<'r, 'a, R>> {
+) -> Option<Box<Run<'r, 'a, R>>> {
     let mut run = Run {
         rule,
         entries: on.entries,
@@ -543,7 +543,7 @@ fn run_started<'r, 'a: 'r, R: Rule>(
         },
     };
     run_unordered(rule, &run.entries, start.file, &mut run.cx);
-    on.has_later.then_some(run)
+    on.has_later.then(|| Box::new(run))
 }
 
 /// How a rule is found by its name and made from its options.

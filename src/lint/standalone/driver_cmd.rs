@@ -12,6 +12,7 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     let mut command = host::command("bun");
     command
         .arg("--no-install")
+        .arg("--no-orphans")
         .arg("-e")
         .arg(script.source.concat())
         .args(script.arguments.iter().map(|it| os_text(it)))

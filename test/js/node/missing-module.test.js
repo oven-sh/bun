@@ -1,6 +1,6 @@
 import assert from "assert";
 import { expect, test } from "bun:test";
-import { readdirSync } from "fs";
+import { readdirSync, statSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -163,12 +163,13 @@ test.concurrent("a literal bun: specifier that names no builtin does not load a 
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  // The first line is the version of bun test.
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The first line of stdout is the version of bun test.
   expect(JSON.parse(stdout.slice(stdout.indexOf("{")))).toEqual({
     "bun:vitest": "ERR_MODULE_NOT_FOUND",
     "bun:@jest/globals": "ERR_MODULE_NOT_FOUND",
   });
+  expect(stderr).toContain(" 1 pass");
   expect(exitCode).toBe(0);
 });
 
@@ -204,7 +205,7 @@ test.concurrent("a literal bun: specifier that names no builtin does not ask the
 
 // bun test maps "vitest" to "bun:test" and bun run does not. The key of a transpiler cache entry
 // does not say which of the two wrote the entry.
-test.each([
+test.concurrent.each([
   ["bun run, then bun test", [["module.js"], ["test", "./entry.test.js"]]],
   ["bun test, then bun run", [["test", "./entry.test.js"], ["module.js"]]],
 ])("a literal bun: specifier that names no builtin is cached as written: %s", async (_, runs) => {
@@ -216,6 +217,7 @@ test.each([
     "entry.test.js": `import "./module.js";`,
   });
   const cache = join(String(dir), "cache");
+  const entries = [];
   for (const args of runs) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
@@ -228,8 +230,13 @@ test.each([
     expect(stdout).not.toContain("loaded the package named like the suffix");
     expect(stderr).toContain("'bun:vitest'");
     expect(exitCode).toBe(1);
-    expect(readdirSync(cache)).toHaveLength(1);
+    const names = readdirSync(cache);
+    expect(names).toHaveLength(1);
+    const { ino, mtimeNs } = statSync(join(cache, names[0]), { bigint: true });
+    entries.push({ name: names[0], ino, mtimeNs });
   }
+  // The second run restores the entry of the first run. A run that does not restore it writes it again.
+  expect(entries[1]).toEqual(entries[0]);
 });
 
 test.concurrent("a literal bun: specifier that names no builtin reaches the module a plugin registers", async () => {

@@ -946,6 +946,7 @@ impl Alias {
         Self::bare_node_builtin(specifier.strip_prefix(b"bun:")?)
     }
 
+    // Not `Self::get`: the answer goes into cached output, and the cache key has no flag or mode.
     #[cold]
     #[inline(never)]
     fn bare_node_builtin(name: &[u8]) -> Option<&[u8]> {

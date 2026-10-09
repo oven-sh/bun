@@ -93,15 +93,17 @@ impl Config {
         enabled: Enabled,
         left: Option<Name<'a>>,
         property: Property<'a>,
+        is_port_of_oxlint: bool,
     ) -> Option<&'static str> {
+        // For oxlint's port every number is an index, and it says nothing about a template.
         if let Property::Computed(index) = property
             && let ExprKind::Number(n) = index.kind()
-            && n.is_finite()
-            && n.fract() == 0.0
+            && (is_port_of_oxlint || n.is_finite() && n.fract() == 0.0)
         {
             return enabled.array.then_some("array");
         }
-        if !enabled.object {
+        let is_template = matches!(property, Property::Computed(index) if index.tag() == ExprTag::Template);
+        if !enabled.object || is_port_of_oxlint && is_template {
             return None;
         }
         let has_same_name = match property {
@@ -120,12 +122,18 @@ impl Config {
             return;
         }
         let left = declaration.pat().as_ident();
-        let Some(kind) = self.perform_check(self.variable_declarator, left, property) else {
+        let is_port_of_oxlint = cx.language().is_oxlint && R::META.plugin == Plugin::Eslint;
+        let Some(kind) = self.perform_check(self.variable_declarator, left, property, is_port_of_oxlint) else {
             return;
         };
-        // oxlint's port of ESLint's rule points at the value.
+        let has_same_name = match property {
+            Property::Name(name) => left == Some(name),
+            Property::Computed(index) => left.is_some() && left == index.as_string(),
+        };
+        // oxlint's port of ESLint's rule points at the value, without its parentheses if the name is another.
         let place = match declaration.init() {
-            Some(init) if cx.language().is_oxlint && R::META.plugin == Plugin::Eslint => init.outer_span(),
+            Some(init) if is_port_of_oxlint && kind == "object" && !has_same_name => init.span(),
+            Some(init) if is_port_of_oxlint => init.outer_span(),
             _ => declaration.span(),
         };
         let report = cx.report(place, PREFER_DESTRUCTURING).data("type", type_in_message(kind, cx));
@@ -157,7 +165,30 @@ impl Config {
         let Some((_, property)) = member_expression(value) else {
             return;
         };
-        if let Some(kind) = self.perform_check(self.assignment_expression, target.as_ident(), property)
+        let (enabled, left) = (self.assignment_expression, target.as_ident());
+        // oxlint's port: `enforceForRenamedProperties` is for `a = b[c]` alone, and `a = b["a"]` is reported once more,
+        // whatever the options are.
+        if cx.language().is_oxlint && R::META.plugin == Plugin::Eslint {
+            let (arrays, objects) = match property {
+                _ if utils::is_assignment_target(e) => (0, 0),
+                Property::Name(name) => (0, usize::from(enabled.object && left == Some(name))),
+                Property::Computed(index) => match index.kind() {
+                    ExprKind::Template(_) => (0, 0),
+                    ExprKind::Number(_) => (usize::from(enabled.array), 0),
+                    ExprKind::String(name) => (
+                        0,
+                        usize::from(self.enforce_for_renamed_properties && enabled.object)
+                            + usize::from(left == Some(name)),
+                    ),
+                    _ => (0, usize::from(self.enforce_for_renamed_properties && enabled.object)),
+                },
+            };
+            for kind in std::iter::repeat_n("Array", arrays).chain(std::iter::repeat_n("Object", objects)) {
+                cx.report(e, PREFER_DESTRUCTURING).data("type", kind);
+            }
+            return;
+        }
+        if let Some(kind) = self.perform_check(enabled, left, property, false)
             // A default value in a pattern is not an assignment.
             && !utils::is_assignment_target(e)
         {
@@ -179,7 +210,7 @@ impl Rule for PreferDestructuring {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
         let is_enabled = |it: Enabled| it.array || it.object;
         if is_enabled(self.config.variable_declarator) {
             on.var_decls(|rule, declaration, cx| {
@@ -189,7 +220,7 @@ impl Rule for PreferDestructuring {
                 }
             });
         }
-        if is_enabled(self.config.assignment_expression) {
+        if is_enabled(self.config.assignment_expression) || file.language().is_oxlint {
             on.exprs([ExprTag::Assign], |rule, e, cx| rule.config.check_assignment_expression(e, cx));
         }
     }

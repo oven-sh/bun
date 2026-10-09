@@ -11,6 +11,8 @@ pub struct NoUnderscoreDangle {
     allow_function_params: bool,
     allow_in_array_destructuring: bool,
     allow_in_object_destructuring: bool,
+    /// An option of oxlint alone.
+    allow_in_using_declarations: bool,
     enforce_in_class_fields: bool,
     enforce_in_method_names: bool,
 }
@@ -100,7 +102,8 @@ impl NoUnderscoreDangle {
             || matches!(declaration.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Var);
         let pat = declaration.pat();
         if let PatKind::Ident(name) = pat.kind() {
-            if self.is_unexpected(name.bytes()) && is_declarator() {
+            let is_using = matches!(declaration.var_kind(), VarKind::Using | VarKind::AwaitUsing);
+            if self.is_unexpected(name.bytes()) && is_declarator() && !(is_using && self.allow_in_using_declarations) {
                 let place = if cx.language().is_oxlint { pat.span() } else { declaration.span() };
                 cx.report(place, UNEXPECTED_UNDERSCORE).data("identifier", name);
             }
@@ -239,6 +242,7 @@ impl Rule for NoUnderscoreDangle {
             allow_function_params: options.bool_or("allowFunctionParams", true),
             allow_in_array_destructuring: options.bool_or("allowInArrayDestructuring", true),
             allow_in_object_destructuring: options.bool_or("allowInObjectDestructuring", true),
+            allow_in_using_declarations: options.bool_or("allowInUsingDeclarations", false),
             enforce_in_class_fields: options.bool_or("enforceInClassFields", false),
             enforce_in_method_names: options.bool_or("enforceInMethodNames", false),
         }

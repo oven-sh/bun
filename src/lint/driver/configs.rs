@@ -949,6 +949,12 @@ impl<'l> Loader<'l> {
                 match (nearest(Flavor::Eslint), nearest(Flavor::Oxlint), by_flags) {
                     (Some(_), Some(_), Some(flavor)) => return Some(flavor),
                     (Some(_), None, Some(Flavor::Oxlint)) => return Some(Flavor::Oxlint),
+                    // `bun lint` has the flag for both, ESLint has it not: a command that was written for one of the two was oxlint's.
+                    (Some(_), Some(_), None)
+                        if options.type_aware == Some(true) && !options.has_flag_of_eslint =>
+                    {
+                        return Some(Flavor::Oxlint);
+                    }
                     (Some(of_eslint), Some(of_oxlint), None) => {
                         let _ = self.undecided.set((of_eslint, of_oxlint));
                     }

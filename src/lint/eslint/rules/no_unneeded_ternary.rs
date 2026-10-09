@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint_oxlint::ast_util::get_inner_expression;
 
 /// Disallow ternary operators when simpler alternatives exist.
 pub struct NoUnneededTernary {
@@ -89,6 +90,9 @@ impl Rule for NoUnneededTernary {
             let ExprKind::Cond { test, yes, no } = e.kind() else {
                 return;
             };
+            // oxlint sees through `as T` and the like.
+            let is_oxlint = cx.language().is_oxlint;
+            let seen = |it: Expr<'a>| if is_oxlint { get_inner_expression(it) } else { it };
             if let (Some(consequent), Some(alternate)) = (boolean_literal(yes), boolean_literal(no)) {
                 cx.report(e, UNNECESSARY_CONDITIONAL_EXPRESSION).fix(|fixer| {
                     if consequent == alternate {
@@ -104,7 +108,7 @@ impl Rule for NoUnneededTernary {
                     })
                 });
             } else if !rule.allows_default_assignment
-                && let (Some(tested), Some(consequent)) = (test.as_ident(), yes.as_ident())
+                && let (Some(tested), Some(consequent)) = (seen(test).as_ident(), seen(yes).as_ident())
                 && tested == consequent
             {
                 cx.report(e, UNNECESSARY_CONDITIONAL_ASSIGNMENT).fix(|fixer| {

@@ -253,7 +253,10 @@ impl ArrowBodyStyle {
                 return;
             };
             if self.require_return_for_object_literal
-                && argument.is_some_and(|it| it.tag() == ExprTag::Object)
+                // oxlint does not look into parentheses.
+                && argument.is_some_and(|it| {
+                    it.tag() == ExprTag::Object && !(cx.language().is_oxlint && it.is_parenthesized())
+                })
             {
                 return;
             }

@@ -680,6 +680,13 @@ fn write_grouped_arguments<'a>(
                 _ => None,
             };
             if !has_signature_without_soft_lines(function) {
+                // Prettier's `printArrowFunctionSignature` gives up whatever the function is in.
+                let return_type = (function.return_type())
+                    .filter(|_| !f.options().flavor.is_oxfmt())
+                    .and_then(|it| f.context().get_cached_element(&it.span()));
+                if return_type.is_some_and(|element| element.will_break(f)) {
+                    return format_all_elements_broken_out(node, &grouped, true, f);
+                }
                 continue;
             }
             // If the signature breaks even without soft line breaks, grouping is not a good fit.

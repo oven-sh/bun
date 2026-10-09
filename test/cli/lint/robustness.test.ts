@@ -1,11 +1,14 @@
 // `bun lint` on inputs that are large in one dimension: it does not overflow the stack, does not run out of memory, and takes time
 // in proportion to the size of the input. The inputs, and what each of them did once, are in oracle/robustness/cases.ts.
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { endChildren, spawn } from "../children";
 import { cases } from "./oracle/robustness/cases";
 import { configOf, countByRule } from "./oracle/robustness/run";
+
+afterAll(endChildren);
 
 const env = {
   ...bunEnv,
@@ -24,13 +27,20 @@ const seconds = isSlowBuild ? 120 : 10;
 const limit = isLinux && !isASAN ? "ulimit -v 4000000; " : "";
 
 describe.concurrent("bun lint", () => {
-  test.each(cases.filter(it => !it.isSlow && !(it.isHeavy && isSlowBuild)).map(it => [it.name, it] as const))(
+  test.skip.each(cases.filter(it => it.waitsFor).map(it => [it.name, it.waitsFor] as const))(
+    "%s: waits for %s",
+    () => {},
+  );
+
+  test.each(
+    cases.filter(it => !it.isSlow && !it.waitsFor && !(it.isHeavy && isSlowBuild)).map(it => [it.name, it] as const),
+  )(
     "%s",
     async (_, it) => {
       const [configName, config] = configOf(it);
       using dir = tempDir("bun-lint-robustness", { [configName]: config, [it.file]: it.text() });
       const args = ["lint", "-c", configName, "--threads", "2", ...(it.args ?? ["-f", "unix"]), it.file];
-      await using proc = Bun.spawn({
+      await using proc = spawn({
         cmd: isWindows ? [bunExe(), ...args] : ["sh", "-c", `ulimit -c 0; ${limit}exec "$0" "$@"`, bunExe(), ...args],
         env,
         cwd: String(dir),

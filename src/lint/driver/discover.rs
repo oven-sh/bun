@@ -9,7 +9,9 @@ use crate::embedded::Framework;
 use crate::gitignore::{self, Chain};
 use crate::run::{Fatal, Pool};
 use crate::{fs, paths};
+use bun_core::strings;
 use bun_lint::js_plugin::Route;
+use bun_lint::linter::config::Dotfiles;
 use bun_lint::linter::{FileConfig, Glob, ResolvedConfig};
 use bun_threading::Guarded;
 use std::sync::Arc;
@@ -90,13 +92,31 @@ impl Matcher {
     }
 }
 
+/// An argument that is a directory or a pattern.
+struct Wanted {
+    /// Absolute.
+    pattern: Vec<u8>,
+    /// As it is written.
+    raw: Vec<u8>,
+    /// It is a pattern. ESLint 8 lints all that one matches, and of a directory what it has `files` for.
+    is_glob: bool,
+}
+
 /// ESLint's `GlobSearch`, with the directory.
 struct Search {
     base_path: Vec<u8>,
-    /// Absolute.
-    patterns: Vec<Vec<u8>>,
-    /// As they are written.
-    raw_patterns: Vec<Vec<u8>>,
+    /// [`dotfiles_for`] the arguments.
+    dotfiles: Dotfiles,
+    patterns: Vec<Wanted>,
+}
+
+/// `dotfilesPattern` of ESLint 8: whether a name in `argument` starts with a dot, and is neither `.` nor `..`.
+fn dotfiles_for(argument: &[u8]) -> Dotfiles {
+    let is_one = |name: &[u8]| matches!(name, [b'.', next, ..] if !matches!(next, b'.' | b'\\'));
+    match strings::split(argument, b"/").any(is_one) {
+        true => Dotfiles::Linted,
+        false => Dotfiles::AsConfigured,
+    }
 }
 
 /// A directory on the way from where a search starts to one that is listed.
@@ -189,8 +209,9 @@ fn search(
     found: &mut Vec<Target>,
 ) -> Result<Option<usize>, Fatal> {
     let matchers: Vec<Matcher> = (search.patterns.iter())
-        .map(|pattern| Matcher::new(&paths::relative(&search.base_path, pattern)))
+        .map(|it| Matcher::new(&paths::relative(&search.base_path, &it.pattern)))
         .collect();
+    let dotfiles = search.dotfiles;
     let is_matched: Vec<AtomicBool> = matchers.iter().map(|_| AtomicBool::new(false)).collect();
     let registry = loader.linter.registry();
     let (mut all_found, mut failure) = (
@@ -201,7 +222,7 @@ fn search(
     if fs::kind(&search.base_path) == Some(fs::Kind::Directory) {
         let inherited = loader.for_directory(&search.base_path)?;
         // From here on, a directory is only listed if it is not ignored.
-        let is_hidden = inherited.config.is_directory_ignored(&search.base_path);
+        let is_hidden = (inherited.config).is_directory_ignored(&search.base_path, dotfiles);
         let name = paths::basename(&search.base_path);
         if !is_hidden || loader.looks_for_configurations_in(&inherited, name) {
             let real = fs::real_path(&search.base_path);
@@ -291,7 +312,8 @@ fn search(
                     if !matchers.iter().any(|it| it.matches_partially(&relative)) {
                         continue;
                     }
-                    let is_hidden = is_hidden || own.config.is_directory_ignored_in(&path);
+                    let is_hidden =
+                        is_hidden || own.config.is_directory_ignored_in(&path, dotfiles);
                     if !is_hidden || loader.looks_for_configurations_in(&own, &entry.name) {
                         let real =
                             real.unwrap_or_else(|| paths::join(&directory.way.real, &entry.name));
@@ -312,26 +334,30 @@ fn search(
                 if is_hidden {
                     continue;
                 }
-                let mut matches = false;
-                let mut config = None;
-                for (matcher, is_matched) in matchers.iter().zip(&is_matched) {
+                // What the configuration says about a file in a directory, and about one that a pattern of ESLint 8 selects.
+                let (mut config, mut selected) = (None, None);
+                let wanted = matchers.iter().zip(&search.patterns).zip(&is_matched);
+                for ((matcher, wanted), is_matched) in wanted {
+                    let selects = wanted.is_glob && own.flavor == Flavor::EslintRc;
+                    let config = if selects { &mut selected } else { &mut config };
                     // The rest only matters as long as it is not known to match something.
-                    if (matches && is_matched.load(Ordering::Relaxed))
+                    if (config.is_some() && is_matched.load(Ordering::Relaxed))
                         || !matcher.matches(&relative)
                     {
                         continue;
                     }
-                    matches = true;
-                    let config =
-                        config.get_or_insert_with(|| match own.config.is_file_ignored_in(&path) {
+                    let config = config.get_or_insert_with(|| {
+                        match own.config.is_file_ignored_in(&path, dotfiles) {
                             true => FileConfig::Ignored,
+                            false if selects => own.config.get_for_pattern(registry, &path),
                             false => own.config.get_unless_ignored(registry, &path),
-                        });
+                        }
+                    });
                     if matches!(config, FileConfig::Matched(_)) {
                         is_matched.store(true, Ordering::Relaxed);
                     }
                 }
-                if let Some(FileConfig::Matched(config)) = config {
+                if let Some(FileConfig::Matched(config)) = selected.or(config) {
                     files.push(Target {
                         path,
                         size: listing.size_of(&entry.name),
@@ -368,23 +394,23 @@ pub(crate) fn find_files(
     let mut found = Vec::new();
     let mut searches = vec![Search {
         base_path: cwd.clone(),
+        dotfiles: Dotfiles::AsConfigured,
         patterns: Vec::new(),
-        raw_patterns: Vec::new(),
     }];
-    let mut add = |base_path: Vec<u8>, pattern: Vec<u8>, raw: &[u8]| {
+    let mut add = |base_path: Vec<u8>, wanted: Wanted| {
+        let dotfiles = dotfiles_for(&wanted.raw);
         let at = searches
             .iter()
-            .position(|it| it.base_path == base_path)
+            .position(|it| it.base_path == base_path && it.dotfiles == dotfiles)
             .unwrap_or_else(|| {
                 searches.push(Search {
                     base_path,
+                    dotfiles,
                     patterns: Vec::new(),
-                    raw_patterns: Vec::new(),
                 });
                 searches.len() - 1
             });
-        searches[at].patterns.push(pattern);
-        searches[at].raw_patterns.push(raw.to_vec());
+        searches[at].patterns.push(wanted);
     };
     let mut missing = None;
     for pattern in patterns {
@@ -405,12 +431,23 @@ pub(crate) fn find_files(
                 });
             }
             Some((fs::Kind::Directory, _)) => {
-                add(path.clone(), paths::join(&path, b"**"), &pattern)
+                let everything = paths::join(&path, b"**");
+                add(
+                    path,
+                    Wanted {
+                        pattern: everything,
+                        raw: pattern,
+                        is_glob: false,
+                    },
+                )
             }
             None if paths::is_glob(&pattern) => add(
                 paths::resolve(cwd, &paths::glob_parent(&pattern)),
-                path,
-                &pattern,
+                Wanted {
+                    pattern: path,
+                    raw: pattern,
+                    is_glob: true,
+                },
             ),
             None => {
                 missing.get_or_insert(pattern);
@@ -435,14 +472,11 @@ pub(crate) fn find_files(
     if let Some((index, pattern)) = unmatched
         && error_on_unmatched_pattern
     {
-        let (search, raw) = (&searches[index], &searches[index].raw_patterns[pattern]);
-        let matcher = Matcher::new(&paths::relative(
-            &search.base_path,
-            &search.patterns[pattern],
-        ));
+        let (search, wanted) = (&searches[index], &searches[index].patterns[pattern]);
+        let matcher = Matcher::new(&paths::relative(&search.base_path, &wanted.pattern));
         return Err(match matches_any_file(&search.base_path, &matcher) {
-            true => all_files_ignored(raw),
-            false => no_files_found(raw),
+            true => all_files_ignored(&wanted.raw),
+            false => no_files_found(&wanted.raw),
         });
     }
     bun_lint::utils::sort::sort_by(&mut found, |a, b| a.path.cmp(&b.path));

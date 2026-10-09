@@ -887,6 +887,20 @@ pub fn get_trailing_statement(statement: Stmt<'_>) -> Option<Stmt<'_>> {
 /// statement would be a declaration where none is allowed, or an `else` after the block would
 /// belong to an `if` in it.
 pub fn are_braces_necessary(block: Stmt<'_>) -> bool {
+    are_braces_necessary_if(block, || {
+        let text = block.file().text();
+        let next = text
+            .get(skip_trivia(text, block.span().end) as usize..)
+            .unwrap_or_default();
+        next.starts_with(b"else") && token_len(next) == 4
+    })
+}
+
+/// [`are_braces_necessary`], where `is_followed_by_else` says whether an `else` follows the block.
+pub fn are_braces_necessary_if(
+    block: Stmt<'_>,
+    is_followed_by_else: impl FnOnce() -> bool,
+) -> bool {
     fn has_unsafe_if(statement: Stmt<'_>) -> bool {
         let mut at = statement;
         loop {
@@ -914,13 +928,7 @@ pub fn are_braces_necessary(block: Stmt<'_>) -> bool {
         StmtKind::Class(_) => true,
         _ => false,
     };
-    is_lexical_declaration || {
-        let text = block.file().text();
-        let next = text
-            .get(skip_trivia(text, block.span().end) as usize..)
-            .unwrap_or_default();
-        has_unsafe_if(statement) && next.starts_with(b"else") && token_len(next) == 4
-    }
+    is_lexical_declaration || has_unsafe_if(statement) && is_followed_by_else()
 }
 
 // ───────────────────────────── values and names ─────────────────────────────

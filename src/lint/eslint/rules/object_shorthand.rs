@@ -85,7 +85,8 @@ fn is_redundant(prop: Prop) -> bool {
     let (Some(key), Some(value)) = (prop.key(), prop.value()) else {
         return false;
     };
-    if is_proto_key(key) {
+    // oxlint does not look into parentheses.
+    if is_proto_key(key) || value.file().language().is_oxlint && value.is_parenthesized() {
         return false;
     }
     match value.kind() {

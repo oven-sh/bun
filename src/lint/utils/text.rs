@@ -8,6 +8,7 @@
 //! | `/\s/u.test(c)` | [`is_js_whitespace`] |
 //! | `/^\s/u.exec(s)?.[0].length` in bytes | [`white_space_len`] |
 //! | `s.trim()`, `trimStart()`, `trimEnd()` | [`trim`], [`trim_start`], [`trim_end`] |
+//! | `s.replace(/^abc/iu, "")`, `/^\w/iu.test(s)`, `/\w$/iu.test(s)` | [`strip_prefix_ignoring_case`], [`starts_with_word_ignoring_case`], [`ends_with_word_ignoring_case`] |
 //! | `s.toLowerCase()`, `s.toUpperCase()` | [`to_lower_case`], [`to_upper_case`] |
 //! | `s[0].toUpperCase() + s.slice(1)` | [`upper_case_first`] |
 //! | `String(n)` | [`number_to_string`] |
@@ -188,6 +189,51 @@ pub fn trim(text: &[u8]) -> &[u8] {
 #[inline]
 pub fn is_blank(text: &[u8]) -> bool {
     trim_start(text).is_empty()
+}
+
+/// What follows `prefix` in `text`, if `/^prefix/iu` matches. `prefix`: characters of ASCII, no capitals.
+///
+/// With these flags U+017F is an `s` and U+212A a `k`, and both are a `\w`. No other character outside ASCII is one of ASCII but
+/// for its case.
+pub fn strip_prefix_ignoring_case<'t>(text: &'t [u8], prefix: &[u8]) -> Option<&'t [u8]> {
+    let mut rest = text;
+    for &c in prefix {
+        rest = match *rest {
+            [first, ref rest @ ..] if first.to_ascii_lowercase() == c => rest,
+            [0xC5, 0xBF, ref rest @ ..] if c == b's' => rest,
+            [0xE2, 0x84, 0xAA, ref rest @ ..] if c == b'k' => rest,
+            _ => return None,
+        };
+    }
+    Some(rest)
+}
+
+/// The byte that the character outside ASCII starts with that is `c` but for its case, and `c` if there is none.
+#[inline]
+pub fn first_byte_of_other_case(c: u8) -> u8 {
+    match c {
+        b's' => 0xC5,
+        b'k' => 0xE2,
+        _ => c,
+    }
+}
+
+/// `/^\w/iu.test(text)`
+#[inline]
+pub fn starts_with_word_ignoring_case(text: &[u8]) -> bool {
+    matches!(
+        *text,
+        [b'0'..=b'9' | b'A'..=b'Z' | b'_' | b'a'..=b'z', ..] | [0xC5, 0xBF, ..] | [0xE2, 0x84, 0xAA, ..]
+    )
+}
+
+/// `/\w$/iu.test(text)`
+#[inline]
+pub fn ends_with_word_ignoring_case(text: &[u8]) -> bool {
+    matches!(
+        *text,
+        [.., b'0'..=b'9' | b'A'..=b'Z' | b'_' | b'a'..=b'z'] | [.., 0xC5, 0xBF] | [.., 0xE2, 0x84, 0xAA]
+    )
 }
 
 fn map_case<'t>(

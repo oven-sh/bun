@@ -22,11 +22,12 @@ use bun_lint::linter::{
     grows_too_much, max_fixed_len,
 };
 use bun_sema::program::FileId;
+use bun_sema::resolve::{inside, to_file_name_lower_case};
 use bun_sema::util::FxHashMap;
 use bun_sema_driver::host::{AlreadyRead, Provided, from_native, to_native};
 use bun_sema_driver::{Category, Diagnostic, Libs};
 use bun_threading::Guarded;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// A file to lint.
 pub(crate) struct Typed<'t> {
@@ -81,8 +82,10 @@ fn check_and_lint(
     }
     let left = check(&like_oxlint, already_read.clone(), Project::Including);
     if !left.is_empty() {
-        let mut config = from_native(&environment.cwd);
-        config.extend_from_slice(b"/tsconfig.of-no-project.json");
+        let config = inside(
+            &from_native(&environment.cwd),
+            b"tsconfig.of-no-project.json",
+        );
         let mut already_read = already_read;
         already_read.insert(config.clone(), OPTIONS_OF_NO_PROJECT.to_vec());
         check(&left, already_read, Project::This(&config));
@@ -104,6 +107,34 @@ enum Project<'a> {
     This(&'a [u8]),
 }
 
+/// Where the files to lint are in a list, by `tspath.Path`: where the file system folds case, a program need not spell a file
+/// as the argument or the working directory that led to it does.
+struct ByPath {
+    /// By the path in the checker's format.
+    exact: FxHashMap<Vec<u8>, usize>,
+    /// The same in lower case. Made when a name is asked for that `exact` does not have.
+    folded: OnceLock<FxHashMap<Vec<u8>, usize>>,
+}
+
+impl ByPath {
+    /// `name`: of a file of a program.
+    fn get(&self, name: &[u8], is_case_sensitive: bool) -> Option<usize> {
+        if let Some(&at) = self.exact.get(name) {
+            return Some(at);
+        }
+        if is_case_sensitive {
+            return None;
+        }
+        let folded = self.folded.get_or_init(|| {
+            let exact = self.exact.iter();
+            exact
+                .map(|(path, &at)| (to_file_name_lower_case(path), at))
+                .collect()
+        });
+        folded.get(&to_file_name_lower_case(name)).copied()
+    }
+}
+
 fn check_and_lint_in(
     context: &Context,
     environment: &Environment,
@@ -112,11 +143,14 @@ fn check_and_lint_in(
     already_read: AlreadyRead,
     project: Project<'_>,
 ) -> Vec<Option<Linted>> {
-    let by_path: FxHashMap<Vec<u8>, usize> = indices
-        .iter()
-        .enumerate()
-        .map(|(at, &index)| (from_native(files[index].path), at))
-        .collect();
+    let by_path = ByPath {
+        exact: indices
+            .iter()
+            .enumerate()
+            .map(|(at, &index)| (from_native(files[index].path), at))
+            .collect(),
+        folded: OnceLock::new(),
+    };
     let mut results: Guarded<Vec<Option<Linted>>> =
         Guarded::new(indices.iter().map(|_| None).collect());
     let options = context.lint_options();
@@ -134,14 +168,17 @@ fn check_and_lint_in(
         }
     };
     let after_file = |checker: &mut bun_sema::check::Checker<'_, '_>, file: FileId| {
-        let Some(&at) = by_path.get(checker.p.files.module(file).file_name()) else {
+        let program = checker.p.files;
+        let name = program.module(file).file_name();
+        let Some(at) = by_path.get(name, program.is_case_sensitive) else {
             return;
         };
-        let config = files[indices[at]].config;
+        let (path, config) = (files[indices[at]].path, files[indices[at]].config);
         let started = context.timing.now();
         let linted = bun_lint::types::with_file_and_modules(
             checker,
             file,
+            Some(path),
             &config.language,
             Some(&read_library),
             Some(context.modules),
@@ -213,22 +250,35 @@ fn check_and_lint_in(
     };
     let provided = Provided {
         already_read,
+        keeps_byte_order_marks: true,
         ..Default::default()
     };
-    let (diagnostics, incomplete) =
+    let (is_case_sensitive, unreadable, diagnostics, incomplete) =
         bun_sema_driver::check_provided_then(&request, provided, |report| {
-            (report.diagnostics, report.incomplete)
+            (
+                report.is_case_sensitive,
+                report.unreadable,
+                report.diagnostics,
+                report.incomplete,
+            )
         });
     // Of code that is nested too deeply for the parser the linter says so itself.
     let out_of_stack = incomplete.into_iter().filter(|it| !it.is_nested_too_deeply);
     (context.out_of_stack.lock()).extend(out_of_stack.map(|it| it.path));
     let mut results = std::mem::take(results.get_mut());
+    // Each was checked, and linted, as an empty file. Who lints it without types says why it cannot be read.
+    for path in &unreadable {
+        let at = by_path.get(path, is_case_sensitive);
+        if let Some(result) = at.and_then(|at| results.get_mut(at)) {
+            *result = None;
+        }
+    }
     if context.checks_types {
         for diagnostic in diagnostics
             .iter()
             .filter(|it| it.category == Category::Error)
         {
-            let at = by_path.get(&diagnostic.path).copied();
+            let at = by_path.get(&diagnostic.path, is_case_sensitive);
             if let Some((result, _)) = at.and_then(|at| results.get_mut(at)?.as_mut()) {
                 result.messages.push(type_error(diagnostic));
             }
@@ -244,6 +294,13 @@ fn check_and_lint_in(
 fn type_error(diagnostic: &Diagnostic) -> LintMessage {
     let text = &diagnostic.text[..];
     let end = strings::index_of_char_usize(text, b'\n').unwrap_or(text.len());
+    // TypeScript drops the byte order mark, which the text that is checked here has: it is no character of the first line.
+    let has_mark = diagnostic.source_line == 1
+        && (diagnostic.source.first()).is_some_and(|it| it.starts_with(b"\xEF\xBB\xBF"));
+    let column = |line: u32, column: u32| match has_mark && line == 1 {
+        true => column.saturating_sub(1).max(1),
+        false => column,
+    };
     LintMessage {
         rule_id: Some(RuleId::Unknown(
             format!("typescript/TS{}", diagnostic.code)
@@ -252,39 +309,13 @@ fn type_error(diagnostic: &Diagnostic) -> LintMessage {
         )),
         message: text[..end].to_vec(),
         line: diagnostic.line,
-        column: diagnostic.column,
-        end: Some((diagnostic.end_line, diagnostic.end_column)),
+        column: column(diagnostic.line, diagnostic.column),
+        end: Some((
+            diagnostic.end_line,
+            column(diagnostic.end_line, diagnostic.end_column),
+        )),
         ..LintMessage::default()
     }
-}
-
-/// The checker has the text of a file without its byte order mark. Puts it back, so that it is in
-/// what is printed and written. `current`: the text that was checked, if it is not what is on the
-/// disk.
-fn with_byte_order_mark((mut result, text): Linted, current: Option<&[u8]>, path: &[u8]) -> Linted {
-    const MARK: &[u8] = b"\xEF\xBB\xBF";
-    let Some(text) = text else {
-        return (result, None);
-    };
-    if !current.map_or_else(
-        || crate::fs::starts_with(path, MARK),
-        |current| current.starts_with(MARK),
-    ) {
-        return (result, Some(text));
-    }
-    let fixes = result
-        .messages
-        .iter_mut()
-        .chain(&mut result.suppressed)
-        .flat_map(|message| {
-            let of_suggestions = message.suggestions.iter_mut().map(|it| &mut it.fix);
-            message.fix.iter_mut().chain(of_suggestions)
-        });
-    for fix in fixes {
-        fix.span.start += MARK.len() as u32;
-        fix.span.end += MARK.len() as u32;
-    }
-    (result, Some([MARK, &text].concat()))
 }
 
 /// What is said about a file for which [`File::is_too_large_for_flow_analysis`](bun_lint::ast::File::is_too_large_for_flow_analysis)
@@ -340,9 +371,7 @@ pub(crate) fn lint(
         for (index, linted) in pending.iter().copied().zip(linted) {
             let (file, state) = (&files[index], &mut states[index]);
             let (mut result, text) = match (linted, &state.current) {
-                (Some(linted), current) => {
-                    with_byte_order_mark(linted, current.as_deref(), file.path)
-                }
+                (Some(linted), _) => linted,
                 // It was in a program before it was fixed.
                 (None, Some(current)) => (
                     context.verify(file.path, current, file.config),

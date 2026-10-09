@@ -445,7 +445,7 @@ impl Run<'_> {
             let results = self
                 .options
                 .warn_ignored
-                .then(|| context.ignored(&path, &status));
+                .then(|| context.ignored(&path, &status, loaded.flavor));
             return Ok(Linted {
                 results: results.into_iter().collect(),
                 files: 0,

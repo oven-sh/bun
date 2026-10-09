@@ -162,11 +162,22 @@ impl Context<'_, '_> {
         })
     }
 
-    /// ESLint's `createIgnoreResult`.
-    pub(crate) fn ignored(&self, path: &[u8], status: &Status) -> FileResult {
+    /// ESLint's `createIgnoreResult`. `flavor`: of the configuration that ignores it.
+    pub(crate) fn ignored(&self, path: &[u8], status: &Status, flavor: Flavor) -> FileResult {
         let message: &[u8] = match status {
             Status::External => b"File ignored because outside of base path.",
             Status::Unconfigured => b"File ignored because no matching configuration was supplied.",
+            // That of ESLint 8 looks at all of the path.
+            _ if flavor == Flavor::EslintRc => {
+                let is_hidden = strings::split(path, b"/").any(|it| it.starts_with(b"."));
+                if is_hidden {
+                    b"File ignored by default.  Use a negated ignore pattern (like \"--ignore-pattern '!<relative/path/to/filename>'\") to override."
+                } else if paths::relative(self.cwd, path).starts_with(b"node_modules") {
+                    b"File ignored by default. Use \"--ignore-pattern '!node_modules/*'\" to override."
+                } else {
+                    b"File ignored because of a matching ignore pattern. Use \"--no-ignore\" to override."
+                }
+            }
             _ => {
                 let relative = paths::relative(self.cwd, path);
                 let directories = strings::split(&relative, b"/").collect::<Vec<_>>();
@@ -437,7 +448,8 @@ impl Context<'_, '_> {
         let Status::Matched(config) = &target.status else {
             // oxlint says nothing about such a file.
             let warns = self.options.warn_ignored && target.loaded.flavor != Flavor::Oxlint;
-            return Ok(warns.then(|| self.ignored(&target.path, &target.status)));
+            let flavor = target.loaded.flavor;
+            return Ok(warns.then(|| self.ignored(&target.path, &target.status, flavor)));
         };
         let started = self.timing.now();
         let text = match fs::read_sized(&target.path, target.size) {

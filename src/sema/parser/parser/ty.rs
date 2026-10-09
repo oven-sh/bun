@@ -862,7 +862,8 @@ impl Parser<'_> {
         list
     }
 
-    /// `parseTypeArguments` does not rescan a `<<`. Babel's does.
+    /// After the expression of a heritage clause, or the name of a JSX element. `parseTypeArguments`
+    /// does not rescan a `<<`. Babel's does.
     #[inline]
     pub(crate) fn is_at_type_arguments_of_heritage_element(&mut self) -> bool {
         if self.token() == T::LessThanLessThan && self.options.dialect.babel {

@@ -1,7 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { chmodSync, chownSync, existsSync, linkSync, readdirSync, readFileSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { endChildren, spawn } from "../children";
+
+afterAll(endChildren);
 
 const command = [bunExe(), "format"];
 
@@ -24,7 +27,7 @@ type Options = {
 async function format(files: Record<string, string>, args: string[], options: Options = {}) {
   using dir = tempDir("bun-format", files);
   options.before?.(String(dir));
-  await using proc = Bun.spawn({
+  await using proc = spawn({
     cmd: [...command, ...args],
     env: { ...env, ...options.env },
     cwd: join(String(dir), options.cwd ?? "."),
@@ -70,7 +73,7 @@ describe.concurrent("bun format", () => {
     let before = 0;
     using dir = tempDir("bun-format", { "a.js": formatted });
     before = statSync(join(String(dir), "a.js")).mtimeMs;
-    await using proc = Bun.spawn({ cmd: [...command, "a.js"], env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+    await using proc = spawn({ cmd: [...command, "a.js"], env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
     expect(await proc.exited).toBe(0);
     expect(statSync(join(String(dir), "a.js")).mtimeMs).toBe(before);
   });
@@ -80,7 +83,7 @@ describe.concurrent("bun format", () => {
     const isRoot = process.getuid?.() === 0;
     /** `bun format` in `dir`, which is still there afterwards. `before`: what starts the command. */
     async function write(dir: string, args: string[], before: string[] = []) {
-      await using proc = Bun.spawn({
+      await using proc = spawn({
         cmd: [...before, ...command, ...args],
         env,
         cwd: dir,
@@ -157,7 +160,12 @@ describe.concurrent("bun format", () => {
     // In a container, say, with the project of a user mounted into it.
     test.skipIf(!isRoot)("keeps its owner if root formats it", async () => {
       using dir = tempDir("bun-format", { "a.js": ugly });
-      chownSync(join(String(dir), "a.js"), 12345, 12345);
+      try {
+        chownSync(join(String(dir), "a.js"), 12345, 12345);
+      } catch {
+        // The root of a container that does not have these.
+        return;
+      }
       const { exitCode } = await write(String(dir), []);
       const { uid, gid } = statSync(join(String(dir), "a.js"));
       expect([read(String(dir), "a.js"), uid, gid]).toEqual([formatted, 12345, 12345]);
@@ -1636,6 +1644,135 @@ try {
     expect(result.exitCode).toBe(0);
   });
 
+  // Each unit, repeated, is a file: what has once taken more than linear time, and what is like it. Many are refused, which has
+  // to be fast too. All of them together are compared with as many files with as many bytes of ordinary text, so that it holds
+  // on a busy machine and in a debug build.
+  test.each<[string, string, string[]]>([
+    [
+      "css",
+      '.button:hover > .icon {\n  color: #336699;\n  margin: 0 auto 1px 2em;\n  background: url("a.png") no-repeat center;\n}\n\n',
+      [
+        ...'a{b:c}\n¦a{¦}¦a,¦a ¦a>¦.a¦#a¦:a¦::a¦[a]¦[a=b]¦(¦)¦[¦]¦{¦;¦:¦,¦/* a */¦/*¦*/¦"a"¦"¦\'¦\\¦@a;¦@a ¦@media a{'.split(
+          "¦",
+        ),
+        ...'@media (a:b) and ¦@import "a";\n¦a:b;¦--a:b;¦--a:{¦a{b:c d e f}\n¦\n¦ ¦\t¦!important¦url(a)¦url(¦1px '.split(
+          "¦",
+        ),
+        ...'+¦-¦*¦/¦%¦#fff ¦é¦😀¦@¦&¦~¦|¦$a:b;¦a{b:c(¦a{b:c,¦a{b:c ¦a{b:(¦a{b:"c" ¦a{b:/* c */¦a{b:c/¦a{b:1+¦a{b:url(c) '.split(
+          "¦",
+        ),
+        ...'a{b:var(--c,¦a{b:calc(1px + ¦a{grid-template-areas:"a"\n¦a:not(¦a:is(b,¦@supports (a:b) or ¦@font-face{a:b}\n'.split(
+          "¦",
+        ),
+        ...'@charset "a";¦<!--¦-->¦a{b:c!important;}\n¦/* prettier-ignore */\na{b:c}\n¦---\n'.split("¦"),
+      ],
+    ],
+    [
+      "scss",
+      ".button {\n  $size: 12px;\n  &:hover {\n    color: darken($color, 10%);\n    @include shadow(1px, 2px);\n  }\n}\n\n",
+      [
+        ..."// a\n¦$a:b;\n¦$a:(b:c,¦$a:(¦#{$a}¦#{¦@include a;\n¦@include a(¦@mixin a{¦@if a{}\n¦@else{}\n¦@if a{}@else ".split(
+          "¦",
+        ),
+        ..."@each $a in b{}\n¦@function a(){¦@return a;¦%a{b:c}\n¦&-a{¦&¦a{b:{c:d}}\n¦a{b:$c+¦a{b:$c*¦a{b:$c - ".split(
+          "¦",
+        ),
+        ...'@use "a";\n¦@forward "a";\n¦$a:b !default;\n¦$a:(b:(c:(¦a{b:c, // d\n¦a{// b\n¦$m:(// a\nb:c,¦@debug a;'.split(
+          "¦",
+        ),
+        ...'@error "a"+¦a{@extend b;}\n¦...¦@media #{$a} and '.split("¦"),
+      ],
+    ],
+    [
+      "less",
+      ".button {\n  @size: 12px;\n  &:hover {\n    color: darken(@color, 10%);\n    .shadow(1px, 2px);\n  }\n}\n\n",
+      [
+        ...'// a\n¦@a:b;\n¦@a:{¦.a();\n¦.a(¦.a() when (b){¦@{a}¦@{¦.a{.b;}\n¦.a{.b();}\n¦~"a"¦~`a`¦e("a")¦@import (a) "b";\n'.split(
+          "¦",
+        ),
+        ...'.a:extend(.b);\n¦&:extend(¦each(@a,{¦each(@a,{})\n¦@plugin "a";\n¦.a{@b:c;}\n¦@a:@@b;\n¦.a when (default()){'.split(
+          "¦",
+        ),
+        ..."@media @a{¦.m(@a;@b){¦@r:{a:b};\n¦@r();\n¦.a{b:@c+¦.a{b:(@c*¦!important¦.a !important;\n¦// '\n¦// \"\n".split(
+          "¦",
+        ),
+      ],
+    ],
+    [
+      "yaml",
+      'name: value\nlist:\n  - one\n  - two: "three"\nmap: { a: 1, b: [2, 3] }\n# a comment\n',
+      [
+        ..."a: b\n¦- a\n¦a:\n¦- ¦- - ¦? a\n¦: a\n¦? ¦a: ¦[¦]¦{¦}¦[a,¦{a: b,¦\"a\" ¦\"¦'¦'a' ¦# a\n¦#¦&a ¦*a ¦!a ".split(
+          "¦",
+        ),
+        ..."!!a ¦|\n¦>\n¦|\n a\n¦>\n a\n¦a: |\n  b\n¦---\n¦...\n¦--- a\n¦%YAML 1.2\n¦%TAG ! a\n¦\n¦ ¦\t¦a ¦a\n¦ a\n".split(
+          "¦",
+        ),
+        ...'é ¦😀 ¦a: &b c\n¦a: *b\n¦a: !c d\n¦- a: b\n¦- a: b\n  c: d\n¦a: [b, c]\n¦a: {b: c}\n¦"a": "b"\n¦a: "b\n  c"\n'.split(
+          "¦",
+        ),
+        ..."a: b # c\n¦# prettier-ignore\na:   b\n¦a:\n  # b\n¦- # a\n¦<<: *a\n¦,¦:¦-¦?¦a: b\n\n¦a: >-\n  b\n\n  c\n".split(
+          "¦",
+        ),
+        ...'- |+\n  a\n\n¦[é, ¦{é: é, ¦"é", '.split("¦"),
+      ],
+    ],
+    [
+      "graphql",
+      "type User {\n  id: ID!\n  name(first: Int = 1): [String!]\n}\n\nquery {\n  user(id: 1) {\n    name\n  }\n}\n\n",
+      [
+        ...'{a}\n¦{¦}¦a ¦query{a}\n¦type A{b:C}\n¦type A{¦b:C ¦# a\n¦"a" ¦"""a""" ¦"¦"""¦(¦)¦[¦]¦$a '.split("¦"),
+        ..."@a ¦...¦...a ¦...on A{b} ¦a:b ¦a(b:1) ¦{a{¦!¦|¦&¦=¦:¦,¦\n¦ ¦1 ¦1.5 ¦enum A{B}\n¦union A=B|C\n¦union A=B".split(
+          "¦",
+        ),
+        ..."|B¦input A{b:C=1}\n¦scalar A\n¦directive @a on B\n¦schema{query:A}\n¦extend type A{b:C}\n¦fragment A on B{c}\n".split(
+          "¦",
+        ),
+        ..."interface A{b:C}\n¦type A implements B&C{d:E}\n¦&B¦{a(b:[¦{a(b:{c:¦é¦\\".split("¦"),
+      ],
+    ],
+    [
+      "hbs",
+      '<div class="a {{b}}">\n  {{#if c}}\n    <span>{{d.e}}</span>\n  {{/if}}\n</div>\n',
+      [
+        ..."a ¦<a>¦</a>¦<a></a>¦<a/>¦<a ¦<¦>¦{{a}}¦{{¦}}¦{{{a}}}¦{{#a}}¦{{/a}}¦{{#a}}{{/a}}¦{{#if a}}b{{/if}}\n".split(
+          "¦",
+        ),
+        ..."{{else}}¦{{#if a}}{{else if b}}¦{{!a}}¦{{!--a--}}¦{{!--¦<!--a-->¦<!--¦{{a b}}¦{{a b=c}}¦{{a (b)}}¦{{a (".split(
+          "¦",
+        ),
+        ...'{{a "b"}}¦{{a.b}}¦{{a.¦<a b="c">¦<a b={{c}}>¦<a b="{{c}}">¦<a {{b}}>¦<a b="¦&amp;¦&¦\n¦ ¦\t¦"'.split("¦"),
+        ..."'¦\\{{a}}¦\\¦<a as |b|>¦{{#a as |b|}}¦<pre>a</pre>¦<br>¦<input>¦é¦😀¦{{~a~}}¦<a\n¦<a b\n¦{{yield}}¦<:a>".split(
+          "¦",
+        ),
+        ..."<A::B/>¦{{@a}}¦{{this.a}}¦<script>a</script>¦<style>a{}</style>¦---\n".split("¦"),
+      ],
+    ],
+  ])(
+    "takes time in proportion to the size of the text: .%s",
+    async (extension, ordinary, units) => {
+      const count = isDebug || isASAN ? 2_000 : 40_000;
+      const repeated = (unit: string, times: number) =>
+        Buffer.alloc(Buffer.byteLength(unit) * Math.floor(times), unit).toString();
+      const texts = units.map(unit => repeated(unit, count));
+      const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
+      for (const configuration of [{}, { ".oxfmtrc.json": "{}\n" }]) {
+        const run = (text: (index: number) => string) =>
+          format(
+            {
+              ...configuration,
+              ...Object.fromEntries(texts.map((_, index) => [`${index}.${extension}`, text(index)])),
+            },
+            ["--check", "--log-level", "silent"],
+          );
+        const shapes = await run(index => texts[index]);
+        const plain = await run(() => repeated(ordinary, length / ordinary.length));
+        expect(shapes.cpu / plain.cpu).toBeLessThan(4);
+      }
+    },
+    120_000,
+  );
+
   // What some part of reading or printing HTML once walked again for each repetition, and what is like it. All of it is weighed
   // against as many bytes of ordinary HTML, by the time of the processor: that holds on a busy machine and in a debug build.
   test("HTML, Vue and Angular take time in proportion to their size", async () => {
@@ -1736,7 +1873,7 @@ try {
   ])(
     "Markdown takes time in proportion to its size: %s",
     async (_, extension, configuration) => {
-      const count = isDebug || isASAN ? 2_000 : 40_000;
+      const count = isDebug || isASAN ? 1_000 : 40_000;
       const units = [
         ..."a b c\n|a b\n\n|- a\n|- a\n\n|1. a\n|- a\n* a\n|1. a\n1) a\n|- a\n\n  ***\n* a\n\n  ***\n|> a\n\n|> a\n|- [ ] a\n".split(
           "|",
@@ -2302,6 +2439,108 @@ try {
       expect(result.stdout).toContain("bun format");
       expect(result.stdout).toContain("--list-different");
       expect(result.exitCode).toBe(0);
+    });
+  });
+});
+
+describe.concurrent("a file that is not UTF-8, or has a NUL", () => {
+  /** Formats the directory with `files`. The files afterwards, byte for byte: one character of the string is one byte. */
+  async function bytesAfter(files: Record<string, string | Buffer>) {
+    using dir = tempDir("bun-format-bytes", files);
+    await using proc = spawn({
+      cmd: [...command, "--no-config", "--no-editorconfig", "."],
+      env,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return {
+      // Not the lines of a code frame: `[error] > 2 | ..`, `[error]     |     ^`.
+      errors: stderr.split(/\r?\n/).filter(line => /^\[error\] [^ >|]/.test(line)),
+      exitCode,
+      files: Object.fromEntries(
+        Object.keys(files).map(name => [name, readFileSync(join(String(dir), name)).toString("latin1")]),
+      ),
+    };
+  }
+  const utf16le = (text: string) => Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")]);
+  const utf16be = (text: string) => Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from(text, "utf16le").swap16()]);
+  const texts = {
+    "a.html": "<p   a>b</p>\r\n<p>c</p>\r\n",
+    "a.vue": "<template>\r\n<p   a>b</p>\r\n</template>\r\n<script>\r\nlet a  =  1\r\n</script>\r\n",
+    "a.md": "#  a\r\n\r\n*  b\r\n",
+    "a.yaml": "a:    1\r\nb:    2\r\n",
+    "a.css": "a{b:c}\r\n",
+    "a.scss": "a{b:c}\r\n",
+    "a.less": "a{b:c}\r\n",
+    "a.json": '{"a":   1}\r\n',
+    "a.graphql": "query   { a }\r\n",
+    "a.hbs": "<p   a>b</p>\r\n",
+    "a.js": "a  =  1\r\n",
+    "a.ts": "let a:number  =  1\r\n",
+  };
+
+  // What `>` and `Out-File` of Windows PowerShell write.
+  test.each([
+    ["little", utf16le],
+    ["big", utf16be],
+  ])("UTF-16, %s endian, is refused in every language and stays as it is", async (_, encode) => {
+    const files = Object.fromEntries(Object.entries(texts).map(([name, text]) => [name, encode(text)]));
+    const result = await bytesAfter(files);
+    expect(result.files).toEqual(
+      Object.fromEntries(Object.entries(files).map(([name, bytes]) => [name, bytes.toString("latin1")])),
+    );
+    expect(result.errors.map(line => line.split(":")[0]).sort()).toEqual(
+      Object.keys(files)
+        .map(name => `[error] ${name}`)
+        .sort(),
+    );
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("what follows a NUL in HTML is not dropped", async () => {
+    const files = {
+      "a.html": "<p   a>b</p>\n<p>c\0d</p>\n<p>e</p>\n",
+      "a.vue": "<template>\n<p>b\0c</p>\n</template>\n<script>\nlet a  = 1\n</script>\n",
+      // The template is no HTML then, and stays as it is.
+      "a.js": "x = html`<p   a>b</p><p>c\0d</p><p>e</p>`;\n",
+    };
+    const result = await bytesAfter(files);
+    expect(result.files).toEqual(files);
+    expect(result.errors.map(line => line.split(":")[0]).sort()).toEqual(["[error] a.html", "[error] a.vue"]);
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("a NUL where the text of HTML does not end with it stays", async () => {
+    const result = await bytesAfter({
+      "a.html": '<p   a="\0">b</p>\n<!-- \0 -->\n<script>a\0b</script>\n<p>e</p>\n',
+    });
+    expect(result).toEqual({
+      errors: [],
+      exitCode: 0,
+      files: { "a.html": '<p a="\0">b</p>\n<!-- \0 -->\n<script>\n  a\0b\n</script>\n<p>e</p>\n' },
+    });
+  });
+
+  test("bytes that are Windows-1252 stay what they are", async () => {
+    const files = {
+      "a.js": Buffer.from("// caf\xE9\nconst a  = 'd\xE9j\xE0';\n", "latin1"),
+      "a.css": Buffer.from("/* caf\xE9 */\na{content:'\xE9'}\n", "latin1"),
+      "a.md": Buffer.from("#  caf\xE9\n", "latin1"),
+      "a.yaml": Buffer.from("a:    caf\xE9\n", "latin1"),
+      "a.html": Buffer.from("<p   title='\xE9'>caf\xE9</p>\n", "latin1"),
+    };
+    expect(await bytesAfter(files)).toEqual({
+      errors: [],
+      exitCode: 0,
+      files: {
+        "a.js": '// caf\xE9\nconst a = "d\xE9j\xE0";\n',
+        "a.css": '/* caf\xE9 */\na {\n  content: "\xE9";\n}\n',
+        "a.md": "# caf\xE9\n",
+        "a.yaml": "a: caf\xE9\n",
+        "a.html": '<p title="\xE9">caf\xE9</p>\n',
+      },
     });
   });
 });

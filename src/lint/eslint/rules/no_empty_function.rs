@@ -149,6 +149,55 @@ fn is_allowed_empty_function(func: Func, kind: u16, allow: Allow) -> bool {
         || allow.includes(OVERRIDE_METHODS) && flags.contains(Flags::OVERRIDE)
 }
 
+/// oxlint's `get_function_name_and_kind`, as far as it says that the function may be empty. There `methods` is for all
+/// methods, `asyncFunctions` also for arrow functions, `overrideMethods` not for accessors, and nothing for
+/// `export default function () {}`.
+fn is_allowed_by_oxlint(func: Func, allow: Allow) -> bool {
+    let (is_async, is_generator) = (func.is_async(), func.is_generator());
+    let is_allowed_function = is_async && allow.includes(ASYNC_FUNCTIONS)
+        || is_generator && allow.includes(GENERATOR_FUNCTIONS)
+        || !is_async && !is_generator && allow.includes(FUNCTIONS);
+    let is_allowed_method = is_async && allow.includes(ASYNC_METHODS)
+        || is_generator && allow.includes(GENERATOR_METHODS)
+        || allow.includes(METHODS);
+    let is_decorated = |member: Member| allow.includes(DECORATED_FUNCTIONS) && member.decorators().next().is_some();
+    if func.is_arrow() {
+        return allow.includes(ARROW_FUNCTIONS)
+            || is_async && allow.includes(ASYNC_FUNCTIONS)
+            || matches!(FunctionParent::of(func), FunctionParent::PropertyDefinition(member) if is_decorated(member));
+    }
+    if func.name().is_some() {
+        return is_allowed_function;
+    }
+    match FunctionParent::of(func) {
+        FunctionParent::MethodDefinition(member) => {
+            let flags = member.flags();
+            is_decorated(member)
+                || match member.kind() {
+                    _ if member.is_constructor() => {
+                        allow.includes(CONSTRUCTORS)
+                            || func.params().iter().any(Param::is_parameter_property)
+                            || flags.contains(Flags::PRIVATE) && allow.includes(PRIVATE_CONSTRUCTORS)
+                            || flags.contains(Flags::PROTECTED) && allow.includes(PROTECTED_CONSTRUCTORS)
+                    }
+                    MemberKind::Getter => allow.includes(GETTERS),
+                    MemberKind::Setter => allow.includes(SETTERS),
+                    _ => is_allowed_method || flags.contains(Flags::OVERRIDE) && allow.includes(OVERRIDE_METHODS),
+                }
+        }
+        FunctionParent::ObjectProperty(prop) => match prop.kind() {
+            PropKind::Getter => allow.includes(GETTERS),
+            PropKind::Setter => allow.includes(SETTERS),
+            PropKind::Method => is_allowed_method,
+            _ => is_allowed_function,
+        },
+        FunctionParent::PropertyDefinition(member) => is_allowed_function || is_decorated(member),
+        FunctionParent::VariableDeclarator(_) | FunctionParent::Other => {
+            is_allowed_function && func.kind() != FnKind::Decl
+        }
+    }
+}
+
 /// How oxlint calls the function.
 fn name_for_oxlint(func: Func) -> Vec<u8> {
     const FUNCTION: &[u8] = b"function";
@@ -189,7 +238,11 @@ pub fn check<'a, R: Rule>(func: Func<'a>, allow: Allow, cx: &Cx<'a, R>) {
     let inside = body.shrink(1, 1);
     // There are no statements, so there is only whitespace, of which TypeScript knows more kinds,
     // and comments.
-    if cx.slice(inside).iter().any(u8::is_ascii_graphic) || is_allowed_empty_function(func, kind, allow) {
+    let is_allowed = || match cx.language().is_oxlint {
+        true => is_allowed_by_oxlint(func, allow),
+        false => is_allowed_empty_function(func, kind, allow),
+    };
+    if cx.slice(inside).iter().any(u8::is_ascii_graphic) || is_allowed() {
         return;
     }
     let name = ast_utils::get_function_name_with_kind(func);

@@ -1,11 +1,14 @@
 // The cases of oxfmt's own command line tests (`apps/oxfmt/test/cli/*/options.json` of oxc-project/oxc, MIT: see LICENSE), with what
 // oxfmt 0.72 does in each: the exit code, the files afterwards, and the files that `--check` and `--list-different` name.
 // `cases.json` is written by `test/cli/lint/oracle/driver/oxfmt-fixtures.mjs --record`.
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { endChildren, spawn } from "../../children";
 import { cases, fixtures } from "./cases.json";
+
+afterAll(endChildren);
 
 type Files = Record<string, string | { link: string }>;
 // A fixture has `experimentalTailwindcss`, which has no effect here. That `bun format` says so is tested elsewhere.
@@ -25,7 +28,7 @@ describe.concurrent("bun format does what oxfmt does", () => {
       });
       const root = join(String(dir), "fixtures");
       for (const [name, { link }] of links) symlinkSync(link, join(root, name));
-      await using proc = Bun.spawn({
+      await using proc = spawn({
         cmd: [...command, ...it.args],
         env: { ...bunEnv, ...(it as { env?: Record<string, string> }).env, ...env },
         cwd: join(root, it.cwd ?? "."),

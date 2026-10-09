@@ -37,7 +37,7 @@ fn get_comment_only_lines<'a>(file: &'a File<'a>) -> Vec<bool> {
 
 /// For each comment where it starts, and how many lines oxlint's `count_comment_lines` finds in the comments up to it:
 /// the lines that a comment has for itself. A line with two comments is a line of code.
-fn count_comment_lines_as_oxlint<'a>(file: &'a File<'a>) -> Vec<(u32, u32)> {
+pub(super) fn count_comment_lines_as_oxlint<'a>(file: &'a File<'a>) -> Vec<(u32, u32)> {
     let mut count = 0;
     let counts = file.comments().map(|comment| {
         let (first, last) = (file.line_of(comment.start()), file.line_of(comment.end()));

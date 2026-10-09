@@ -3070,7 +3070,8 @@ test("react-compiler memory does not grow with the square of the size of a compo
   // A debug build is 20 times slower, and its larger frames leave the stack for
   // a chain of 94: a longer one is not compiled.
   const small = isDebug || isASAN;
-  const terms = small ? 90 : 400;
+  // A chain is nested as deeply as it is long, and more than 256 levels are not compiled.
+  const terms = small ? 90 : 250;
   const elements = small ? 120 : 300;
   using dir = tempDir("react-compiler-memory", {
     "empty.jsx": `export default function App() { return null; }`,
@@ -3116,10 +3117,10 @@ test("react-compiler memory does not grow with the square of the size of a compo
 
   const [empty, chain, pattern] = await Promise.all([peakMB("empty.jsx"), peakMB("chain.jsx"), peakMB("pattern.jsx")]);
   // Above the empty build, without the fixes: 110 MB and 125 MB for the small
-  // inputs, 940 MB and 1050 MB for the large ones.
-  const bound = small ? 70 : 300;
-  expect(chain - empty).toBeLessThan(bound);
-  expect(pattern - empty).toBeLessThan(bound);
+  // inputs, 1050 MB for the large pattern, and 940 MB for a chain of 400 terms,
+  // which is 370 MB for 250.
+  expect(chain - empty).toBeLessThan(small ? 70 : 120);
+  expect(pattern - empty).toBeLessThan(small ? 70 : 300);
 });
 
 // ValidateExhaustiveDependencies gives each phi the dependencies of its

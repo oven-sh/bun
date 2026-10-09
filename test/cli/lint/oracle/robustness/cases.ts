@@ -39,6 +39,8 @@ export type Case = {
   isHeavy?: boolean;
   /** It takes more than half a second in a release build: for check.ts alone. */
   isSlow?: boolean;
+  /** It fails, and what it takes to pass. For check.ts alone until then. */
+  waitsFor?: string;
 };
 
 const fn = (body: string) => `function f(a, b) {\n${body}\n}\n`;
@@ -469,6 +471,16 @@ export const cases: Case[] = [
     rules: { "prefer-named-capture-group": "error", "no-useless-backreference": "error" },
     reports: {},
     exitCode: 0,
+  },
+  {
+    name: "a pattern in a comment that splits a line of 3,000 characters in four in every way",
+    waitsFor: "a limit on the steps of a search in JavaScriptCore's interpreter, which counts only attempts at groups: it does not end",
+    file: "a.js",
+    text: () => `/* eslint max-len: ["error", { "code": 10, "ignorePattern": ".*.*.*.*x" }] */\n// ${rep("a", 3_000)}\n`,
+    rules: {},
+    eslint: true,
+    reports: { "max-len": 1 },
+    exitCode: 1,
   },
 
   // ── comments ──
@@ -943,6 +955,27 @@ export const cases: Case[] = [
       exitCode: [0, 1],
     }),
   ),
+  {
+    name: "100,000 commas in a row, with types",
+    isHeavy: true,
+    file: "a.ts",
+    text: () => `export const a = (${rep("1, ", 100_000)}1);\n`,
+    rules: { "typescript/no-deprecated": "error" },
+    args: typed,
+    reports: {},
+    exitCode: 0,
+  },
+  {
+    // Each starts where the first does and ends further on, all on one line.
+    name: "100,000 commas in a row, and the type errors",
+    isHeavy: true,
+    file: "a.ts",
+    text: () => `export const a = (${rep("1, ", 100_000)}1);\n`,
+    rules: { "typescript/no-deprecated": "error" },
+    args: ["--type-check", ...typed],
+    matches: /^100000 problems$/m,
+    exitCode: 1,
+  },
   {
     name: "a regular expression in a variable that 30,000 functions match with",
     isHeavy: true,

@@ -19,7 +19,6 @@ use bun_lint_driver::js_plugin::{Demand, Engine, PROGRAM, Serve, Vm};
 use bun_threading::{Condition, Guarded};
 use std::sync::Arc;
 use std::thread::ThreadId;
-use std::time::Instant;
 
 bun_core::declare_scope!(lint_js, hidden);
 
@@ -402,7 +401,6 @@ struct Borrowed<'e> {
     engines: &'e Engines,
     at: usize,
     desk: Arc<Desk>,
-    since: Instant,
     /// The size of the file that it is borrowed for.
     size: usize,
     /// A caller further up has borrowed it, and gives it back.
@@ -443,10 +441,8 @@ impl Drop for Borrowed<'_> {
         let mut state = self.engines.state.lock();
         state.borrowed.retain(|it| it.1 != self.at);
         state.idle.push(self.at);
-        let started = state.all[self.at].1.take();
         drop(state);
-        let since_its_start = started.map(|it| it.elapsed());
-        (self.engines.demand).note(self.size, self.since.elapsed(), since_its_start);
+        self.engines.demand.note(self.size);
         // Each of those that wait may wait for another one.
         self.engines.is_idle.notify_all();
     }
@@ -454,8 +450,8 @@ impl Drop for Borrowed<'_> {
 
 #[derive(Default)]
 struct State {
-    /// With when it was started, until it is given back for the first time, and who has borrowed it last.
-    all: Vec<(Arc<Desk>, Option<Instant>, ThreadId)>,
+    /// With who has borrowed it last.
+    all: Vec<(Arc<Desk>, ThreadId)>,
     /// Which of them nobody has borrowed. The last one was given back last.
     idle: Vec<usize>,
     /// Who has borrowed which.
@@ -474,7 +470,7 @@ pub(crate) struct Engines {
 impl Engines {
     /// Ends every engine. Nothing is being linted any more.
     pub(crate) fn end_all(&self) {
-        for (desk, ..) in core::mem::take(&mut self.state.lock().all) {
+        for (desk, _) in core::mem::take(&mut self.state.lock().all) {
             desk.say(Turn::End);
             desk.hear(|turn| matches!(turn, Turn::Returned(_)));
         }
@@ -490,19 +486,18 @@ impl Engines {
                 engines: self,
                 at,
                 desk: Arc::clone(&state.all[at].0),
-                since: Instant::now(),
                 size,
                 is_borrowed_further_up: true,
             });
         }
         let at = loop {
             // The one that it had, which has grown by what this thread has given it.
-            let mine = (state.idle.iter()).rposition(|&at| state.all[at].2 == me);
+            let mine = (state.idle.iter()).rposition(|&at| state.all[at].1 == me);
             if let Some(at) = mine
                 .map(|it| state.idle.remove(it))
                 .or_else(|| state.idle.pop())
             {
-                state.all[at].2 = me;
+                state.all[at].1 = me;
                 break at;
             }
             if self.demand.is_worth_another(state.all.len()) {
@@ -514,7 +509,7 @@ impl Engines {
                     .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
                     .spawn(move || run_engine(at, &start, &for_thread))
                     .map_err(|_| b"Could not start a thread for the plugins.".to_vec())?;
-                state.all.push((desk, Some(Instant::now()), me));
+                state.all.push((desk, me));
                 break at;
             }
             self.is_idle.wait_guarded(&mut state);
@@ -524,7 +519,6 @@ impl Engines {
             engines: self,
             at,
             desk: Arc::clone(&state.all[at].0),
-            since: Instant::now(),
             size,
             is_borrowed_further_up: false,
         })

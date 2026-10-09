@@ -594,7 +594,7 @@ impl CommandLineParser<'_> {
             self.response_files.len() >= MAX_NESTED || self.response_files.contains(&file_name);
         let text = match is_refused {
             true => None,
-            false => host::read_at(&file_name),
+            false => host::read_at(&file_name, false),
         };
         let Some(text) = text else {
             let cannot_read = global(5083, &[displayed_path(&file_name)]);
@@ -892,6 +892,8 @@ pub struct Report {
     pub diagnostics: Vec<Diagnostic>,
     /// Files of which errors may be missing.
     pub incomplete: Vec<Incomplete>,
+    /// `Host::take_unreadable`: the source files that could not be read. Each was checked as an empty file.
+    pub unreadable: Vec<Vec<u8>>,
     /// Whether `@types/bun` is installed where a checked project would resolve it.
     pub has_bun_types_installed: bool,
     /// By `package.json`.
@@ -950,6 +952,7 @@ impl Report {
     fn merge(&mut self, other: Report) {
         self.diagnostics.extend(other.diagnostics);
         self.incomplete.extend(other.incomplete);
+        self.unreadable.extend(other.unreadable);
         self.listed_files.extend(other.listed_files);
         self.scripts_elsewhere.extend(other.scripts_elsewhere);
         self.resolution_trace.extend(other.resolution_trace);
@@ -1077,13 +1080,20 @@ fn located(
     end: u32,
     reported: Diagnostic,
 ) -> Diagnostic {
-    let counted = std::cell::Cell::default();
-    located_after(&counted, path, text, starts, start, end, reported)
+    located_after(
+        &Counted::default(),
+        path,
+        text,
+        starts,
+        start,
+        end,
+        reported,
+    )
 }
 
 /// `counted`: see `line_and_character`.
 fn located_after(
-    counted: &std::cell::Cell<(u32, u32)>,
+    counted: &Counted,
     path: &[u8],
     text: &[u8],
     starts: &[u32],
@@ -1113,23 +1123,31 @@ fn located_after(
 }
 
 /// `GetECMALineAndUTF16CharacterOfPosition`: the 0-based line that contains `offset`, and the number
-/// of UTF-16 code units before it on that line. `counted`: the offset in `text` that was asked for before, and that
-/// number for it. What follows it on its line is counted from there, not from the start of the line.
-fn line_and_character(
-    text: &[u8],
-    starts: &[u32],
-    offset: u32,
-    counted: &std::cell::Cell<(u32, u32)>,
-) -> (u32, u32) {
+/// of UTF-16 code units before it on that line. What follows one of `counted` on its line is counted from there, not
+/// from the start of the line.
+fn line_and_character(text: &[u8], starts: &[u32], offset: u32, counted: &Counted) -> (u32, u32) {
     let offset = offset.min(text.len() as u32);
     let line = starts.partition_point(|&s| s <= offset) - 1;
-    let (from, units) = match counted.get() {
-        (from, units) if (starts[line]..=offset).contains(&from) => (from, units),
-        _ => (starts[line], 0),
-    };
+    let mut places = counted.places.get();
+    let nearest = (0..places.len())
+        .filter(|&i| (starts[line]..=offset).contains(&places[i].0))
+        .max_by_key(|&i| places[i].0);
+    let (from, units) = nearest.map_or((starts[line], 0), |i| places[i]);
     let character = units + utf16_len(&text[from as usize..offset as usize]) as u32;
-    counted.set((offset, character));
+    let written = nearest.unwrap_or_else(|| counted.older.get());
+    places[written] = (offset, character);
+    counted.places.set(places);
+    counted.older.set(1 - written);
     (line as u32, character)
+}
+
+/// Two offsets in a text that `line_and_character` was asked for, each with the number it found. Two, because errors
+/// that start at one place and end further and further on, as those of a chain of operators do, are asked for in turn.
+#[derive(Default)]
+struct Counted {
+    places: std::cell::Cell<[(u32, u32); 2]>,
+    /// Which of them was written before the other.
+    older: std::cell::Cell<usize>,
 }
 
 /// `core.UTF16Len`: a byte that is not part of a well-formed sequence is a U+FFFD of its own.
@@ -1178,6 +1196,7 @@ pub fn check_provided_then<R>(
     let mut disk = host::Disk::with_already_read(threads, provided.already_read, &project);
     disk.before_read = provided.before_read;
     disk.scripts_of_page = provided.scripts_of_page;
+    disk.keeps_byte_order_marks = provided.keeps_byte_order_marks;
     if let Libs::Bundled(libs) = request.libs {
         disk.bundled_libs = Some(libs);
     }
@@ -1465,10 +1484,9 @@ impl Projects {
             if !has_to_include {
                 break;
             }
-            let dir = dirname::<Posix>(&below);
-            let parent = dirname::<Posix>(dir);
-            let above = (parent.len() < dir.len()).then(|| config::find_config(disk, parent));
-            let Some(above) = above.flatten() else {
+            // Up to the root. What is above `/C:` is `/`, which is no directory of Windows.
+            let parent = ancestors(dirname::<Posix>(&below)).nth(1);
+            let Some(above) = parent.and_then(|it| config::find_config(disk, it)) else {
                 break;
             };
             if let Some(owner) = self.find_project_with(disk, request, &above, path) {
@@ -3063,7 +3081,7 @@ fn check_named_files(
         let module = &program.files.modules[file.idx()];
         let text = &text_of(file)[..];
         let starts = compute_ecma_line_starts(text);
-        let counted = std::cell::Cell::default();
+        let counted = Counted::default();
         let shown: Vec<Diagnostic> = errors
             .into_iter()
             .map(|e| {
@@ -3635,6 +3653,7 @@ fn check_named_files(
     let unreadable = host.take_unreadable();
     let cannot_read = (unreadable.iter()).map(|path| global(5083, &[displayed_path(path)]));
     report.diagnostics.extend(cannot_read);
+    report.unreadable.extend(unreadable);
     sort_and_deduplicate(&mut report.diagnostics);
     report.check_time = checking.elapsed();
     report.declaration_files = std::mem::take(&mut *declaration_files.lock());

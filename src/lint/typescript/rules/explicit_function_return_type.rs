@@ -114,7 +114,8 @@ impl ExplicitFunctionReturnType {
         if func.return_type().is_some() || !ast_utils::is_function_with_body(func) && !is_only_declared {
             return;
         }
-        let is_expression = func.kind() != FnKind::Decl;
+        // For oxlint a function that is only declared is allowed where a function expression is.
+        let is_expression = func.kind() != FnKind::Decl || is_only_declared;
         if self.allow_concise_arrow_function_expressions_starting_with_void
             && func.is_arrow()
             && let FnBody::Expr(body) = func.body()
@@ -125,23 +126,35 @@ impl ExplicitFunctionReturnType {
         if self.is_allowed_function(func) {
             return;
         }
-        if is_only_declared {
+        let head = || {
             let start = match func.owner() {
                 Node::Stmt(statement) => statement.span_without_export().start,
                 Node::Member(member) => member.span().start,
                 _ => func.span().start,
             };
-            let end = func.open_paren().filter(|&it| it >= start).unwrap_or(start);
-            cx.report(Span::new(start, end), MISSING_RETURN_TYPE);
+            Span::new(start, func.open_paren().filter(|&it| it >= start).unwrap_or(start))
+        };
+        if is_only_declared && matches!(func.owner(), Node::Member(_)) {
+            cx.report(head(), MISSING_RETURN_TYPE);
             return;
         }
+        let untyped = ReturnTypeOptions { allow_typed_function_expressions: false, ..self.options };
+        let is_default = is_oxlint && oxlint_is_default_of_parameter(func);
         if is_expression
             && self.options.allow_typed_function_expressions
-            && (is_valid_function_expression_return_type(func, self.options)
-                && !(is_oxlint && oxlint_is_default_of_parameter(func))
+            && (is_valid_function_expression_return_type(func, if is_default { untyped } else { self.options })
                 || ancestor_has_return_type(func)
                 || is_oxlint && oxlint_ancestor_has_return_type(func, &mut cx.state))
         {
+            return;
+        }
+        // oxlint allows `() => 1 as const` whatever `allowTypedFunctionExpressions` is.
+        let only_const = ReturnTypeOptions { allow_expressions: false, ..untyped };
+        if is_oxlint && is_expression && is_valid_function_expression_return_type(func, only_const) {
+            return;
+        }
+        if is_only_declared {
+            cx.report(head(), MISSING_RETURN_TYPE);
             return;
         }
         check_function_return_type(func, self.options, |mut loc| {

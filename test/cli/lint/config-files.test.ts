@@ -1,11 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { existsSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { endChildren, spawn } from "../children";
 import { cases as rowsOfESLint8 } from "./oracle/driver/eslintrc-cli-cases.mjs";
 import differencesFromESLint8 from "./oracle/driver/eslintrc-cli.differences.json";
 import whatESLint8Does from "./oracle/driver/eslintrc-cli.expected.json";
 import { argumentsOf, difference, environment, outcome, write } from "./oracle/driver/eslintrc-cli.mjs";
+
+afterAll(endChildren);
 
 const command = [bunExe(), "lint"];
 
@@ -31,7 +34,7 @@ type Options = { cwd?: string; env?: Record<string, string | undefined>; before?
 async function lint(files: Record<string, string>, args: string[] = ["."], options: Options = {}) {
   using dir = tempDir("bun-lint-config-files", files);
   options.before?.(String(dir));
-  await using proc = Bun.spawn({
+  await using proc = spawn({
     cmd: [...command, "--threads", "2", "-f", "json-with-metadata", ...args],
     env: { ...env, ...options.env },
     cwd: join(String(dir), options.cwd ?? "."),
@@ -165,7 +168,7 @@ describe.concurrent("an eslint.config.js", () => {
   test("a path leaves the program that runs the file with `/`, also on Windows", async () => {
     const source = readFileSync(join(import.meta.dir, "../../../src/lint/driver/evaluate-describe.js"), "utf8");
     const paths = [String.raw`C:\proj\src`, String.raw`packages\a`, String.raw`\\server\share\a`, "C:/proj"];
-    await using proc = Bun.spawn({
+    await using proc = spawn({
       cmd: [
         bunExe(),
         "-e",
@@ -1200,7 +1203,9 @@ describe.concurrent("the configuration files of ESLint 8", () => {
       "node_modules/@typescript-eslint/eslint-plugin/package.json": JSON.stringify({ version, main: "dist/index.js" }),
       // Version 8 is not loaded for its configurations.
       "node_modules/@typescript-eslint/eslint-plugin/dist/index.js":
-        version === "8.0.0" ? `throw new Error("loaded");` : `module.exports = { configs: { mine: require("./configs/mine") } };`,
+        version === "8.0.0"
+          ? `throw new Error("loaded");`
+          : `module.exports = { configs: { mine: require("./configs/mine") } };`,
       [`node_modules/@typescript-eslint/eslint-plugin/dist/${configs}/mine.js`]: `module.exports = { extends: ["./${configs}/base"] };`,
       [`node_modules/@typescript-eslint/eslint-plugin/dist/${configs}/base.js`]: `module.exports = ${JSON.stringify(eqeqeq)};`,
       "a.js": code,
@@ -1253,7 +1258,12 @@ describe.concurrent("the configuration files of ESLint 8", () => {
   test("a rule that ESLint 8 does not have is a message in every file", async () => {
     const { problems, stdout, exitCode } = await lint({
       ".eslintrc.json": rc({
-        rules: { "no-such-rule": "warn", "no-useless-assignment": "error", "react-hooks/rules-of-hooks": 2, "no-other": 0 },
+        rules: {
+          "no-such-rule": "warn",
+          "no-useless-assignment": "error",
+          "react-hooks/rules-of-hooks": 2,
+          "no-other": 0,
+        },
       }),
       "a.js": code,
       "b.js": "",
@@ -1317,7 +1327,7 @@ describe.concurrent("the configuration files of ESLint 8", () => {
       for (const row of some) {
         using dir = tempDir("bun-lint-eslintrc", {});
         const directories = write(join(String(dir), "row"), row);
-        await using proc = Bun.spawn({
+        await using proc = spawn({
           cmd: [...command, "--threads", "2", ...argumentsOf(row, directories.project)],
           env: environment(row, directories.home, env),
           cwd: directories.cwd,
@@ -1331,7 +1341,9 @@ describe.concurrent("the configuration files of ESLint 8", () => {
         if (what) differs[row.name] = what;
       }
       const known = differencesFromESLint8 as Record<string, string>;
-      expect(differs).toEqual(Object.fromEntries(some.filter(it => it.name in known).map(it => [it.name, known[it.name]])));
+      expect(differs).toEqual(
+        Object.fromEntries(some.filter(it => it.name in known).map(it => [it.name, known[it.name]])),
+      );
     });
   }
 });
@@ -1443,9 +1455,18 @@ describe.concurrent("whose configuration files count", () => {
     expect((await lint(files, ["--deny-warnings", "-D", "correctness", "a.js"])).problems).toEqual([
       "a.js:2:13 no-debugger",
     ]);
+    expect((await lint(files, ["--type-aware", "a.js"])).exitCode).toBe(2);
     const { "package.json": _, ...alone } = files;
     expect((await lint(alone, ["a.js"])).problems).toEqual(["a.js:1:1 no-var"]);
+    expect((await lint(alone, ["--type-aware", "a.js"])).problems).toEqual(["a.js:1:1 no-var"]);
     expect((await lint(alone, ["--deny-warnings", "a.js"])).problems).toEqual(["a.js:2:13 no-debugger"]);
+  });
+
+  test("--type-aware, which ESLint does not have, is for oxlint where there are files of both", async () => {
+    const { problems, stderr } = await lint(both, ["--type-aware", "a.js"]);
+    expect(problems).toEqual(["a.js:2:7 eqeqeq"]);
+    expect(stderr).not.toContain("Both ");
+    expect((await lint(both, ["--type-aware", "--cache", "a.js"])).problems).toEqual(["a.js:1:1 no-var"]);
   });
 
   test.each([["--cache"], ["--no-warn-ignored"], ["--ext", ".js"], ["--rule", "no-var: error"]])(
@@ -1600,7 +1621,9 @@ describe.concurrent("the command line of oxlint", () => {
     const files = { "package.json": JSON.stringify({ devDependencies: { oxlint: "*" } }), "a.js": code };
     expect((await lint(files, ["--type-check"])).exitCode).toBe(1);
     expect((await lint({ "a.js": code }, ["-D", "no-var", "--type-check"])).exitCode).toBe(1);
-    expect((await lint({ "a.js": code }, ["--type-check"])).exitCode).toBe(2);
+    // Only oxlint has the flag.
+    expect((await lint({ "a.js": code }, ["--type-check"])).exitCode).toBe(1);
+    expect((await lint({ "a.js": code }, ["--flavor=eslint", "--type-check"])).exitCode).toBe(2);
   });
 
   test("a configuration that cannot be used ends the run with 1", async () => {
@@ -1665,7 +1688,7 @@ describe.concurrent("the command line of oxlint", () => {
       }),
       "base.json": JSON.stringify({ plugins: ["react"], rules: { "no-alert": "error", "no-var": "off" } }),
     });
-    await using proc = Bun.spawn({
+    await using proc = spawn({
       cmd: [...command, "--print-config", "-D", "no-eval"],
       env,
       cwd: String(dir),
@@ -1732,7 +1755,7 @@ describe.concurrent("the command line of oxlint", () => {
   test("--init writes the defaults of oxlint, and not over a file", async () => {
     using dir = tempDir("bun-lint-init", { "a.js": "debugger;\n" });
     const run = async (...args: string[]) => {
-      await using proc = Bun.spawn({
+      await using proc = spawn({
         cmd: [...command, ...args],
         env,
         cwd: String(dir),
@@ -1765,7 +1788,7 @@ describe.concurrent("the command line of oxlint", () => {
         "sub/a.js": code,
       });
       const run = async (...args: string[]) => {
-        await using proc = Bun.spawn({
+        await using proc = spawn({
           cmd: [...command, ...args],
           env,
           cwd: join(String(dir), "sub"),

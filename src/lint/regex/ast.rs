@@ -732,19 +732,6 @@ impl<'a> Node<'a> {
         }
     }
 
-    /// The `alternatives` of a `Pattern`, a `Group`, a `CapturingGroup`, a lookaround `Assertion`
-    /// or a `ClassStringDisjunction`. Empty for other nodes.
-    pub fn alternatives(self) -> Nodes<'a> {
-        match self.data().data {
-            Data::Pattern { alternatives }
-            | Data::Group { alternatives, .. }
-            | Data::CapturingGroup { alternatives, .. }
-            | Data::Lookaround { alternatives, .. }
-            | Data::ClassStringDisjunction { alternatives } => self.list(alternatives),
-            _ => self.list(Run::default()),
-        }
-    }
-
     /// The `elements` of an `Alternative`, a `CharacterClass` or a `StringAlternative`. Empty for
     /// other nodes.
     pub fn elements(self) -> Nodes<'a> {

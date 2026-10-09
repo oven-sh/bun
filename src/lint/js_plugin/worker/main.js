@@ -189,12 +189,17 @@ function exportedObjects() {
   return exported;
 }
 
+// Why the last module of a rule could not be loaded.
+let whyNoRule = "";
+
 // The rule that is there. `undefined`: it cannot be had without its plugin.
 function ruleAt(location) {
   const started = performance.now();
+  whyNoRule = "";
   try {
     return exportedAt(require(location.module), location.export);
-  } catch {
+  } catch (error) {
+    whyNoRule = ` ${location.module}: ${error?.message ?? error}`;
     return undefined;
   } finally {
     loadingTime += performance.now() - started;
@@ -398,7 +403,8 @@ function configure(id, position) {
   const ofPlugin = rules[index];
   const found = ofPlugin !== undefined ? ofPlugin.plugin.rules[ofPlugin.name] : location && ruleAt(location);
   if (found === undefined || found === null) {
-    if (loadedPlugins.has(pluginPosition)) throw new Error(`The plugin no longer has the rule '${ruleId}'.`);
+    if (loadedPlugins.has(pluginPosition))
+      throw new Error(`The plugin no longer has the rule '${ruleId}'.${whyNoRule}`);
     return pluginPosition;
   }
   // A function is a rule without `meta`, as for ESLint until version 8.

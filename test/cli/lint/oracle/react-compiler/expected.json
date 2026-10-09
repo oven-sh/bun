@@ -3062,6 +3062,176 @@
     ]
    }
   },
+  "casts": {
+   "exit": 1,
+   "files": 1,
+   "diagnostics": {
+    "casts.tsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 11,
+         "line": 35,
+         "offset": 731
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 4,
+         "length": 12,
+         "line": 13,
+         "offset": 235
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 4,
+         "length": 29,
+         "line": 30,
+         "offset": 633
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Missing dependencies can cause a value to update less often than it should, resulting in stale UI",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 49,
+         "length": 18,
+         "line": 25,
+         "offset": 546
+        }
+       },
+       {
+        "label": "Missing dependency `props.a`",
+        "span": {
+         "column": 39,
+         "length": 7,
+         "line": 25,
+         "offset": 536
+        }
+       }
+      ],
+      "message": "Found missing memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 19,
+         "length": 11,
+         "line": 20,
+         "offset": 401
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Passing a ref to a function may read its value during render",
+        "span": {
+         "column": 22,
+         "length": 18,
+         "line": 19,
+         "offset": 362
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(static-components)",
+      "help": "Components created during render will reset their state each time they are created. Declare components outside of render",
+      "labels": [
+       {
+        "label": "This component is created during render",
+        "span": {
+         "column": 8,
+         "length": 5,
+         "line": 7,
+         "offset": 171
+        }
+       },
+       {
+        "label": "The component is created during render here",
+        "span": {
+         "column": 17,
+         "length": 12,
+         "line": 3,
+         "offset": 99
+        }
+       }
+      ],
+      "message": "Cannot create components during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/static-components",
+      "severity": "error"
+     },
+     {
+      "code": "react(use-memo)",
+      "help": "Use an array literal containing identifiers or property access expressions",
+      "labels": [
+       {
+        "label": "Expected the dependency list to be an array of simple expressions (e.g. `x`, `x.y.z`, `x?.y?.z`)",
+        "span": {
+         "column": 50,
+         "length": 16,
+         "line": 25,
+         "offset": 547
+        }
+       }
+      ],
+      "message": "Expected the dependency list to be an array of simple expressions (e.g. `x`, `x.y.z`, `x?.y?.z`)",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/use-memo",
+      "severity": "error"
+     }
+    ]
+   }
+  },
   "node_modules": {
    "exit": 1,
    "files": 4,
@@ -3311,6 +3481,100 @@
    ]
   },
   "small": {
+   "casts.tsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/static-components",
+      "severity": 2,
+      "message": "Error: Cannot create components during render\n\nComponents created during render will reset their state each time they are created. Declare components outside of render.\n\n<dir>/casts.tsx:7:8\n   5 |     <div>\n   6 |       <Dynamic />\n>  7 |       <Plain />\n     |        ^^^^^ This component is created during render\n   8 |     </div>\n   9 |   );\n  10 | }\n\n<dir>/casts.tsx:3:17\n  1 | function Hidden(props: Props) {\n  2 |   const Dynamic = useComponent(props.kind) as any;\n> 3 |   const Plain = useComponent(props.kind);\n    |                 ^^^^^^^^^^^^^^^^^^^^^^^^ The component is created during render here\n  4 |   return (\n  5 |     <div>\n  6 |       <Dynamic />",
+      "line": 7,
+      "column": 8,
+      "endLine": 7,
+      "endColumn": 13,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/immutability",
+      "severity": 2,
+      "message": "Error: This value cannot be modified\n\nModifying component props or hook arguments is not allowed. Consider using a local variable instead.\n\n<dir>/casts.tsx:13:4\n  11 |\n  12 | function Mutates(props: Props) {\n> 13 |   (props as any).value = 1;\n     |    ^^^^^^^^^^^^ value cannot be modified\n  14 |   return <div />;\n  15 | }\n  16 |",
+      "line": 13,
+      "column": 4,
+      "endLine": 13,
+      "endColumn": 16,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/refs",
+      "severity": 2,
+      "message": "Error: Cannot access refs during render\n\nReact refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected (https://react.dev/reference/react/useRef).\n\n<dir>/casts.tsx:19:22\n  17 | function Passes(props: Props) {\n  18 |   const ref = useRef(null);\n> 19 |   const value = read({ ref } as Options);\n     |                      ^^^^^^^^^^^^^^^^^^ Passing a ref to a function may read its value during render\n  20 |   const current = ref.current as number;\n  21 |   return <div>{value}{current}</div>;\n  22 | }",
+      "line": 19,
+      "column": 22,
+      "endLine": 19,
+      "endColumn": 40,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/refs",
+      "severity": 2,
+      "message": "Error: Cannot access refs during render\n\nReact refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected (https://react.dev/reference/react/useRef).\n\n<dir>/casts.tsx:20:19\n  18 |   const ref = useRef(null);\n  19 |   const value = read({ ref } as Options);\n> 20 |   const current = ref.current as number;\n     |                   ^^^^^^^^^^^ Cannot access ref value during render\n  21 |   return <div>{value}{current}</div>;\n  22 | }\n  23 |",
+      "line": 20,
+      "column": 19,
+      "endLine": 20,
+      "endColumn": 30,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/memo-dependencies",
+      "severity": 2,
+      "message": "Error: Found missing memoization dependencies\n\nMissing dependencies can cause a value to update less often than it should, resulting in stale UI.\n\n<dir>/casts.tsx:25:39\n  23 |\n  24 | function Depends(props: Props) {\n> 25 |   const value = useMemo(() => compute(props.a), [(props as any).a]);\n     |                                       ^^^^^^^ Missing dependency `props.a`\n  26 |   return <div>{value}</div>;\n  27 | }\n  28 |\n\nInferred dependencies: `[props.a]`",
+      "line": 25,
+      "column": 39,
+      "endLine": 25,
+      "endColumn": 46,
+      "suggestions": [
+       {
+        "desc": "Update dependencies",
+        "range": [
+         546,
+         564
+        ],
+        "text": "[props.a]"
+       }
+      ]
+     },
+     {
+      "ruleId": "react-hooks/use-memo",
+      "severity": 2,
+      "message": "Error: Expected the dependency list to be an array of simple expressions (e.g. `x`, `x.y.z`, `x?.y?.z`)\n\nExpected the dependency list to be an array of simple expressions (e.g. `x`, `x.y.z`, `x?.y?.z`).\n\n<dir>/casts.tsx:25:50\n  23 |\n  24 | function Depends(props: Props) {\n> 25 |   const value = useMemo(() => compute(props.a), [(props as any).a]);\n     |                                                  ^^^^^^^^^^^^^^^^ Expected the dependency list to be an array of simple expressions (e.g. `x`, `x.y.z`, `x?.y?.z`)\n  26 |   return <div>{value}</div>;\n  27 | }\n  28 |",
+      "line": 25,
+      "column": 50,
+      "endLine": 25,
+      "endColumn": 66,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/immutability",
+      "severity": 2,
+      "message": "Error: This value cannot be modified\n\nModifying component props or hook arguments is not allowed. Consider using a local variable instead.\n\n<dir>/casts.tsx:30:4\n  28 |\n  29 | function Twice(props: Props) {\n> 30 |   ((props as unknown) as Mutable).value = 1;\n     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ value cannot be modified\n  31 |   return <div />;\n  32 | }\n  33 |",
+      "line": 30,
+      "column": 4,
+      "endLine": 30,
+      "endColumn": 33,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/immutability",
+      "severity": 2,
+      "message": "Error: This value cannot be modified\n\nModifying component props or hook arguments is not allowed. Consider using a local variable instead.\n\n<dir>/casts.tsx:35:3\n  33 |\n  34 | function NotNull(props: Props) {\n> 35 |   props.other!.value = 2;\n     |   ^^^^^^^^^^^ value cannot be modified\n  36 |   return <div />;\n  37 | }\n  38 |",
+      "line": 35,
+      "column": 3,
+      "endLine": 35,
+      "endColumn": 14,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
    "disabled.jsx": {
     "messages": [],
     "suppressed": [

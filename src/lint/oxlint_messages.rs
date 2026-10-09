@@ -345,6 +345,7 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
         m("returnsValue", "Setter cannot return a value"),
     ]),
     ("eslint", "no-shadow", &[
+        m("noEnumShadow", "'{{name}}' is already declared in the upper scope."),
         m("noShadow", "'{{name}}' is already declared in the upper scope."),
     ]),
     ("eslint", "no-shadow-restricted-names", &[

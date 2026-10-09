@@ -107,6 +107,10 @@ impl FuncStyle {
         let Node::VarDecl(declarator) = e.parent() else {
             return;
         };
+        // For oxlint parentheses are between the two.
+        if cx.language().is_oxlint && e.is_parenthesized() {
+            return;
+        }
         let expects_declaration = match self.named_exports {
             Some(style) if declarator.flags().contains(Flags::EXPORT) => style == Style::Declaration,
             _ => self.enforce_declarations,

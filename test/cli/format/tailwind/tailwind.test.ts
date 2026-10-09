@@ -3,13 +3,16 @@
 // its order. Both are made by test/cli/format/oracle/tailwind/make-fixtures.ts.
 //
 // The order comes from the package `tailwindcss` of the project. Here that is a stand-in, which knows what is in order.json.
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { endChildren, spawn } from "../../children";
 import cases from "./cases.json";
 import { forPrettier } from "./for-prettier";
 import order from "./order.json";
+
+afterAll(endChildren);
 
 const getClassOrder = `classes => classes.map(name => [name, order.includes(name) ? BigInt(sign * order.indexOf(name)) : null])`;
 /** Tailwind CSS 4, as far as it is asked. A style sheet with `reversed` in it turns the order around. */
@@ -38,7 +41,7 @@ exports.createContext = config => {
 };
 
 async function formatIn(cwd: string, names: string[], flags: string[] = ["."]) {
-  await using proc = Bun.spawn({
+  await using proc = spawn({
     cmd: [bunExe(), "format", "--log-level=warn", ...flags],
     env: bunEnv,
     cwd,

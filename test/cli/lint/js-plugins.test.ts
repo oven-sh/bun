@@ -1,7 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { endChildren, spawn } from "../children";
+
+afterAll(endChildren);
 
 // Disable AI agent and CI detection regardless of the environment the tests run in.
 const env = {
@@ -17,7 +20,7 @@ const env = {
 
 async function lint(files: Record<string, string>, args: string[], reads: string[] = []) {
   using dir = tempDir("bun-lint-js-plugins", files);
-  await using proc = Bun.spawn({
+  await using proc = spawn({
     cmd: [bunExe(), "lint", ...(args.includes("--threads") ? [] : ["--threads", "2"]), ...args],
     env,
     cwd: String(dir),
@@ -849,7 +852,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       };
       for (let i = 0; i < 128; i++) files[`src/${i}.js`] = "foo;\n";
       using dir = tempDir("bun-lint-js-plugins", files);
-      await using proc = Bun.spawn({
+      await using proc = spawn({
         cmd: [bunExe(), "lint", "--threads", "4", "src"],
         env: { ...env, BUN_DEBUG_lint_js: "1" },
         cwd: String(dir),
@@ -1035,7 +1038,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         for (let i = 0; i < 8; i++) files[`${project}/${i}.ts`] = "foo;\n";
       }
       using dir = tempDir("bun-lint-js-plugins", files);
-      await using proc = Bun.spawn({
+      await using proc = spawn({
         cmd: [bunExe(), "lint", "-f", "unix", "--threads", "4"],
         // As many threads in a pool, however many cores there are.
         env: { ...env, GOMAXPROCS: "8" },
@@ -1054,14 +1057,13 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   test(
     "there are as many engines as pay, with types and without, and they report the same",
     async () => {
-      // What a file takes, in what the engine has taken until its first file.
-      const run = async (count: number, extension: string, share: number, threads: string) => {
+      const run = async (count: number, extension: string, size: number, threads: string) => {
         const files: Record<string, string> = {
           "tsconfig.json": JSON.stringify({ compilerOptions: { noLib: true, types: [] } }),
           "eslint.config.mjs": `
             import demo from "./plugin.mjs";
             export default [
-              { files: ["src/*"], plugins: { demo }, rules: { "demo/slow": "error" } },
+              { files: ["src/*"], plugins: { demo }, rules: { "demo/seen": "error" } },
               {
                 files: ["**/*.ts"],
                 plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
@@ -1069,47 +1071,32 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
                 rules: { "@typescript-eslint/no-floating-promises": "error" },
               },
             ];`,
-          "plugin.mjs": `
-            let start = 0;
-            export default {
-              rules: {
-                slow: {
-                  create: context => ({
-                    Program(node) {
-                      start ||= performance.now();
-                      const until = performance.now() + start * ${share};
-                      while (performance.now() < until);
-                      context.report({ node, message: "seen" });
-                    },
-                  }),
-                },
-              },
-            };`,
+          "plugin.mjs": `export default { rules: { seen: { create: context => ({ Program(node) { context.report({ node, message: "seen" }); } }) } } };`,
         };
-        for (let i = 0; i < count; i++) files[`src/${i}.${extension}`] = "foo;\n";
+        const text = "foo;\n" + Buffer.alloc(size, "// comment\n").toString();
+        for (let i = 0; i < count; i++) files[`src/${i}.${extension}`] = text;
         const { stdout, stderr, exitCode } = await lint(files, ["-f", "unix", "--timing", "--threads", threads, "src"]);
         expect(exitCode).toBe(1);
         return { stdout, engines: Number(/JavaScript: (\d+) engines/.exec(stderr)?.[1]) };
       };
-      const [quickWithTypes, quick, oneWithTypes, one, severalWithTypes, several] = await Promise.all([
-        run(20, "ts", 0, "8"),
-        run(20, "js", 0, "8"),
-        run(24, "ts", 0, "1"),
-        run(24, "js", 0, "1"),
-        run(24, "ts", 1, "4"),
-        run(24, "js", 1, "4"),
+      // 24 files of 250 KB are 6 MB, which three engines are for.
+      const [smallWithTypes, small, oneWithTypes, one, largeWithTypes, large] = await Promise.all([
+        run(24, "ts", 0, "8"),
+        run(24, "js", 0, "8"),
+        run(24, "ts", 250_000, "1"),
+        run(24, "js", 250_000, "1"),
+        run(24, "ts", 250_000, "8"),
+        run(24, "js", 250_000, "8"),
       ]);
-      // One, but for a hiccup of the machine.
-      expect(quickWithTypes.engines).toBeLessThanOrEqual(2);
-      expect(quick.engines).toBeLessThanOrEqual(2);
-      expect([oneWithTypes.engines, one.engines]).toEqual([1, 1]);
-      for (const it of [severalWithTypes, several]) {
+      expect([smallWithTypes.engines, small.engines, oneWithTypes.engines, one.engines]).toEqual([1, 1, 1, 1]);
+      // A thread only asks for an engine while the others are in use.
+      for (const it of [largeWithTypes, large]) {
         expect(it.engines).toBeGreaterThan(1);
-        expect(it.engines).toBeLessThanOrEqual(4);
+        expect(it.engines).toBeLessThanOrEqual(3);
       }
-      expect(severalWithTypes.stdout).toBe(oneWithTypes.stdout);
-      expect(several.stdout).toBe(one.stdout);
-      expect(one.stdout.split("\n").filter(it => it.endsWith(": seen [Error/demo/slow]"))).toHaveLength(24);
+      expect(largeWithTypes.stdout).toBe(oneWithTypes.stdout);
+      expect(large.stdout).toBe(one.stdout);
+      expect(one.stdout.split("\n").filter(it => it.endsWith(": seen [Error/demo/seen]"))).toHaveLength(24);
     },
     timeout,
   );

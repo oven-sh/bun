@@ -1,13 +1,25 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
-use std::sync::LazyLock;
 
 /// Disallow specified warning terms in comments.
 pub struct NoWarningComments {
-    /// Each term, and what matches a comment that has it in the configured location.
-    terms: Vec<(Vec<u8>, Regex)>,
-    /// If the terms are looked for at the start of a comment: what can be before them beside whitespace, and what they start
-    /// with, both in lower case. `None`: it is not told from a byte whether a comment can match.
-    starts: Option<(Vec<u8>, Vec<u8>)>,
+    terms: Vec<Term>,
+    /// They are looked for at the start of a comment, and not anywhere in it.
+    is_at_start: bool,
+    /// What can be before them at the start beside whitespace, without capitals.
+    decoration: Vec<u8>,
+}
+
+struct Term {
+    text: Vec<u8>,
+    matcher: Matcher,
+}
+
+/// What tells that a comment has a term in the configured location.
+enum Matcher {
+    /// The term without capitals. It and the decoration are of ASCII, so it takes no regular expression.
+    Ascii(Vec<u8>),
+    Pattern(Box<Regex>),
 }
 
 const UNEXPECTED_COMMENT: Message = Message::new(
@@ -17,10 +29,23 @@ const UNEXPECTED_COMMENT: Message = Message::new(
 
 const CHAR_LIMIT: u32 = 40;
 
-static SELF_CONFIG: LazyLock<Regex> = LazyLock::new(|| Regex::literal("/\\bno-warning-comments\\b/u"));
-
 fn is_word_character(byte: Option<&u8>) -> bool {
     byte.is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_')
+}
+
+/// `/\bno-warning-comments\b/u`
+fn is_self_config(value: &[u8]) -> bool {
+    const NAME: &[u8] = b"no-warning-comments";
+    let mut at = 0;
+    while let Some(found) = strings::index_of(value.get(at..).unwrap_or_default(), NAME) {
+        at += found;
+        let before = at.checked_sub(1).and_then(|it| value.get(it));
+        if !is_word_character(before) && !is_word_character(value.get(at + NAME.len())) {
+            return true;
+        }
+        at += 1;
+    }
+    false
 }
 
 /// The words of `comment` with one space between them, as many as fit in `CHAR_LIMIT`.
@@ -47,20 +72,55 @@ fn comment_to_display(comment: &[u8]) -> Vec<u8> {
     shown
 }
 
-/// Whether `byte` is whitespace or, but for its case, in `decoration`.
-fn is_before(decoration: &[u8], byte: u8) -> bool {
-    matches!(byte, b'\t'..=b'\r' | b' ') || decoration.contains(&byte.to_ascii_lowercase())
+/// `/^term\b/iu`, with the `\b` if `term` ends with a `\w`.
+fn is_here(term: &[u8], rest: &[u8]) -> bool {
+    text::strip_prefix_ignoring_case(rest, term)
+        .is_some_and(|after| !(is_word_character(term.last()) && text::starts_with_word_ignoring_case(after)))
+}
+
+/// `/\bterm\b/iu`, each `\b` if there is a `\w` on that side of `term`.
+fn is_anywhere(term: &[u8], value: &[u8]) -> bool {
+    let Some(first) = term.first() else {
+        return true;
+    };
+    // The bytes that a character starts with that is `first` but for its case.
+    let starts = [*first, first.to_ascii_uppercase(), text::first_byte_of_other_case(*first)];
+    let mut at = 0;
+    while let Some(found) = strings::index_of_any(value.get(at..).unwrap_or_default(), &starts) {
+        at += found;
+        let Some((before, rest)) = value.split_at_checked(at) else {
+            return false;
+        };
+        if !(is_word_character(Some(first)) && text::ends_with_word_ignoring_case(before)) && is_here(term, rest) {
+            return true;
+        }
+        at += 1;
+    }
+    false
 }
 
 impl NoWarningComments {
-    /// Whether a term can match `value`, as far as its first byte after whitespace tells.
-    fn may_match(&self, value: &[u8]) -> bool {
-        let Some((before, first_bytes)) = &self.starts else {
-            return true;
-        };
-        match value.iter().find(|byte| !is_before(before, **byte)) {
-            Some(first) => !first.is_ascii() || first_bytes.contains(&first.to_ascii_lowercase()),
-            None => false,
+    /// `/^[\s<decoration>]*term\b/iu`
+    fn starts_with(&self, term: &[u8], value: &[u8]) -> bool {
+        let mut rest = value;
+        while !is_here(term, rest) {
+            let after_decoration = |c| text::strip_prefix_ignoring_case(rest, std::slice::from_ref(c));
+            rest = match text::white_space_len(rest) {
+                0 => match self.decoration.iter().find_map(after_decoration) {
+                    Some(rest) => rest,
+                    None => return false,
+                },
+                len => rest.get(len..).unwrap_or_default(),
+            };
+        }
+        true
+    }
+
+    fn has(&self, term: &Term, value: &[u8]) -> bool {
+        match &term.matcher {
+            Matcher::Ascii(term) if self.is_at_start => self.starts_with(term, value),
+            Matcher::Ascii(term) => is_anywhere(term, value),
+            Matcher::Pattern(pattern) => pattern.test(value),
         }
     }
 }
@@ -72,8 +132,7 @@ impl Rule for NoWarningComments {
     fn new(options: &Options) -> Self {
         let object = options.object(0);
         let is_at_start = object.str("location") != Some("anywhere");
-        let decoration = object.strings("decoration").concat();
-        let decoration = text::escape_string_regexp(decoration.as_bytes());
+        let decoration = object.strings("decoration").concat().into_bytes();
         let terms = match object.has("terms") {
             true => object.strings("terms"),
             false => vec!["todo", "fixme", "xxx"],
@@ -82,7 +141,7 @@ impl Rule for NoWarningComments {
             let mut pattern = Vec::new();
             if is_at_start {
                 pattern.extend_from_slice(b"^[\\s");
-                pattern.extend_from_slice(&decoration);
+                pattern.extend_from_slice(&text::escape_string_regexp(&decoration));
                 pattern.extend_from_slice(b"]*");
             } else if is_word_character(term.first()) {
                 pattern.extend_from_slice(b"\\b");
@@ -93,20 +152,16 @@ impl Rule for NoWarningComments {
             }
             Regex::from_bytes(&pattern, b"iu").ok()
         };
-        let first_bytes: Option<Vec<u8>> = (terms.iter())
-            .map(|term| term.as_bytes().first().filter(|it| it.is_ascii()).map(u8::to_ascii_lowercase))
-            .collect();
-        let before = object.strings("decoration").concat().into_bytes().to_ascii_lowercase();
-        // A term that starts with what can be before it starts anywhere in that.
-        let is_told_by_a_byte = |first_bytes: &Vec<u8>| {
-            is_at_start && before.is_ascii() && !first_bytes.iter().any(|it| is_before(&before, *it))
+        let matcher = |term: &[u8]| match term.is_ascii() && (!is_at_start || decoration.is_ascii()) {
+            true => Some(Matcher::Ascii(term.to_ascii_lowercase())),
+            false => Some(Matcher::Pattern(Box::new(convert_to_reg_exp(term)?))),
         };
         NoWarningComments {
-            starts: first_bytes.filter(is_told_by_a_byte).map(|first_bytes| (before, first_bytes)),
-            terms: terms
-                .iter()
-                .filter_map(|term| Some((term.as_bytes().to_vec(), convert_to_reg_exp(term.as_bytes())?)))
+            terms: (terms.iter().map(|term| term.as_bytes()))
+                .filter_map(|term| Some(Term { text: term.to_vec(), matcher: matcher(term)? }))
                 .collect(),
+            is_at_start,
+            decoration: decoration.to_ascii_lowercase(),
         }
     }
 
@@ -117,21 +172,16 @@ impl Rule for NoWarningComments {
                     continue;
                 }
                 let value = comment.comment_value();
-                if !rule.may_match(value) {
-                    continue;
-                }
-                let mut matches = rule.terms.iter().filter(|term| term.1.test(value)).peekable();
-                if matches.peek().is_none()
-                    || ast_utils::is_directive_comment(&comment) && SELF_CONFIG.test(value)
-                {
+                let mut matches = rule.terms.iter().filter(|term| rule.has(term, value)).peekable();
+                if matches.peek().is_none() || ast_utils::is_directive_comment(&comment) && is_self_config(value) {
                     continue;
                 }
                 let shown = comment_to_display(value);
                 // oxlint says one thing about a comment.
                 let count = if cx.language().is_oxlint { 1 } else { usize::MAX };
-                for (term, _) in matches.take(count) {
+                for term in matches.take(count) {
                     cx.report(comment, UNEXPECTED_COMMENT)
-                        .data("matchedTerm", term.clone())
+                        .data("matchedTerm", term.text.clone())
                         .data("comment", shown.clone());
                 }
             }

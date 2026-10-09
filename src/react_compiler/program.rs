@@ -62,6 +62,11 @@ pub trait Host {
     fn module_scope(&self) -> &Scope;
     fn import_records(&self) -> &[ImportRecord];
 
+    /// The operand of each `x as T` with the cast, in the order of the operands. The parser drops casts.
+    fn type_casts(&self) -> &[(Loc, Loc)] {
+        &[]
+    }
+
     /// Whether `ref_` is bound outside of the function that is compiled, which for the parser is
     /// in the scope of the module.
     fn is_module_level(&self, ref_: Ref) -> bool {

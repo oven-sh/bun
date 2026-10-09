@@ -27,7 +27,7 @@ pub(crate) static VARIANT: core::sync::atomic::AtomicU8 = core::sync::atomic::At
 
 /// To tell one build from another.
 #[used]
-static BUILD: [u8; 25] = *b"json_reader experiment 11";
+static BUILD: [u8; 25] = *b"json_reader experiment 12";
 
 type DupMap = bun_collections::HashMap<u64, (), bun_collections::IdentityContext<u64>>;
 
@@ -114,23 +114,20 @@ fn is_rare(c: u8) -> bool {
 /// With what a line starts.
 #[derive(Clone, Copy)]
 struct Indentation {
-    /// The first 16 bytes of the line.
-    bytes: [u64; 2],
-    /// How many of them are before the first token. 16 if that is not known, or if they are more.
+    /// The first 8 bytes of the line.
+    bytes: u64,
+    /// How many of them are before the first token. 8 if that is not known, or if they are more.
     len: usize,
 }
 
 impl Indentation {
-    const UNKNOWN: Indentation = Indentation {
-        bytes: [0; 2],
-        len: 16,
-    };
+    const UNKNOWN: Indentation = Indentation { bytes: 0, len: 8 };
 
     /// Of the line that starts at `start`, with `bytes`, and has its first token at `token`.
     #[inline(always)]
-    fn between(bytes: [u64; 2], start: usize, token: usize) -> Indentation {
+    fn between(bytes: u64, start: usize, token: usize) -> Indentation {
         match token - start {
-            len @ ..16 => Indentation { bytes, len },
+            len @ ..8 => Indentation { bytes, len },
             _ => Indentation::UNKNOWN,
         }
     }
@@ -390,21 +387,14 @@ impl<'a, 's> Parser<'a, 's> {
     #[inline(always)]
     fn bump_comma(&mut self, p: usize, indentation: &mut Indentation) -> usize {
         let Indentation { bytes, len } = *indentation;
-        if let Some([b'\n', line @ ..]) = self.contents.get(p + 1..p + 18)
-            && let Some((low, high)) = line.split_first_chunk::<8>()
-            && let Some(high) = high.first_chunk::<8>()
+        if let Some([b'\n', line @ ..]) = self.contents.get(p + 1..p + 10)
+            && let Some(line) = line.first_chunk::<8>()
         {
-            let line = [u64::from_le_bytes(*low), u64::from_le_bytes(*high)];
-            if len < 16 && self.variant & 4 == 0 {
-                // The word that the token starts in, and whether the one before is the same.
-                let (word, known, is_same) = match len < 8 {
-                    true => (line[0], bytes[0], true),
-                    false => (line[1], bytes[1], line[0] == bytes[0]),
-                };
-                let bits = 8 * (len % 8);
-                let other = (word ^ known) & ((1 << bits) - 1);
-                let first = (word >> bits) as u8;
-                if is_same && other == 0 && first > b' ' && first != b'/' {
+            let line = u64::from_le_bytes(*line);
+            if len < 8 && self.variant & 4 == 0 {
+                let other = (line ^ bytes) & ((1 << (8 * len)) - 1);
+                let first = (line >> (8 * len)) as u8;
+                if other == 0 && first > b' ' && first != b'/' {
                     self.gap_start = p + 1;
                     self.at = p + 2 + len;
                     return p + 2 + len;
@@ -415,6 +405,17 @@ impl<'a, 's> Parser<'a, 's> {
             return next;
         }
         self.skip_from(p + 1)
+    }
+
+    /// With what the line behind the byte at `p` starts, if a line starts there. `next`: the token behind `p`.
+    #[inline(always)]
+    fn indentation_behind(&self, p: usize, next: usize) -> Indentation {
+        if let Some([b'\n', line @ ..]) = self.contents.get(p + 1..p + 10)
+            && let Some(line) = line.first_chunk::<8>()
+        {
+            return Indentation::between(u64::from_le_bytes(*line), p + 2, next);
+        }
+        Indentation::UNKNOWN
     }
 
     /// Past the token of one byte at `p`.
@@ -1079,7 +1080,7 @@ impl<'a, 's> Parser<'a, 's> {
             });
         }
         let mut next = self.bump(loc.start as usize);
-        let mut indentation = Indentation::UNKNOWN;
+        let mut indentation = self.indentation_behind(loc.start as usize, next);
         let mark = self.scratch_json_items.len();
         next = self.peek(next).1;
         let mut is_single_line = !self.is_after_newline();
@@ -1173,7 +1174,7 @@ impl<'a, 's> Parser<'a, 's> {
             });
         }
         let mut next = self.bump(loc.start as usize);
-        let mut indentation = Indentation::UNKNOWN;
+        let mut indentation = self.indentation_behind(loc.start as usize, next);
         let mark = self.scratch_props.len();
         let hmark = self.dup_hashes.len();
         next = self.peek(next).1;

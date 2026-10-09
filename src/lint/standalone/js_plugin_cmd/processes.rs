@@ -9,7 +9,6 @@ use bun_lint::js_plugin::{Demand, Engine, Serve, Vm};
 use bun_threading::{Condition, Guarded};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::ThreadId;
-use std::time::Instant;
 
 const PROGRAM: u32 = 100;
 const RESULT: u32 = 100;
@@ -34,8 +33,6 @@ struct Process {
     /// To write messages in.
     buffer: Vec<u8>,
     has_failed: bool,
-    /// When it was started, until it has been used for the first time.
-    started: Option<Instant>,
 }
 
 impl Process {
@@ -129,7 +126,6 @@ impl<'e> Processes<'e> {
             channel: (self.spawn)()?,
             buffer: Vec::new(),
             has_failed: false,
-            started: Some(Instant::now()),
         };
         process.send(PROGRAM, &mut |out| out.extend_from_slice(&self.program))?;
         Ok(process)
@@ -167,11 +163,9 @@ impl Engine for Processes<'_> {
             None => self.start().inspect_err(|_| self.lose()),
         };
         let used = started.map(|mut process| {
-            let since = Instant::now();
             then(&mut process);
             if !is_within {
-                let started = process.started.take();
-                (self.demand).note(size, since.elapsed(), started.map(|it| it.elapsed()));
+                self.demand.note(size);
             }
             process
         });

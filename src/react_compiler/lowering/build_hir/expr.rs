@@ -22,6 +22,24 @@ pub(crate) fn lower_expression(
     builder: &mut HirBuilder,
     expr: &Expr,
 ) -> Result<InstructionValue, CompilerError> {
+    let value = lower_expression_without_cast(builder, expr)?;
+    let Some(cast) = builder.type_cast_around(expr.loc) else {
+        return Ok(value);
+    };
+    Ok(InstructionValue::TypeCastExpression {
+        value: lower_value_to_temporary(builder, value)?,
+        type_: Type::Poly,
+        type_annotation_name: None,
+        type_annotation_kind: Some("as"),
+        type_annotation: None,
+        loc: convert_loc(cast),
+    })
+}
+
+fn lower_expression_without_cast(
+    builder: &mut HirBuilder,
+    expr: &Expr,
+) -> Result<InstructionValue, CompilerError> {
     if !builder.environment().has_stack() {
         return Err(crate::lowering::nested_too_deeply().into());
     }

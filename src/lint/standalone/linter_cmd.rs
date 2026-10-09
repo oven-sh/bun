@@ -24,6 +24,7 @@ use bun_lint::ast::File;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin::Host;
 use bun_lint::language::{Global, LanguageOptions, Parser, SourceType};
+use bun_lint::linter::config::Dotfiles;
 use bun_lint::linter::{
     Config, FileConfig, LegacyFailure, LegacyFile, LegacyKind, LegacyOptions, LintMessage,
     LintOptions, Linter, Registry, ResolvedConfig, RuleId, TypesInJavaScript, Utf16Offsets,
@@ -613,7 +614,9 @@ fn config(args: &[String]) {
                 b"directories".to_vec(),
                 Json::Array(
                     paths(b"directories")
-                        .map(|it| Json::Bool(config.is_directory_ignored(it)))
+                        .map(|it| {
+                            Json::Bool(config.is_directory_ignored(it, Dotfiles::AsConfigured))
+                        })
                         .collect(),
                 ),
             ),
@@ -644,7 +647,7 @@ fn resolve(args: &[String]) {
         for path in host::list(directory) {
             let bytes = path.to_string_lossy().into_owned().into_bytes();
             match path.is_dir() {
-                true if config.is_directory_ignored(&bytes) => {}
+                true if config.is_directory_ignored(&bytes, Dotfiles::AsConfigured) => {}
                 true => walk(&path, config, files),
                 false => files.push(bytes),
             }

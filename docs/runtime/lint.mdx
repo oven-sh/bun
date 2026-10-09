@@ -133,7 +133,7 @@ Plugins run inside `bun lint`, on threads of their own, as they run inside `esli
 - Its `process.on("exit")` handlers run after the report.
 - A rule that throws ends the run with exit code `2`. With an `.oxlintrc.json` the error is reported for the file, and the run goes on.
 - Each thread that runs rules in JavaScript loads the plugins for itself, so state at the top level of a module is per thread, and so are the handlers.
-- The rules in JavaScript run on one thread at first. More such threads are started, 16 at most, if the files that are left take long enough for that to pay: each has to load the plugins again.
+- The rules in JavaScript run on one thread, on two if the files that they are for have 2 MB, on 4 from 9 MB, on 8 from 35 MB, on 16 from 135 MB: each has to load the plugins again, and takes memory.
 
 Types are not there for a rule in JavaScript. `parserServices.program` is `null`, also with `--type-aware`. A rule that asks for types with `getParserServices()` of typescript-eslint does not run. See [what cannot be linted](#what-cannot-be-linted).
 
@@ -251,7 +251,7 @@ In a project with `vite-plus` in its `package.json` and no configuration file of
 
 The rules of oxlint's plugins are built in: `unicorn`, `oxc`, `react`, `react-perf`, `jsx-a11y`, `nextjs`, `import`, `promise`, `node`, `jest`, `vitest`, `vue`, and `jsdoc`. These 569 rules do what oxlint 1.87 does, with its options, messages, and fixes. The 22 React Compiler rules of `react`, such as `react/refs` and `react/set-state-in-effect`, run the React Compiler that is built into Bun. With an `eslint.config.js` these names mean the plugins that the configuration imports.
 
-The rules that oxlint shares with ESLint and typescript-eslint are ports of the originals. With an `.oxlintrc.json`, most of them report at oxlint's places with oxlint's messages. Where the two disagree about what is a problem, `bun lint` does what ESLint does.
+The rules that oxlint shares with ESLint and typescript-eslint are ports of the originals. With an `.oxlintrc.json` they report what oxlint reports, at its places, with its messages. In the few cases where they still differ, `bun lint` does what ESLint does.
 
 The plugins in `jsPlugins` are loaded and run. Run `bun lint --rules` to list the rules that are built in. A rule that is not built in [cannot be linted](#what-cannot-be-linted).
 
@@ -334,7 +334,7 @@ A project that runs `oxlint && eslint` has files of both. Say which tool each ru
 }
 ```
 
-A flag that only one of the two tools has says so too, such as `-D` and `--deny-warnings` of oxlint, or `--cache` and `--ext` of ESLint.
+A flag that only one of the two tools has says so too, such as `-D`, `--deny-warnings`, and `--type-aware` of oxlint, or `--cache` and `--ext` of ESLint. Most commands of oxlint have none: `oxlint`, `oxlint .`, and `oxlint --fix` become `bun lint --flavor=oxlint`, with the same arguments.
 
 If nothing says so, `bun lint` lints nothing and exits with code `2`. A run for the wrong tool would leave out the rules of the other without a word.
 

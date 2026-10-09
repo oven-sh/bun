@@ -92,6 +92,46 @@ function Clock() {
 
 const impure = "function Component() {\n  return <div>{Date.now()}</div>;\n}\n";
 
+/** A type cast is an instruction of its own to the compiler, with a place of its own. `x!` is not. */
+const casts = `function Hidden(props: Props) {
+  const Dynamic = useComponent(props.kind) as any;
+  const Plain = useComponent(props.kind);
+  return (
+    <div>
+      <Dynamic />
+      <Plain />
+    </div>
+  );
+}
+
+function Mutates(props: Props) {
+  (props as any).value = 1;
+  return <div />;
+}
+
+function Passes(props: Props) {
+  const ref = useRef(null);
+  const value = read({ ref } as Options);
+  const current = ref.current as number;
+  return <div>{value}{current}</div>;
+}
+
+function Depends(props: Props) {
+  const value = useMemo(() => compute(props.a), [(props as any).a]);
+  return <div>{value}</div>;
+}
+
+function Twice(props: Props) {
+  ((props as unknown) as Mutable).value = 1;
+  return <div />;
+}
+
+function NotNull(props: Props) {
+  props.other!.value = 2;
+  return <div />;
+}
+`;
+
 /** The small directories, by the name of the test. */
 export const small: Record<string, Files> = {
   comments,
@@ -224,6 +264,7 @@ function Component(props) {
 }
 `,
   },
+  casts: { ".oxlintrc.json": rc(), "casts.tsx": casts },
   node_modules: {
     ".oxlintrc.json": rc(),
     "a.jsx": impure,
@@ -302,6 +343,7 @@ ${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.
   return <div>{value}</div>;
 }
 `,
+  "casts.tsx": casts,
   "disabled.jsx": readsRef("// eslint-disable-next-line react-hooks/refs"),
   "flow-hook.jsx": readsRef("// $FlowFixMe[react-rule-hook]"),
   "flow-ref.jsx": readsRef("// $FlowFixMe[react-rule-unsafe-ref]"),

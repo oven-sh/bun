@@ -494,6 +494,9 @@ pub trait AnyRule: Send + Sync {
 #[derive(Copy, Clone)]
 pub struct Start<'a> {
     file: &'a File<'a>,
+    /// Of the rule. It comes from whoever starts the rule and not from its type, with which [`run_started`] would be
+    /// other code for each rule.
+    meta: &'static Meta,
     rule: u16,
     severity: Severity,
 }
@@ -509,7 +512,7 @@ impl<R: Rule> AnyRule for R {
         if on.entries.is_empty() {
             return None;
         }
-        run_started(self, on, state, start, &R::META)
+        run_started(self, on, state, start)
     }
 }
 
@@ -520,7 +523,6 @@ fn run_started<'r, 'a: 'r, R: Rule>(
     on: Listeners<'a, R>,
     state: R::State<'a>,
     start: Start<'a>,
-    meta: &'static Meta,
 ) -> Option<Box<dyn Running<'a> + 'r>> {
     let mut run = Run {
         rule,
@@ -529,7 +531,7 @@ fn run_started<'r, 'a: 'r, R: Rule>(
             state,
             base: CxBase {
                 file: start.file,
-                meta,
+                meta: start.meta,
                 rule: start.rule,
                 severity: start.severity,
                 reports: std::cell::Cell::new(0),
@@ -979,11 +981,13 @@ fn run_rules<'r, 'a: 'r>(file: &'a File<'a>, rules: &'r [Enabled<'r>]) {
     let has_types = file.types.is_some();
     let mut running: Vec<Box<dyn Running<'a> + 'r>> = Vec::with_capacity(rules.len());
     for (i, enabled) in rules.iter().enumerate() {
-        if enabled.severity == Severity::Off || enabled.rule.meta().requires_types && !has_types {
+        let meta = enabled.rule.meta();
+        if enabled.severity == Severity::Off || meta.requires_types && !has_types {
             continue;
         }
         running.extend(enabled.rule.start(Start {
             file,
+            meta,
             rule: i as u16,
             severity: enabled.severity,
         }));

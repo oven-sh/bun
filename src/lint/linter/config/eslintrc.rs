@@ -84,8 +84,10 @@ pub struct LegacyOptions<'o> {
     pub cascade: usize,
 }
 
-/// For ESLint these are patterns of a `.gitignore`.
-const IGNORED: [&[u8]; 3] = [b".*", b"!.eslintrc.*", b"/**/node_modules/*"];
+/// `DotPatterns` of `IgnorePattern`. For ESLint these are patterns of a `.gitignore`.
+const DOT_PATTERNS: [&[u8]; 2] = [b".*", b"!.eslintrc.*"];
+/// `DefaultPatterns`
+const DEFAULT_PATTERNS: [&[u8]; 1] = [b"/**/node_modules/*"];
 
 /// The name of the element that the flags of the command line make.
 const COMMAND_LINE: &[u8] = b"CLIOptions";
@@ -2005,7 +2007,9 @@ impl Config {
             let default = legacy.reader.object(&default)?;
             legacy.reader.objects.push(default);
         }
-        legacy.ignore_patterns(&IGNORED, options.cwd)?;
+        let dot_patterns = legacy.reader.objects.len();
+        legacy.ignore_patterns(&DOT_PATTERNS, options.cwd)?;
+        legacy.ignore_patterns(&DEFAULT_PATTERNS, options.cwd)?;
         legacy.reader.defaults = legacy.reader.objects.len();
         // `_loadConfigInAncestors`: from the innermost, up to one with `root`.
         let (cascade, others) = files.split_at(options.cascade.min(files.len()));
@@ -2034,6 +2038,7 @@ impl Config {
         legacy.summary(&named)?;
         Ok(Config {
             lints_all_that_is_named: !options.ignore,
+            dot_patterns: Some(dot_patterns),
             ..legacy.reader.finish(Semantics {
                 keeps_options: true,
                 accepts_all_plugins: true,

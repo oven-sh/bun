@@ -3,6 +3,9 @@ import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { realpathSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
+import { endChildren, spawn } from "../children";
+
+afterAll(endChildren);
 
 // The tests of ESLint, of typescript-eslint and of the plugins, more cases that the real ESLint has judged, and the tests of
 // oxlint's own plugins, which oxlint has judged, run on `bun lint`. See conformance/README.md. `src/lint/conformance` runs
@@ -43,7 +46,8 @@ test.skipIf(!hasRunner).each(suites)(
   async ({ suite, expected: file, every }) => {
     // Some cases are files of a project, which the runner writes there. The paths in them are those of POSIX.
     const projects = isWindows ? [] : [`--projects=${join(root, "projects")}`, "--extract", "--types"];
-    await using proc = Bun.spawn({
+    await using proc = spawn({
+      timeout: 9 * 60_000,
       cmd: [
         bunExe(),
         "lint",

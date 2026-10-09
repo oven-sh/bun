@@ -12,8 +12,11 @@ const UNEXPECTED_UNARY_OP: Message =
 /// ESLint's `isForLoopAfterthought`: `e` is the update of a `for`, or an operand of comma operators
 /// that are.
 fn is_for_loop_afterthought<'a>(e: Expr<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
+    // For oxlint it can as well be the `init` or the test of a `for` that has an update.
+    let is_oxlint = e.file().language().is_oxlint;
     let found = known.find(Node::Expr(e), |at, parent| match parent {
         Node::Expr(parent) if matches!(parent.kind(), ExprKind::Binary { op: BinOp::Comma, .. }) => None,
+        Node::Stmt(parent) if is_oxlint => Some(matches!(parent.kind(), StmtKind::For { update: Some(_), .. })),
         Node::Stmt(parent) => {
             Some(matches!(parent.kind(), StmtKind::For { update: Some(update), .. } if Node::Expr(update) == at))
         }

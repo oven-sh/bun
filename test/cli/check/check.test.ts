@@ -1203,6 +1203,23 @@ describe.concurrent("bun check", () => {
       expect(named.stdout).toStartWith("//localhost/");
     });
 
+    // `LONG-D~1` is also what NTFS calls `long-directory-name`, unless short names are turned off for the volume. The
+    // temporary directory of a GitHub runner is C:\Users\RUNNER~1\AppData\Local\Temp.
+    test.each(["LONG-D~1", ...(isWindows ? ["long-directory-name"] : [])])(
+      "a project that is reached as LONG-D~1 and is called %s",
+      async name => {
+        using dir = tempDir("bun-check", {
+          [`${name}/tsconfig.json`]: tsconfig,
+          [`${name}/a.ts`]: `export const a: string = 1;\n`,
+        });
+        const short = join(String(dir), "LONG-D~1");
+        if (!existsSync(short)) return;
+        const error = "a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.";
+        expect((await run(short, ["check"])).stdout).toBe(error);
+        expect((await run(String(dir), ["check", "LONG-D~1/a.ts"])).stdout).toBe(`LONG-D~1/${error}`);
+      },
+    );
+
     test("-p accepts a file or a directory", async () => {
       using dir = project({
         "packages/a/tsconfig.json": tsconfig,

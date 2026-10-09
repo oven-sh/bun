@@ -402,6 +402,12 @@ fn format(
     verifies: bool,
 ) -> Result<Formatted, Failure> {
     let options = &resolved.options;
+    // What `>` of Windows PowerShell writes. Some parsers take it for UTF-8 with a NUL next to every letter.
+    if matches!(text, [0xFF, 0xFE, ..] | [0xFE, 0xFF, ..]) {
+        return Err(Failure::Syntax(
+            b"SyntaxError: It is encoded as UTF-16. Only UTF-8 is read.".to_vec(),
+        ));
+    }
     // The name says what kind of file it is. Whether it is TypeScript is up to `path`.
     let name = options
         .filepath

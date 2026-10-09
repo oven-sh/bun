@@ -550,7 +550,17 @@ impl<'a> Format<'a> for FormatSignature<'a> {
             }
         });
         let flattened = format_with(|f| match (has_parameters, &return_type) {
-            (true, _) => write!(f, [type_params, params, return_type]),
+            // The arguments ask whether the return type breaks.
+            (true, Some(return_type)) => {
+                let key = || {
+                    arrow
+                        .return_type()
+                        .map_or_else(Span::default, |it| it.span())
+                };
+                let return_type = FormatContentWithCacheMode::new(key, return_type, cache_mode);
+                write!(f, [type_params, params, return_type]);
+            }
+            (true, None) => write!(f, [type_params, params]),
             (false, Some(return_type)) => write!(f, return_type),
             // The arguments expect to find something in the cache.
             (false, None) if matches!(cache_mode, FunctionCacheMode::Cache) => {

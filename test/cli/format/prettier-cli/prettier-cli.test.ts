@@ -3,11 +3,14 @@
 // `--check` and `--list-different` name, and what is printed for standard input. `bun format` writes unless told otherwise, so
 // Prettier was given `--write` where the command line only prints.
 // `cases.json` is written by `test/cli/lint/oracle/driver/prettier-fixtures.mjs --record`.
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { endChildren, spawn } from "../../children";
 import { cases, fixtures } from "./cases.json";
+
+afterAll(endChildren);
 
 type Files = Record<string, string | { link: string }>;
 const command = [bunExe(), "format"];
@@ -26,7 +29,7 @@ describe.concurrent("bun format does what Prettier does", () => {
       const texts = Object.entries(files).filter(([, file]) => typeof file === "string") as [string, string][];
       using dir = tempDir("prettier-cli", Object.fromEntries(texts.map(([name, text]) => [`${top}/${name}`, text])));
       for (const [name, { link }] of links) symlinkSync(link, join(String(dir), top, name));
-      await using proc = Bun.spawn({
+      await using proc = spawn({
         cmd: [...command, ...it.args],
         env,
         cwd: join(String(dir), it.directory),

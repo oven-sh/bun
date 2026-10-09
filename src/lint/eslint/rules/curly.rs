@@ -57,7 +57,43 @@ fn is_collapsed_one_liner(statement: Stmt<'_>) -> bool {
     before.is_some() && before == last_line_excluding_semicolon(statement)
 }
 
+/// oxlint's `is_collapsed_one_liner`: there is no line break between what is written before `statement`, be it a
+/// comment, and the end of `statement` without its `;`. So `;` alone on the next line is none.
+fn is_collapsed_one_liner_for_oxlint(statement: Stmt<'_>) -> bool {
+    let file = statement.file();
+    let before = file.text().get(..statement.span().start as usize).unwrap_or_default();
+    let before = before.iter().rposition(|it| !it.is_ascii_whitespace()).map_or(0, |it| it as u32 + 1);
+    file.line_of(before) == file.line_of(end_without_semicolon_for_oxlint(statement))
+}
+
+/// Where the text of `statement` ends without the `;` and the white space at its end. A comment before the `;` is part
+/// of it.
+fn end_without_semicolon_for_oxlint(statement: Stmt<'_>) -> u32 {
+    let last = statement.text().iter().rposition(|it| !it.is_ascii_whitespace() && *it != b';');
+    statement.span().start + last.map_or(0, |it| it as u32 + 1)
+}
+
+/// oxlint's `is_followed_by_else_keyword`: it skips a character after the block, and wants a space, a `;` or a `{`
+/// after the `else`, or where that would be.
+fn is_followed_by_else_for_oxlint(block: Stmt<'_>) -> bool {
+    let rest = block.file().text().get(block.span().end as usize..).unwrap_or_default();
+    let skipped = match rest {
+        [b'\r', b'\n', ..] | [b'\n', b'\r', ..] => 2,
+        [] => return false,
+        _ => text::code_point_at(rest, 0).1,
+    };
+    let mut rest = rest.get(skipped..).unwrap_or_default().trim_ascii_start();
+    while let Some(after) = rest.strip_prefix(b"else") {
+        rest = after;
+    }
+    matches!(rest.first(), Some(b' ' | b';' | b'{'))
+}
+
 fn is_one_liner(statement: Stmt<'_>) -> bool {
+    let file = statement.file();
+    if file.language().is_oxlint && statement.tag() != StmtTag::Empty {
+        return file.line_of(statement.span().start) == file.line_of(end_without_semicolon_for_oxlint(statement));
+    }
     statement.tag() == StmtTag::Empty
         || last_line_excluding_semicolon(statement) == Some(statement.file().line_of(statement.span().start))
 }
@@ -108,10 +144,16 @@ impl Curly {
     fn prepare_check<'a>(&self, body: Stmt<'a>, name: &'static str, has_condition: bool) -> Check<'a> {
         let block = body.as_block();
         let only = block.and_then(|it| it.first().filter(|_| it.len() == 1));
+        let is_oxlint = body.file().language().is_oxlint;
+        let are_braces_necessary = || match is_oxlint {
+            true => ast_utils::are_braces_necessary_if(body, || is_followed_by_else_for_oxlint(body)),
+            false => ast_utils::are_braces_necessary(body),
+        };
         let expected = match self.mode {
             Mode::All => Some(true),
-            _ if block.is_some() && (only.is_none() || ast_utils::are_braces_necessary(body)) => Some(true),
+            _ if block.is_some() && (only.is_none() || are_braces_necessary()) => Some(true),
             Mode::Multi => Some(false),
+            Mode::MultiLine if is_oxlint => (!is_collapsed_one_liner_for_oxlint(body)).then_some(true),
             Mode::MultiLine => (!is_collapsed_one_liner(body)).then_some(true),
             Mode::MultiOrNest => Some(match only {
                 Some(only) => !is_one_liner(only) || body.file().comments_before(only).next().is_some(),

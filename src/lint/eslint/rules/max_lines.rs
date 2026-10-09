@@ -1,3 +1,4 @@
+use super::max_lines_per_function::count_comment_lines_as_oxlint;
 use bun_lint::prelude::*;
 
 /// Enforce a maximum number of lines per file.
@@ -37,6 +38,25 @@ impl MaxLines {
         if count as usize <= self.max {
             return;
         }
+        // oxlint takes the lines of the comments from the lines that are not blank: a blank line in a comment is taken
+        // twice. It points at the last byte of the file.
+        if cx.language().is_oxlint {
+            let lines = match self.skip_blank_lines {
+                true => (1..=count).filter(|line| !text::is_blank(file.line_text(*line))).count(),
+                false => count as usize,
+            };
+            let comment_lines = match self.skip_comments {
+                true => count_comment_lines_as_oxlint(file).last().map_or(0, |it| it.1 as usize),
+                false => 0,
+            };
+            let actual = lines.max(1).saturating_sub(comment_lines);
+            if actual > self.max {
+                cx.report(Span::empty(file.span().end.saturating_sub(1)), EXCEED)
+                    .data("max", self.max)
+                    .data("actual", actual);
+            }
+            return;
+        }
         let mut is_comment_line = Vec::new();
         if self.skip_comments {
             is_comment_line.resize(count as usize + 2, false);
@@ -62,12 +82,7 @@ impl MaxLines {
             actual += 1;
         }
         if let Some(line) = first_excess {
-            // oxlint points at the last byte of the file.
-            let place = match cx.language().is_oxlint {
-                true => Span::new(file.span().end.saturating_sub(1), file.span().end.saturating_sub(1)),
-                false => Span::new(file.line_span(line).start, file.span().end),
-            };
-            cx.report(place, EXCEED)
+            cx.report(Span::new(file.line_span(line).start, file.span().end), EXCEED)
                 .data("max", self.max)
                 .data("actual", actual);
         }

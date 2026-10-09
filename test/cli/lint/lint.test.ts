@@ -1,7 +1,18 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { chmodSync, chownSync, existsSync, linkSync, readdirSync, readFileSync, statSync, symlinkSync } from "node:fs";
-import { join } from "node:path";
+import { afterAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import {
+  chmodSync,
+  chownSync,
+  existsSync,
+  linkSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  symlinkSync,
+} from "node:fs";
+import { basename, dirname, join, parse } from "node:path";
+import { endChildren, spawn } from "../children";
 import { configurations } from "./oracle/plugins/oxlint/compare-options";
 import whatOxlintReports from "./oracle/plugins/oxlint/expected.json";
 import { directoryOf, filesOf, cases as fixCases } from "./oracle/plugins/oxlint/fixes";
@@ -10,6 +21,8 @@ import whatOxlintFixes from "./oracle/plugins/oxlint/fixes.expected.json";
 import { filesOf as filesOfMessages, entries as messages, messagesOf } from "./oracle/plugins/oxlint/messages";
 import optionsOfOxlint from "./oracle/plugins/oxlint/options.json";
 import { projects } from "./oracle/plugins/oxlint/projects";
+
+afterAll(endChildren);
 
 const command = [bunExe(), "lint"];
 
@@ -48,7 +61,7 @@ type Options = {
 async function lint(files: Record<string, string>, args: string[], options: Options = {}) {
   using dir = tempDir("bun-lint", files);
   options.before?.(String(dir));
-  await using proc = Bun.spawn({
+  await using proc = spawn({
     cmd: [...command, ...args],
     env: { ...env, ...options.env },
     cwd: join(String(dir), options.cwd ?? "."),
@@ -836,7 +849,7 @@ describe.concurrent("bun lint", () => {
         expect(JSON.parse(suppressed.raw).diagnostics).toEqual([]);
         expect(suppressed.exitCode).toBe(0);
         using dir = tempDir("bun-lint-suppressions", project);
-        await using proc = Bun.spawn({
+        await using proc = spawn({
           cmd: [...command, "--suppress-all", "-f", "json"],
           env,
           cwd: String(dir),
@@ -1589,7 +1602,7 @@ describe.concurrent("bun lint", () => {
       const isRoot = process.getuid?.() === 0;
       /** `--fix` in `dir`, which is still there afterwards. `before`: what starts the command. */
       async function fix(dir: string, args: string[], before: string[] = []) {
-        await using proc = Bun.spawn({
+        await using proc = spawn({
           cmd: [...before, ...command, "--fix", ...args],
           env,
           cwd: dir,
@@ -1641,7 +1654,8 @@ describe.concurrent("bun lint", () => {
         for (const { stdout, stderr } of [named, found, withoutRepository]) {
           expect(stdout + stderr).toContain("Cannot write <dir>/project/c/d.js: A link leads out of the repository.");
         }
-        expect([named.exitCode, found.exitCode, withoutRepository.exitCode]).toEqual([2, 2, 2]);
+        // Beside an .oxlintrc.json what fails ends the run as it ends oxlint's.
+        expect([named.exitCode, found.exitCode, withoutRepository.exitCode]).toEqual([2, 1, 2]);
       });
 
       test("can be one that a link leads to in the repository, or that is named outside of the working directory", async () => {
@@ -1664,7 +1678,12 @@ describe.concurrent("bun lint", () => {
       // In a container, say, with the project of a user mounted into it.
       test.skipIf(!isRoot)("keeps its owner if root fixes it", async () => {
         using dir = tempDir("bun-lint", files);
-        chownSync(join(String(dir), "a.js"), 12345, 12345);
+        try {
+          chownSync(join(String(dir), "a.js"), 12345, 12345);
+        } catch {
+          // The root of a container that does not have these.
+          return;
+        }
         await fix(String(dir), ["a.js"]);
         const { uid, gid } = statSync(join(String(dir), "a.js"));
         expect([read(String(dir), "a.js"), uid, gid]).toEqual([fixed, 12345, 12345]);
@@ -2058,6 +2077,391 @@ describe.concurrent("bun lint", () => {
       expect(raw).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    const slow = isDebug || isASAN ? 120_000 : undefined;
+
+    // Whether the file system takes `A` for `a`, where the projects of these tests are.
+    const foldsCase = (() => {
+      using dir = tempDir("bun-lint", { "probe": "" });
+      return existsSync(join(String(dir), "PROBE"));
+    })();
+
+    // `name:line rule` of every problem, whatever the directories are called.
+    async function problems(cwd: string, args: string[], stdin?: string) {
+      await using proc = Bun.spawn({
+        cmd: [...command, "-f", "json", ...args],
+        env,
+        cwd,
+        stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const results: { filePath: string; messages: { ruleId: string; line: number }[] }[] = JSON.parse(stdout || "[]");
+      const found = results.flatMap(it =>
+        it.messages.map(message => `${basename(it.filePath).toLowerCase()}:${message.line} ${message.ruleId}`),
+      );
+      return { found: found.sort(), stderr, exitCode };
+    }
+    const inSrc = {
+      "tsconfig.json": files["tsconfig.json"],
+      "eslint.config.js": files["eslint.config.js"],
+      "src/a.ts": files["a.ts"],
+      "src/b.ts": files["b.ts"],
+    };
+    const both = [
+      "a.ts:2 @typescript-eslint/no-floating-promises",
+      "a.ts:3 @typescript-eslint/no-unnecessary-type-assertion",
+    ];
+    // On Windows the working directory is spelled as whoever started the process spelled it.
+    const inUpperCase = (dir: string) => join(dirname(dir), basename(dir).toUpperCase());
+    const withSmallDrive = (dir: string) => dir[0].toLowerCase() + dir.slice(1);
+    // `src/a.ts` is `Src/A.ts` in tsconfig.json, and so in the program. Where the file system does not fold case, each
+    // spelling is a file of its own, and the type checker folds all the same: it finds `A.TS` where it looks for `a.ts`.
+    const respelled = (text: string) => ({
+      ...inSrc,
+      "tsconfig.json": JSON.stringify({ ...JSON.parse(files["tsconfig.json"]), files: ["Src/A.ts"] }),
+      "src/a.ts": text,
+      "src/A.TS": text,
+      "Src/A.ts": text,
+      "Src/b.ts": files["b.ts"],
+    });
+
+    test(
+      "run however an argument or the working directory is spelled",
+      async () => {
+        using dir = tempDir("bun-lint", inSrc);
+        const root = String(dir);
+        const rows: [cwd: string, args: string[]][] = [
+          [root, []],
+          [root, ["src"]],
+          [root, ["src/a.ts"]],
+          [root, [join(root, "src", "a.ts")]],
+          [join(root, "src"), ["a.ts"]],
+        ];
+        if (foldsCase) {
+          rows.push(
+            [root, ["SRC"]],
+            [root, ["SRC/a.ts"]],
+            [root, ["src/A.ts"]],
+            [root, [join(root, "SRC", "A.TS")]],
+            [join(root, "SRC"), ["a.ts"]],
+            [inUpperCase(root), []],
+          );
+        }
+        if (isWindows) rows.push([withSmallDrive(root), []], [root, ["src\\a.ts"]]);
+        for (const [cwd, args] of rows) {
+          expect({ cwd, args, ...(await problems(cwd, args)) }).toMatchObject({ found: both, exitCode: 1 });
+        }
+      },
+      slow,
+    );
+
+    test(
+      "run on a file that tsconfig.json spells differently",
+      async () => {
+        using dir = tempDir("bun-lint", respelled(files["a.ts"]));
+        expect(await problems(String(dir), ["src/a.ts"])).toMatchObject({ found: both, exitCode: 1 });
+      },
+      slow,
+    );
+
+    // The text of the second pass, and that of standard input, is in memory under the path as it is spelled here.
+    test(
+      "--fix in several passes, and --stdin, however the path is spelled",
+      async () => {
+        for (const name of foldsCase ? ["src/a.ts", "SRC/A.ts"] : ["src/a.ts"]) {
+          using dir = tempDir("bun-lint", respelled("declare const text: string;\nexport const a = text!!;\n"));
+          const fixed = await problems(String(dir), ["--fix", name]);
+          expect({ name, ...fixed, text: readFileSync(join(String(dir), "src/a.ts"), "utf8") }).toMatchObject({
+            found: [],
+            exitCode: 0,
+            text: "declare const text: string;\nexport const a = text;\n",
+          });
+          const piped = await problems(String(dir), ["--stdin", "--stdin-filename", name], files["a.ts"]);
+          expect({ name, ...piped }).toMatchObject({ found: both, exitCode: 1 });
+        }
+      },
+      slow,
+    );
+
+    // oxlint checks it in a project of its own, whose configuration file is in memory, in the working directory.
+    test(
+      "a file that no project includes, from any working directory",
+      async () => {
+        using dir = tempDir("bun-lint", {
+          ".oxlintrc.json": JSON.stringify({
+            categories: { correctness: "off" },
+            rules: { "typescript/no-floating-promises": "error" },
+          }),
+          "a.ts": "async function later() {}\nlater();\nexport {};\n",
+        });
+        const root = String(dir);
+        const args = ["-c", join(root, ".oxlintrc.json"), "--type-aware", "-f", "unix", join(root, "a.ts")];
+        const from = [root, parse(root).root, ...(isWindows ? [inUpperCase(root), withSmallDrive(root)] : [])];
+        for (const cwd of from) {
+          await using proc = Bun.spawn({ cmd: [...command, ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
+          const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+          expect({ cwd, stdout, exitCode }).toEqual({
+            cwd,
+            stdout: expect.stringContaining("a.ts:2:1: Promises must be awaited"),
+            exitCode: 1,
+          });
+        }
+      },
+      slow,
+    );
+
+    // `LONG-D~1` is also what NTFS calls `long-directory-name`, unless short names are turned off for the volume.
+    test.each(["LONG-D~1", ...(isWindows ? ["long-directory-name"] : [])])(
+      "in a directory that is reached as LONG-D~1 and is called %s",
+      async name => {
+        using dir = tempDir(
+          "bun-lint",
+          Object.fromEntries(Object.entries(inSrc).map(([path, text]) => [`${name}/${path}`, text])),
+        );
+        const short = join(String(dir), "LONG-D~1");
+        if (!existsSync(short)) return;
+        expect(await problems(short, [])).toMatchObject({ found: both, exitCode: 1 });
+        expect(await problems(String(dir), ["LONG-D~1/src/a.ts"])).toMatchObject({ found: both, exitCode: 1 });
+      },
+      slow,
+    );
+
+    test("--fix of a file with a byte order mark, in several passes", async () => {
+      const result = await lint(
+        { ...files, "a.ts": "\uFEFFdeclare const text: string;\nexport const a = text!!;\n" },
+        ["--fix"],
+        { reads: ["a.ts"] },
+      );
+      expect(result.files).toEqual({ "a.ts": "\uFEFFdeclare const text: string;\nexport const a = text;\n" });
+      expect(result.exitCode).toBe(0);
+    });
+
+    test(
+      "unicode-bom sees the byte order mark",
+      async () => {
+        const config = (option: string) =>
+          files["eslint.config.js"].replace("rules: {", `rules: { "unicode-bom": ["error", "${option}"],`);
+        const text = "export const a = 1;\r\n";
+        const rows: [option: string, text: string, found: string[], fixed: string][] = [
+          ["never", "\uFEFF" + text, ["a.ts:1 unicode-bom"], text],
+          ["never", text, [], text],
+          ["always", "\uFEFF" + text, [], "\uFEFF" + text],
+          ["always", text, ["a.ts:1 unicode-bom"], "\uFEFF" + text],
+        ];
+        for (const [option, text, found, fixed] of rows) {
+          using dir = tempDir("bun-lint", { ...files, "eslint.config.js": config(option), "a.ts": text });
+          expect({ option, text, found: (await problems(String(dir), ["a.ts"])).found }).toEqual({
+            option,
+            text,
+            found,
+          });
+          await problems(String(dir), ["--fix", "a.ts"]);
+          expect({ option, text, fixed: readFileSync(join(String(dir), "a.ts"), "utf8") }).toEqual({
+            option,
+            text,
+            fixed,
+          });
+        }
+      },
+      slow,
+    );
+
+    // As for TypeScript, which drops it.
+    test("the byte order mark is no character of the line that a type error is in", async () => {
+      const project = {
+        "tsconfig.json": files["tsconfig.json"],
+        ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" } }),
+        "a.ts": `\uFEFFexport const a: number = "";\n`,
+      };
+      const args = ["--type-aware", "--type-check", "-f", "unix"];
+      const read = await lint(project, args);
+      const piped = await lint(project, [...args, "--stdin", "--stdin-filename", "a.ts"], { stdin: project["a.ts"] });
+      const where = (text: string) => /a\.ts:\d+:\d+: Type 'string'/.exec(text)?.[0];
+      expect([where(read.raw), where(piped.raw)]).toEqual(["a.ts:1:14: Type 'string'", "a.ts:1:14: Type 'string'"]);
+    });
+
+    test("rules that are about several files run on a file that is linted with types", async () => {
+      const { raw, exitCode } = await lint(
+        {
+          "tsconfig.json": files["tsconfig.json"],
+          ".oxlintrc.json": JSON.stringify({
+            categories: { correctness: "off" },
+            plugins: ["import", "typescript"],
+            rules: { "import/no-cycle": "error", "typescript/no-floating-promises": "error" },
+          }),
+          "a.ts": `import { b } from "./b";\nexport async function a() {}\nb();\n`,
+          "b.ts": `import { a } from "./a";\nexport function b() {\n  a();\n}\n`,
+        },
+        ["--type-aware", "-f", "json"],
+      );
+      const found = JSON.parse(raw).diagnostics.map((it: any) => `${it.filename}:${it.labels[0].span.line} ${it.code}`);
+      expect(found.sort()).toEqual([
+        "a.ts:1 import(no-cycle)",
+        "b.ts:1 import(no-cycle)",
+        "b.ts:3 typescript(no-floating-promises)",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
+    // a.ts is linted with types, b.ts without.
+    test(
+      "a rule in JavaScript gets the path of the file, with and without types",
+      async () => {
+        const { raw, exitCode } = await lint(
+          {
+            ...files,
+            "eslint.config.js": `import { existsSync } from "node:fs";
+            import { isAbsolute, relative } from "node:path";
+            const path = { create: context => ({ Program: node => context.report({ node, message: [
+              isAbsolute(context.filename), existsSync(context.filename), relative(context.cwd, context.filename),
+            ].join(" ") }) }) };
+            export default [
+              {
+                files: ["**/*.ts"],
+                plugins: { p: { meta: { name: "p" }, rules: { path } } },
+                languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } },
+                rules: { "p/path": "error" },
+              },
+              {
+                files: ["a.ts"],
+                plugins: { "@typescript-eslint": { meta: { name: "@typescript-eslint/eslint-plugin" } } },
+                languageOptions: { parserOptions: { projectService: true } },
+                rules: { "@typescript-eslint/no-floating-promises": "error" },
+              },
+            ];`,
+          },
+          ["-f", "json", "a.ts", "b.ts"],
+        );
+        const said = JSON.parse(raw).flatMap((it: any) => it.messages.map((m: any) => `${m.ruleId}: ${m.message}`));
+        expect(said.filter((it: string) => it.startsWith("p/"))).toEqual([
+          "p/path: true true a.ts",
+          "p/path: true true b.ts",
+        ]);
+        expect(exitCode).toBe(1);
+      },
+      slow,
+    );
+
+    // As ESLint, whose `readFile` throws. Without types it always was one.
+    test("a file that cannot be read is an error", async () => {
+      const { "a.ts": _, ...others } = files;
+      using dir = tempDir("bun-lint", isLinux ? others : files);
+      const path = join(String(dir), "a.ts");
+      const everyone = "*S-1-1-0";
+      // It can be opened, and reading it fails, also for root.
+      if (isLinux) symlinkSync("/proc/self/mem", path);
+      // Its data only: what it is, and that it can be deleted, is still to be found out.
+      else if (isWindows) Bun.spawnSync({ cmd: ["icacls", path, "/deny", `${everyone}:(RD)`] });
+      else chmodSync(path, 0);
+      try {
+        const canRead = (() => {
+          try {
+            return readFileSync(path).length >= 0;
+          } catch {
+            return false;
+          }
+        })();
+        // root on macOS.
+        if (canRead) return;
+        const { stderr, exitCode } = await problems(String(dir), []);
+        expect(stderr).toContain("Cannot read ");
+        expect(exitCode).toBe(2);
+      } finally {
+        if (isWindows) Bun.spawnSync({ cmd: ["icacls", path, "/remove:d", everyone] });
+      }
+    });
+
+    describe("a project that is referenced is read from its sources", () => {
+      const compilerOptions = {
+        ...JSON.parse(files["tsconfig.json"]).compilerOptions,
+        noEmit: false,
+        composite: true,
+        rootDir: "src",
+        outDir: "dist",
+      };
+      // Nothing is built: it has no `dist`.
+      const lib = (directory: string) => ({
+        [`packages/${directory}/package.json`]: JSON.stringify({
+          name: "lib",
+          version: "1.0.0",
+          types: "dist/index.d.ts",
+        }),
+        [`packages/${directory}/tsconfig.json`]: JSON.stringify({ compilerOptions, include: ["src"] }),
+        [`packages/${directory}/src/index.ts`]: "export async function later() {}\n",
+      });
+      const app = `import { later } from "lib";\nlater();\n`;
+      // `LIB` and `INDEX.TS`: as in `respelled`.
+      const workspace = (reference: string) => ({
+        "eslint.config.js": files["eslint.config.js"],
+        ...lib("lib"),
+        ...lib("LIB"),
+        "packages/app/tsconfig.json": JSON.stringify({
+          compilerOptions,
+          files: ["src/index.ts"],
+          references: [{ path: reference }],
+        }),
+        "packages/app/src/index.ts": app,
+        "packages/app/src/INDEX.TS": app,
+      });
+      // The real path of the link has the drive and the directories as the system spells them.
+      const rows: [reference: string, cwd: (dir: string) => string][] = [
+        ["../lib", dir => dir],
+        ["../LIB", dir => dir],
+      ];
+      if (isWindows) rows.push(["../lib", withSmallDrive]);
+      test.each(rows)(
+        "through a link in node_modules, referenced as %s",
+        async (reference, cwd) => {
+          using dir = tempDir("bun-lint", workspace(reference));
+          const modules = join(String(dir), "packages/app/node_modules");
+          mkdirSync(modules, { recursive: true });
+          symlinkSync(join(String(dir), "packages/lib"), join(modules, "lib"), "junction");
+          expect(await problems(cwd(String(dir)), ["packages/app/src/index.ts"])).toMatchObject({
+            found: ["index.ts:2 @typescript-eslint/no-floating-promises"],
+            exitCode: 1,
+          });
+        },
+        slow,
+      );
+    });
+
+    // `subst` gives the directory a drive letter, as in test/cli/check/check.test.ts.
+    test.skipIf(!isWindows)(
+      "a project at the root of a drive",
+      async () => {
+        using dir = tempDir("bun-lint", {
+          ...inSrc,
+          "no-project/.oxlintrc.json": JSON.stringify({
+            categories: { correctness: "off" },
+            rules: { "typescript/no-floating-promises": "error" },
+          }),
+          "no-project/c.js": "async function later() {}\nlater();\n",
+        });
+        const subst = (...args: string[]) => Bun.spawnSync({ cmd: ["subst", ...args] }).exitCode === 0;
+        const drive = [..."ZYXWVUTSRQ"]
+          .map(letter => `${letter}:`)
+          .find(drive => !existsSync(`${drive}\\`) && subst(drive, String(dir)));
+        expect(drive).toBeDefined();
+        try {
+          expect((await problems(`${drive}\\`, ["src"])).found).toEqual(both);
+          expect((await problems(String(dir), [`${drive}\\src\\a.ts`])).found).toEqual(both);
+          // The tsconfig.json at the root does not include it, and nothing is above the root.
+          await using proc = Bun.spawn({
+            cmd: [...command, "--type-aware", "-f", "unix", "c.js"],
+            env,
+            cwd: `${drive}\\no-project`,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          expect(await proc.stdout.text()).toContain("c.js:2:1: Promises must be awaited");
+        } finally {
+          subst(drive!, "/D");
+        }
+      },
+      slow,
+    );
 
     // What typescript-eslint 8.71 says. `undefined`: nothing. In two of them TypeScript 7, and so tsgolint, differs from
     // TypeScript 6, on which typescript-eslint runs: they are as in 7.

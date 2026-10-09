@@ -1,12 +1,15 @@
 // TOML under a configuration file of oxfmt. What is printed for which text is in `own/cases/toml`, judged by oxfmt.
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { endChildren, spawn } from "../children";
+
+afterAll(endChildren);
 
 async function format(files: Record<string, string>, config: object, args: string[] = []) {
   using dir = tempDir("bun-format-toml", { ...files, ".oxfmtrc.json": JSON.stringify(config) });
-  await using proc = Bun.spawn({
+  await using proc = spawn({
     cmd: [bunExe(), "format", ...args],
     env: { ...bunEnv, NO_COLOR: "1" },
     cwd: String(dir),

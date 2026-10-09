@@ -228,6 +228,14 @@ impl Default for ConfigObject {
     }
 }
 
+/// What is found for an argument of ESLint 8 in which a name starts with a dot (`.storybook`, `.*.js`) is not ignored for such a
+/// name: its `dotfiles`.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum Dotfiles {
+    AsConfigured,
+    Linted,
+}
+
 /// What a configuration says about a file: ESLint's `getConfigWithStatus`.
 #[derive(Clone)]
 pub enum FileConfig {
@@ -339,6 +347,8 @@ pub struct Config {
     is_legacy: bool,
     /// `--no-ignore` of ESLint 8: a file that is named is linted, whatever ignores it. What is found in a directory is not.
     lints_all_that_is_named: bool,
+    /// Which object has the patterns with which ESLint 8 ignores what starts with a dot.
+    dot_patterns: Option<usize>,
     /// A rule of ESLint that typescript-eslint extends stands for the extension, as in oxlint.
     prefers_typescript_rules: bool,
     /// `options` of an `.oxlintrc.json` and of what it extends.
@@ -446,13 +456,15 @@ impl Config {
 
     /// `shouldIgnorePath(this.ignores, ..)`. `relative` is relative to the base path, and ends with
     /// a slash if it is a directory.
-    fn is_ignored_globally(&self, relative: &[u8]) -> bool {
+    fn is_ignored_globally(&self, relative: &[u8], dotfiles: Dotfiles) -> bool {
         let parts = SplitPath::new(relative);
         let mut is_ignored = false;
         // See `Config::relative`.
         let is_outside = relative.starts_with(b"/");
-        for object in self.objects.iter().filter(|it| it.is_global_ignores) {
-            if is_outside && object.ignores_inside_only {
+        let skipped = self.dot_patterns.filter(|_| dotfiles == Dotfiles::Linted);
+        let objects = self.objects.iter().enumerate();
+        for (index, object) in objects.filter(|it| it.1.is_global_ignores) {
+            if is_outside && object.ignores_inside_only || skipped == Some(index) {
                 continue;
             }
             let ignores = object.ignores.as_deref().unwrap_or_default();
@@ -492,22 +504,22 @@ impl Config {
 
     /// [`Config::is_directory_ignored`] for a directory inside the base path of which it is known that
     /// no directory that it is in is ignored.
-    pub fn is_directory_ignored_in(&self, directory: &[u8]) -> bool {
+    pub fn is_directory_ignored_in(&self, directory: &[u8], dotfiles: Dotfiles) -> bool {
         let mut relative = self.relative(directory);
         if relative.is_empty() {
             return false;
         }
         relative.push(b'/');
-        self.is_ignored_globally(&relative)
+        self.is_ignored_globally(&relative, dotfiles)
     }
 
     /// Whether a file inside the base path is ignored, if the directory that it is in is not.
-    pub fn is_file_ignored_in(&self, file: &[u8]) -> bool {
-        self.is_ignored_globally(&self.relative(file))
+    pub fn is_file_ignored_in(&self, file: &[u8], dotfiles: Dotfiles) -> bool {
+        self.is_ignored_globally(&self.relative(file), dotfiles)
     }
 
     /// ESLint's `isDirectoryIgnored`. `directory` is absolute.
-    pub fn is_directory_ignored(&self, directory: &[u8]) -> bool {
+    pub fn is_directory_ignored(&self, directory: &[u8], dotfiles: Dotfiles) -> bool {
         let relative = self.relative(directory);
         if relative.is_empty() {
             return false;
@@ -520,7 +532,7 @@ impl Config {
         while end < relative.len() {
             end += bun_core::strings::index_of_char_usize(&relative[end..], b'/')
                 .unwrap_or(relative.len() - end);
-            if self.is_ignored_globally(&[&relative[..end], b"/"].concat()) {
+            if self.is_ignored_globally(&[&relative[..end], b"/"].concat(), dotfiles) {
                 return true;
             }
             end += 1;
@@ -535,7 +547,8 @@ impl Config {
             return FileConfig::External;
         }
         let is_ignored = || {
-            self.is_directory_ignored(path::dirname(file)) || self.is_ignored_globally(&relative)
+            self.is_directory_ignored(path::dirname(file), Dotfiles::AsConfigured)
+                || self.is_ignored_globally(&relative, Dotfiles::AsConfigured)
         };
         if !self.lints_all_that_is_named && is_ignored() {
             return FileConfig::Ignored;
@@ -548,6 +561,11 @@ impl Config {
     /// whoever walks the directories has asked [`Config::is_directory_ignored`] on the way.
     pub fn get_unless_ignored(&self, registry: &Registry, file: &[u8]) -> FileConfig {
         self.get_if(registry, file, true)
+    }
+
+    /// The same for a file that a pattern among the arguments matches. ESLint 8 lints that, whatever it is called.
+    pub fn get_for_pattern(&self, registry: &Registry, file: &[u8]) -> FileConfig {
+        self.get_if(registry, file, !self.is_legacy)
     }
 
     /// `must_match`: a file that no `files` is for has no configuration.

@@ -3,10 +3,13 @@
 // and empty lines in odd places. What is expected is what Prettier 3.9.9 with the plugin (for
 // prettier-plugin-organize-imports, with TypeScript 5.9), and oxfmt 0.72, print.
 // They are made by test/cli/format/oracle/sort-imports/make-fixtures.mjs.
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { endChildren, spawn } from "../../children";
+
+afterAll(endChildren);
 
 type Case = { name: string; filename: string; options: Record<string, unknown>; input: string; output: string };
 
@@ -22,7 +25,7 @@ const tools = {
 
 async function format(files: Record<string, string>, names: string[], flags: string[] = []) {
   using dir = tempDir("bun-format-sort-imports", files);
-  await using proc = Bun.spawn({
+  await using proc = spawn({
     cmd: [bunExe(), "format", "--log-level=warn", ...flags, "."],
     env: bunEnv,
     cwd: String(dir),

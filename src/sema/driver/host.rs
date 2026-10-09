@@ -5,7 +5,9 @@
 //! printed type or a line of output converts it there, with `resolve::displayed_path`.
 
 use bun_ast::e::{JsonValue, ObjectJSON};
-use bun_core::strings::{BOM, contains, is_valid_utf8, without_trailing_slash};
+use bun_core::strings::{
+    BOM, contains, is_valid_utf8, rsplit_once_char, split_once_char, without_trailing_slash,
+};
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, windows_volume_name_len, z};
 use bun_paths::{basename_posix, path_buffer_pool};
@@ -14,7 +16,8 @@ use bun_sema::hir;
 use bun_sema::json::Json;
 use bun_sema::resolve::{
     Host, ModuleDetection, ParseOptions, Phase, ScriptKind, Spent, ancestors, inside,
-    is_declaration_file_name, join, root_length, to_file_name_lower_case, to_path, typescript_path,
+    is_declaration_file_name, is_same_path, join, root_length, to_file_name_lower_case, to_path,
+    typescript_path,
 };
 use bun_sema::session::Arena;
 use bun_sema::util::SharedSort;
@@ -169,10 +172,12 @@ pub struct Disk {
     idle_readers: bun_threading::Guarded<Vec<Reader>>,
     /// See `Host::take_unreadable`.
     unreadable: bun_threading::Guarded<Vec<Vec<u8>>>,
-    /// See `AlreadyRead`.
+    /// See `AlreadyRead`. By `tspath.Path`: such a file is found however its name is spelled, like one on the disk.
     already_read: AlreadyRead,
-    /// What `already_read` adds to the listing of a directory, by the path of the directory.
+    /// What `already_read` adds to the listing of a directory, by the `tspath.Path` of the directory.
     in_memory: FxHashMap<Vec<u8>, InMemory>,
+    /// `Provided::keeps_byte_order_marks`
+    pub(crate) keeps_byte_order_marks: bool,
     /// `Host::times`, in nanoseconds.
     times: [AtomicU64; Phase::ALL.len()],
     /// What is in `BUNDLED_LIBS`.
@@ -185,8 +190,8 @@ pub struct Disk {
     pub(crate) scripts_of_page: Option<ScriptsOfPage>,
 }
 
-/// The text of files that the caller of the check has read, by path in the checker's format, as
-/// UTF-8 without a byte order mark. Such a file is not opened. Several programs may read it.
+/// The text of files that the caller of the check has read, by path in the checker's format, as UTF-8, without a byte order
+/// mark unless `Provided::keeps_byte_order_marks`. Such a file is not opened. Several programs may read it.
 /// `bun build --check` passes what the bundler has read.
 pub type AlreadyRead = FxHashMap<Vec<u8>, Vec<u8>>;
 
@@ -204,6 +209,9 @@ pub struct Provided {
     pub already_read: AlreadyRead,
     pub before_read: Option<BeforeRead>,
     pub scripts_of_page: Option<ScriptsOfPage>,
+    /// The text of a script keeps the UTF-8 byte order mark that the file starts with, which TypeScript drops. The parser
+    /// takes it for a blank. `bun lint` has a rule about it, and writes the text back.
+    pub keeps_byte_order_marks: bool,
 }
 
 /// The names in one directory of the files of `AlreadyRead` and of the directories that lead to
@@ -216,12 +224,16 @@ struct InMemory {
 }
 
 impl InMemory {
-    fn by_directory(already_read: &AlreadyRead) -> FxHashMap<Vec<u8>, InMemory> {
+    fn by_directory(
+        already_read: &AlreadyRead,
+        is_case_sensitive: bool,
+    ) -> FxHashMap<Vec<u8>, InMemory> {
         let mut by_directory: FxHashMap<Vec<u8>, InMemory> = FxHashMap::default();
         for path in already_read.keys() {
             let Split { mut parent, name } = split(path);
-            let mut is_new = !by_directory.contains_key(parent);
-            let names = by_directory.entry(parent.to_vec()).or_default();
+            let key = to_path(parent, is_case_sensitive).into_owned();
+            let mut is_new = !by_directory.contains_key(&key);
+            let names = by_directory.entry(key).or_default();
             names.files.push(name.to_vec());
             // A directory is entered in its parent when it gets its first entry.
             while is_new {
@@ -229,8 +241,9 @@ impl InMemory {
                 if directory.name.is_empty() {
                     break;
                 }
-                is_new = !by_directory.contains_key(directory.parent);
-                let names = by_directory.entry(directory.parent.to_vec()).or_default();
+                let key = to_path(directory.parent, is_case_sensitive).into_owned();
+                is_new = !by_directory.contains_key(&key);
+                let names = by_directory.entry(key).or_default();
                 names.directories.push(directory.name.to_vec());
                 parent = directory.parent;
             }
@@ -294,13 +307,15 @@ fn read_file(directory: Fd, name: &[u8], buffer: &mut Vec<u8>) -> Option<Vec<u8>
 
 /// `decodeBytes`: the text of a file, decoded according to its byte order mark. `BOM` does not
 /// support big endian, so the byte pairs are swapped first.
-fn decoded(mut bytes: Vec<u8>) -> Cow<'static, [u8]> {
+/// `keeps_mark`: that of UTF-8 stays.
+fn decoded(mut bytes: Vec<u8>, keeps_mark: bool) -> Cow<'static, [u8]> {
     if bytes.starts_with(&[0xFE, 0xFF]) {
         for pair in bytes.as_chunks_mut::<2>().0 {
             pair.swap(0, 1);
         }
     }
     Cow::Owned(match BOM::detect(&bytes) {
+        Some(BOM::Utf8) if keeps_mark => bytes,
         Some(mark) => mark.remove_and_convert_to_utf8_and_free(bytes),
         // `BOM::detect` needs three bytes. A UTF-16 byte order mark alone is an empty file.
         None if bytes == [0xFF, 0xFE] => Vec::new(),
@@ -309,9 +324,9 @@ fn decoded(mut bytes: Vec<u8>) -> Cow<'static, [u8]> {
 }
 
 /// `vfs.FS.ReadFile` of the file at `path`, by that path alone.
-pub(crate) fn read_at(path: &[u8]) -> Option<Cow<'static, [u8]>> {
+pub(crate) fn read_at(path: &[u8], keeps_mark: bool) -> Option<Cow<'static, [u8]>> {
     let bytes = bun_sys::File::read_from(Fd::cwd(), to_native(path));
-    bytes.ok().map(decoded)
+    bytes.ok().map(|bytes| decoded(bytes, keeps_mark))
 }
 
 /// The two parts of a path.
@@ -356,12 +371,19 @@ fn is_directory(directory: Fd, path: &[u8]) -> Option<bool> {
 impl Disk {
     /// `project`: a path in the project, in the checker's path format.
     pub fn with_already_read(threads: usize, already_read: AlreadyRead, project: &[u8]) -> Self {
+        let case_sensitive = is_file_system_case_sensitive(project);
         Disk {
             threads,
-            in_memory: InMemory::by_directory(&already_read),
-            already_read,
+            in_memory: InMemory::by_directory(&already_read, case_sensitive),
+            already_read: match case_sensitive {
+                true => already_read,
+                false => (already_read.into_iter())
+                    .map(|(path, text)| (to_file_name_lower_case(&path), text))
+                    .collect(),
+            },
+            keeps_byte_order_marks: false,
             caches: Default::default(),
-            case_sensitive: is_file_system_case_sensitive(project),
+            case_sensitive,
             directories: ShardedMap::default(),
             real_directories: ShardedMap::default(),
             reading: cfg!(target_os = "macos").then(|| {
@@ -469,21 +491,32 @@ impl Disk {
         {
             return Directory::Missing;
         }
-        match (list(path), self.in_memory.get(path)) {
+        match (list(path), self.added_to(path)) {
             (read, None) | (read @ Directory::Unreadable, _) => read,
             (Directory::Listed(listing), Some(more)) => Directory::Listed(listing.with(more)),
             (Directory::Missing, Some(more)) => Directory::Listed(Listing::default().with(more)),
         }
     }
 
+    /// What `already_read` adds to the directory at `path`.
+    fn added_to(&self, path: &[u8]) -> Option<&InMemory> {
+        match self.in_memory.is_empty() {
+            true => None,
+            false => self.in_memory.get(&*to_path(path, self.case_sensitive)),
+        }
+    }
+
     /// Whether `path` is a directory, for a path that `already_read` adds.
     fn find_in_memory(&self, path: &[u8]) -> Option<bool> {
         let Split { parent, name } = split(path);
-        let names = self.in_memory.get(parent)?;
+        let names = self.added_to(parent)?;
         if name.is_empty() {
             return Some(true);
         }
-        let has = |names: &[Vec<u8>]| names.iter().any(|it| it == name);
+        let has = |names: &[Vec<u8>]| {
+            let mut names = names.iter();
+            names.any(|it| is_same_path(it, name, self.case_sensitive))
+        };
         if has(&names.files) {
             return Some(false);
         }
@@ -513,10 +546,10 @@ impl Disk {
     /// spelling, and the file system of that directory may take one for the other, whatever that of
     /// the project does: a project can have several. Or it has letters outside ASCII, which a file
     /// system folds and normalizes by rules of its own: for APFS U+017F is `s`, and a composed
-    /// letter is the decomposed one, with or without case.
+    /// letter is the decomposed one, with or without case. Or it can be a short name.
     fn find_in<'a>(&self, listing: &'a Listing, name: &[u8]) -> Option<Option<(&'a [u8], bool)>> {
         match listing.find(name, self.case_sensitive) {
-            None if !name.is_ascii() => None,
+            None if !name.is_ascii() || is_like_a_short_name(name) => None,
             None if self.case_sensitive && listing.find(name, false).is_some() => None,
             found => Some(found),
         }
@@ -612,6 +645,20 @@ impl Drop for Disk {
             bun_threading::io_thread_pool::release();
         }
     }
+}
+
+/// Whether `name` has the form of the second name that NTFS and FAT give an entry whose own name is not 8.3: `PROGRA~1` for
+/// `Program Files`, `RUNNER~1` for `runneradmin`. The entry is found by it, and no listing has it.
+fn is_like_a_short_name(name: &[u8]) -> bool {
+    let Some((before, after)) = rsplit_once_char(name, b'~') else {
+        return false;
+    };
+    let (number, extension) = split_once_char(after, b'.').unwrap_or((after, &b""[..]));
+    !before.is_empty()
+        && before.len() + 1 + number.len() <= 8
+        && extension.len() <= 3
+        && !number.is_empty()
+        && number.iter().all(u8::is_ascii_digit)
 }
 
 /// Reads the entries of the directory at `path` from the system.
@@ -1065,7 +1112,9 @@ impl Host for Disk {
             .map(|phase| Duration::from_nanos(self.times[phase as usize].load(Ordering::Relaxed)))
     }
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
-        if let Some(text) = self.already_read.get(path) {
+        if !self.already_read.is_empty()
+            && let Some(text) = (self.already_read).get(&*to_path(path, self.case_sensitive))
+        {
             return Some(Cow::Owned(text.clone()));
         }
         let _reading = Spent::on(self, Phase::Read);
@@ -1077,8 +1126,10 @@ impl Host for Disk {
             before_read(path);
         }
         let Split { parent, name } = split(path);
+        // Not of a configuration file or a `package.json`, which are read as JSON.
+        let keeps_mark = self.keeps_byte_order_marks && ScriptKind::from_file_name(path).is_some();
         if name.is_empty() || Self::is_above_listings(parent) {
-            return read_at(path);
+            return read_at(path, keeps_mark);
         }
         let _turn = self.reading.as_ref().map(Turn::wait_for);
         let mut reader = self.take_reader(parent);
@@ -1106,7 +1157,7 @@ impl Host for Disk {
             read_file(Fd::cwd(), path, &mut reader.buffer)
         });
         self.return_reader(reader);
-        read.map(decoded)
+        read.map(|bytes| decoded(bytes, keeps_mark))
     }
     fn read_source(&self, path: &[u8]) -> Cow<'static, [u8]> {
         self.read(path).unwrap_or_else(|| {

@@ -1,9 +1,10 @@
 // The rules that report what the React Compiler finds: the 22 `react/*` of oxlint, and the 27 `react-hooks/*` of
 // eslint-plugin-react-hooks. What oxlint and ESLint report for the same inputs is in oracle/react-compiler/expected.json;
 // expected.ts there writes it.
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 import { realpathSync } from "node:fs";
+import { endChildren, spawn } from "../children";
 import expected from "./oracle/react-compiler/expected.json";
 import {
   briefly,
@@ -16,6 +17,8 @@ import {
   small,
   twoLabels,
 } from "./oracle/react-compiler/inputs";
+
+afterAll(endChildren);
 
 // Disable AI agent and CI detection regardless of the environment the tests run in.
 const env = {
@@ -31,7 +34,7 @@ const env = {
 
 async function lint(files: Files, args: string[], more: Record<string, string> = {}) {
   using dir = tempDir("bun-lint-react-compiler", files);
-  await using proc = Bun.spawn({
+  await using proc = spawn({
     cmd: [bunExe(), "lint", ...args],
     env: { ...env, ...more },
     cwd: String(dir),
@@ -159,6 +162,13 @@ describe.concurrent(`bun lint: the rules of the React Compiler report what oxlin
       "virtual.jsx",
     ]);
     expect(files).toBe(expected.reports.fork.files);
+    expect(exit).toBe(1);
+  });
+
+  test("a type cast has a place of its own, and hides what it is a cast of", async () => {
+    const { diagnostics, exit } = await report(small.casts);
+    expect(diagnostics).toEqual(expected.reports.casts.diagnostics);
+    expect(diagnostics["casts.tsx"]).toHaveLength(8);
     expect(exit).toBe(1);
   });
 

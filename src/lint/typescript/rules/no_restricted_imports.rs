@@ -1,7 +1,7 @@
 use bun_lint::prelude::*;
 use bun_lint_eslint::rules::no_restricted_imports::{
-    Dialect, Ignore, IgnoreVersion, Restrictions, STATEMENTS, import_source, is_type_only,
-    restricted_paths, restricted_patterns,
+    Dialect, Ignore, IgnoreVersion, Restrictions, STATEMENTS, SideEffectImports, import_source,
+    is_type_only, restricted_paths, restricted_patterns,
 };
 
 /// Disallow specified modules when loaded by `import`.
@@ -26,7 +26,7 @@ impl Rule for NoRestrictedImports {
     const META: Meta = Meta::typescript("no-restricted-imports", Kind::Suggestion)
         .deprecated()
         .extends_base_rule("no-restricted-imports");
-    type State<'a> = ();
+    type State<'a> = SideEffectImports<'a>;
 
     fn new(options: &Options) -> Self {
         let allows_type_imports = |it: &Object| it.bool_or("allowTypeImports", false);
@@ -62,15 +62,15 @@ impl Rule for NoRestrictedImports {
         rule
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> SideEffectImports<'a> {
         if self.base.is_empty() {
-            return;
+            return SideEffectImports::default();
         }
         // In oxlint `allowTypeImports` is about the restriction that it is set for, as in ESLint's rule.
         if file.language().is_oxlint {
             on.stmts(STATEMENTS, |rule, statement, cx| rule.base.check(cx, statement, Dialect::TypeScript));
             on.exprs([ExprTag::ImportCall], |rule, call, cx| rule.base.check_import_call(cx, call));
-            return;
+            return SideEffectImports::default();
         }
         on.stmts(STATEMENTS, |rule, statement, cx| {
             let is_allowed = statement.tag() != StmtTag::ExportStar
@@ -81,5 +81,6 @@ impl Rule for NoRestrictedImports {
                 rule.base.check(cx, statement, Dialect::TypeScript);
             }
         });
+        SideEffectImports::default()
     }
 }

@@ -51,8 +51,11 @@ impl Complexity {
             ExprKind::Cond { .. } => true,
             ExprKind::Binary { op, .. } => matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish),
             // A default value in the target of a destructuring assignment.
+            // oxlint does not count it.
             ExprKind::Assign { op: None, .. } => {
-                matches!(e.parent(), Node::Expr(_) | Node::Prop(_)) && is_assignment_target(e)
+                !cx.language().is_oxlint
+                    && matches!(e.parent(), Node::Expr(_) | Node::Prop(_))
+                    && is_assignment_target(e)
             }
             ExprKind::Assign { op, .. } => ast_utils::is_logical_assignment_operator(op),
             _ => e.is_optional(),

@@ -21,7 +21,7 @@ pub struct RequireParam {
     check_destructured_roots: bool,
     check_destructured: bool,
     check_rest_property: bool,
-    check_types_pattern: Option<Regex>,
+    check_types_pattern: CheckTypes,
     use_default_object_properties: bool,
     ignore_when_all_params_missing: bool,
     interface_exempts_params_check: bool,
@@ -29,7 +29,12 @@ pub struct RequireParam {
 
 const REQUIRE_PARAM: Message = Message::new("", "Missing JSDoc `@param` declaration for function parameters.");
 
-const DEFAULT_CHECK_TYPES_PATTERN: &str = "^(?:[oO]bject|[aA]rray|PlainObject|Generic(?:Object|Array))$";
+enum CheckTypes {
+    /// `^(?:[oO]bject|[aA]rray|PlainObject|Generic(?:Object|Array))$`
+    Default,
+    /// `checkTypesPattern`, if it is a pattern.
+    Pattern(Option<Box<Regex>>),
+}
 
 impl Rule for RequireParam {
     const META: Meta = Meta::oxlint(Plugin::Jsdoc, "require-param", Kind::Suggestion);
@@ -38,7 +43,7 @@ impl Rule for RequireParam {
     fn new(options: &Options) -> Self {
         let options = options.object(0);
         let exempted_by = if options.has("exemptedBy") { options.strings("exemptedBy") } else { vec!["inheritdoc"] };
-        let check_types_pattern = options.str("checkTypesPattern").unwrap_or(DEFAULT_CHECK_TYPES_PATTERN);
+        let check_types_pattern = options.str("checkTypesPattern");
         RequireParam {
             exempted_by: exempted_by.iter().map(|it| it.as_bytes().into()).collect(),
             check_constructors: options.bool_or("checkConstructors", false),
@@ -47,7 +52,8 @@ impl Rule for RequireParam {
             check_destructured_roots: options.bool_or("checkDestructuredRoots", true),
             check_destructured: options.bool_or("checkDestructured", true),
             check_rest_property: options.bool_or("checkRestProperty", false),
-            check_types_pattern: rust_regex(check_types_pattern, false),
+            check_types_pattern: check_types_pattern
+                .map_or(CheckTypes::Default, |it| CheckTypes::Pattern(rust_regex(it, false).map(Box::new))),
             use_default_object_properties: options.bool_or("useDefaultObjectProperties", false),
             ignore_when_all_params_missing: options.bool_or("ignoreWhenAllParamsMissing", false),
             interface_exempts_params_check: options.bool_or("interfaceExemptsParamsCheck", false),
@@ -118,7 +124,13 @@ fn is_parent_fn_typed(func: Func) -> bool {
 
 impl RequireParam {
     fn is_checked_type(&self, r#type: &[u8]) -> bool {
-        self.check_types_pattern.as_ref().is_some_and(|it| it.test(r#type))
+        match &self.check_types_pattern {
+            CheckTypes::Default => matches!(
+                r#type,
+                b"object" | b"Object" | b"array" | b"Array" | b"PlainObject" | b"GenericObject" | b"GenericArray"
+            ),
+            CheckTypes::Pattern(pattern) => pattern.as_ref().is_some_and(|it| it.test(r#type)),
+        }
     }
 
     fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {

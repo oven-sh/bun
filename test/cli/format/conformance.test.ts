@@ -1,7 +1,10 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "node:path";
+import { endChildren, spawn } from "../children";
 import { collect, concatenate } from "./bundle.ts";
+
+afterAll(endChildren);
 
 // The tests of Prettier and of oxfmt, and inputs of our own, run on `bun format`. See the README.md of prettier, oxfmt and own.
 // `src/format/conformance` runs them: it says what is checked, and what is left out and why.
@@ -37,7 +40,8 @@ test.skipIf(!hasRunner).concurrent.each([
         ? ownCases()
         : Bun.zstdDecompressSync(await Bun.file(join(import.meta.dir, suite, "bundle.zst")).bytes()),
     );
-    await using proc = Bun.spawn({
+    await using proc = spawn({
+      timeout: 4 * 60_000,
       cmd: [bunExe(), "format", `--run-${runner}-tests`, bundle, `--every=${every}`],
       env: bunEnv,
       stdout: "pipe",

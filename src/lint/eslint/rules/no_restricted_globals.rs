@@ -40,7 +40,15 @@ fn is_member_expression(e: Expr<'_>) -> bool {
 
 /// Whether the parent of the identifier is a `TSTypeReference`, a `TSInterfaceHeritage`, a
 /// `TSClassImplements`, a `TSTypeQuery` or a `TSQualifiedName`.
-fn is_in_type_context(reference: Reference<'_>) -> bool {
+fn is_in_type_context(reference: Reference<'_>, is_oxlint: bool) -> bool {
+    // For oxc the operand of a `typeof` type is a value, and what `export default` exports can be a type.
+    if is_oxlint {
+        return reference.is_type()
+            || reference.expr().is_some_and(|it| {
+                !it.is_parenthesized()
+                    && matches!(it.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::ExportDefault)
+            });
+    }
     match reference.node() {
         Node::Expr(e) => is_in_type_query(e),
         Node::Type(ty) => match ty.kind() {
@@ -112,7 +120,7 @@ impl NoRestrictedGlobals {
         for reference in file.unresolved_references() {
             let name = reference.name();
             if let Some(custom_message) = self.restricted.get(name.bytes())
-                && !is_in_type_context(reference)
+                && !is_in_type_context(reference, file.language().is_oxlint)
             {
                 Self::report(cx, reference.span(), name, custom_message.as_deref());
             }

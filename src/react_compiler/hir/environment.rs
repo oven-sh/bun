@@ -39,7 +39,7 @@ pub enum OutputMode {
     Lint,
 }
 
-/// The passes after the lowering take more stack for a level than it does, and nested `try` costs n^2.5.
+/// For time and memory where a thread has a large stack: nested `try` costs n^2.5. The stack has `has_stack`.
 const MAX_NESTING: u32 = 256;
 
 pub struct Environment {

@@ -1,11 +1,14 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::directives::match_directives_pattern;
 use bun_lint::utils::text;
 
 /// Disallow fallthrough of `case` statements.
 pub struct NoFallthrough {
-    fallthrough_comment_pattern: Regex,
-    has_default_pattern: bool,
+    /// `commentPattern`
+    fallthrough_comment_pattern: Option<Regex>,
+    /// `commentPattern` as oxlint reads it: in capitals or not.
+    pattern_of_oxlint: Option<Regex>,
     allow_empty_case: bool,
     report_unused_fallthrough_comment: bool,
 }
@@ -20,16 +23,42 @@ const DEFAULT: Message = Message::new("default", "Expected a 'break' statement b
 /// Without `commentPattern`, a comment has to be one of these for oxlint, in capitals or not.
 const COMMENTS_OF_OXLINT: [&[u8]; 4] = [b"falls through", b"fall through", b"fallsthrough", b"fallthrough"];
 
+/// `/falls?\s?through/iu`, which is what a comment has to match without `commentPattern`.
+fn is_default_fallthrough_comment(value: &[u8]) -> bool {
+    let mut rest = value;
+    while let Some(at) = strings::index_of_any(rest, b"fF") {
+        rest = rest.get(at..).unwrap_or_default();
+        if let Some(after) = text::strip_prefix_ignoring_case(rest, b"fall") {
+            let after = text::strip_prefix_ignoring_case(after, b"s").unwrap_or(after);
+            let after = after.get(text::white_space_len(after)..).unwrap_or_default();
+            if text::strip_prefix_ignoring_case(after, b"through").is_some() {
+                return true;
+            }
+        }
+        rest = rest.get(1..).unwrap_or_default();
+    }
+    false
+}
+
 impl NoFallthrough {
     /// The comment, if it is a fallthrough comment and not a directive of ESLint.
     fn fallthrough_comment<'a>(&self, comment: Option<Token<'a>>, is_oxlint: bool) -> Option<Token<'a>> {
         comment.filter(|comment| {
             let value = comment.comment_value();
-            if self.has_default_pattern && is_oxlint {
-                return COMMENTS_OF_OXLINT.iter().any(|it| text::trim(value).eq_ignore_ascii_case(it));
+            if is_oxlint {
+                let value = text::trim(value);
+                return match &self.pattern_of_oxlint {
+                    Some(pattern) => {
+                        pattern.test(value) && !value.starts_with(b"oxlint-") && !value.starts_with(b"eslint-")
+                    }
+                    None => COMMENTS_OF_OXLINT.iter().any(|it| value.eq_ignore_ascii_case(it)),
+                };
             }
-            self.fallthrough_comment_pattern.test(value)
-                && match_directives_pattern(text::trim(value)).is_none()
+            let is_fallthrough_comment = match &self.fallthrough_comment_pattern {
+                Some(pattern) => pattern.test(value),
+                None => is_default_fallthrough_comment(value),
+            };
+            is_fallthrough_comment && match_directives_pattern(text::trim(value)).is_none()
         })
     }
 
@@ -116,12 +145,10 @@ impl Rule for NoFallthrough {
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
-        let pattern = (object.str("commentPattern"))
-            .filter(|pattern| !pattern.is_empty())
-            .and_then(|pattern| Regex::new(pattern, "u").ok());
+        let source = object.str("commentPattern").filter(|pattern| !pattern.is_empty());
         NoFallthrough {
-            has_default_pattern: pattern.is_none(),
-            fallthrough_comment_pattern: pattern.unwrap_or_else(|| Regex::literal(r"/falls?\s?through/iu")),
+            pattern_of_oxlint: source.and_then(|pattern| Regex::new(pattern, "iu").ok()),
+            fallthrough_comment_pattern: source.and_then(|pattern| Regex::new(pattern, "u").ok()),
             allow_empty_case: object.bool_or("allowEmptyCase", false),
             report_unused_fallthrough_comment: object
                 .bool_or("reportUnusedFallthroughComment", false),

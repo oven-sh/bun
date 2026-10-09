@@ -8,6 +8,15 @@ pub struct ArrayCallbackReturn {
     allow_void: bool,
 }
 
+/// What oxlint says if the last statement is a `switch` without `default`, or an `if` without `else`.
+const MAY_FALL_THROUGH_SWITCH: Message = Message::new(
+    "mayFallThroughSwitch",
+    "Callback for array method \"{{arrayMethodName}}\" may fall through a `switch` without returning",
+);
+const MAY_REACH_END_OF_IF: Message = Message::new(
+    "mayReachEndOfIf",
+    "Callback for array method \"{{arrayMethodName}}\" may reach the end of an `if` without returning",
+);
 const EXPECTED_AT_END: Message = Message::new(
     "expectedAtEnd",
     "{{arrayMethodName}}() expects a value to be returned at the end of {{name}}.",
@@ -220,22 +229,23 @@ impl ArrayCallbackReturn {
         let FnBody::Block(body) = func.body() else {
             return;
         };
+        // An `async` function returns something, unless there is nothing in it.
+        if func.is_async() && (!body.is_empty() || self.allow_implicit) {
+            return;
+        }
         let (last, mut returns) = (body.last(), func.returns());
         let is_end_reachable =
             !matches!(last.map(Stmt::tag), Some(StmtTag::Return | StmtTag::Throw)) && func.is_end_reachable();
-        let message = match is_end_reachable {
-            true if returns.next().is_some() => EXPECTED_AT_END,
-            true => EXPECTED_INSIDE,
-            false if !self.allow_implicit && returns.any(|it| matches!(it.kind(), StmtKind::Return(None))) => {
-                EXPECTED_RETURN_VALUE
-            }
-            false => return,
+        let mut returns_nothing = || returns.any(|it| matches!(it.kind(), StmtKind::Return(None)));
+        if !is_end_reachable && (self.allow_implicit || !returns_nothing()) {
+            return;
+        }
+        let message = match last.map(Stmt::kind) {
+            Some(StmtKind::Switch { cases, .. }) if !cases.iter().any(Case::is_default) => MAY_FALL_THROUGH_SWITCH,
+            Some(StmtKind::If { no: None, .. }) => MAY_REACH_END_OF_IF,
+            _ => EXPECTED_INSIDE,
         };
-        let can_run_past_the_last = match last.map(Stmt::kind) {
-            Some(StmtKind::Switch { cases, .. }) => !cases.iter().any(Case::is_default),
-            Some(StmtKind::If { no, .. }) => no.is_none(),
-            _ => false,
-        };
+        let can_run_past_the_last = message.id != EXPECTED_INSIDE.id;
         let start = func.estree_span().start;
         let place = match can_run_past_the_last {
             true if func.is_arrow() => func.arrow_span(),

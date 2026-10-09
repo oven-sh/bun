@@ -158,8 +158,6 @@ FAIL oxfmt js/semicolons/suppressed-statement.js { printWidth: 80, semi: false }
 FAIL oxfmt js/semicolons/suppressed-statement.js { printWidth: 100, semi: false }
 FAIL oxfmt js/semicolons/suppressed-trailing-semicolon.js { printWidth: 80, semi: false }
 FAIL oxfmt js/semicolons/suppressed-trailing-semicolon.js { printWidth: 100, semi: false }
-FAIL oxfmt js/sequence-expression/leading-comment-in-first-element-parens.js { printWidth: 80 }
-FAIL oxfmt js/sequence-expression/leading-comment-in-first-element-parens.js { printWidth: 100 }
 FAIL oxfmt js/switch/clause-block-comment.js { printWidth: 80 }
 FAIL oxfmt js/switch/clause-block-comment.js { printWidth: 100 }
 FAIL oxfmt js/typecast/comments-inside-cast-parens.js { printWidth: 80 }

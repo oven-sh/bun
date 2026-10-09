@@ -3144,14 +3144,15 @@ impl<'h> Resolver<'h> {
 
     /// `fileExistsIfProjectReferenceDts`
     fn file_exists_if_project_reference_dts(&self, path: &[u8]) -> Option<Vec<u8>> {
+        // `getRedirectFromOutput(toPath(file))`: by `tspath.Path`. A real path spells a drive and a directory as the system
+        // has them, `output_dir` as the working directory and the configuration files do.
+        let is_case_sensitive = self.host.is_case_sensitive();
         for (output_dir, root_dir) in &self.options.referenced_outputs {
-            let Some(relative) = path
-                .strip_prefix(output_dir.as_slice())
-                .and_then(|rest| rest.strip_prefix(b"/"))
-            else {
+            if !contains_path(output_dir, path, is_case_sensitive) {
                 continue;
-            };
-            let extension = known_extension(relative);
+            }
+            let relative = get_relative_path_from_directory(output_dir, path, is_case_sensitive);
+            let extension = known_extension(&relative);
             let sources: &[&[u8]] = match extension {
                 b".d.ts" => &[b".ts", b".tsx"],
                 b".d.mts" => &[b".mts"],
@@ -3173,15 +3174,14 @@ impl<'h> Resolver<'h> {
     /// `directoryExistsIfProjectReferenceDeclDir`: the output directory of a referenced project, an
     /// ancestor of it or a directory inside it.
     fn directory_exists_if_project_reference_decl_dir(&self, path: &[u8]) -> bool {
-        let is_inside = |inner: &[u8], outer: &[u8]| {
-            inner
-                .strip_prefix(outer)
-                .is_some_and(|rest| rest.is_empty() || rest.starts_with(b"/"))
-        };
+        let is_case_sensitive = self.host.is_case_sensitive();
         self.options
             .referenced_outputs
             .iter()
-            .any(|(output_dir, _)| is_inside(output_dir, path) || is_inside(path, output_dir))
+            .any(|(output_dir, _)| {
+                contains_path(path, output_dir, is_case_sensitive)
+                    || contains_path(output_dir, path, is_case_sensitive)
+            })
     }
 
     /// `handleDirectoryCouldBeSymlink` of `ParseNodeModuleFromPath`: `path` with its package

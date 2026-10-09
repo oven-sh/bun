@@ -40,7 +40,14 @@ impl Config {
 
     pub fn check<'a>(&self, decl: VarDecl<'a>) -> Option<Finding<'a>> {
         let name = decl.pat().as_ident()?;
-        if self.is_never && !matches!(decl.var_kind(), VarKind::Var | VarKind::Let) {
+        // For oxlint only a `const` has to be initialized.
+        let is_oxlint = decl.file().language().is_oxlint;
+        let has_to_be_initialized = match decl.var_kind() {
+            VarKind::Var | VarKind::Let => false,
+            VarKind::Const => true,
+            VarKind::Using | VarKind::AwaitUsing => !is_oxlint,
+        };
+        if self.is_never && has_to_be_initialized {
             return None;
         }
         let Node::Stmt(declaration) = decl.parent() else {
@@ -62,7 +69,10 @@ impl Config {
         let is_initialized = in_for_loop.unwrap_or_else(|| decl.init().is_some());
         let message = match self.is_never {
             false if !is_initialized => INITIALIZED,
-            true if is_initialized && !(self.ignore_for_loop_init && in_for_loop.is_some()) => NOT_INITIALIZED,
+            // With `ignoreForLoopInit` oxlint says nothing at all.
+            true if is_initialized && !(self.ignore_for_loop_init && (in_for_loop.is_some() || is_oxlint)) => {
+                NOT_INITIALIZED
+            }
             _ => return None,
         };
         Some(Finding {

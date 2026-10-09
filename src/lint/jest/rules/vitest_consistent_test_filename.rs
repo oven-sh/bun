@@ -5,18 +5,36 @@ use bun_lint::rule::Plugin;
 
 /// This rule triggers an error when a file is considered a test file, but its name does not match an expected filename format.
 pub struct ConsistentTestFilename {
-    all_test_pattern: Option<Regex>,
-    pattern: Option<Regex>,
+    /// By default `.*\.(test|spec)\.[tj]sx?$`
+    all_test_pattern: Matcher,
+    /// By default `.*\.test\.[tj]sx?$`
+    pattern: Matcher,
+}
+
+enum Matcher {
+    Default,
+    /// The option, if it is a pattern.
+    Pattern(Option<Box<Regex>>),
 }
 
 const CONSISTENT_TEST_FILENAME: Message =
     Message::new("", "The file {{file_path}} is a test file, but its name does not match the expected pattern.");
 
 /// `/pattern/flags`, of which the flags are ignored, or a pattern.
-fn matcher_pattern(configured: Option<&str>, default: &str) -> Option<Regex> {
-    let pattern = configured.unwrap_or(default);
+fn matcher_pattern(configured: Option<&str>) -> Matcher {
+    let Some(pattern) = configured else {
+        return Matcher::Default;
+    };
     let literal = pattern.strip_prefix('/').and_then(|it| it.get(..strings::last_index_of_char(it.as_bytes(), b'/')?));
-    rust_regex(literal.unwrap_or(pattern), false)
+    Matcher::Pattern(rust_regex(literal.unwrap_or(pattern), false).map(Box::new))
+}
+
+/// The `test` or `spec` of a path that `\.(test|spec)\.[tj]sx?$` matches.
+fn kind_of_test(path: &[u8]) -> Option<&'static [u8]> {
+    let extensions: [&[u8]; 4] = [b".ts", b".tsx", b".js", b".jsx"];
+    let rest = extensions.iter().find_map(|it| path.strip_suffix(*it))?;
+    let kinds: [&'static [u8]; 2] = [b"test", b"spec"];
+    (kinds.into_iter()).find(|it| rest.strip_suffix(*it).is_some_and(|rest| rest.ends_with(b".")))
 }
 
 impl Rule for ConsistentTestFilename {
@@ -26,14 +44,18 @@ impl Rule for ConsistentTestFilename {
     fn new(options: &Options) -> Self {
         let config = options.object(0);
         ConsistentTestFilename {
-            all_test_pattern: matcher_pattern(config.str("allTestPattern"), r".*\.(test|spec)\.[tj]sx?$"),
-            pattern: matcher_pattern(config.str("pattern"), r".*\.test\.[tj]sx?$"),
+            all_test_pattern: matcher_pattern(config.str("allTestPattern")),
+            pattern: matcher_pattern(config.str("pattern")),
         }
     }
 
     fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        let is_match = |pattern: &Option<Regex>| pattern.as_ref().is_some_and(|it| it.test(file.path()));
-        if is_match(&self.all_test_pattern) && !is_match(&self.pattern) {
+        let path = file.path();
+        let is_match = |matcher: &Matcher, is_default: fn(&[u8]) -> bool| match matcher {
+            Matcher::Default => kind_of_test(path).is_some_and(is_default),
+            Matcher::Pattern(pattern) => pattern.as_ref().is_some_and(|it| it.test(path)),
+        };
+        if is_match(&self.all_test_pattern, |_| true) && !is_match(&self.pattern, |kind| kind == b"test") {
             on.finish(|_, cx| {
                 let file_path = cx.file().path();
                 let file_name = strings::last_index_of_any(file_path, b"/\\").and_then(|at| file_path.get(at + 1..));

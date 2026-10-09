@@ -108,6 +108,8 @@ pub(crate) struct Converted {
     /// The tag of `<>`.
     pub(crate) fragment: Ref,
     pub(crate) recorded: Vec<Recorded>,
+    /// [`Host::type_casts`](bun_react_compiler::Host::type_casts)
+    pub(crate) casts: Vec<(Loc, Loc)>,
     /// Each `new Date()` and `Date()`, which is in the tree as `Date.now()`. In the order of the source.
     pub(crate) clock_reads: Vec<Span>,
 }
@@ -153,6 +155,7 @@ pub(crate) struct Converter<'a, 'x> {
     create_element: Ref,
     fragment: Ref,
     recorded: Vec<Recorded>,
+    casts: Vec<(Loc, Loc)>,
     clock_reads: Vec<Span>,
     /// Of the function that is being converted.
     here: Counts,
@@ -188,6 +191,7 @@ pub(crate) fn convert<'a>(
         create_element: Ref::NONE,
         fragment: Ref::NONE,
         recorded: Vec::new(),
+        casts: Vec::new(),
         clock_reads: Vec::new(),
         here: Counts::default(),
         squares: Counts::default(),
@@ -202,8 +206,14 @@ pub(crate) fn convert<'a>(
         true => Root::Arrow(converter.arrow(func)?),
         false => Root::Function(converter.function(func)?),
     };
+    // Of `(x as A) as B`, which is there twice, the outer one, which is the later one.
+    let mut casts = converter.casts;
+    casts.reverse();
+    bun_lint::utils::sort::sort_by_key(&mut casts, |it| it.0.start);
+    casts.dedup_by_key(|it| it.0.start);
     Ok(Converted {
         root,
+        casts,
         spans: converter.spans,
         symbols: converter.symbols,
         is_outside: converter.is_outside,
@@ -844,13 +854,18 @@ impl<'a> Converter<'a, '_> {
 
     fn expr_at(&mut self, expr: Expr<'a>, span: Span) -> Converts<JsExpr> {
         // What is only there for the types has no node in this tree.
-        if let ExprKind::As { expr: inner, .. }
-        | ExprKind::Satisfies { expr: inner, .. }
-        | ExprKind::AsConst(inner)
-        | ExprKind::NonNull(inner)
-        | ExprKind::Instantiation { expr: inner, .. } = expr.kind()
+        if let ExprKind::NonNull(inner) | ExprKind::Instantiation { expr: inner, .. } = expr.kind()
         {
             return self.expr(inner);
+        }
+        if let ExprKind::As { expr: inner, .. }
+        | ExprKind::Satisfies { expr: inner, .. }
+        | ExprKind::AsConst(inner) = expr.kind()
+        {
+            let cast = self.loc(span)?;
+            let operand = self.expr(inner)?;
+            self.casts.push((operand.loc, cast));
+            return Ok(operand);
         }
         if let ExprKind::Fn(func) = expr.kind() {
             return self.function_expr(func, span);

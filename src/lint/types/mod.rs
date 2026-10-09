@@ -577,13 +577,15 @@ pub fn with_file<R>(
     read_library: Option<ReadLibrary<'_>>,
     then: impl for<'a> FnOnce(&'a File<'a>) -> R,
 ) -> Option<R> {
-    with_file_and_modules(checker, file, language, read_library, None, then)
+    with_file_and_modules(checker, file, None, language, read_library, None, then)
 }
 
-/// The same, for a file that has [`File::modules`].
+/// The same, for a file that has [`File::modules`]. `path`: [`File::path`], the path that the file is linted under. `None`: the
+/// name that the program has for it, which is in the checker's format (`/C:/a.ts`) and spelled as the program found it.
 pub fn with_file_and_modules<R>(
     checker: &mut bun_sema::check::Checker<'_, '_>,
     file: FileId,
+    path: Option<&[u8]>,
     language: &crate::language::LanguageOptions,
     read_library: Option<ReadLibrary<'_>>,
     modules: Option<&dyn crate::modules::Modules>,
@@ -594,7 +596,8 @@ pub fn with_file_and_modules<R>(
     if module.is_lib || hir.ran_out_of_stack || bound.ran_out_of_stack {
         return None;
     }
-    let (path, atoms) = (module.file_name(), &WrittenNames(&checker.p.files.atoms));
+    let path = path.unwrap_or_else(|| module.file_name());
+    let atoms = &WrittenNames(&checker.p.files.atoms);
     Some(checker.with_services(file, read_library, |services| {
         let types = Checker::new(services);
         let file = File::new(path, hir, bound, atoms, language, Some(types));

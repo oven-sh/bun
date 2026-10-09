@@ -3498,5 +3498,136 @@
   "a.ts:2:45 eslint(preserve-caught-error)",
   "a.ts:4:62 eslint(preserve-caught-error)",
   "a.ts:6:20 eslint(preserve-caught-error)"
+ ],
+ "disable-comments/await-thenable": [
+  "a.ts:13:5 typescript(await-thenable)",
+  "a.ts:16:5 typescript(await-thenable)",
+  "a.ts:7:5 typescript(await-thenable)"
+ ],
+ "disable-comments/consistent-type-exports": [
+  "a.ts:4:3 typescript(consistent-type-exports)",
+  "a.ts:6:1 typescript(consistent-type-exports)"
+ ],
+ "disable-comments/no-array-delete": [
+  "a.ts:7:3 typescript(no-array-delete)"
+ ],
+ "disable-comments/no-duplicate-type-constituents": [
+  "a.ts:3:5 typescript(no-duplicate-type-constituents)"
+ ],
+ "disable-comments/no-misused-promises": [
+  "a.ts:10:3 typescript(no-misused-promises)",
+  "a.ts:17:12 typescript(no-misused-promises)",
+  "a.ts:7:3 typescript(no-misused-promises)"
+ ],
+ "disable-comments/no-unnecessary-condition": [
+  "a.ts:13:3 typescript(no-unnecessary-condition)",
+  "a.ts:15:1 typescript(no-unnecessary-condition)",
+  "a.ts:21:1 typescript(no-unnecessary-condition)",
+  "a.ts:24:5 typescript(no-unnecessary-condition)",
+  "a.ts:4:3 typescript(no-unnecessary-condition)"
+ ],
+ "disable-comments/no-unnecessary-type-conversion": [
+  "a.ts:19:3 typescript(no-unnecessary-type-conversion)",
+  "a.ts:28:3 typescript(no-unnecessary-type-conversion)",
+  "a.ts:7:3 typescript(no-unnecessary-type-conversion)",
+  "a.ts:9:1 typescript(no-unnecessary-type-conversion)"
+ ],
+ "disable-comments/no-unnecessary-type-parameters": [
+  "a.ts:6:6 typescript(no-unnecessary-type-parameters)"
+ ],
+ "disable-comments/no-unsafe-assignment": [
+  "a.ts:13:3 typescript(no-unsafe-assignment)",
+  "a.ts:20:3 typescript(no-unsafe-assignment)",
+  "a.ts:26:3 typescript(no-unsafe-assignment)",
+  "a.ts:36:3 typescript(no-unsafe-assignment)",
+  "a.ts:7:3 typescript(no-unsafe-assignment)"
+ ],
+ "disable-comments/no-unsafe-enum-comparison": [
+  "a.ts:5:1 typescript(no-unsafe-enum-comparison)",
+  "a.ts:9:9 typescript(no-unsafe-enum-comparison)"
+ ],
+ "disable-comments/no-unsafe-return": [
+  "a.ts:17:3 typescript(no-unsafe-return)",
+  "a.ts:8:10 typescript(no-unsafe-return)"
+ ],
+ "disable-comments/no-unsafe-type-assertion": [
+  "a.ts:7:3 typescript(no-unsafe-type-assertion)"
+ ],
+ "disable-comments/restrict-plus-operands": [],
+ "disable-comments/unbound-method": [
+  "a.ts:10:3 typescript(unbound-method)",
+  "a.ts:7:4 typescript(unbound-method)"
+ ],
+ "source-type/no-redeclare-names-of-the-libraries-of-typescript": [
+  "a.d.ts:4:11 eslint(no-redeclare)",
+  "a.d.ts:7:13 eslint(no-redeclare)",
+  "b.ts:2:11 eslint(no-redeclare)"
+ ],
+ "disable-comments/no-duplicate-type-constituents-lines-and-blocks": [
+  "a.ts:14:5 typescript(no-duplicate-type-constituents)",
+  "a.ts:2:5 typescript(no-duplicate-type-constituents)"
+ ],
+ "disable-comments/no-unsafe-assignment-lines-and-blocks": [
+  "a.ts:12:3 typescript(no-unsafe-assignment)",
+  "a.ts:5:3 typescript(no-unsafe-assignment)"
+ ],
+ "disable-comments/await-thenable-lines-and-blocks": [
+  "a.ts:12:5 typescript(await-thenable)",
+  "a.ts:5:5 typescript(await-thenable)"
+ ],
+ "disable-comments/no-unnecessary-condition-lines-and-blocks": [
+  "a.ts:14:5 typescript(no-unnecessary-condition)",
+  "a.ts:21:5 typescript(no-unnecessary-condition)",
+  "a.ts:2:1 typescript(no-unnecessary-condition)",
+  "a.ts:7:1 typescript(no-unnecessary-condition)"
+ ],
+ "disable-comments/no-unsafe-return-lines-and-blocks": [
+  "a.ts:13:3 typescript(no-unsafe-return)",
+  "a.ts:5:3 typescript(no-unsafe-return)"
+ ],
+ "disable-comments/no-unsafe-type-assertion-lines-and-blocks": [
+  "a.ts:14:18 typescript(no-unsafe-type-assertion)",
+  "a.ts:18:18 typescript(no-unsafe-type-assertion)",
+  "a.ts:7:18 typescript(no-unsafe-type-assertion)"
+ ],
+ "disable-comments/unbound-method-lines-and-blocks": [
+  "a.ts:13:4 typescript(unbound-method)",
+  "a.ts:9:4 typescript(unbound-method)"
+ ],
+ "disable-comments/no-unsafe-assignment-kinds": [
+  "a.tsx:11:5 typescript(no-unsafe-assignment)",
+  "a.tsx:15:5 typescript(no-unsafe-assignment)",
+  "a.tsx:21:5 typescript(no-unsafe-assignment)",
+  "a.tsx:27:5 typescript(no-unsafe-assignment)",
+  "a.tsx:33:5 typescript(no-unsafe-assignment)",
+  "a.tsx:34:18 typescript(no-unsafe-assignment)",
+  "a.tsx:37:3 typescript(no-unsafe-assignment)",
+  "a.tsx:41:7 typescript(no-unsafe-assignment)",
+  "a.tsx:49:5 typescript(no-unsafe-assignment)",
+  "a.tsx:5:7 typescript(no-unsafe-assignment)"
+ ],
+ "disable-comments/no-unnecessary-type-conversion-kinds": [
+  "a.ts:11:1 typescript(no-unnecessary-type-conversion)",
+  "a.ts:5:1 typescript(no-unnecessary-type-conversion)",
+  "a.ts:9:1 typescript(no-unnecessary-type-conversion)"
+ ],
+ "disable-comments/await-thenable-kinds": [
+  "a.ts:10:6 typescript(await-thenable)",
+  "a.ts:4:5 typescript(await-thenable)"
+ ],
+ "disable-comments/consistent-type-exports-kinds": [
+  "a.ts:13:3 typescript(consistent-type-exports)",
+  "a.ts:4:3 typescript(consistent-type-exports)"
+ ],
+ "disable-comments/no-unnecessary-condition-kinds": [
+  "a.ts:16:3 typescript(no-unnecessary-condition)",
+  "a.ts:19:8 typescript(no-unnecessary-condition)",
+  "a.ts:30:1 typescript(no-unnecessary-condition)"
+ ],
+ "disable-comments/no-misused-promises-kinds": [
+  "a.ts:10:12 typescript(no-misused-promises)",
+  "a.ts:13:3 typescript(no-misused-promises)",
+  "a.ts:22:3 typescript(no-misused-promises)",
+  "a.ts:4:12 typescript(no-misused-promises)"
  ]
 }

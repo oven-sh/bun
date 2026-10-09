@@ -1,7 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { endChildren, spawn } from "../children";
+
+afterAll(endChildren);
 
 // Disable AI agent and CI detection regardless of the environment the tests run in.
 const env = {
@@ -17,7 +20,7 @@ const env = {
 
 async function lint(files: Record<string, string>, args: string[], reads: string[] = []) {
   using dir = tempDir("bun-lint-js-parsers", files);
-  await using proc = Bun.spawn({
+  await using proc = spawn({
     cmd: [bunExe(), "lint", "--threads", "2", ...args],
     env,
     cwd: String(dir),

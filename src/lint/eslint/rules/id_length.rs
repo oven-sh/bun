@@ -281,6 +281,7 @@ impl IdLength {
         };
         self.check(cx, name, || match pat.parent() {
             Node::Param(param) if param.func().is_some_and(|it| it.kind() == FnKind::IndexSignature) => None,
+            Node::Param(_) if name.is("this") => None,
             // `{ a }`
             Node::PatProp(prop) if prop.is_shorthand() && prop.default().is_none() && !self.properties => None,
             _ => Some(pat.span()),

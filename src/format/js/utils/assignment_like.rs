@@ -127,10 +127,20 @@ fn computed_key_width<'a>(key: Key<'a>, f: &Formatter<'a>) -> Option<usize> {
     if f.options().flavor.is_oxfmt() {
         return Some(f.source_text().span_width(key.inner_span(f.file())) + 2);
     }
-    if let KeyKind::Computed(e) = key.kind() {
-        return Some(plain_expression_width(e, f)? + 2);
-    }
     let span = key.span(f.file());
+    if let KeyKind::Computed(e) = key.kind() {
+        // A comment in the brackets is a piece of its own.
+        let inner = e.outer_span();
+        let is_blank = |start: u32, end: u32| {
+            (f.source_text().text_for(&Span::new(start.min(end), end)))
+                .trim_ascii()
+                .is_empty()
+        };
+        return (is_blank(span.start + 1, inner.start)
+            && is_blank(inner.end, span.end.saturating_sub(1)))
+        .then(|| plain_expression_width(e, f))?
+        .map(|width| width + 2);
+    }
     // A template is written with a `lineSuffixBoundary`.
     let is_template = f
         .source_text()

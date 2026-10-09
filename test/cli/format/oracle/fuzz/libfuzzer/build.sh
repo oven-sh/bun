@@ -4,6 +4,7 @@
 #   asan      libFuzzer's instrumentation, AddressSanitizer, overflow checks, debug assertions
 #   plain     the same without AddressSanitizer: twice as fast, and frames on the stack of the size they have in Bun
 #   coverage  no fuzzing: -C instrument-coverage, to run a corpus and see what it reaches (coverage.sh)
+# PROGRAMS="fuzz_regex ..": only these.
 # KERNELS=<directory>: every *.o in it is linked too: Bun's SIMD kernels (src/jsc/bindings/highway_*.cpp and vendor/highway/hwy/targets.cc, compiled
 # as Bun compiles them, with -fsanitize=address for asan). They take the place of the plain loops in src/sema/standalone/native.rs, which are weak symbols.
 # NATIVE=<directory> (default: target/native): where scripts/build/lint-standalone-native.ts keeps what it makes: JavaScriptCore's regular expression engine, which has no stand-in. For
@@ -34,7 +35,7 @@ objects=
 [ -n "$KERNELS" ] && for object in "$KERNELS"/*.o; do objects="$objects -Clink-arg=$object"; done
 native=$(bun "$root/scripts/build/lint-standalone-native.ts" "${NATIVE:-$root/target/native}" $variant)
 for argument in $native; do objects="$objects -Clink-arg=$argument"; done
-for program in $(sed -n 's/^name = "\(fuzz_[a-z_]*\)"$/\1/p' Cargo.toml); do
+for program in ${PROGRAMS:-$(sed -n 's/^name = "\(fuzz_[a-z_]*\)"$/\1/p' Cargo.toml)}; do
   # One that does not compile does not keep the others from being built.
   RUSTFLAGS="$flags" cargo rustc --profile $profile --target "$host" --bin $program -- $objects || failed="$failed $program"
 done

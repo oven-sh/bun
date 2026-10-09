@@ -86,6 +86,14 @@ export const cases: Case[] = [
     matches: /nested too deeply/,
     exitCode: 1,
   },
+  {
+    name: "20,000 comments before the first token",
+    file: "a.js",
+    text: () => `${rep("// a\n/* b */ ", 10_000)}debugger;\n`,
+    rules: { "no-debugger": "error" },
+    reports: { "no-debugger": 1 },
+    exitCode: 1,
+  },
 
   {
     name: "a constant behind 27,000 operators, and one that 44,000 assignments pass on",

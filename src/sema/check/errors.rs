@@ -184,7 +184,7 @@ impl Checker<'_, '_> {
         self.limits = 0;
         // tsgo never resets it, so each of its checkers reports nothing that needs the type of a
         // reference in the files after one whose module body got 2563.
-        self.flow_analysis_disabled = false;
+        self.flow_analysis_disabled = None;
         self.outermost_comparison = None;
         self.checked_type_references.0 = None;
         self.instantiation_limit_hits = 0;

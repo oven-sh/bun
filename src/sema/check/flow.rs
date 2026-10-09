@@ -5515,7 +5515,7 @@ impl<'p, 's> Checker<'p, 's> {
         start: Start,
         of_name: Crossing,
     ) -> TypeId {
-        if self.flow_analysis_disabled {
+        if self.flow_analysis_disabled == Some(file) {
             return TypeId::ERROR;
         }
         let bound = self.bound(file);
@@ -5574,7 +5574,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getFlowTypeOfReferenceEx`, once the `FlowState` is set up.
     fn get_flow_type_of_reference(&mut self, mut walk: Walk, flow: FlowId) -> TypeId {
         let (file, e, declared) = (walk.reference.file, walk.reference.at, walk.declared);
-        if self.flow_analysis_disabled {
+        if self.flow_analysis_disabled == Some(file) {
             return TypeId::ERROR;
         }
         self.flow_invocation_count += 1;
@@ -5591,7 +5591,7 @@ impl<'p, 's> Checker<'p, 's> {
         let evolved = evolved.ty;
         // errorType, and `reportFlowControlError`
         if walk.too_deep {
-            self.flow_analysis_disabled = true;
+            self.flow_analysis_disabled = Some(file);
             self.report_flow_control_error(&walk.reference);
             return TypeId::ERROR;
         }
@@ -5819,7 +5819,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getFlowNodeOfNode(reference) == nil`: `declaredType`. `expr_flow` has the unreachable
         // node for that too.
         if flow == UNREACHABLE
-            && !self.flow_analysis_disabled
+            && self.flow_analysis_disabled != Some(file)
             && !is_narrowable_reference(self.hir(file), e)
         {
             return TypeId::AUTO;
@@ -8202,7 +8202,7 @@ impl<'p, 's> Checker<'p, 's> {
         test: ExprId,
         sense: bool,
     ) -> TypeId {
-        if self.flow_analysis_disabled {
+        if self.flow_analysis_disabled == Some(reference.file) {
             return TypeId::ERROR;
         }
         self.flow_invocation_count += 1;
@@ -8214,7 +8214,7 @@ impl<'p, 's> Checker<'p, 's> {
             walk.depth = 1;
             let ty = self.flow_type(&mut walk, before).ty;
             if walk.too_deep {
-                self.flow_analysis_disabled = true;
+                self.flow_analysis_disabled = Some(reference.file);
                 self.report_flow_control_error(reference);
                 return TypeId::ERROR;
             }

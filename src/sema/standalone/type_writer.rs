@@ -26,7 +26,9 @@ struct TypeWalk {
 impl Checker<'_, '_> {
     /// `typeWriterWalker.getTypes`. The file must have been checked, as in the harness.
     pub fn types_at_locations(&mut self, file: FileId) -> Vec<TypeAtLocation> {
-        self.flow_analysis_disabled |= self.is_flow_analysis_left_disabled(file);
+        if self.is_flow_analysis_left_disabled(file) {
+            self.flow_analysis_disabled = Some(file);
+        }
         let hir = self.hir(file);
         let mut walk = TypeWalk {
             text_of_expr: vec![None; hir.exprs.len()],
@@ -50,7 +52,9 @@ impl Checker<'_, '_> {
         if !self.reports_semantic_errors(file) || self.is_plain_js(file) {
             return Vec::new();
         }
-        self.flow_analysis_disabled |= self.is_flow_analysis_left_disabled(file);
+        if self.is_flow_analysis_left_disabled(file) {
+            self.flow_analysis_disabled = Some(file);
+        }
         let mut found = Vec::new();
         for node in self.visited_nodes(file) {
             if self.is_omitted_from_types(file, node.kind) {

@@ -2042,7 +2042,7 @@ impl<'s> Checker<'_, 's> {
         if self.bound(file).flow_places > super::flow::MAX_FLOW_DEPTH
             && (self.p.flows_too_deep.get(&self.task, &(file, e))).is_some()
         {
-            self.flow_analysis_disabled = true;
+            self.flow_analysis_disabled = Some(file);
         }
     }
 

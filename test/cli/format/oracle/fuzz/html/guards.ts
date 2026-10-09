@@ -147,13 +147,13 @@ try {
     for (const n of [size, size * 4]) {
       const path = join(directory, file);
       writeFileSync(path, make(n));
-      const start = performance.now();
       const result = Bun.spawnSync([bin, "format", "file", path], {
         timeout: limit,
         stdout: "ignore",
         stderr: "ignore",
       });
-      took.push(performance.now() - start);
+      // The time of the processor: on a busy machine the clock says little.
+      took.push(Number(result.resourceUsage.cpuTime.total) / 1000);
       if (result.exitCode !== 0)
         problem ||= result.signalCode ? `ended by ${result.signalCode}` : `exit code ${result.exitCode}`;
     }

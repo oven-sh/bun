@@ -60,13 +60,13 @@ try {
     for (const n of [size, size * 4]) {
       const path = join(directory, name.startsWith("components") ? "a.ts" : "a.js");
       writeFileSync(path, make(n) + "\n");
-      const start = performance.now();
       const result = Bun.spawnSync([bin, "format", "file", path, "--embeddedHtml"], {
         timeout: limit,
         stdout: "ignore",
         stderr: "ignore",
       });
-      took.push(performance.now() - start);
+      // The time of the processor: on a busy machine the clock says little.
+      took.push(Number(result.resourceUsage.cpuTime.total) / 1000);
       if (result.exitCode !== 0) problem = result.exitCode === null ? "it was ended" : `exit code ${result.exitCode}`;
     }
     if (!problem && took[1] > 200 && took[1] > took[0] * 10) problem = "four times the size takes more than ten times as long";

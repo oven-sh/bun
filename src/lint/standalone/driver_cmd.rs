@@ -11,6 +11,7 @@ use std::io::{IsTerminal, Write};
 fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     let mut command = host::command("bun");
     command
+        .arg("--no-install")
         .arg("-e")
         .arg(script.source)
         .args(script.arguments.iter().map(|it| os_text(it)))

@@ -18,6 +18,7 @@ type Options = {
   reads?: string[];
   /** Called with the directory before the command runs. */
   before?: (dir: string) => void;
+  env?: Record<string, string>;
 };
 
 async function format(files: Record<string, string>, args: string[], options: Options = {}) {
@@ -25,7 +26,7 @@ async function format(files: Record<string, string>, args: string[], options: Op
   options.before?.(String(dir));
   await using proc = Bun.spawn({
     cmd: [...command, ...args],
-    env,
+    env: { ...env, ...options.env },
     cwd: join(String(dir), options.cwd ?? "."),
     stdin: options.stdin === undefined ? "ignore" : Buffer.from(options.stdin),
     stdout: "pipe",
@@ -690,6 +691,29 @@ describe.concurrent("bun format", () => {
       expect(
         await after({ "package.json": '{ "devDependencies": { "oxfmt": "0.72.0" } }\n', ".prettierrc": "{}\n" }),
       ).toBe(asPrettier);
+    });
+
+    test("no registry is asked for what a configuration file imports", async () => {
+      let requests = 0;
+      using registry = Bun.serve({
+        port: 0,
+        fetch() {
+          requests++;
+          return new Response("{}", { status: 404 });
+        },
+      });
+      const result = await format(
+        {
+          "package.json": '{ "devDependencies": { "vite-plus": "1.0.0" } }\n',
+          "vite.config.ts":
+            'import { defineConfig } from "vite-plus";\nexport default defineConfig({ fmt: { semi: false } });\n',
+          "a.js": "a;\n",
+        },
+        ["a.js"],
+        { reads: ["a.js"], env: { BUN_CONFIG_REGISTRY: registry.url.href, NPM_CONFIG_REGISTRY: registry.url.href } },
+      );
+      expect(result.files["a.js"]).toBe("a\n");
+      expect(requests).toBe(0);
     });
 
     test("a project that depends on Vite+ has its options in the fmt of the nearest vite.config.ts that has one", async () => {

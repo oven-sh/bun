@@ -2822,6 +2822,8 @@ export const wrong: number = x;
       expect(exitCode).toBe(1);
     });
 
+    // TypeScript's parser tries each as a part of the one before, one level of the stack for each, and throws away what it
+    // has read so. The reader of comments does not read it: 2,000,000 of them take no stack, and a second.
     test.each([
       "@overload",
       "@callback",
@@ -2829,7 +2831,7 @@ export const wrong: number = x;
       "@param {object[]} a",
       "@template T @param {Object} a",
       "@callback @param {Object} a",
-    ])("a JSDoc comment of 20,000 times %j, each nested in the last", async tags => {
+    ])("a JSDoc comment of 20,000 times %j", async tags => {
       using dir = project({
         "a.ts": `/** {@link f} ${repeat(`${tags} `, 20_000)}*/
 export function f() {}
@@ -2841,9 +2843,7 @@ const wrong: number = "";
         "a.ts(3,7): error TS2322: Type 'string' is not assignable to type 'number'.
         a.ts(3,7): error TS6133: 'wrong' is declared but its value is never read."
       `);
-      expect(stderr.split("\n")[0]).toBe(
-        "error: ran out of stack in a.ts. This is a bug in Bun: errors in this file may be missing.",
-      );
+      expect(stderr.split("\n")[0]).toBe("Found 2 errors in 1 file, checked 1 file [time]");
       expect(exitCode).toBe(1);
     });
 

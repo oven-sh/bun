@@ -2550,6 +2550,61 @@ describe("bundler", () => {
     run: { file: "/out/entry.js", stdout: "late2 b late1 b" },
   });
 
+  const cycleSharedByTwoImportCalls = {
+    "/a.js": /* js */ `
+      export * as A from "./a.js";
+      import { B } from "./b.js";
+      export var node = { name: "a", dep: B.node?.name ?? "undefined" };
+    `,
+    "/b.js": /* js */ `
+      export * as B from "./b.js";
+      import { A } from "./a.js";
+      export var node = { name: "b" };
+      export const readA = () => A.node.dep;
+    `,
+    "/late1.js": `import { B } from "./b.js"; globalThis.first ??= "late1"; export const go = () => B.readA();`,
+    "/late2.js": `import { A } from "./a.js"; globalThis.first ??= "late2"; export const go = () => A.node.dep;`,
+  };
+
+  // The import() of late2.js comes first in the source, and the one of late1.js runs first. It enters the cycle at B,
+  // so a.js runs ahead of b.js.
+  itBundled("splitting/CycleFollowsTheImportCallThatRunsFirstAtRunTime", {
+    files: {
+      ...cycleSharedByTwoImportCalls,
+      "/first.js": `globalThis.loadLate2 = () => import("./late2.js");`,
+      "/entry.js": /* js */ `
+        import "./first.js";
+        const m1 = await import("./late1.js");
+        const m2 = await globalThis.loadLate2();
+        console.log("late1", m1.go(), "late2", m2.go());
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "late1 undefined late2 undefined" },
+  });
+
+  // Both import() calls are in flight at once, and the runtime picks which of the two runs first. The cycle follows it.
+  itBundled("splitting/CycleFollowsWhicheverOfTwoImportCallsInFlightRunsFirst", {
+    files: {
+      ...cycleSharedByTwoImportCalls,
+      "/first.js": `globalThis.late2 = import("./late2.js");`,
+      "/entry.js": /* js */ `
+        import "./first.js";
+        const late1 = import("./late1.js");
+        const [m2, m1] = await Promise.all([globalThis.late2, late1]);
+        console.log(m2.go() === (globalThis.first === "late2" ? "b" : "undefined"), m1.go() === m2.go());
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/entry.js", stdout: "true true" },
+  });
+
   // The namespace object of barrel.js names a before b, but b.js runs first: the shared chunk follows late_b.js.
   itBundled("splitting/SharedChunkOwnerIgnoresNamespaceExportOrder", {
     files: {

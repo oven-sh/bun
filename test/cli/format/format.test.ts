@@ -553,6 +553,17 @@ describe.concurrent("bun format", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  test("half a million quoted scalars on a line of YAML do not take quadratic time", async () => {
+    const result = await format(
+      { "a.yaml": Buffer.alloc(1_000_000, '""').toString(), "b.yaml": `[${Buffer.alloc(300_000, '"a", ').toString()}"a"]\n` },
+      [],
+      { reads: ["b.yaml"] },
+    );
+    expect(result.stderr).toContain("a.yaml: SyntaxError");
+    expect(result.files["b.yaml"]).toBe(`[\n${Buffer.alloc(420_007, '  "a",\n').toString()}]\n`);
+    expect(result.exitCode).toBe(2);
+  });
+
   test("JSON", async () => {
     const result = await format(
       {

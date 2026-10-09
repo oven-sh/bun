@@ -731,6 +731,45 @@ test.concurrent(
 );
 
 test.concurrent(
+  "an empty trustedDependencies list holds on the install that migrates a package-lock.json",
+  async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const preinstall = join(packageDir, "node_modules", "electron", "preinstall.txt");
+    const tarball = await file(join(import.meta.dir, "registry", "packages", "electron", "electron-1.0.0.tgz")).bytes();
+    const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tarball).digest("base64");
+
+    await writeFile(
+      packageJson,
+      JSON.stringify({ name: "foo", dependencies: { electron: "1.0.0" }, trustedDependencies: [] }),
+    );
+    await writeFile(
+      join(packageDir, "package-lock.json"),
+      JSON.stringify({
+        name: "foo",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": { name: "foo", dependencies: { electron: "1.0.0" } },
+          "node_modules/electron": {
+            version: "1.0.0",
+            resolved: `${verdaccio.registryUrl()}electron/-/electron-1.0.0.tgz`,
+            integrity,
+            hasInstallScript: true,
+          },
+        },
+      }),
+    );
+
+    const { err } = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(err).toContain("migrated lockfile from package-lock.json");
+    expect(await exists(join(packageDir, "node_modules", "electron", "package.json"))).toBeTrue();
+    expect(await exists(preinstall)).toBeFalse();
+    expect(await file(join(packageDir, "bun.lock")).text()).toContain('"trustedDependencies": [],');
+  },
+);
+
+test.concurrent(
   "lifecycle script trust for file: dependencies is keyed on the dependency alias, not the package's self-declared name",
   async () => {
     using ctx = await setupTest();

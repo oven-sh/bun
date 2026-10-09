@@ -1571,6 +1571,60 @@ describe("bundler", () => {
     ],
   });
 
+  // api.js names store only in a function that it stores, so it can come ahead of store.js.
+  itBundled("splitting/SharedChunkOwnerLoadTimeReadStoredFunction", {
+    files: {
+      "/main.js": `import { store } from "./store.js"; console.log("main", store);`,
+      "/worker.js": /* js */ `
+        import "./flag.js"; import { api, getStore } from "./api.js";
+        console.log("worker", api.name, typeof getStore);
+      `,
+      "/flag.js": `globalThis.IS_WORKER = true;`,
+      "/store.js": /* js */ `
+        import { api } from "./api.js";
+        export const store = globalThis.IS_WORKER ? "no store" : "store of " + api.name;
+      `,
+      "/api.js": /* js */ `
+        import { store } from "./store.js";
+        export const api = { name: "api" };
+        export const getStore = () => store;
+      `,
+    },
+    entryPoints: ["/worker.js", "/main.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/main.js", stdout: "main store of api" },
+      { file: "/out/worker.js", stdout: "worker api function" },
+    ],
+  });
+
+  // m6.js names v5 only in a function that it stores, so the order of a.js breaks no read and the chunk stays with it.
+  // m5.js needs what m6.js sets on cfg.
+  itBundled("splitting/SharedChunkOwnerKeepsChunkWithStoredFunction", {
+    files: {
+      "/a.js": `import { label } from "./m5.js"; console.log("a", label);`,
+      "/b.js": `import { getV5 } from "./m6.js"; console.log("b", typeof getV5);`,
+      "/m5.js": /* js */ `
+        import "./m6.js"; import { cfg } from "./cfg.js";
+        export let v5 = 1;
+        export const label = cfg.name.toUpperCase();
+      `,
+      "/m6.js": /* js */ `
+        import { v5 } from "./m5.js"; import { cfg } from "./cfg.js";
+        cfg.name = "app";
+        export const getV5 = () => v5;
+      `,
+      "/cfg.js": `export const cfg = {};`,
+    },
+    entryPoints: ["/a.js", "/b.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/a.js", stdout: "a APP" },
+  });
+
   // Ported from Rolldown's code_splitting/issue_5276_2.
   itBundled("splitting/NamespaceImportAndDynamicImportOfSameModule", {
     files: {

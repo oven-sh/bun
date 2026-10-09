@@ -37,10 +37,8 @@ pub(crate) fn find_all_imported_parts_in_js_order(
     let mut plan = WalkPlan::new(this, chunks);
     let mut walks = plan.create_walks(this);
     run_walks(this, &plan, chunks, &mut walks);
-    if plan.reassign_unsafe_owners(this, chunks, &walks) {
-        walks = plan.create_walks(this);
-        run_walks(this, &plan, chunks, &mut walks);
-    }
+    let safe_walks = plan.find_safe_walks(this, chunks, &walks);
+    walks.extend(safe_walks);
     let order = WalkOrder::collect(this, chunks.len(), walks);
 
     struct Ctx<'a, 'f> {
@@ -211,6 +209,7 @@ impl WalkOrder {
             runs_of_chunk: vec![Vec::new(); chunks_len],
             entered: vec![u32::MAX; c.graph.files.len()],
         };
+        // A walk of `find_safe_walks` comes after the owner's, and replaces it.
         for walk in walks {
             for owned in walk.owned {
                 order.runs_of_chunk[owned.chunk_index as usize] = owned.runs;
@@ -336,34 +335,26 @@ impl WalkPlan {
     }
 
     /// A chunk prints its files in the order of its owner. On an import cycle, that order can put a part that runs at
-    /// load ahead of a binding that it reads, where the order of another entry point of the chunk does not. The first
-    /// such entry point by rank takes the chunk. Returns whether a chunk changed owner.
-    fn reassign_unsafe_owners(
+    /// load ahead of a binding that it reads, where the order of another entry point of the chunk does not. Returns the
+    /// walks of the first such entry point by rank, each with the chunks that it lays out in place of their owner.
+    fn find_safe_walks(
         &mut self,
-        c: &LinkerContext,
+        this: &mut LinkerContext,
         chunks: &[Chunk],
         walks: &[EntryWalk],
-    ) -> bool {
+    ) -> Vec<EntryWalk> {
         let mut reads: Option<LoadTimeReads> = None;
-        let mut trial_plan: Option<WalkPlan> = None;
-        let mut reassigned = false;
+        // With the other entry points of the chunk, last by rank first.
+        let mut unsafe_chunks: Vec<(usize, Vec<u32>)> = Vec::new();
         for owned in walks.iter().flat_map(|walk| &walk.owned) {
             let chunk_index = owned.chunk_index as usize;
             if !owned.has_cycle || chunks[chunk_index].entry_bits().count() < 2 {
                 continue;
             }
-            let reads = reads.get_or_insert_with(|| LoadTimeReads::new(c));
-            if !reads.is_broken_by(c, &owned.runs) {
+            let reads = reads.get_or_insert_with(|| LoadTimeReads::new(this));
+            if !reads.is_broken_by(this, &owned.runs) {
                 continue;
             }
-            // In a trial, the candidate owns this chunk alone.
-            let trial_plan = trial_plan.get_or_insert_with(|| WalkPlan {
-                chunk_of_file: self.chunk_of_file.clone(),
-                owner_of_chunk: vec![u32::MAX; chunks.len()],
-                slot_of_chunk: vec![0; chunks.len()],
-                entry_id_of_file: self.entry_id_of_file.clone(),
-                rank: Vec::new(),
-            });
             let mut candidates: Vec<u32> = Vec::new();
             let mut bits = chunks[chunk_index].entry_bits().iterator::<true, true>();
             while let Some(entry_id) = bits.next() {
@@ -371,33 +362,61 @@ impl WalkPlan {
                     candidates.push(entry_id as u32);
                 }
             }
-            candidates.sort_unstable_by_key(|&entry_id| self.rank[entry_id as usize]);
-            for candidate in candidates {
-                trial_plan.owner_of_chunk[chunk_index] = candidate;
-                let mut trial = trial_plan.create_walks(c);
-                trial[0].run(c, trial_plan, chunks);
-                if !reads.is_broken_by(c, &trial[0].owned[0].runs) {
-                    self.owner_of_chunk[chunk_index] = candidate;
-                    reassigned = true;
-                    break;
-                }
-            }
-            trial_plan.owner_of_chunk[chunk_index] = u32::MAX;
+            candidates
+                .sort_unstable_by_key(|&entry_id| core::cmp::Reverse(self.rank[entry_id as usize]));
+            unsafe_chunks.push((chunk_index, candidates));
         }
-        reassigned
+
+        let mut safe_walks: Vec<EntryWalk> = Vec::new();
+        let Some(mut reads) = reads else {
+            return safe_walks;
+        };
+        // One round tries the next entry point of every chunk, so chunks with the same entry points share a walk.
+        let mut is_safe = vec![false; chunks.len()];
+        loop {
+            self.owner_of_chunk.fill(u32::MAX);
+            unsafe_chunks.retain_mut(|(chunk_index, candidates)| {
+                if is_safe[*chunk_index] {
+                    return false;
+                }
+                let Some(candidate) = candidates.pop() else {
+                    return false;
+                };
+                self.owner_of_chunk[*chunk_index] = candidate;
+                true
+            });
+            if unsafe_chunks.is_empty() {
+                return safe_walks;
+            }
+            let mut trials = self.create_walks(this);
+            run_walks(this, self, chunks, &mut trials);
+            for mut trial in trials {
+                trial
+                    .owned
+                    .retain(|owned| !reads.is_broken_by(this, &owned.runs));
+                for owned in &trial.owned {
+                    is_safe[owned.chunk_index as usize] = true;
+                }
+                trial
+                    .entered
+                    .retain(|&file| is_safe[self.chunk_of_file[file as usize] as usize]);
+                safe_walks.push(trial);
+            }
+        }
     }
 }
 
-/// Which live parts run at load, and which parts name a binding of which.
+/// What the live parts do at load, and which parts name a binding of which.
 struct LoadTimeReads {
     /// Per file: the id of its part 0. The id of a part is that plus its index.
     first_part_id: Vec<u32>,
     file_of_part: Vec<IndexInt>,
-    runs_at_load: AutoBitSet,
+    /// `Hoisted` also for a part that does not run where it prints.
+    effects: Vec<LoadEffect>,
     /// `dependents[dependents_start[id]..dependents_start[id + 1]]`: the parts that name a binding of part `id`.
     dependents_start: Vec<u32>,
     dependents: Vec<u32>,
-    /// Scratch for `is_broken_by`. Per part that runs at load, in the chunk: the index of its run.
+    /// Scratch for `is_broken_by`. Per part of the chunk that is not hoisted: the index of its run.
     position: Vec<u32>,
     visited: Vec<bool>,
 }
@@ -429,16 +448,15 @@ impl LoadTimeReads {
             }
         };
 
-        let mut runs_at_load = bun_core::handle_oom(AutoBitSet::init_empty(parts_len));
+        let mut effects = vec![LoadEffect::Hoisted; parts_len];
         let mut dependents_start: Vec<u32> = vec![0; parts_len + 2];
         for_each_live_part(&mut |file, id, part| {
             // A wrapped file runs when it is called, and a namespace object prints ahead of every file.
             if flags[file].wrap == Wrap::None
                 && file as u32 != Index::RUNTIME.value()
                 && id - first_part_id[file] != bun_ast::NAMESPACE_EXPORT_PART_INDEX
-                && part_runs_at_load(part)
             {
-                runs_at_load.set(id as usize);
+                effects[id as usize] = LoadEffect::of(part);
             }
             for dependency in part.dependencies.iter() {
                 let to =
@@ -462,7 +480,7 @@ impl LoadTimeReads {
         LoadTimeReads {
             first_part_id,
             file_of_part,
-            runs_at_load,
+            effects,
             dependents_start,
             dependents,
             position: vec![u32::MAX; parts_len],
@@ -470,7 +488,7 @@ impl LoadTimeReads {
         }
     }
 
-    /// Calls `each` with the index of the run and the id of each part of `runs` that runs at load, last run first.
+    /// Calls `each` with the index of the run and the id of each part of `runs` that is not hoisted, last run first.
     fn for_each_part_backward(
         &self,
         c: &LinkerContext,
@@ -481,7 +499,7 @@ impl LoadTimeReads {
             let parts_len = c.graph.ast.items_parts()[run.source_index as usize].len() as u32;
             for part_index in run.begin..run.end.min(parts_len) {
                 let id = self.first_part_id[run.source_index as usize] + part_index;
-                if self.runs_at_load.is_set(id as usize) && each(run_index as u32, id) {
+                if self.effects[id as usize] != LoadEffect::Hoisted && each(run_index as u32, id) {
                     return true;
                 }
             }
@@ -489,8 +507,8 @@ impl LoadTimeReads {
         false
     }
 
-    /// Some part of `runs` that runs at load names, itself or through the functions that it names, a binding that a later
-    /// part of another file of `runs` gives its value.
+    /// Some part of `runs` that evaluates code names, itself or through the functions that it names, a binding that a
+    /// later part of another file of `runs` gives its value.
     fn is_broken_by(&mut self, c: &LinkerContext, runs: &[PartRun]) -> bool {
         let mut position = core::mem::take(&mut self.position);
         let mut visited = core::mem::take(&mut self.visited);
@@ -509,7 +527,7 @@ impl LoadTimeReads {
                     self.dependents_start[id as usize + 1] as usize,
                 );
                 for &dependent in &self.dependents[start..end] {
-                    if self.runs_at_load.is_set(dependent as usize) {
+                    if self.effects[dependent as usize] == LoadEffect::Evaluates {
                         if position[dependent as usize] < run_index
                             && self.file_of_part[dependent as usize]
                                 != self.file_of_part[written as usize]
@@ -535,24 +553,53 @@ impl LoadTimeReads {
     }
 }
 
-/// The part runs code, or gives a binding its value, when its file runs. A function declaration is hoisted.
-fn part_runs_at_load(part: &bun_ast::Part) -> bool {
-    !part.stmts.slice().iter().all(|stmt| match &stmt.data {
-        StmtData::SImport(_)
-        | StmtData::SExportStar(_)
-        | StmtData::SExportFrom(_)
-        | StmtData::SExportClause(_)
-        | StmtData::SFunction(_)
-        | StmtData::SComment(_)
-        | StmtData::SDirective(_)
-        | StmtData::STypeScript(_)
-        | StmtData::SEmpty(_) => true,
-        StmtData::SExportDefault(default) => matches!(
-            &default.value,
-            StmtOrExpr::Stmt(stmt) if matches!(stmt.data, StmtData::SFunction(_))
-        ),
-        _ => false,
-    })
+/// What happens where a part prints.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum LoadEffect {
+    /// Nothing: function declarations, imports, re-exports.
+    Hoisted,
+    /// A binding gets a value that evaluates nothing (`Expr::can_be_moved`): a function, a literal.
+    Assigns,
+    Evaluates,
+}
+
+impl LoadEffect {
+    fn of(part: &bun_ast::Part) -> LoadEffect {
+        let of_moved = |can_be_moved: bool| {
+            if can_be_moved {
+                LoadEffect::Assigns
+            } else {
+                LoadEffect::Evaluates
+            }
+        };
+        let effects = part.stmts.slice().iter().map(|stmt| match &stmt.data {
+            StmtData::SImport(_)
+            | StmtData::SExportStar(_)
+            | StmtData::SExportFrom(_)
+            | StmtData::SExportClause(_)
+            | StmtData::SFunction(_)
+            | StmtData::SComment(_)
+            | StmtData::SDirective(_)
+            | StmtData::STypeScript(_)
+            | StmtData::SEmpty(_) => LoadEffect::Hoisted,
+            StmtData::SExportDefault(default) => match &default.value {
+                StmtOrExpr::Stmt(stmt) if matches!(stmt.data, StmtData::SFunction(_)) => {
+                    LoadEffect::Hoisted
+                }
+                _ => of_moved(default.can_be_moved()),
+            },
+            StmtData::SClass(class) => of_moved(class.class.can_be_moved()),
+            StmtData::SLocal(local) => of_moved(
+                local
+                    .decls
+                    .slice()
+                    .iter()
+                    .all(|decl| decl.value.is_none_or(|value| value.can_be_moved())),
+            ),
+            _ => LoadEffect::Evaluates,
+        });
+        effects.max().unwrap_or(LoadEffect::Hoisted)
+    }
 }
 
 #[derive(Clone, Copy)]

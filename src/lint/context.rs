@@ -256,21 +256,6 @@ impl<'a> Report<'a> {
         self.suggest_as(SuggestionKind::Suggestion, message, data, fix)
     }
 
-    /// oxlint's `diagnostic_with_dangerous_fix`. It is a suggestion that says what the report says.
-    pub fn fix_dangerously<F: IntoFix>(self, fix: impl FnOnce(Fixer<'a>) -> F) -> Self {
-        // The text is there when the report is made.
-        self.suggest_as(SuggestionKind::DangerousFix, Message::new("", ""), &[], fix)
-    }
-
-    /// oxlint's `diagnostic_with_dangerous_suggestion`.
-    pub fn suggest_dangerously<F: IntoFix>(
-        self,
-        message: Message,
-        fix: impl FnOnce(Fixer<'a>) -> F,
-    ) -> Self {
-        self.suggest_as(SuggestionKind::DangerousSuggestion, message, &[], fix)
-    }
-
     fn suggest_as<F: IntoFix>(
         mut self,
         kind: SuggestionKind,

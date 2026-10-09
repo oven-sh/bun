@@ -336,7 +336,7 @@ impl<'a> Parser<'a> {
             self.refuse(Refusal::Reported);
         }
         if self.is_ecmascript && !self.is_flow && !self.has_failed() {
-            bun_sema::ecmascript::report_misplaced_modifiers(&mut self.f);
+            bun_sema::ecmascript::report_syntax_of_typescript(&mut self.f, self.lx.src);
         }
         if self.f.diagnostics.len() > 1 {
             self.f.diagnostics.sort_by_key(|it| (it.start, it.code));

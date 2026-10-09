@@ -2244,7 +2244,10 @@ fn check_with_references(
         let referenced = references[index].iter();
         pending.extend(referenced.filter(|&&it| std::mem::replace(&mut is_left_out[it], false)));
     }
-    let loaded = || (0..count).filter(|&index| !is_left_out[index] && !roots[index].is_empty());
+    // As `build` below.
+    let is_solution =
+        |index: usize| roots[index].is_empty() && projects[index].project.has_references;
+    let loaded = || (0..count).filter(|&index| !is_left_out[index] && !is_solution(index));
     let variants = variants_of_several(loaded().map(|index| &projects[index].project.options));
     host.share_declaration_files(variants, loaded().count());
     let is_read_by_a_program = |index: usize| {

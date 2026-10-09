@@ -21,7 +21,7 @@ use bun_sema::session::Arena;
 use bun_sema::util::{FxHashMap, ShardedMap};
 use bun_sys::{EntryKind, ExistsAtType, Fd};
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -169,8 +169,7 @@ pub struct Disk {
     idle_readers: bun_threading::Guarded<Vec<Reader>>,
     /// See `Host::take_unreadable`.
     unreadable: bun_threading::Guarded<Vec<Vec<u8>>>,
-    /// `Host::share_declaration_files`
-    shared: bun_threading::Guarded<Option<Arc<Shared>>>,
+    shared: bun_threading::Guarded<Sharing>,
     /// See `AlreadyRead`.
     already_read: AlreadyRead,
     /// What `already_read` adds to the listing of a directory, by the path of the directory.
@@ -187,17 +186,26 @@ pub struct Disk {
     pub(crate) scripts_of_page: Option<ScriptsOfPage>,
 }
 
+/// `Host::share_declaration_files`
+#[derive(Default)]
+struct Sharing {
+    files: Option<Arc<Shared>>,
+    variants: u32,
+    /// The programs that are yet to `stay_loaded`.
+    programs: usize,
+}
+
 /// The declaration files that the programs of one check have loaded.
 #[derive(Default)]
 struct Shared {
-    /// `Host::share_declaration_files`
-    variants: AtomicU32,
-    /// The programs that are yet to `stay_loaded`.
-    programs: AtomicUsize,
-    /// By path. As `Host::read` has returned it: no library that is kept anyway is copied.
-    texts: ShardedMap<Vec<u8>, Cow<'static, [u8]>>,
-    /// `Host::shared_file`, by path and then the variant. Two threads that find a file empty both
-    /// load it, and neither waits.
+    /// What `Host::read` has returned, by path, and returns again. As it was: no library that is
+    /// kept anyway is copied.
+    read: ShardedMap<Vec<u8>, Cow<'static, [u8]>>,
+    /// The first text of a file that is not what was `read`, by path: a project has emitted it.
+    /// A program that is not given the file by that project finds the one on the disk.
+    emitted: ShardedMap<Vec<u8>, Box<[u8]>>,
+    /// `Host::shared_file`, by path, and then the variant and whether the text is `emitted`. Two
+    /// threads that find a file empty both load it, and neither waits.
     files: ShardedMap<Vec<u8>, Arc<OnceLock<SharedFile>>>,
 }
 
@@ -1088,28 +1096,32 @@ impl Host for Disk {
     }
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>> {
         let is_shared = is_declaration_file_name(path);
-        let Some(shared) = is_shared.then(|| self.shared.lock().clone()).flatten() else {
+        let shared = is_shared.then(|| self.shared.lock().files.clone());
+        let Some(shared) = shared.flatten() else {
             return self.read_for_one_program(path);
         };
-        if let Some(text) = shared.texts.get_ref(path) {
+        if let Some(text) = shared.read.get_ref(path) {
             return Some(text.clone());
         }
         let text = self.read_for_one_program(path)?;
-        shared.texts.insert_ref(path.to_vec(), text.clone());
+        shared.read.insert_ref(path.to_vec(), text.clone());
         Some(text)
     }
     fn share_declaration_files(&self, variants: u32, programs: usize) {
         if variants != 0 {
             let mut shared = self.shared.lock();
-            let shared = shared.get_or_insert_default();
-            shared.variants.fetch_or(variants, Ordering::Relaxed);
-            shared.programs.fetch_add(programs, Ordering::Relaxed);
+            shared.files.get_or_insert_default();
+            shared.variants |= variants;
+            shared.programs += programs;
         }
     }
     fn stays_loaded(&self) {
         let mut shared = self.shared.lock();
-        let is_last = |it: &Arc<Shared>| it.programs.fetch_sub(1, Ordering::Relaxed) == 1;
-        let unused = shared.take_if(|it| is_last(it));
+        shared.programs = shared.programs.saturating_sub(1);
+        if shared.programs > 0 {
+            return;
+        }
+        let unused = std::mem::take(&mut *shared);
         // Freed without the lock.
         drop(shared);
         drop(unused);
@@ -1120,25 +1132,27 @@ impl Host for Disk {
         text: &[u8],
         variant: u8,
     ) -> Option<Arc<OnceLock<SharedFile>>> {
-        let shared = self.shared.lock().clone()?;
-        if shared.variants.load(Ordering::Relaxed) & 1 << (variant >> 1) == 0
-            || !is_declaration_file_name(path)
-            || self.script_kind(path).is_some()
-        {
+        if !is_declaration_file_name(path) || self.script_kind(path).is_some() {
             return None;
         }
-        let first = match shared.texts.get_ref(path) {
-            Some(text) => text,
-            // What a project has emitted is not read from the disk.
-            None => shared
-                .texts
-                .insert_ref(path.to_vec(), Cow::Owned(text.to_vec())),
+        let shared = {
+            let shared = self.shared.lock();
+            let is_of_several = shared.variants & 1 << (variant >> 1) != 0;
+            shared.files.clone().filter(|_| is_of_several)?
         };
         // A program can find on the disk what another gets from a project that it references.
-        if **first != *text {
-            return None;
+        let read = shared.read.get_ref(path);
+        let is_emitted = read.is_none_or(|read| **read != *text);
+        if is_emitted {
+            let first = match shared.emitted.get_ref(path) {
+                Some(text) => text,
+                None => shared.emitted.insert_ref(path.to_vec(), text.into()),
+            };
+            if **first != *text {
+                return None;
+            }
         }
-        let key = [path, &[variant]].concat();
+        let key = [path, &[variant << 1 | u8::from(is_emitted)]].concat();
         Some(Arc::clone(match shared.files.get_ref(&key[..]) {
             Some(file) => file,
             None => shared.files.insert_ref(key, Default::default()),

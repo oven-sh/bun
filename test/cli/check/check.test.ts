@@ -1553,8 +1553,20 @@ late/src/index.ts(3,14): error TS2322: Type '"fresh"' is not assignable to type 
 later/src/index.ts(2,14): error TS2322: Type '"fresh"' is not assignable to type 'never'.
 later/src/index.ts(3,14): error TS2322: Type '"fresh"' is not assignable to type 'never'.`;
       for (const threads of ["1", "8"]) {
-        const { stdout } = await check(dir, ["--threads", threads]);
-        expect(stdout).toBe(expected);
+        const { stdout, exitCode } = await check(dir, ["--threads", threads]);
+        expect({ stdout, exitCode }).toEqual({ stdout: expected, exitCode: 1 });
+      }
+      // Each directory is a build of its own. What `lib` emits for `late` is not on the disk, where `later` looks.
+      const separately = `late/src/index.ts(2,14): error TS2322: Type '"fresh"' is not assignable to type 'never'.
+late/src/index.ts(3,14): error TS2322: Type '"fresh"' is not assignable to type 'never'.
+later/src/index.ts(2,14): error TS2322: Type '"stale"' is not assignable to type 'never'.
+later/src/index.ts(3,14): error TS2322: Type '"stale"' is not assignable to type 'never'.`;
+      for (const directories of [
+        ["late", "later"],
+        ["later", "late"],
+      ]) {
+        const { stdout, exitCode } = await check(dir, directories);
+        expect({ stdout, exitCode }).toEqual({ stdout: separately, exitCode: 1 });
       }
     });
 

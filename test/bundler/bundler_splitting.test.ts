@@ -1491,6 +1491,86 @@ describe("bundler", () => {
     ],
   });
 
+  // m2.js, m5.js and m6.js import each other, in a chunk that worker.js and the import() in index.js share. m5.js reads
+  // v6 at load. worker.js enters the cycle at m6.js, so m5.js comes first in its order. The import() enters it at m5.js,
+  // so m6.js comes first in its order, and the chunk follows that one.
+  const cycleWithLoadTimeRead = {
+    "/index.js": `import("./m5.js").then(m => console.log("ok", m.w5));`,
+    "/worker.js": `import "./flag.js"; import "./m6.js"; console.log("worker");`,
+    "/flag.js": `globalThis.IS_WORKER = true;`,
+    "/m2.js": `export { v5 as x } from "./m5.js"; export function v2() { return 2 }`,
+    "/m5.js": /* js */ `
+      import { v2 } from "./m2.js"; import { v6 } from "./m6.js";
+      export function v5() { return v2 }
+      export const w5 = globalThis.IS_WORKER ? null : v6.toUpperCase();
+    `,
+    "/m6.js": `import { v2 } from "./m2.js"; export const w6 = typeof v2; export let v6 = "six";`,
+  };
+  for (const [name, options] of Object.entries<Partial<Parameters<typeof itBundled>[1]>>({
+    "": {},
+    "EntriesSwapped": { entryPoints: ["/worker.js", "/index.js"] },
+    "Browser": { target: "browser" },
+    "Minified": { minifyIdentifiers: true, minifySyntax: true, minifyWhitespace: true },
+    "HashedEntry": {
+      entryNaming: "[name].entry-[hash].[ext]",
+      onAfterBundle(api) {
+        launchHashedEntry(api, "index");
+        launchHashedEntry(api, "worker");
+      },
+    },
+  })) {
+    itBundled("splitting/SharedChunkOwnerLoadTimeRead" + name, {
+      files: cycleWithLoadTimeRead,
+      entryPoints: ["/index.js", "/worker.js"],
+      splitting: true,
+      target: "bun",
+      outdir: "/out",
+      format: "esm",
+      ...options,
+      run: [
+        { file: "/out/index.js", stdout: "ok SIX" },
+        { file: "/out/worker.js", stdout: "worker" },
+      ],
+    });
+  }
+
+  // Without flag.js, worker.js throws unbundled too. index.js still loads.
+  itBundled("splitting/SharedChunkOwnerLoadTimeReadThrowingEntry", {
+    files: {
+      ...cycleWithLoadTimeRead,
+      "/worker.js": `import "./m6.js"; console.log("worker");`,
+    },
+    entryPoints: ["/index.js", "/worker.js"],
+    splitting: true,
+    target: "bun",
+    outdir: "/out",
+    format: "esm",
+    run: { file: "/out/index.js", stdout: "ok SIX" },
+  });
+
+  // store.js reads api.js only through a function that it calls at load.
+  itBundled("splitting/SharedChunkOwnerLoadTimeReadThroughFunction", {
+    files: {
+      "/main.js": `import { store } from "./store.js"; console.log("main", store);`,
+      "/worker.js": `import "./flag.js"; import { api } from "./api.js"; console.log("worker", api.name);`,
+      "/flag.js": `globalThis.IS_WORKER = true;`,
+      "/store.js": /* js */ `
+        import { describe } from "./describe.js";
+        export const store = globalThis.IS_WORKER ? "no store" : "store of " + describe();
+      `,
+      "/describe.js": `import { api } from "./api.js"; export function describe() { return api.name; }`,
+      "/api.js": `import "./store.js"; export const api = { name: "api" };`,
+    },
+    entryPoints: ["/worker.js", "/main.js"],
+    splitting: true,
+    outdir: "/out",
+    format: "esm",
+    run: [
+      { file: "/out/main.js", stdout: "main store of api" },
+      { file: "/out/worker.js", stdout: "worker api" },
+    ],
+  });
+
   // Ported from Rolldown's code_splitting/issue_5276_2.
   itBundled("splitting/NamespaceImportAndDynamicImportOfSameModule", {
     files: {

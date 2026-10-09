@@ -1,5 +1,5 @@
 use crate::mal_prelude::*;
-use bun_ast::{ImportKind, ImportRecord};
+use bun_ast::{ImportKind, ImportRecord, StmtData, StmtOrExpr};
 use bun_collections::{AutoBitSet, HashMap, StringHashMap, VecExt};
 
 use crate::linker_context::merge_small_chunks::part_has_no_side_effects;
@@ -34,32 +34,12 @@ pub(crate) fn find_all_imported_parts_in_js_order(
         }
     }
 
-    let (plan, mut walks) = WalkPlan::new(this, chunks);
-    {
-        struct WalkCtx<'a, 'f> {
-            c: bun_ptr::ParentRef<LinkerContext<'a>, bun_ptr::Mut>,
-            plan: &'f WalkPlan,
-            chunks: &'f [Chunk],
-        }
-        let walk_ctx = WalkCtx {
-            // SAFETY: `this` is the live `&mut LinkerContext` for the link step.
-            c: unsafe {
-                bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(this))
-            },
-            plan: &plan,
-            chunks: &*chunks,
-        };
-        this.worker_pool().each_ptr(
-            walk_ctx,
-            |ctx: &WalkCtx, walk: *mut EntryWalk, _: usize| {
-                // SAFETY: `each_ptr` hands each task a distinct `*mut EntryWalk`.
-                let walk = unsafe { &mut *walk };
-                // SAFETY: the walks only read the graph.
-                let c: &LinkerContext = unsafe { &*ctx.c.as_mut_ptr() };
-                walk.run(c, ctx.plan, ctx.chunks);
-            },
-            &mut walks,
-        );
+    let mut plan = WalkPlan::new(this, chunks);
+    let mut walks = plan.create_walks(this);
+    run_walks(this, &plan, chunks, &mut walks);
+    if plan.reassign_unsafe_owners(this, chunks, &walks) {
+        walks = plan.create_walks(this);
+        run_walks(this, &plan, chunks, &mut walks);
     }
     let order = WalkOrder::collect(this, chunks.len(), walks);
 
@@ -107,6 +87,31 @@ pub(crate) fn find_all_imported_parts_in_js_order(
         chunks,
     );
     Ok(())
+}
+
+fn run_walks(this: &mut LinkerContext, plan: &WalkPlan, chunks: &[Chunk], walks: &mut [EntryWalk]) {
+    struct WalkCtx<'a, 'f> {
+        c: bun_ptr::ParentRef<LinkerContext<'a>, bun_ptr::Mut>,
+        plan: &'f WalkPlan,
+        chunks: &'f [Chunk],
+    }
+    let walk_ctx = WalkCtx {
+        // SAFETY: `this` is the live `&mut LinkerContext` for the link step.
+        c: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(this)) },
+        plan,
+        chunks,
+    };
+    this.worker_pool().each_ptr(
+        walk_ctx,
+        |ctx: &WalkCtx, walk: *mut EntryWalk, _: usize| {
+            // SAFETY: `each_ptr` hands each task a distinct `*mut EntryWalk`.
+            let walk = unsafe { &mut *walk };
+            // SAFETY: the walks only read the graph.
+            let c: &LinkerContext = unsafe { &*ctx.c.as_mut_ptr() };
+            walk.run(c, ctx.plan, ctx.chunks);
+        },
+        walks,
+    );
 }
 
 /// Each part range is printed as one task, so a range stops growing once it
@@ -228,10 +233,12 @@ struct WalkPlan {
     slot_of_chunk: Vec<u32>,
     /// With code splitting: the entry point id of each entry point's file, `u32::MAX` for the others.
     entry_id_of_file: Vec<u32>,
+    /// With code splitting: `load_rank`.
+    rank: Vec<u32>,
 }
 
 impl WalkPlan {
-    fn new(c: &LinkerContext, chunks: &[Chunk]) -> (WalkPlan, Vec<EntryWalk>) {
+    fn new(c: &LinkerContext, chunks: &[Chunk]) -> WalkPlan {
         let files_len = c.graph.files.len();
         let entry_points = c.graph.entry_points.items_source_index();
         let code_splitting = c.graph.code_splitting;
@@ -240,6 +247,7 @@ impl WalkPlan {
             owner_of_chunk: vec![u32::MAX; chunks.len()],
             slot_of_chunk: vec![0; chunks.len()],
             entry_id_of_file: Vec::new(),
+            rank: Vec::new(),
         };
 
         if code_splitting {
@@ -269,7 +277,6 @@ impl WalkPlan {
         }
 
         // The entry point that loads first among the chunk's entry points owns the chunk.
-        let mut rank = Vec::new();
         if code_splitting {
             plan.entry_id_of_file = vec![u32::MAX; files_len];
             for (entry_id, &source_index) in entry_points.iter().enumerate() {
@@ -278,19 +285,17 @@ impl WalkPlan {
                     *slot = entry_id as u32;
                 }
             }
-            rank = load_rank(c, &plan.entry_id_of_file);
+            plan.rank = load_rank(c, &plan.entry_id_of_file);
         }
-        let mut walk_of_entry = vec![u32::MAX; entry_points.len()];
-        let mut walks: Vec<EntryWalk> = Vec::new();
         for (chunk_index, chunk) in chunks.iter().enumerate() {
             if !matches!(chunk.content, chunk::Content::Javascript(_)) {
                 continue;
             }
-            let owner = if code_splitting {
+            plan.owner_of_chunk[chunk_index] = if code_splitting {
                 let mut bits = chunk.entry_bits().iterator::<true, true>();
                 let mut owner = u32::MAX;
                 while let Some(entry_id) = bits.next() {
-                    if owner == u32::MAX || rank[entry_id] < rank[owner as usize] {
+                    if owner == u32::MAX || plan.rank[entry_id] < plan.rank[owner as usize] {
                         owner = entry_id as u32;
                     }
                 }
@@ -298,6 +303,15 @@ impl WalkPlan {
             } else {
                 chunk.entry_point.entry_point_id()
             };
+        }
+        plan
+    }
+
+    /// One walk per entry point that owns a chunk.
+    fn create_walks(&mut self, c: &LinkerContext) -> Vec<EntryWalk> {
+        let mut walk_of_entry = vec![u32::MAX; c.graph.entry_points.len()];
+        let mut walks: Vec<EntryWalk> = Vec::new();
+        for (chunk_index, &owner) in self.owner_of_chunk.iter().enumerate() {
             if owner == u32::MAX {
                 continue;
             }
@@ -311,15 +325,234 @@ impl WalkPlan {
                 });
             }
             let walk = &mut walks[*walk_index as usize];
-            plan.owner_of_chunk[chunk_index] = owner;
-            plan.slot_of_chunk[chunk_index] = walk.owned.len() as u32;
+            self.slot_of_chunk[chunk_index] = walk.owned.len() as u32;
             walk.owned.push(OwnedChunk {
                 chunk_index: chunk_index as u32,
                 runs: Vec::new(),
+                has_cycle: false,
             });
         }
-        (plan, walks)
+        walks
     }
+
+    /// A chunk prints its files in the order of its owner. On an import cycle, that order can put a part that runs at
+    /// load ahead of a binding that it reads, where the order of another entry point of the chunk does not. The first
+    /// such entry point by rank takes the chunk. Returns whether a chunk changed owner.
+    fn reassign_unsafe_owners(
+        &mut self,
+        c: &LinkerContext,
+        chunks: &[Chunk],
+        walks: &[EntryWalk],
+    ) -> bool {
+        let mut reads: Option<LoadTimeReads> = None;
+        let mut trial_plan: Option<WalkPlan> = None;
+        let mut reassigned = false;
+        for owned in walks.iter().flat_map(|walk| &walk.owned) {
+            let chunk_index = owned.chunk_index as usize;
+            if !owned.has_cycle || chunks[chunk_index].entry_bits().count() < 2 {
+                continue;
+            }
+            let reads = reads.get_or_insert_with(|| LoadTimeReads::new(c));
+            if !reads.is_broken_by(c, &owned.runs) {
+                continue;
+            }
+            // In a trial, the candidate owns this chunk alone.
+            let trial_plan = trial_plan.get_or_insert_with(|| WalkPlan {
+                chunk_of_file: self.chunk_of_file.clone(),
+                owner_of_chunk: vec![u32::MAX; chunks.len()],
+                slot_of_chunk: vec![0; chunks.len()],
+                entry_id_of_file: self.entry_id_of_file.clone(),
+                rank: Vec::new(),
+            });
+            let mut candidates: Vec<u32> = Vec::new();
+            let mut bits = chunks[chunk_index].entry_bits().iterator::<true, true>();
+            while let Some(entry_id) = bits.next() {
+                if entry_id as u32 != self.owner_of_chunk[chunk_index] {
+                    candidates.push(entry_id as u32);
+                }
+            }
+            candidates.sort_unstable_by_key(|&entry_id| self.rank[entry_id as usize]);
+            for candidate in candidates {
+                trial_plan.owner_of_chunk[chunk_index] = candidate;
+                let mut trial = trial_plan.create_walks(c);
+                trial[0].run(c, trial_plan, chunks);
+                if !reads.is_broken_by(c, &trial[0].owned[0].runs) {
+                    self.owner_of_chunk[chunk_index] = candidate;
+                    reassigned = true;
+                    break;
+                }
+            }
+            trial_plan.owner_of_chunk[chunk_index] = u32::MAX;
+        }
+        reassigned
+    }
+}
+
+/// Which live parts run at load, and which parts name a binding of which.
+struct LoadTimeReads {
+    /// Per file: the id of its part 0. The id of a part is that plus its index.
+    first_part_id: Vec<u32>,
+    file_of_part: Vec<IndexInt>,
+    runs_at_load: AutoBitSet,
+    /// `dependents[dependents_start[id]..dependents_start[id + 1]]`: the parts that name a binding of part `id`.
+    dependents_start: Vec<u32>,
+    dependents: Vec<u32>,
+    /// Scratch for `is_broken_by`. Per part that runs at load, in the chunk: the index of its run.
+    position: Vec<u32>,
+    visited: Vec<bool>,
+}
+
+impl LoadTimeReads {
+    fn new(c: &LinkerContext) -> LoadTimeReads {
+        let all_parts = c.graph.ast.items_parts();
+        let flags = c.graph.meta.items_flags();
+        let css = c.graph.ast.items_css();
+        let mut first_part_id: Vec<u32> = Vec::with_capacity(all_parts.len());
+        let mut file_of_part: Vec<IndexInt> = Vec::new();
+        for (file, parts) in all_parts.iter().enumerate() {
+            first_part_id.push(file_of_part.len() as u32);
+            file_of_part.resize(file_of_part.len() + parts.len(), file as IndexInt);
+        }
+        let parts_len = file_of_part.len();
+
+        let for_each_live_part = |each: &mut dyn FnMut(usize, u32, &bun_ast::Part)| {
+            for source_index in c.graph.reachable_files.iter() {
+                let file = source_index.get() as usize;
+                if !c.graph.files_live.is_set(file) || css[file].is_some() {
+                    continue;
+                }
+                for (part_index, part) in all_parts[file].as_slice().iter().enumerate() {
+                    if c.graph.parts_live[file].is_set(part_index) {
+                        each(file, first_part_id[file] + part_index as u32, part);
+                    }
+                }
+            }
+        };
+
+        let mut runs_at_load = bun_core::handle_oom(AutoBitSet::init_empty(parts_len));
+        let mut dependents_start: Vec<u32> = vec![0; parts_len + 2];
+        for_each_live_part(&mut |file, id, part| {
+            // A wrapped file runs when it is called, and a namespace object prints ahead of every file.
+            if flags[file].wrap == Wrap::None
+                && file as u32 != Index::RUNTIME.value()
+                && id - first_part_id[file] != bun_ast::NAMESPACE_EXPORT_PART_INDEX
+                && part_runs_at_load(part)
+            {
+                runs_at_load.set(id as usize);
+            }
+            for dependency in part.dependencies.iter() {
+                let to =
+                    first_part_id[dependency.source_index.get() as usize] + dependency.part_index;
+                dependents_start[to as usize + 2] += 1;
+            }
+        });
+        for i in 2..dependents_start.len() {
+            dependents_start[i] += dependents_start[i - 1];
+        }
+        let mut dependents: Vec<u32> = vec![0; dependents_start[parts_len + 1] as usize];
+        for_each_live_part(&mut |_, id, part| {
+            for dependency in part.dependencies.iter() {
+                let to =
+                    first_part_id[dependency.source_index.get() as usize] + dependency.part_index;
+                dependents[dependents_start[to as usize + 1] as usize] = id;
+                dependents_start[to as usize + 1] += 1;
+            }
+        });
+
+        LoadTimeReads {
+            first_part_id,
+            file_of_part,
+            runs_at_load,
+            dependents_start,
+            dependents,
+            position: vec![u32::MAX; parts_len],
+            visited: vec![false; parts_len],
+        }
+    }
+
+    /// Calls `each` with the index of the run and the id of each part of `runs` that runs at load, last run first.
+    fn for_each_part_backward(
+        &self,
+        c: &LinkerContext,
+        runs: &[PartRun],
+        mut each: impl FnMut(u32, u32) -> bool,
+    ) -> bool {
+        for (run_index, run) in runs.iter().enumerate().rev() {
+            let parts_len = c.graph.ast.items_parts()[run.source_index as usize].len() as u32;
+            for part_index in run.begin..run.end.min(parts_len) {
+                let id = self.first_part_id[run.source_index as usize] + part_index;
+                if self.runs_at_load.is_set(id as usize) && each(run_index as u32, id) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Some part of `runs` that runs at load names, itself or through the functions that it names, a binding that a later
+    /// part of another file of `runs` gives its value.
+    fn is_broken_by(&mut self, c: &LinkerContext, runs: &[PartRun]) -> bool {
+        let mut position = core::mem::take(&mut self.position);
+        let mut visited = core::mem::take(&mut self.visited);
+        self.for_each_part_backward(c, runs, |run_index, id| {
+            position[id as usize] = run_index;
+            false
+        });
+        // Last run first: the first search that comes to a function is the one from the latest binding that it leads to.
+        // `import` statements are hoisted, so a file that a part can name does not print between two parts of its file.
+        let mut queue: Vec<u32> = Vec::new();
+        let is_broken = self.for_each_part_backward(c, runs, |run_index, written| {
+            queue.push(written);
+            while let Some(id) = queue.pop() {
+                let (start, end) = (
+                    self.dependents_start[id as usize] as usize,
+                    self.dependents_start[id as usize + 1] as usize,
+                );
+                for &dependent in &self.dependents[start..end] {
+                    if self.runs_at_load.is_set(dependent as usize) {
+                        if position[dependent as usize] < run_index
+                            && self.file_of_part[dependent as usize]
+                                != self.file_of_part[written as usize]
+                        {
+                            return true;
+                        }
+                    } else if !visited[dependent as usize] {
+                        visited[dependent as usize] = true;
+                        queue.push(dependent);
+                    }
+                }
+            }
+            false
+        });
+        self.for_each_part_backward(c, runs, |_, id| {
+            position[id as usize] = u32::MAX;
+            false
+        });
+        visited.fill(false);
+        self.position = position;
+        self.visited = visited;
+        is_broken
+    }
+}
+
+/// The part runs code, or gives a binding its value, when its file runs. A function declaration is hoisted.
+fn part_runs_at_load(part: &bun_ast::Part) -> bool {
+    !part.stmts.slice().iter().all(|stmt| match &stmt.data {
+        StmtData::SImport(_)
+        | StmtData::SExportStar(_)
+        | StmtData::SExportFrom(_)
+        | StmtData::SExportClause(_)
+        | StmtData::SFunction(_)
+        | StmtData::SComment(_)
+        | StmtData::SDirective(_)
+        | StmtData::STypeScript(_)
+        | StmtData::SEmpty(_) => true,
+        StmtData::SExportDefault(default) => matches!(
+            &default.value,
+            StmtOrExpr::Stmt(stmt) if matches!(stmt.data, StmtData::SFunction(_))
+        ),
+        _ => false,
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -509,6 +742,8 @@ struct OwnedChunk {
     chunk_index: u32,
     /// The runs placed so far.
     runs: Vec<PartRun>,
+    /// The walk came back to a file of the chunk that it had not left.
+    has_cycle: bool,
 }
 
 /// One walk from an entry point. It lays out the chunks that the entry point owns.
@@ -522,10 +757,19 @@ struct EntryWalk {
 impl EntryWalk {
     fn run(&mut self, c: &LinkerContext, plan: &WalkPlan, chunks: &[Chunk]) {
         let mut seen = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
+        let mut left = bun_core::handle_oom(AutoBitSet::init_empty(c.graph.files.len()));
         let mut stack: Vec<WalkFrame> = Vec::new();
         let mut css_placed: HashMap<u64, ()> = HashMap::default();
         let root = c.graph.entry_points.items_source_index()[self.entry_id as usize];
-        self.walk(c, plan, &mut seen, &mut stack, &mut css_placed, root);
+        self.walk(
+            c,
+            plan,
+            &mut seen,
+            &mut left,
+            &mut stack,
+            &mut css_placed,
+            root,
+        );
 
         // Chunk folding can move a file into a chunk whose entry points do not import it. It goes last there.
         let runtime = Index::RUNTIME.value();
@@ -537,6 +781,7 @@ impl EntryWalk {
                         c,
                         plan,
                         &mut seen,
+                        &mut left,
                         &mut stack,
                         &mut css_placed,
                         source_index,
@@ -552,6 +797,7 @@ impl EntryWalk {
         c: &LinkerContext,
         plan: &WalkPlan,
         seen: &mut AutoBitSet,
+        left: &mut AutoBitSet,
         stack: &mut Vec<WalkFrame>,
         css_placed: &mut HashMap<u64, ()>,
         root: IndexInt,
@@ -587,6 +833,9 @@ impl EntryWalk {
             let (source_index, loader) = match frame {
                 WalkFrame::Place { run, slot } => {
                     self.owned[slot as usize].runs.push(run);
+                    if run.end == u32::MAX {
+                        left.set(run.source_index as usize);
+                    }
                     continue;
                 }
                 WalkFrame::PlaceCss { source_index, slot } => {
@@ -622,9 +871,18 @@ impl EntryWalk {
             let mut begin = 0;
             let mark = stack.len();
 
+            let owned = &mut self.owned;
             // The parts ahead of the one that imports `other` print before `other` does.
             let mut import = |part_index: u32, other: IndexInt, loader: u32| {
-                if other == Index::RUNTIME.value() || seen.is_set(other as usize) {
+                if other == Index::RUNTIME.value() {
+                    return;
+                }
+                if seen.is_set(other as usize) {
+                    if !left.is_set(other as usize)
+                        && let Some(slot) = slot_of(other)
+                    {
+                        owned[slot as usize].has_cycle = true;
+                    }
                     return;
                 }
                 let is_css = css[other as usize].is_some();

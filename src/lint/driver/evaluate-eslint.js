@@ -145,6 +145,7 @@ function serializeConfigObject(given, index) {
   const config = withoutMatchers(given);
   const { plugins, languageOptions, processor, extends: extended, ...rest } = config;
   const out = serialize(rest);
+  if (typeof out.basePath === "string") out.basePath = portablePath(out.basePath, require("node:path"));
   // Which object this is of what the file exports: a worker takes from there what JSON cannot say.
   if (rest.settings !== undefined) out.$source = { config: path, index };
   if (plugins && typeof plugins === "object") {

@@ -98,6 +98,11 @@ function describe(name, plugin) {
   return stringify({ name, rules });
 }
 
+// A path as the system writes it, `system` being `node:path`, with `/`: that is how it is read.
+function portablePath(path, system) {
+  return path.split(system.sep).join("/");
+}
+
 function serialize(value, ancestors = []) {
   switch (typeof value) {
     case "string":

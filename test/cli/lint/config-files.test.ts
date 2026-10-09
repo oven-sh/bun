@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const command = [bunExe(), "lint"];
@@ -130,6 +131,42 @@ describe.concurrent("a function in an eslint.config.js", () => {
 });
 
 describe.concurrent("an eslint.config.js", () => {
+  test("`basePath` can be written as the system writes paths", async () => {
+    const { problems } = await lint({
+      "eslint.config.mjs": `import { join } from "node:path";
+        export default [
+          { basePath: join(import.meta.dirname, "src", "deep"), files: ["*.js"], rules: { "no-var": "error" } },
+          { basePath: join("src", "deep"), ignores: ["ignored.js"] },
+        ];`,
+      "a.js": code,
+      "src/b.js": code,
+      "src/deep/c.js": code,
+      "src/deep/ignored.js": code,
+    });
+    expect(problems).toEqual(["src/deep/c.js:1:1 no-var"]);
+  });
+
+  test("a path leaves the program that runs the file with `/`, also on Windows", async () => {
+    const source = readFileSync(join(import.meta.dir, "../../../src/lint/driver/evaluate-describe.js"), "utf8");
+    const paths = [String.raw`C:\proj\src`, String.raw`packages\a`, String.raw`\\server\share\a`, "C:/proj"];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `${source}
+        const { posix, win32 } = require("node:path");
+        const paths = ${JSON.stringify(paths)};
+        console.log(JSON.stringify([paths.map(it => portablePath(it, win32)), paths.map(it => portablePath(it, posix))]));`,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual([["C:/proj/src", "packages/a", "//server/share/a", "C:/proj"], paths]);
+    expect(exitCode).toBe(0);
+  });
+
   test("the options of the language of a plugin are not those of JavaScript", async () => {
     const { problems, stderr } = await lint({
       "eslint.config.mjs": `export default [

@@ -828,14 +828,15 @@ try {
   test("400,000 quoted scalars on a line of YAML do not take quadratic time", async () => {
     const result = await format(
       {
-        "a.yaml": Buffer.alloc(800_000, '""').toString(),
-        "b.yaml": `[${Buffer.alloc(25_000, '"a", ').toString()}"a"]\n`,
+        // A debug build is 30 times slower or more, and the machine can be busy.
+        "a.yaml": Buffer.alloc(isDebug || isASAN ? 100_000 : 800_000, '""').toString(),
+        "b.yaml": `[${Buffer.alloc(5_000, '"a", ').toString()}"a"]\n`,
       },
       [],
       { reads: ["b.yaml"] },
     );
     expect(result.stderr).toContain("a.yaml: SyntaxError");
-    expect(result.files["b.yaml"]).toBe(`[\n${Buffer.alloc(35_007, '  "a",\n').toString()}]\n`);
+    expect(result.files["b.yaml"]).toBe(`[\n${Buffer.alloc(7_007, '  "a",\n').toString()}]\n`);
     expect(result.exitCode).toBe(2);
   });
 

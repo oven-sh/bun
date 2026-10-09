@@ -2065,11 +2065,12 @@ describe.concurrent("the SourceProvider cache does not keep what is made from mo
       import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
       import { expect, test } from "bun:test";
       import { writeFileSync } from "node:fs";
+      import { join } from "node:path";
       import { matched } from "./globs.ts";
       import { value } from "./calls-macro.ts";
       test("the second file", () => {
         expect({ matched, value }).toEqual({ matched: ["./globbed/a.ts", "./globbed/b.ts"], value: "second" });
-        expect(["globs", "calls-macro", "plain"].map(name => isolatedModuleCacheSourceType(import.meta.dir + "/" + name + ".ts"))).toEqual(
+        expect(["globs", "calls-macro", "plain"].map(name => isolatedModuleCacheSourceType(join(import.meta.dir, name + ".ts")))).toEqual(
           [null, null, "BunTranspiledModule"],
         );
         writeFileSync(import.meta.dir + "/globbed/c.ts", "");

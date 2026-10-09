@@ -362,7 +362,7 @@ impl<'a> Parser<'a> {
             map[b'.' as usize] = MARK_OTHER;
         }
         if flags.collapse_whitespace {
-            for c in [b' ', b'\t', b'\r'] {
+            for c in *b" \t\r" {
                 map[c as usize] = MARK_OTHER;
             }
         }

@@ -1,8 +1,10 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { chmodSync, chownSync, mkdirSync, rmSync, statSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+
+const isRoot = !isWindows && process.getuid?.() === 0;
 
 async function runPmPkg(args: string[], cwd: string, expectSuccess = true) {
   await using proc = spawn({
@@ -200,6 +202,46 @@ describe.concurrent("bun pm pkg", () => {
       expect(error).toBe("");
       expect(code).toBe(0);
       expect((await readPkg(dir)).description).toBe("New description");
+    });
+
+    // package.json is replaced through a temporary file; the new file must look like the old one.
+    it.skipIf(isWindows)("keeps the mode of package.json", async () => {
+      using dir = makeTestDir();
+      const packageJson = join(String(dir), "package.json");
+      chmodSync(packageJson, 0o600);
+      const { code } = await runPmPkg(["set", "description=Updated"], dir);
+      expect(code).toBe(0);
+      expect({ mode: statSync(packageJson).mode & 0o777, description: (await readPkg(dir)).description }).toEqual({
+        mode: 0o600,
+        description: "Updated",
+      });
+    });
+
+    // Root creates files in any directory, so root cannot run this one.
+    it.skipIf(isWindows || isRoot)("writes a package.json whose directory refuses new files", async () => {
+      using dir = makeTestDir();
+      chmodSync(String(dir), 0o555);
+      try {
+        const { code } = await runPmPkg(["set", "description=Updated"], dir);
+        expect(code).toBe(0);
+        expect((await readPkg(dir)).description).toBe("Updated");
+      } finally {
+        chmodSync(String(dir), 0o755);
+      }
+    });
+
+    it.skipIf(!isRoot)("keeps the owner of package.json", async () => {
+      using dir = makeTestDir();
+      const packageJson = join(String(dir), "package.json");
+      chownSync(packageJson, 1, 1);
+      const { code } = await runPmPkg(["set", "description=Updated"], dir);
+      expect(code).toBe(0);
+      const { uid, gid } = statSync(packageJson);
+      expect({ uid, gid, description: (await readPkg(dir)).description }).toEqual({
+        uid: 1,
+        gid: 1,
+        description: "Updated",
+      });
     });
 
     it("should set multiple properties", async () => {

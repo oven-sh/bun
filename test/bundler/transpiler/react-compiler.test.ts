@@ -3353,7 +3353,7 @@ describe("react-compiler does not overflow the stack on a component that is nest
   // than 256 levels, so there each is more than the lowering has the stack for.
   const depthOf = (debug: number, releaseWithASAN: number, release: number) =>
     isDebug ? debug : isASAN ? releaseWithASAN : release;
-  const flat = "scopes that statements in a row nest";
+  const flat = ["scopes that statements in a row nest", "variables that are each the one before"];
   const shapes: [name: string, depth: number, source: (n: number) => string][] = [
     ["effects", depthOf(60, 250, 500), n => component(nest(n, () => "useEffect(() => {", "setS(1);", "}, []);"))],
     [
@@ -3395,7 +3395,7 @@ describe("react-compiler does not overflow the stack on a component that is nest
     ["an optional chain", depthOf(200, 400, 1000), n => component(`const x = props${Array(n).fill("?.b").join("")};`)],
     // Each array is changed after all that were made after it, so its scope has theirs in it.
     [
-      flat,
+      flat[0],
       depthOf(60, 300, 1000),
       n =>
         component(
@@ -3422,6 +3422,18 @@ describe("react-compiler does not overflow the stack on a component that is nest
       depthOf(2000, 5000, 10000),
       n => component(`${Array(n).fill("if (props.a) {}").join("")} props.f(x); let x = 0;`),
     ],
+    // Values in a row, each the one before, which PruneNonEscapingScopes followed one call deep each. That pass
+    // is a late one. One declaration for all: the lowering looks through a block once for each of its declarations.
+    [
+      flat[1],
+      depthOf(3000, 5000, 18000),
+      n =>
+        component(
+          `let [${Array.from({ length: n + 1 }, (_, i) => `v${i}`).join(",")}] = props.l;` +
+            Array.from({ length: n }, (_, i) => `v${i + 1} = v${i};`).join(""),
+          `<div>{v${n}}</div>`,
+        ),
+    ],
   ];
 
   test.concurrent.each(shapes)("%s", async (name, depth, source) => {
@@ -3438,7 +3450,7 @@ describe("react-compiler does not overflow the stack on a component that is nest
     const out = await Bun.file(join(String(dir), "out.js")).text();
     expect(out).toContain("useState(0)");
     // In a debug build, and for what is not nested in the source, that depends on how much of the stack is left.
-    if (!isDebug && name !== flat) expect(out).not.toContain("react/compiler-runtime");
+    if (!isDebug && !flat.includes(name)) expect(out).not.toContain("react/compiler-runtime");
     expect(exitCode).toBe(0);
   });
 });

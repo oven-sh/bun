@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { longLimit, spawn } from "../children";
 
 // `bun check` follows TypeScript 7, which is a native program next to its `lib.*.d.ts`: `typescript7` in
 // test/package.json, beside the `typescript` that has the API in JavaScript. `TSC` is the path of another to compare with.
@@ -28,7 +29,7 @@ export const env = {
 
 /** What `cmd` prints, sorted, without the path of `root`. */
 export async function linesOf(cmd: string[], cwd: string, root: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
+  await using proc = spawn({ timeout: longLimit, cmd, cwd, env, stdout: "pipe", stderr: "ignore" });
   const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
   const prefix = new RegExp(root.replaceAll("\\", "/").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
   return stdout

@@ -53,6 +53,10 @@ fn spawn() -> Result<Box<dyn Channel>, Vec<u8>> {
         "-c",
         "exec \"$0\" \"$@\" 3<&0 4>&1 1>&2 </dev/null",
         &bun,
+        // It ends with the thread that has started it: one of the pool, or the first, which are there to the end.
+        "--no-orphans",
+        // As in an engine of `bun lint`: what is not installed is missing.
+        "--no-install",
         "-e",
         BOOTSTRAP,
     ]);

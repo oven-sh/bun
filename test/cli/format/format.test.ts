@@ -850,6 +850,8 @@ describe.concurrent("bun format", () => {
   });
 
   describe("a language that only a plugin of Prettier reads", () => {
+    // A run starts a VM, and the search for leaks at its end takes seconds with the threads of one.
+    const timeout = isDebug || isASAN ? 120_000 : 5_000;
     // Stand-ins. This Prettier takes blanks away, and writes down what it is called with.
     const packages = {
       "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.0.0", "main": "index.cjs" }',
@@ -872,141 +874,181 @@ exports.format = async (text, options) => {
     };
     const reads = ["a.svelte", "b.js", "node_modules/prettier/calls.txt"];
 
-    test("goes to the project's own Prettier, with its configuration file and the flags", async () => {
-      const result = await format(files, ["--tab-width", "8"], { reads });
-      expect(result.files["a.svelte"]).toBe("<p >a</p>\n");
-      expect(result.files["b.js"]).toBe("b\n");
-      const calls = result.files[reads[2]]!.trim().split("\n");
-      expect(calls.map(it => JSON.parse(it))).toEqual([
-        { ...config, tabWidth: 8, filepath: expect.stringMatching(/[\\/]a\.svelte$/) },
-      ]);
-      expect(result.stderr).toContain("1 file was handed to the Prettier of the project");
-      expect(result.exitCode).toBe(0);
-    });
+    test(
+      "goes to the project's own Prettier, with its configuration file and the flags",
+      async () => {
+        const result = await format(files, ["--tab-width", "8"], { reads });
+        expect(result.files["a.svelte"]).toBe("<p >a</p>\n");
+        expect(result.files["b.js"]).toBe("b\n");
+        const calls = result.files[reads[2]]!.trim().split("\n");
+        expect(calls.map(it => JSON.parse(it))).toEqual([
+          { ...config, tabWidth: 8, filepath: expect.stringMatching(/[\\/]a\.svelte$/) },
+        ]);
+        expect(result.stderr).toContain("1 file was handed to the Prettier of the project");
+        expect(result.exitCode).toBe(0);
+      },
+      timeout,
+    );
 
-    test("is checked, and listed", async () => {
-      const checked = await format(files, ["--check"], { reads });
-      expect(checked.files["a.svelte"]).toBe(files["a.svelte"]);
-      expect(checked.stderr).toContain("[warn] a.svelte");
-      expect(checked.exitCode).toBe(1);
-      expect(await different(files, [])).toEqual(["a.svelte", "b.js"]);
-      const fine = await format({ ...files, "a.svelte": "<p>a</p>\n", "b.js": "b\n" }, ["--check"]);
-      expect(fine.stdout).toContain("All matched files use Prettier code style!");
-      expect(fine.exitCode).toBe(0);
-    });
+    test(
+      "is checked, and listed",
+      async () => {
+        const checked = await format(files, ["--check"], { reads });
+        expect(checked.files["a.svelte"]).toBe(files["a.svelte"]);
+        expect(checked.stderr).toContain("[warn] a.svelte");
+        expect(checked.exitCode).toBe(1);
+        expect(await different(files, [])).toEqual(["a.svelte", "b.js"]);
+        const fine = await format({ ...files, "a.svelte": "<p>a</p>\n", "b.js": "b\n" }, ["--check"]);
+        expect(fine.stdout).toContain("All matched files use Prettier code style!");
+        expect(fine.exitCode).toBe(0);
+      },
+      timeout,
+    );
 
-    test("from standard input", async () => {
-      const result = await format(files, ["--stdin-filepath", "c.svelte"], { stdin: "<p   >c</p>\n" });
-      expect(result).toMatchObject({ raw: "<p >c</p>\n", stderr: "", exitCode: 0 });
-      const checked = await format(files, ["--stdin-filepath", "c.svelte", "--check"], { stdin: "<p   >c</p>\n" });
-      expect(checked).toMatchObject({ raw: "(stdin)\n", exitCode: 1 });
-    });
+    test(
+      "from standard input",
+      async () => {
+        const result = await format(files, ["--stdin-filepath", "c.svelte"], { stdin: "<p   >c</p>\n" });
+        expect(result).toMatchObject({ raw: "<p >c</p>\n", stderr: "", exitCode: 0 });
+        const checked = await format(files, ["--stdin-filepath", "c.svelte", "--check"], { stdin: "<p   >c</p>\n" });
+        expect(checked).toMatchObject({ raw: "(stdin)\n", exitCode: 1 });
+      },
+      timeout,
+    );
 
     // Each thread that hands a file over waits for the answer, and Prettier reads files on threads too.
-    test("more files than there are threads", async () => {
-      const names = Array.from({ length: availableParallelism() + 1 }, (_, index) => `many/${index}.svelte`);
-      const reading = packages["node_modules/prettier/index.cjs"].replace(
-        "exports.format = async (text, options) => {",
-        "exports.format = async (text, options) => {\n  await fs.promises.readFile(__filename);",
-      );
-      const result = await format(
-        {
-          ...files,
-          "node_modules/prettier/index.cjs": reading,
-          ...Object.fromEntries(names.map(name => [name, "<p   >a</p>\n"])),
-        },
-        ["many"],
-        { reads: names },
-      );
-      expect(Object.values(result.files)).toEqual(names.map(() => "<p >a</p>\n"));
-      expect(result.exitCode).toBe(0);
-    });
+    test(
+      "more files than there are threads",
+      async () => {
+        const names = Array.from({ length: availableParallelism() + 1 }, (_, index) => `many/${index}.svelte`);
+        const reading = packages["node_modules/prettier/index.cjs"].replace(
+          "exports.format = async (text, options) => {",
+          "exports.format = async (text, options) => {\n  await fs.promises.readFile(__filename);",
+        );
+        const result = await format(
+          {
+            ...files,
+            "node_modules/prettier/index.cjs": reading,
+            ...Object.fromEntries(names.map(name => [name, "<p   >a</p>\n"])),
+          },
+          ["many"],
+          { reads: names },
+        );
+        expect(Object.values(result.files)).toEqual(names.map(() => "<p >a</p>\n"));
+        expect(result.exitCode).toBe(0);
+      },
+      timeout,
+    );
 
     // The first pattern that is compiled starts JavaScriptCore too, on the thread that formats the file.
-    test("beside files for which a pattern of the configuration is compiled", async () => {
-      const sorter = "@ianvs/prettier-plugin-sort-imports";
-      const result = await format(
-        {
-          ...files,
-          [`node_modules/${sorter}/package.json`]: `{ "name": "${sorter}", "version": "4.0.0" }`,
-          ".prettierrc": `{\n  "plugins": ["prettier-plugin-svelte", "${sorter}"],\n  "importOrder": ["^b", "^a"]\n}\n`,
-          "c.ts": 'import a from "a";\nimport b from "b";\n',
-          "d.ts": 'import a from "a";\nimport b from "b";\n',
-        },
-        [],
-        { reads: ["a.svelte", "c.ts", "d.ts"] },
-      );
-      const sorted = 'import b from "b";\nimport a from "a";\n';
-      expect(result.files).toEqual({ "a.svelte": "<p >a</p>\n", "c.ts": sorted, "d.ts": sorted });
-      expect(result.exitCode).toBe(0);
-    });
+    test(
+      "beside files for which a pattern of the configuration is compiled",
+      async () => {
+        const sorter = "@ianvs/prettier-plugin-sort-imports";
+        const result = await format(
+          {
+            ...files,
+            [`node_modules/${sorter}/package.json`]: `{ "name": "${sorter}", "version": "4.0.0" }`,
+            ".prettierrc": `{\n  "plugins": ["prettier-plugin-svelte", "${sorter}"],\n  "importOrder": ["^b", "^a"]\n}\n`,
+            "c.ts": 'import a from "a";\nimport b from "b";\n',
+            "d.ts": 'import a from "a";\nimport b from "b";\n',
+          },
+          [],
+          { reads: ["a.svelte", "c.ts", "d.ts"] },
+        );
+        const sorted = 'import b from "b";\nimport a from "a";\n';
+        expect(result.files).toEqual({ "a.svelte": "<p >a</p>\n", "c.ts": sorted, "d.ts": sorted });
+        expect(result.exitCode).toBe(0);
+      },
+      timeout,
+    );
 
     // It runs in this process.
-    test("a Prettier that ends the process ends the run, and every file is whole", async () => {
-      const names = Array.from({ length: 8 }, (_, index) => `${index}.svelte`);
-      const exits = packages["node_modules/prettier/index.cjs"].replace(
-        "exports.format = async (text, options) => {",
-        'exports.format = async (text, options) => {\n  if (text.includes("ends")) process.exit(7);',
-      );
-      using dir = tempDir("bun-format-exit", {
-        ...files,
-        "node_modules/prettier/index.cjs": exits,
-        "many/ends.svelte": "<p   >ends</p>\n",
-        ...Object.fromEntries(names.map(name => [`many/${name}`, "<p   >a</p>\n"])),
-      });
-      await using proc = spawn({ cmd: [...command, "many"], env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 7 });
-      // Another thread may be between writing a file under another name and giving it its name.
-      const left = readdirSync(join(String(dir), "many")).filter(name => !name.endsWith(".tmp"));
-      expect(left.sort()).toEqual([...names, "ends.svelte"]);
-      expect(readFileSync(join(String(dir), "many/ends.svelte"), "utf8")).toBe("<p   >ends</p>\n");
-      for (const name of names) {
-        expect(["<p   >a</p>\n", "<p >a</p>\n"]).toContain(readFileSync(join(String(dir), "many", name), "utf8"));
-      }
-    });
+    test(
+      "a Prettier that ends the process ends the run, and every file is whole",
+      async () => {
+        const names = Array.from({ length: 8 }, (_, index) => `${index}.svelte`);
+        const exits = packages["node_modules/prettier/index.cjs"].replace(
+          "exports.format = async (text, options) => {",
+          'exports.format = async (text, options) => {\n  if (text.includes("ends")) process.exit(7);',
+        );
+        using dir = tempDir("bun-format-exit", {
+          ...files,
+          "node_modules/prettier/index.cjs": exits,
+          "many/ends.svelte": "<p   >ends</p>\n",
+          ...Object.fromEntries(names.map(name => [`many/${name}`, "<p   >a</p>\n"])),
+        });
+        await using proc = spawn({ cmd: [...command, "many"], env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 7 });
+        // Another thread may be between writing a file under another name and giving it its name.
+        const left = readdirSync(join(String(dir), "many")).filter(name => !name.endsWith(".tmp"));
+        expect(left.sort()).toEqual([...names, "ends.svelte"]);
+        expect(readFileSync(join(String(dir), "many/ends.svelte"), "utf8")).toBe("<p   >ends</p>\n");
+        for (const name of names) {
+          expect(["<p   >a</p>\n", "<p >a</p>\n"]).toContain(readFileSync(join(String(dir), "many", name), "utf8"));
+        }
+      },
+      timeout,
+    );
 
-    test("a promise that nothing can settle any more is an error for the file", async () => {
-      const waits = packages["node_modules/prettier/index.cjs"].replace(
-        "exports.format = async (text, options) => {",
-        'exports.format = async (text, options) => {\n  if (text.includes("waits")) await new Promise(() => {});',
-      );
-      const result = await format(
-        { ...files, "node_modules/prettier/index.cjs": waits, "c.svelte": "<p   >waits</p>\n" },
-        [],
-        { reads: ["a.svelte", "c.svelte"] },
-      );
-      expect(result.files).toEqual({ "a.svelte": "<p >a</p>\n", "c.svelte": "<p   >waits</p>\n" });
-      expect(result.stderr).toContain("[error] c.svelte: A promise is not settled, and nothing is left to wait for.");
-      expect(result.exitCode).toBe(2);
-    });
+    test(
+      "a promise that nothing can settle any more is an error for the file",
+      async () => {
+        const waits = packages["node_modules/prettier/index.cjs"].replace(
+          "exports.format = async (text, options) => {",
+          'exports.format = async (text, options) => {\n  if (text.includes("waits")) await new Promise(() => {});',
+        );
+        const result = await format(
+          { ...files, "node_modules/prettier/index.cjs": waits, "c.svelte": "<p   >waits</p>\n" },
+          [],
+          { reads: ["a.svelte", "c.svelte"] },
+        );
+        expect(result.files).toEqual({ "a.svelte": "<p >a</p>\n", "c.svelte": "<p   >waits</p>\n" });
+        expect(result.stderr).toContain("[error] c.svelte: A promise is not settled, and nothing is left to wait for.");
+        expect(result.exitCode).toBe(2);
+      },
+      timeout,
+    );
 
-    test("what Prettier leaves running does not keep the run from ending", async () => {
-      const leaves = `setInterval(() => {}, 1000);
+    test(
+      "what Prettier leaves running does not keep the run from ending",
+      async () => {
+        const leaves = `setInterval(() => {}, 1000);
 require("node:net").createServer(() => {}).listen(0, "127.0.0.1");
 ${packages["node_modules/prettier/index.cjs"]}`;
-      const result = await format({ ...files, "node_modules/prettier/index.cjs": leaves }, [], { reads });
-      expect(result.files["a.svelte"]).toBe("<p >a</p>\n");
-      expect(result.exitCode).toBe(0);
-    });
+        const result = await format({ ...files, "node_modules/prettier/index.cjs": leaves }, [], { reads });
+        expect(result.files["a.svelte"]).toBe("<p >a</p>\n");
+        expect(result.exitCode).toBe(0);
+      },
+      timeout,
+    );
 
-    test("what Prettier throws is shown as it shows it", async () => {
-      const result = await format({ ...files, "a.svelte": "broken\n" }, [], { reads });
-      expect(result.files["a.svelte"]).toBe("broken\n");
-      expect(result.stderr).toContain("[error] a.svelte: SyntaxError: Unexpected token (1:2)");
-      expect(result.exitCode).toBe(2);
-    });
+    test(
+      "what Prettier throws is shown as it shows it",
+      async () => {
+        const result = await format({ ...files, "a.svelte": "broken\n" }, [], { reads });
+        expect(result.files["a.svelte"]).toBe("broken\n");
+        expect(result.stderr).toContain("[error] a.svelte: SyntaxError: Unexpected token (1:2)");
+        expect(result.exitCode).toBe(2);
+      },
+      timeout,
+    );
 
-    test("is left as it is if the plugin is not installed, and what would help is said", async () => {
-      const { "node_modules/prettier-plugin-svelte/package.json": _, ...rest } = files;
-      const result = await format(rest, [], { reads });
-      expect(result.files["a.svelte"]).toBe(files["a.svelte"]);
-      expect(result.stderr).toContain(
-        "[warn] Not installed: prettier-plugin-svelte. With all plugins of the configuration and prettier installed, bun format hands the files of their languages to them.",
-      );
-      expect(result.stderr).toContain("and left as they are: 1 .svelte.");
-      expect(result.exitCode).toBe(2);
-    });
+    test(
+      "is left as it is if the plugin is not installed, and what would help is said",
+      async () => {
+        const { "node_modules/prettier-plugin-svelte/package.json": _, ...rest } = files;
+        const result = await format(rest, [], { reads });
+        expect(result.files["a.svelte"]).toBe(files["a.svelte"]);
+        expect(result.stderr).toContain(
+          "[warn] Not installed: prettier-plugin-svelte. With all plugins of the configuration and prettier installed, bun format hands the files of their languages to them.",
+        );
+        expect(result.stderr).toContain("and left as they are: 1 .svelte.");
+        expect(result.exitCode).toBe(2);
+      },
+      timeout,
+    );
   });
 
   test("with an .oxfmtrc.json TOML is formatted, and Svelte, which bun format cannot format, is named if the configuration has svelte", async () => {
@@ -2176,10 +2218,10 @@ try {
       ]);
     });
 
-    test.skipIf(isWindows)("links are not followed", async () => {
+    test("links are not followed", async () => {
       const before = (dir: string) => {
-        symlinkSync("../a.js", join(dir, "src/link.js"));
-        symlinkSync("src", join(dir, "linked"));
+        symlinkSync(join("..", "a.js"), join(dir, "src/link.js"), "file");
+        symlinkSync("src", join(dir, "linked"), "dir");
       };
       expect(await different(files, ["."], { before })).toEqual([
         "a.js",
@@ -2552,7 +2594,7 @@ try {
 
 /** The files that are not formatted, according to `-l`, in a directory that is there. */
 async function differentIn(cwd: string, args: string[]) {
-  await using proc = Bun.spawn({ cmd: [...command, "-l", ...args], env, cwd, stdout: "pipe", stderr: "ignore" });
+  await using proc = spawn({ cmd: [...command, "-l", ...args], env, cwd, stdout: "pipe", stderr: "ignore" });
   return (await proc.stdout.text()).split("\n").filter(Boolean);
 }
 
@@ -2669,7 +2711,7 @@ describe.concurrent("how a path is written", () => {
   test("what cannot be used is named as the system writes it", async () => {
     using dir = tempDir("bun-format", { "src/a.js": ugly, "notes.foo": "a\n" });
     const firstLine = async (args: string[], stdin?: string) => {
-      await using proc = Bun.spawn({
+      await using proc = spawn({
         cmd: [...command, ...args],
         env,
         cwd: String(dir),
@@ -2698,7 +2740,7 @@ describe.concurrent("how a path is written", () => {
       "editorconfig/a.js": "if (a) {\n  b;\n}\n",
     });
     const foldsCase = existsSync(join(String(dir), "rc", ".prettierrc"));
-    await using proc = Bun.spawn({ cmd: command, env, cwd: String(dir), stdout: "ignore", stderr: "ignore" });
+    await using proc = spawn({ cmd: command, env, cwd: String(dir), stdout: "ignore", stderr: "ignore" });
     expect(await proc.exited).toBe(0);
     expect(["rc", "editorconfig"].map(name => readFileSync(join(String(dir), name, "a.js"), "utf8"))).toEqual(
       foldsCase ? ["a\n", "if (a) {\n\tb;\n}\n"] : ["a;\n", "if (a) {\n  b;\n}\n"],
@@ -2814,7 +2856,7 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
   /** Formats the directory with `files`. The files afterwards, byte for byte: one character of the string is one byte. */
   async function bytesAfter(files: Files, args: string[] = []) {
     using dir = tempDir("bun-format-bytes", files);
-    await using proc = Bun.spawn({
+    await using proc = spawn({
       cmd: [...command, "--no-config", "--no-editorconfig", ...args, "."],
       env,
       cwd: String(dir),
@@ -2932,7 +2974,7 @@ describe.concurrent("line breaks, byte order marks and encodings", () => {
   describe("--range-start, --range-end and --cursor-offset count UTF-16 code units of the text as it is", () => {
     const onStdin = async (name: string, text: string, args: string[]) => {
       using dir = tempDir("bun-format-stdin", {});
-      await using proc = Bun.spawn({
+      await using proc = spawn({
         cmd: [...command, "--no-config", "--stdin-filepath", name, ...args],
         env,
         cwd: String(dir),
@@ -3149,7 +3191,7 @@ describe.concurrent("upper and lower case in the name of a file", () => {
   test("a name that is typed in another case than the file has", async () => {
     using dir = tempDir("bun-format-case", { "a.ts": "let a:number  =  1\n" });
     if (!existsSync(join(String(dir), "A.TS"))) return;
-    await using proc = Bun.spawn({
+    await using proc = spawn({
       cmd: [...command, "--no-config", "A.TS"],
       env,
       cwd: String(dir),

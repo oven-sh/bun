@@ -56,6 +56,9 @@ pub(crate) fn infer_types(
         &mut env.types,
         &mut unifier,
     );
+    if !unifier.has_stack() {
+        return Err(crate::lowering::nested_too_deeply());
+    }
     Ok(())
 }
 
@@ -1059,6 +1062,8 @@ struct Unifier {
     enable_treat_ref_like_identifiers_as_refs: bool,
     enable_treat_set_identifiers_as_state_setters: bool,
     custom_hook_type: Option<Type>,
+    stack: bun_core::StackCheck,
+    is_out_of_stack: std::cell::Cell<bool>,
 }
 
 impl Unifier {
@@ -1072,7 +1077,17 @@ impl Unifier {
             enable_treat_ref_like_identifiers_as_refs,
             enable_treat_set_identifiers_as_state_setters,
             custom_hook_type,
+            stack: bun_core::StackCheck::init(),
+            is_out_of_stack: std::cell::Cell::new(false),
         }
+    }
+
+    /// As `Environment::has_stack`, whose fields `infer_types` lends out one by one.
+    fn has_stack(&self) -> bool {
+        if !self.stack.is_safe_to_recurse() {
+            self.is_out_of_stack.set(true);
+        }
+        !self.is_out_of_stack.get()
     }
 
     fn unify(
@@ -1134,6 +1149,9 @@ impl Unifier {
 
         if type_equals(&t_a, &t_b) {
             return Ok(());
+        }
+        if !self.has_stack() {
+            return Err(crate::lowering::nested_too_deeply());
         }
 
         if let Type::TypeVar { .. } = &t_a {
@@ -1253,6 +1271,9 @@ impl Unifier {
     }
 
     fn try_resolve_type(&mut self, v: &Type, ty: &Type) -> Option<Type> {
+        if !self.has_stack() {
+            return None;
+        }
         match ty {
             Type::Phi { operands } => {
                 let mut new_operands = AstAlloc::vec();
@@ -1320,22 +1341,29 @@ impl Unifier {
 
         if let Type::TypeVar { id } = ty {
             if let Some(sub) = self.substitutions.get(id) {
-                return self.occurs_check(v, sub);
+                return self.has_stack() && self.occurs_check(v, sub);
             }
         }
 
         if let Type::Phi { operands } = ty {
-            return operands.iter().any(|o| self.occurs_check(v, o));
+            return self.has_stack() && operands.iter().any(|o| self.occurs_check(v, o));
         }
 
         if let Type::Function { return_type, .. } = ty {
-            return self.occurs_check(v, return_type);
+            return self.has_stack() && self.occurs_check(v, return_type);
         }
 
         false
     }
 
     fn get(&self, ty: &Type) -> Type {
+        let has_parts = matches!(
+            ty,
+            Type::TypeVar { .. } | Type::Phi { .. } | Type::Function { .. }
+        );
+        if has_parts && !self.has_stack() {
+            return ty.clone();
+        }
         if let Type::TypeVar { id } = ty {
             if let Some(sub) = self.substitutions.get(id) {
                 return self.get(sub);

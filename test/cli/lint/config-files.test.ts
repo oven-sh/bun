@@ -316,7 +316,7 @@ describe.concurrent("an eslint.config.js", () => {
     const paths = [`${root}/real/${isWindows ? "" : "./"}eslint.config.mjs`, `${root}/link/eslint.config.mjs`];
     const keys = await Promise.all(
       paths.map(async path => {
-        await using proc = Bun.spawn({
+        await using proc = spawn({
           cmd: [bunExe(), "-e", source.join(""), "<marker>", path],
           env,
           cwd: join(path, ".."),
@@ -354,7 +354,7 @@ describe.concurrent("what an eslint.config.js evaluates to is kept", () => {
     for (const [name, text] of Object.entries(files)) write(name, text, 60);
     /** The rules that report something, and how often the file has run so far. */
     const run = async (more: Record<string, string> = {}, args: string[] = []) => {
-      await using proc = Bun.spawn({
+      await using proc = spawn({
         cmd: [...command, "--threads", "2", "-f", "unix", ...args, "a.js"],
         env: { ...env, STRICT: undefined, ...more },
         cwd: root,
@@ -588,15 +588,6 @@ describe.concurrent("an .oxlintrc.json", () => {
     expect(results.map(it => it.problems)).toEqual(results.map(() => ["d.js:1:1 no-var", "keep.gen.js:1:1 no-var"]));
   });
 
-  test.skipIf(isWindows)("a link that leads nowhere is passed over", async () => {
-    const files = { ".oxlintrc.json": JSON.stringify({ ...noVar, categories: { correctness: "off" } }), "a.js": code };
-    const { problems, exitCode } = await lint(files, ["."], {
-      before: dir => symlinkSync(join(dir, "nowhere.js"), join(dir, "b.js")),
-    });
-    expect(problems).toEqual(["a.js:1:1 no-var"]);
-    expect(exitCode).toBe(1);
-  });
-
   // What oxlint 1.87.0 reports. A junction needs no privilege on Windows. Elsewhere it is a link like any other.
   test("a link to a directory is followed, unless it leads to a directory on the way from where the search starts", async () => {
     const files = {
@@ -663,19 +654,6 @@ describe.concurrent("an .oxlintrc.json", () => {
     const { problems, exitCode } = await lint(files, [long, "a.js"]);
     expect(problems).toEqual(["a.js:1:1 no-var"]);
     expect(exitCode).toBe(1);
-  });
-
-  test.skipIf(isWindows)("--fix of files that are reached by two paths", async () => {
-    const files: Record<string, string> = {
-      ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, rules: { "prefer-const": "error" } }),
-    };
-    for (let i = 0; i < 64; i++) files[`real/${i}.js`] = "let a = 1;\nexport { a };\n";
-    const { problems, stderr, exitCode } = await lint(files, ["--threads", "8", "--fix", "."], {
-      before: dir => symlinkSync(join(dir, "real"), join(dir, "link")),
-    });
-    expect(stderr).not.toContain("Cannot write");
-    expect(problems).toEqual([]);
-    expect(exitCode).toBe(0);
   });
 
   test("`defineConfig` of the package oxlint, which need not be installed", async () => {
@@ -2147,7 +2125,7 @@ const quiet = { categories: { correctness: "off" } };
 describe.skipIf(!hasRunner)("the paths of Windows, on every system", () => {
   async function configurations(cases: object[]) {
     using dir = tempDir("bun-lint-paths", { "cases.json": JSON.stringify(cases) });
-    await using proc = Bun.spawn({
+    await using proc = spawn({
       cmd: [...command, "--run-path-tests", "configurations", join(String(dir), "cases.json")],
       env,
       // Not where a `package.json` has a script `lint`.

@@ -68,10 +68,7 @@ pub(crate) fn merge_consecutive_blocks(func: &mut HirFunction, functions: &mut [
     let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
 
     for block_id in &block_ids {
-        let block = match func.body.blocks.get(block_id) {
-            Some(b) => b,
-            None => continue, // already removed
-        };
+        let block = &func.body.blocks[block_id];
 
         if block.preds.len() != 1
             || block.kind != BlockKind::Block
@@ -149,10 +146,11 @@ pub(crate) fn merge_consecutive_blocks(func: &mut HirFunction, functions: &mut [
         pred.instructions.extend(block_instr_ids);
         pred.terminal = block_terminal;
 
-        // Record merge and remove block
         merged.merge(*block_id, pred_id);
-        func.body.blocks.shift_remove(block_id);
     }
+    func.body
+        .blocks
+        .retain(|block_id, _| !merged.map.contains_key(*block_id));
 
     // Update phi operands for merged blocks
     for block in func.body.blocks.values_mut() {

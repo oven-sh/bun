@@ -1420,7 +1420,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   test("a path reaches a rule as the system writes it, also on Windows", async () => {
     const source = readFileSync(join(import.meta.dir, "../../../src/lint/js_plugin/worker/paths.js"), "utf8");
     const paths = ["C:/proj/src/a.js", "C:/proj/a.md/0_x.js", "//server/share/a.js", "/proj/a\\b.js"];
-    await using proc = Bun.spawn({
+    await using proc = spawn({
       cmd: [
         bunExe(),
         "-e",

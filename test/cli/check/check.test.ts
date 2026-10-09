@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import {
   chmodSync,
@@ -13,6 +13,9 @@ import {
 } from "node:fs";
 import { basename, delimiter, dirname, isAbsolute, join } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
+import { endChildren, longLimit, spawn } from "../children";
+
+afterAll(endChildren);
 
 // The directory of the `lib.*.d.ts` files of the `typescript7` package, which has them in a package for the platform.
 const typescript7 = (() => {
@@ -77,12 +80,11 @@ const env = {
 
 /** `timeout`: for what may never end. Less than that of the test, after which nothing ends the process. */
 async function run(cwd: string, cmd: string[], extra: Record<string, string | undefined> = {}, timeout?: number) {
-  await using proc = Bun.spawn({
+  await using proc = spawn({
     cmd: [bunExe(), ...cmd],
     cwd,
     env: { ...env, ...extra },
-    timeout,
-    killSignal: "SIGKILL",
+    timeout: timeout ?? longLimit,
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -113,7 +115,8 @@ const hasTerminal = (() => {
 async function inTerminal(cwd: string, cmd: string[]) {
   const decoder = new TextDecoder();
   let output = "";
-  await using child = Bun.spawn({
+  await using child = spawn({
+    timeout: longLimit,
     cmd: [bunExe(), ...cmd],
     cwd,
     env: { ...env, NO_COLOR: undefined, FORCE_COLOR: "1", BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS: "0" },
@@ -359,7 +362,8 @@ describe.concurrent("bun check", () => {
         "src/other.ts": `import "./button";\nexport {};\n`,
         "main.ts": main,
       });
-      await using piped = Bun.spawn({
+      await using piped = spawn({
+        timeout: longLimit,
         cmd: [bunExe(), "--check", "-"],
         cwd: String(dir),
         env,
@@ -479,7 +483,8 @@ describe.concurrent("bun check", () => {
   test.skipIf(isWindows || !hasTerminal)("shows progress in a terminal", async () => {
     using dir = project({ "index.ts": `const wrong: string = 1;\n` });
     let output = "";
-    await using proc = Bun.spawn({
+    await using proc = spawn({
+      timeout: longLimit,
       cmd: [bunExe(), "check"],
       cwd: String(dir),
       env: { ...env, BUN_DEBUG_TEST_CHECK_PROGRESS_DELAY_MS: "0" },
@@ -2922,17 +2927,22 @@ const wrong: number = "";
       20_000,
     );
 
-    test("an import of a path with 30,000 segments", async () => {
-      using dir = project({
-        "a.ts": `import "./${repeat("a/", 30_000)}a";\nexport const wrong: number = "";\n`,
-      });
-      const { stdout, exitCode } = await check(dir);
-      expect(stdout.split("\n").map(line => line.slice(0, 26))).toEqual([
-        "a.ts(1,8): error TS2882: C",
-        "a.ts(2,14): error TS2322: ",
-      ]);
-      expect(exitCode).toBe(1);
-    });
+    test(
+      "an import of a path with 30,000 segments",
+      async () => {
+        using dir = project({
+          "a.ts": `import "./${repeat("a/", 30_000)}a";\nexport const wrong: number = "";\n`,
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout.split("\n").map(line => line.slice(0, 26))).toEqual([
+          "a.ts(1,8): error TS2882: C",
+          "a.ts(2,14): error TS2322: ",
+        ]);
+        expect(exitCode).toBe(1);
+        // A debug build takes 12 seconds.
+      },
+      isDebug || isASAN ? 120_000 : undefined,
+    );
 
     test("100,000 signs that begin a decorator", async () => {
       using dir = project({
@@ -15188,7 +15198,14 @@ describe.concurrent("--check", () => {
   // `printed` is called at once with all that it has printed.
   type Output = { stdout: string; stderr: string };
   const watching = (dir: { toString(): string }, cmd: readonly string[], printed = (_: Output) => {}) => {
-    const proc = Bun.spawn({ cmd: [bunExe(), ...cmd], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
+    const proc = spawn({
+      timeout: longLimit,
+      cmd: [bunExe(), ...cmd],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
     const output: Output = { stdout: "", stderr: "" };
     const read = async (name: "stdout" | "stderr") => {
       for await (const chunk of proc[name]) {
@@ -15776,7 +15793,8 @@ describe.concurrent("--check", () => {
     );
 
     const piped = async (text: string) => {
-      await using proc = Bun.spawn({
+      await using proc = spawn({
+        timeout: longLimit,
         cmd: [bunExe(), "--check", "-"],
         cwd: root,
         env,

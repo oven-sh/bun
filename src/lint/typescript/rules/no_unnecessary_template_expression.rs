@@ -5,7 +5,9 @@ use bun_lint::types::tsutils::type_constituents;
 use bun_lint::types::utils::{get_constraint_info, is_string_like};
 use bun_lint::types::{SyntaxKind, Type};
 use bun_lint::utils::text::{is_blank, line_break_len, number_to_string};
-use bun_lint::utils::ts_utils::get_moved_node_code;
+use bun_lint::utils::ts_utils::{
+    get_moved_node_code, get_operator_precedence_for_node, get_operator_precedence_of_ts_parent,
+};
 use smallvec::SmallVec;
 
 /// Disallow unnecessary template expressions.
@@ -198,7 +200,16 @@ fn is_trivial_interpolation<'a>(
 fn report_single_interpolation<'a>(node: Node<'a>, interpolation: Node<'a>, cx: &Context<'a>) {
     let span = interpolation.span();
     cx.report(Span::new(span.start.saturating_sub(2), span.end + 1), NO_UNNECESSARY_TEMPLATE_EXPRESSION)
-        .fix(|fixer| fixer.replace(node, get_moved_node_code(node, interpolation)));
+        .fix(|fixer| {
+            // tsgolint adds parentheses unless what moves binds more tightly than what the template is in.
+            let (Node::Expr(template), Node::Expr(moved), true) = (node, interpolation, cx.language().is_oxlint) else {
+                return fixer.replace(node, get_moved_node_code(node, interpolation));
+            };
+            match get_operator_precedence_for_node(moved) <= get_operator_precedence_of_ts_parent(template) {
+                true => fixer.replace(node, [&b"("[..], moved.text(), b")"].concat()),
+                false => fixer.replace(node, moved.text()),
+            }
+        });
 }
 
 fn report_interpolations<'a>(

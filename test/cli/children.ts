@@ -21,6 +21,9 @@ export function spawn<
   return proc;
 }
 
+/** For what takes long by its nature: just below the limit that a test has on CI, which is 90 s, and 270 s with ASAN. */
+export const longLimit = isDebug || isASAN ? 250_000 : 80_000;
+
 export function endChildren() {
   for (const proc of running) proc.kill("SIGKILL");
   running.clear();

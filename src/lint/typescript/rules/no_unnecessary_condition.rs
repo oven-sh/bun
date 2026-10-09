@@ -228,7 +228,8 @@ fn is_array_index_expression(node: Expr) -> bool {
     let ExprKind::Index { obj, index, .. } = node.kind() else {
         return false;
     };
-    if node.is_chain_root() {
+    // For ESLint it is a `ChainExpression`, for tsgolint the access itself.
+    if node.is_chain_root() && !node.file().language().is_oxlint {
         return false;
     }
     let parts = union_constituents(get_constrained_type_at_location(obj));
@@ -629,6 +630,26 @@ fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
         return;
     }
     if is_optionable_expression(node_to_check, cx) {
+        return;
+    }
+    // What tsgolint 7.0 goes by, where that is another type.
+    let goes_by = |node_to_check: Expr<'a>| match node_to_check.kind() {
+        // `a?.b?.c`: what `b` is declared as, whatever is known of `a?.b` here.
+        ExprKind::Dot { obj, name, .. } if node_to_check.is_optional() => {
+            get_constrained_type_at_location(obj).get_non_nullable_type().get_type_of_property(name.bytes())
+        }
+        // `a?.[b]?.c`: it looks up what `a?.[b]` gives only where the type of `b` is that of string literals.
+        ExprKind::Index { index, .. } if node_to_check.is_optional() => {
+            let is_looked_up = union_constituents(index.ty()).iter().all(|it| it.is_string_literal());
+            (!is_looked_up).then(|| node_to_check.ty())
+        }
+        // `a?.b.c?.d`, and not `a?.b().c?.d`: with the `undefined` of the `?.` further left.
+        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj.tag() != ExprTag::Call => {
+            Some(get_constrained_type_at_location(node_to_check))
+        }
+        _ => None,
+    };
+    if cx.language().is_oxlint && goes_by(node_to_check).is_some_and(is_nullable_type) {
         return;
     }
 

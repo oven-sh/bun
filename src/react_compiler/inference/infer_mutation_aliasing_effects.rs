@@ -245,6 +245,9 @@ pub(crate) fn infer_mutation_aliasing_effects(
         }
     }
 
+    if !env.has_stack() {
+        return Err(crate::lowering::nested_too_deeply());
+    }
     Ok(())
 }
 
@@ -1565,6 +1568,9 @@ fn freeze_function_captures_transitive(
     reason: ValueReason,
 ) {
     if let Some(&func_id) = context.function_values.get(&value_id) {
+        if !env.has_stack() {
+            return;
+        }
         let ctx_ids: Vec<IdentifierId> = env.functions[func_id.0 as usize]
             .context
             .iter()
@@ -1958,6 +1964,10 @@ fn apply_effect(
             ref signature,
             ref loc,
         } => {
+            // The one kind whose effects can be of its own kind: each cycle of calls comes through here.
+            if !env.has_stack() {
+                return Err(crate::lowering::nested_too_deeply());
+            }
             // First, check if the callee is a locally-declared function expression
             // whose aliasing effects we already know (TS lines 1016-1068)
             if state.is_defined(function.identifier) {

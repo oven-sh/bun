@@ -1,9 +1,12 @@
 // What `--check` checks does not depend on the kind of project that the entry point is in, on how Bun gets to the entry
 // point, or on the command: every kind of project, with every kind of entry point, with and without a type error.
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
+import { endChildren, longLimit, spawn } from "../children";
+
+afterAll(endChildren);
 
 // Disable AI agent and CI detection regardless of the environment the tests run in.
 const env = {
@@ -276,7 +279,8 @@ test.concurrent.each(cases)("%s", async (_, kind, entry, command, isCorrect) => 
     ...Object.fromEntries(inApp),
     [join(kind.app, "seen.ts")]: `export type Seen = number;\n`,
   });
-  await using proc = Bun.spawn({
+  await using proc = spawn({
+    timeout: longLimit,
     cmd: [bunExe(), ...argumentsOf(command, kind, entry, entry.main(isCorrect, seen))],
     cwd: join(String(dir), kind.app),
     env,
@@ -323,7 +327,8 @@ test("a byte order mark is not a column, wherever the text comes from", async ()
     `,
   });
   const run = async (cmd: string[], stdin?: string) => {
-    await using proc = Bun.spawn({
+    await using proc = spawn({
+      timeout: longLimit,
       cmd: [bunExe(), ...cmd],
       cwd: String(dir),
       env,
@@ -383,7 +388,8 @@ test("Bun.build: the check has the conditions and the loaders of the build, not 
     [false, ["imported.script TS2322"]],
   ];
   for (const flags of [[], ["--conditions=mine"]]) {
-    await using proc = Bun.spawn({
+    await using proc = spawn({
+      timeout: longLimit,
       cmd: [bunExe(), ...flags, "build.ts"],
       cwd: String(dir),
       env,
@@ -412,7 +418,7 @@ test("a check in a bundle of more files than there are threads, and more such bu
     `,
   });
   const run = async (cmd: string[]) => {
-    await using proc = Bun.spawn({
+    await using proc = spawn({
       cmd: [bunExe(), ...cmd],
       cwd: String(dir),
       env,

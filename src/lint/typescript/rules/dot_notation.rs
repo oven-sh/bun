@@ -32,6 +32,9 @@ impl DotNotation {
             let properties = obj.ty().get_non_nullable_type().get_properties();
             properties.iter().find(|property| escaped_name_is(property.escaped_name(), value.bytes()))
         });
+        // tsgolint finds nothing for what nothing declares: the `a` of a `Record<"a" | "b", T>`.
+        let is_oxlint = obj.file().language().is_oxlint;
+        let property_symbol = property_symbol.filter(|it| !is_oxlint || it.declarations().next().is_some());
         // Of a getter and a setter tsgolint asks the one that is used.
         let is_updated = matches!(node.parent(), Node::Expr(parent) if matches!(
             parent.kind(),
@@ -41,7 +44,6 @@ impl DotNotation {
             true => SyntaxKind::SetAccessor,
             false => SyntaxKind::GetAccessor,
         };
-        let is_oxlint = obj.file().language().is_oxlint;
         // The modifiers are the first children of a declaration.
         let modifier_kind = property_symbol
             .and_then(|symbol| {

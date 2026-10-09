@@ -242,7 +242,10 @@ fn check_and_lint_in(
             current_directory_is_of_the_project: true,
             reports_nothing_about_files: !context.checks_types,
             only_in_a_project_that_includes: matches!(project, Project::Including),
-            refuses_broken_configurations: matches!(project, Project::Including),
+            // Also for the project that `--tsconfig` of oxlint names. Nothing is asked about the program of the files that no
+            // project includes (`CreateInferredProjectProgram`).
+            refuses_broken_configurations: !matches!(project, Project::This(_))
+                && (indices.iter()).all(|&index| files[index].config.language.is_oxlint),
             ..Default::default()
         },
         retains_everything: false,
@@ -317,12 +320,12 @@ fn note_invalid_tsconfig(context: &Context, refused: &Refused) {
             true => &diagnostic.path,
             false => &refused.config_path,
         });
-        let mut help = String::from_utf8_lossy(&diagnostic.text).into_owned();
+        // `GetDiagnosticMessage`: without what is chained to it.
+        let text = &diagnostic.text[..];
+        let text = &text[..strings::index_of_char_usize(text, b'\n').unwrap_or(text.len())];
+        let mut help = bstr::BStr::new(text).to_string();
         // `enhanceHelpDiagnosticMessage`
-        if strings::contains(
-            &diagnostic.text,
-            b"Please remove it from your configuration.",
-        ) {
+        if strings::contains(text, b"Please remove it from your configuration.") {
             help.push_str(
                 "\nSee https://github.com/oxc-project/tsgolint/issues/351 for more information.",
             );
@@ -360,6 +363,10 @@ fn note_invalid_tsconfig(context: &Context, refused: &Refused) {
         });
         if !is_noted {
             result.messages.push(message);
+            // `SortAndDeduplicateDiagnostics`: those without a place first, by their text.
+            bun_lint::utils::sort::sort_by(&mut result.messages, |a, b| {
+                (a.line, a.column, help_of(a)).cmp(&(b.line, b.column, help_of(b)))
+            });
             result.counts = Counts::of(&result.messages);
         }
     }

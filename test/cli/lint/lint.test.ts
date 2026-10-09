@@ -90,7 +90,7 @@ async function lint(files: Record<string, string>, args: string[], options: Opti
 /** The same in a directory that is there, with nothing in the output replaced. */
 async function run(cwd: string, args: string[]) {
   const stdio = { stdin: "ignore", stdout: "pipe", stderr: "pipe" } as const;
-  await using proc = Bun.spawn({ cmd: [...command, ...args], env, cwd, ...stdio });
+  await using proc = spawn({ cmd: [...command, ...args], env, cwd, ...stdio });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, lines: stdout.split("\n").filter(Boolean), stderr, exitCode };
 }
@@ -273,10 +273,10 @@ describe.concurrent("bun lint", () => {
       expect(exitCode).toBe(1);
     });
 
-    test.skipIf(isWindows)("a link to a file is linted, a link to a directory is not followed", async () => {
+    test("a link to a file is linted, a link to a directory is not followed", async () => {
       const before = (dir: string) => {
-        symlinkSync("../a.js", join(dir, "src/deep/link.js"));
-        symlinkSync("deep", join(dir, "src/linked"));
+        symlinkSync(join("..", "..", "a.js"), join(dir, "src/deep/link.js"), "file");
+        symlinkSync("deep", join(dir, "src/linked"), "dir");
       };
       expect(await listed(["src/deep", "src/linked/.."], { before })).toEqual({
         files: [
@@ -1574,6 +1574,55 @@ describe.concurrent("bun lint", () => {
         });
       });
 
+      // What oxlint 1.87.0 with tsgolint 7.0.2003 does: there is no program for such a tsconfig.json, so no rule that needs types
+      // runs on its files, and nothing is fixed on types that do not resolve. Each error of TypeScript is one of oxlint.
+      test("a tsconfig.json that TypeScript refuses is an error, and its files are linted without types", async () => {
+        const options = `"strict":true,"lib":["esnext"]`;
+        const code = "declare const s: string;\nexport const g = s as string;\ndebugger;\n";
+        const { raw, exitCode, files } = await lint(
+          {
+            ".oxlintrc.json": rc({
+              rules: { "typescript/no-unnecessary-type-assertion": "error", "no-debugger": "error" },
+            }),
+            "good/tsconfig.json": `{"compilerOptions":{${options}}}`,
+            "good/a.ts": code,
+            "removed/tsconfig.json": `{"compilerOptions":{${options},"baseUrl":".","target":"es5","types":["node","bun"]}}`,
+            "removed/a.ts": code,
+            "base.json": `{"compilerOptions":{${options},"moduleResolution":"node"}}`,
+            "inherited/tsconfig.json": `{"extends":"../base.json"}`,
+            "inherited/a.ts": code,
+            "unknown/tsconfig.json": `{"compilerOptions":{${options},"nope":true}}`,
+            "unknown/a.ts": code,
+            "unfinished/tsconfig.json": `{"compilerOptions":{${options}}`,
+            "unfinished/a.ts": "export {};\n",
+            "in-no-project.ts": code,
+          },
+          ["-f", "json", "--type-aware", "--fix"],
+          { reads: ["good/a.ts", "removed/a.ts", "in-no-project.ts"] },
+        );
+        const removed = "has been removed. Please remove it from your configuration.";
+        const see = "\nSee https://github.com/oxc-project/tsgolint/issues/351 for more information.";
+        const found = JSON.parse(raw).diagnostics.map((it: any) => {
+          const { line, column, length } = it.labels[0]?.span ?? {};
+          return [it.filename, line, column, length, it.severity, it.code, it.message, it.help ?? ""].join(" ");
+        });
+        const invalid = "error typescript(tsconfig-error) Invalid tsconfig";
+        expect(found.filter((it: string) => it.includes("tsconfig")).sort()).toEqual([
+          `inherited/tsconfig.json    ${invalid} Option 'moduleResolution=node10' ${removed}${see}`,
+          `removed/tsconfig.json    ${invalid} Cannot find type definition file for 'bun'.`,
+          `removed/tsconfig.json    ${invalid} Cannot find type definition file for 'node'.`,
+          `removed/tsconfig.json 1 52 9 ${invalid} Option 'baseUrl' ${removed}${see}`,
+          `removed/tsconfig.json 1 75 5 ${invalid} Option 'target=ES5' ${removed}${see}`,
+          `unfinished/tsconfig.json 1 52 0 ${invalid} '}' expected.`,
+          `unknown/tsconfig.json 1 52 6 ${invalid} Unknown compiler option 'nope'.`,
+        ]);
+        // The rules that need no types run everywhere.
+        expect(found.filter((it: string) => it.includes("no-debugger")).length).toBe(5);
+        const fixed = code.replace(" as string", "");
+        expect(files).toEqual({ "good/a.ts": fixed, "removed/a.ts": code, "in-no-project.ts": fixed });
+        expect(exitCode).toBe(1);
+      });
+
       // A file is parsed once for all projects of a run that read it alike. Each of these pairs reads it in two ways.
       describe("a file of two projects is to each what the options of the project make of it", () => {
         const project = (more: object, include: string[]) =>
@@ -2467,7 +2516,7 @@ describe.concurrent("bun lint", () => {
 
     // `name:line rule` of every problem, whatever the directories are called.
     async function problems(cwd: string, args: string[], stdin?: string) {
-      await using proc = Bun.spawn({
+      await using proc = spawn({
         cmd: [...command, "-f", "json", ...args],
         env,
         cwd,
@@ -2605,7 +2654,7 @@ describe.concurrent("bun lint", () => {
         const from = [root, parse(root).root, ...(isWindows ? [inUpperCase(root), withSmallDrive(root)] : [])];
         const results = [];
         for (const cwd of from) {
-          await using proc = Bun.spawn({ cmd: [...command, ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
+          await using proc = spawn({ cmd: [...command, ...args], env, cwd, stdout: "pipe", stderr: "pipe" });
           const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
           results.push({ cwd, stdout, exitCode });
         }
@@ -2852,7 +2901,7 @@ describe.concurrent("bun lint", () => {
           expect((await problems(`${drive}\\`, ["src"])).found).toEqual(both);
           expect((await problems(String(dir), [`${drive}\\src\\a.ts`])).found).toEqual(both);
           // The tsconfig.json at the root does not include it, and nothing is above the root.
-          await using proc = Bun.spawn({
+          await using proc = spawn({
             cmd: [...command, "--type-aware", "-f", "unix", "c.js"],
             env,
             cwd: `${drive}\\no-project`,

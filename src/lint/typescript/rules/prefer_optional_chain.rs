@@ -1045,6 +1045,20 @@ fn tsgolint_leaves_chain_before(operator: BinOp, first: NullishComparisonType, o
     }
 }
 
+/// tsgolint's `containsOptionalChain`, for what is tested.
+fn tsgolint_contains_optional_chain(mut node: Expr) -> bool {
+    loop {
+        if node.is_optional() {
+            return true;
+        }
+        node = match node.kind() {
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
+            ExprKind::Call(call) => call.callee(),
+            _ => return false,
+        };
+    }
+}
+
 /// tsgolint's `strictCheckRequiresSuggestion`: the chain tests for `null` only or for `undefined` only, with `===`, and
 /// that is all that the types of what it tests have. An optional chain tests for both.
 fn tsgolint_strict_check_requires_suggestion(chain: &[ValidOperand]) -> bool {
@@ -1291,19 +1305,29 @@ fn get_new_code<'a>(file: &'a File<'a>, chain: &[ValidOperand<'a>]) -> Option<Ve
     // Each operand adds what it has more than those before it, after a `?.`.
     let mut parts: Vec<FlattenedChain> = Vec::new();
     let mut next_operand = Vec::new();
+    let mut known = 0;
     for current in chain {
         flatten_chain_expression(current.compared_name.expr(), &mut next_operand)?;
-        let known = parts.len();
+        known = parts.len();
         for (i, mut part) in next_operand.drain(..).skip(known).enumerate() {
             part.optional |= i == 0 && known > 0;
             parts.push(part);
         }
     }
+    // tsgolint 7.0: where only a name is tested, all of the access after it is optional, but for a call at its end:
+    // `a && a.b.c()` is `a?.b?.c()`.
+    let is_filled = file.language().is_oxlint
+        && known == 1
+        && chain.last().is_some_and(|it| it.comparison_type == NullishComparisonType::Boolean);
+    let ends_with_call = matches!(parts.last(), Some(FlattenedChain { text: PartText::Call { .. }, .. }));
+    let filled = if is_filled { 1..parts.len() - usize::from(ends_with_call) } else { 0..0 };
 
     let mut new_code = Vec::new();
-    for part in &parts {
+    for (i, part) in parts.iter().enumerate() {
         if part.optional {
             new_code.extend_from_slice(b"?.");
+        } else if filled.contains(&i) {
+            new_code.extend_from_slice(if part.non_null { &b"!?."[..] } else { &b"?."[..] });
         } else {
             if part.non_null {
                 new_code.push(b'!');
@@ -1468,6 +1492,23 @@ impl PreferOptionalChain {
         // `!a || a.b === null`: tsgolint leaves it alone.
         if is_oxlint
             && matches!((operator, first, last_operand.comparison_type), (BinOp::Or, T::NotBoolean, T::StrictEqualNull))
+        {
+            return;
+        }
+        // And what starts with an optional chain, but for `a?.b != null && a.b.c` and more than two operands of `||`.
+        if is_oxlint
+            && chain.first().is_some_and(|it| tsgolint_contains_optional_chain(it.compared_name.expr()))
+            && match operator {
+                BinOp::And => matches!(first, T::Boolean | T::NotStrictEqualNull | T::NotStrictEqualUndefined),
+                _ => chain.len() == 2,
+            }
+        {
+            return;
+        }
+        // And where `a!` is tested.
+        if is_oxlint
+            && !self.allow_potentially_unsafe_fixes_that_modify_the_return_type_i_know_what_im_doing
+            && chain.iter().any(|it| it.node.tag() == ExprTag::NonNull)
         {
             return;
         }

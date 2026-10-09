@@ -422,32 +422,34 @@ impl PreferNullishCoalescing {
             .data("equals", equals)
             .suggest_with(SUGGEST_NULLISH, &[("equals", equals.as_bytes())], |fixer| {
                 let mut fixes = Vec::new();
-                let is_in_logical_or = node.parent().as_expr().is_some_and(is_logical_or_operator);
-                if fixer.file().language().is_oxlint {
-                    // tsgolint puts into parentheses what is in a `||`, and each operand that is a logical expression.
-                    let is_logical = |it: Expr<'a>| {
-                        matches!(it.binary_op(), Some(BinOp::And | BinOp::Or | BinOp::Nullish)) && equals.is_empty()
-                    };
-                    for (it, needs_parentheses) in
-                        [(node, is_in_logical_or), (left, is_logical(left)), (right, is_logical(right))]
-                    {
-                        if needs_parentheses && !it.is_parenthesized() {
-                            fixes.extend([fixer.insert_before(it, "("), fixer.insert_after(it, ")")]);
-                        }
-                    }
-                } else if is_in_logical_or {
+                // For tsgolint parentheses are nodes.
+                let is_oxlint = fixer.file().language().is_oxlint;
+                let is_in_logical_or = node.parent().as_expr().is_some_and(is_logical_or_operator)
+                    && !(is_oxlint && node.is_parenthesized());
+                if is_in_logical_or {
                     // `&&` and `??` cannot be mixed without parentheses.
                     fixes.push(match left.kind() {
                         ExprKind::Binary {
                             op: BinOp::And | BinOp::Or | BinOp::Nullish,
                             left: left_of_left,
                             right: right_of_left,
-                        } if !is_logical_or_operator(left_of_left) => {
+                        } if !is_logical_or_operator(left_of_left) && !(is_oxlint && left.is_parenthesized()) => {
                             fixer.insert_before(right_of_left, "(")
                         }
                         _ => fixer.insert_before(left, "("),
                     });
                     fixes.push(fixer.insert_after(right, ")"));
+                }
+                // tsgolint also puts an operand into parentheses that is a logical expression.
+                for (it, is_looked_at) in [(left, !is_in_logical_or), (right, true)] {
+                    if is_oxlint
+                        && is_looked_at
+                        && equals.is_empty()
+                        && !it.is_parenthesized()
+                        && matches!(it.binary_op(), Some(BinOp::And | BinOp::Or | BinOp::Nullish))
+                    {
+                        fixes.extend([fixer.insert_before(it, "("), fixer.insert_after(it, ")")]);
+                    }
                 }
                 fixes.push(fixer.replace(bar_bar_operator, ["??", equals].concat()));
                 fixes

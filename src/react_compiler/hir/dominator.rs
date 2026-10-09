@@ -10,7 +10,6 @@
 //! https://www.cs.rice.edu/~keith/Embed/dom.pdf
 
 use crate::collections::{FxHashSet as HashSet, IdMap};
-use smallvec::SmallVec;
 
 use crate::diagnostics::{CompilerDiagnostic, ErrorCategory};
 
@@ -186,7 +185,7 @@ fn dfs_postorder(
         return;
     }
     let successors_of = |id| nodes.get(id).map(|node| node.succs.iter());
-    let mut stack = SmallVec::<[_; 32]>::new();
+    let mut stack = Vec::with_capacity(16);
     stack.push((id, successors_of(id)));
     while let Some((id, successors)) = stack.last_mut() {
         let id = *id;

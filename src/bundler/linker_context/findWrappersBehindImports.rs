@@ -32,11 +32,11 @@ impl VisitedFiles {
 }
 
 impl LinkerContext<'_> {
-    /// Whether every load that evaluates `importer` evaluates `source_index`.
-    pub(crate) fn runs_with(&self, importer: IndexInt, source_index: IndexInt) -> bool {
+    /// Whether every load that evaluates `importer` evaluates `imported`.
+    pub(crate) fn runs_with(&self, importer: IndexInt, imported: IndexInt) -> bool {
         let entry_bits = self.graph.files.items_entry_bits();
-        self.graph.files_live.is_set(source_index as usize)
-            && entry_bits[importer as usize].subset_of(&entry_bits[source_index as usize])
+        self.graph.files_live.is_set(imported as usize)
+            && entry_bits[importer as usize].subset_of(&entry_bits[imported as usize])
     }
 
     /// The files that an `import` of `target` in `importer` runs, in order: `target`, or when

@@ -816,12 +816,13 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         env: { ...env, BUN_DEBUG_lint_js: "1" },
         cwd: String(dir),
         stdin: "ignore",
-        stdout: "ignore",
-        stderr: "pipe",
+        stdout: "pipe",
+        stderr: "ignore",
       });
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-      const steps = [...stderr.matchAll(/a VM (begins|is made)/g)].map(it => it[1]);
-      expect(steps.filter(it => it === "begins")).toHaveLength(4);
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const steps = [...stdout.matchAll(/a VM (begins|is made)/g)].map(it => it[1]);
+      // How many there are depends on the number of cores.
+      expect(steps.filter(it => it === "begins").length).toBe(steps.filter(it => it === "is made").length);
       expect(steps.slice(0, 2)).toEqual(["begins", "is made"]);
       expect(exitCode).toBe(1);
     },

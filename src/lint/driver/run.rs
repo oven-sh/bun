@@ -136,6 +136,8 @@ pub(crate) fn threads_to_lint_on(options: &Options, js_plugins: &Host) -> usize 
         0 if js_plugins.has_plugins() => usize::from(bun_core::get_thread_count())
             .min(MOST_THREADS_WITH_JS_PLUGINS)
             .min(js_plugins.most_realms()),
+        // A file with types is linted by the thread that has checked it, so each thread can have a realm.
+        threads if js_plugins.has_plugins() => threads.min(js_plugins.most_realms()),
         threads => threads,
     }
 }
@@ -581,7 +583,9 @@ impl Run<'_> {
         context.js_plugins.expect(
             match with_types.iter().any(|it| needs(it.0) != Needs::Nothing) {
                 true => pool.threads(),
-                false => engines_for(with_engine.count()).min(pool.threads()),
+                false => engines_for(with_engine.count())
+                    .min(pool.threads())
+                    .min(context.js_plugins.most_realms()),
             },
         );
         if !with_types.is_empty() {
@@ -607,7 +611,7 @@ impl Run<'_> {
         let units: Vec<&[&Target]> = std::iter::once(with_configuration)
             .chain(with_engine.chunks(1))
             .collect();
-        let engines = engines_for(units.len());
+        let engines = engines_for(units.len()).min(context.js_plugins.most_realms());
         let (next_unit, next_plain) = (AtomicUsize::new(0), AtomicUsize::new(0));
         let (mut results, mut failure) = (Guarded::new(results), Guarded::new(None));
         let lint = |target: &Target| match context.lint_file(target, &on_circular_fixes) {

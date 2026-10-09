@@ -24,8 +24,13 @@ import type { Dependency } from "../source.ts";
 // (`HtmlRewriter::resume()`), maintained on the `bun` branch. The upstream
 // base commit is recorded here so a rebase onto a new upstream tag is
 // `git rebase --onto <new-tag> <LOLHTML_UPSTREAM_BASE> bun` in the fork.
+//
+// The pinned commit also carries two selector changes. The selector compiler
+// and the drop of the selector AST do not recurse. A selector nests at most 4
+// blocks (`:not(`, `[`): that limit comes from cssparser 0.38 and selectors
+// 0.41, and Cargo.lock holds those versions, so it moves together with this pin.
 const LOLHTML_UPSTREAM_BASE = "77127cd2b8545998756e8d64e36ee2313c4bb312"; // v2.7.2
-const LOLHTML_COMMIT = "725ce499aa9b71e38b7a2d0a9fbb6d7294a4079e";
+const LOLHTML_COMMIT = "bc78da83da526f762e797a2fab4124bf5c67b085";
 void LOLHTML_UPSTREAM_BASE;
 
 export const lolhtml: Dependency = {

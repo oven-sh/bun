@@ -2730,6 +2730,221 @@ it.each([
   await expect(res.text()).rejects.toThrow("Body already used");
 });
 
+// lol-html parses a selector in `on()` with one recursion per nested block, and
+// compiles it in `transform()` with one AST node per combinator. A selector is
+// user input and a native stack overflow cannot be caught, so the parser has a
+// limit of 4 nested blocks and the compiler does not recurse.
+describe("selectors that nest or chain deeply", () => {
+  const nest = (open, depth, innermost = "span") =>
+    Buffer.alloc(open.length * depth, open).toString() + innermost + Buffer.alloc(depth, ")").toString();
+  const tooDeep = "HTMLRewriterError: Unsupported syntax in selector.";
+  const unsupportedSyntax = expect.objectContaining({
+    name: "HTMLRewriterError",
+    message: "Unsupported syntax in selector.",
+  });
+
+  it("on() accepts 4 nested blocks and throws for 5", () => {
+    const accepts = selector => {
+      const rw = new HTMLRewriter();
+      expect(rw.on(selector, { element() {} })).toBe(rw);
+    };
+    const rejects = (selector, error) => expect(() => new HTMLRewriter().on(selector, { element() {} })).toThrow(error);
+
+    accepts(nest(":not(", 4));
+    rejects(nest(":not(", 5), unsupportedSyntax);
+    // `[` and `:nth-child(` open a block too.
+    for (const innermost of ["[a]", ":nth-child(2)"]) {
+      accepts(nest(":not(", 3, innermost));
+      rejects(nest(":not(", 4, innermost), unsupportedSyntax);
+    }
+    // `:host()` is not supported at any depth. Past the limit, the limit is what on() reports.
+    rejects(
+      nest(":host(", 4),
+      expect.objectContaining({
+        name: "HTMLRewriterError",
+        message: "Unsupported pseudo-class or pseudo-element in selector.",
+      }),
+    );
+    rejects(nest(":host(", 5), unsupportedSyntax);
+
+    // The rejected on() registers nothing, so the handlers around it keep their own selectors.
+    const rw = new HTMLRewriter();
+    rw.on("i", { element: el => void el.setInnerContent("first") });
+    expect(() => rw.on(nest(":not(", 5), { element: el => void el.setInnerContent("rejected") })).toThrow(
+      unsupportedSyntax,
+    );
+    rw.on("b", { element: el => void el.setInnerContent("second") });
+    expect(rw.transform("<i>1</i><b>2</b>")).toBe("<i>first</i><b>second</b>");
+  });
+
+  it("parentheses that open no block do not count", () => {
+    const matched = (selector, html) => {
+      const ids = [];
+      new HTMLRewriter().on(selector, { element: el => void ids.push(el.getAttribute("id")) }).transform(html);
+      return ids;
+    };
+    const parens = Buffer.alloc(200, "(").toString();
+
+    // In a string, escaped in an identifier, and in a comment.
+    expect(matched(`[data-x="${parens}"]`, `<p id="1" data-x="${parens}"></p><p id="2" data-x="("></p>`)).toEqual([
+      "1",
+    ]);
+    expect(
+      matched("." + Buffer.alloc(400, "\\(").toString(), `<p id="1" class="${parens}"></p><p id="2" class="("></p>`),
+    ).toEqual(["1"]);
+    expect(matched("/*((((((*/p", `<p id="1"></p><b id="2"></b>`)).toEqual(["1"]);
+
+    // 1000 blocks side by side are one block deep.
+    const negations = Array.from({ length: 1000 }, (_, i) => `:not(.x${i})`).join("");
+    expect(
+      matched("p" + negations, `<p id="1" class="y"></p><p id="2" class="x0"></p><p id="3" class="x999"></p>`),
+    ).toEqual(["1"]);
+    const list = Array.from({ length: 1000 }, (_, i) => `li:nth-child(${i + 1})`).join(", ");
+    expect(matched(list, `<ul><li id="1"></li><li id="2"></li></ul>`)).toEqual(["1", "2"]);
+
+    expect(matched("p:not(:nth-child(2))", `<div><p id="1"></p><p id="2"></p><p id="3"></p></div>`)).toEqual([
+      "1",
+      "3",
+    ]);
+  });
+
+  it("on() throws for every spelling of an 8000-deep nest", async () => {
+    // In a child process: a native stack overflow ends the process, it does not throw.
+    // `\6e ` is an escaped `n`, so `:\6e ot(` is `:not(` too.
+    const fixture = /* js */ `
+      const depth = 8000;
+      const nest = (open, innermost = "span") =>
+        Buffer.alloc(open.length * depth, open).toString() + innermost + Buffer.alloc(depth, ")").toString();
+      const selectors = {
+        ":not(": nest(":not("),
+        ":host(": nest(":host("),
+        ":NOT(": nest(":NOT("),
+        ":\\\\6e ot(": nest(":\\\\6e ot("),
+        ":not(a,": nest(":not(a,"),
+        "never closed": Buffer.alloc(5 * depth, ":not(").toString(),
+        "after a comment that holds a quote": '/*"*/' + nest(":not("),
+        "with a ) in a comment at each level":
+          Buffer.alloc(10 * depth, ":not(/*)*/").toString() + "span" + Buffer.alloc(depth, ")").toString(),
+      };
+      for (const [name, selector] of Object.entries(selectors)) {
+        try {
+          new HTMLRewriter().on(selector, { element() {} });
+          console.log(name + " -> accepted");
+        } catch (e) {
+          console.log(name + " -> " + e.name + ": " + e.message);
+        }
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.split("\n")).toEqual([
+      `:not( -> ${tooDeep}`,
+      `:host( -> ${tooDeep}`,
+      `:NOT( -> ${tooDeep}`,
+      `:\\6e ot( -> ${tooDeep}`,
+      `:not(a, -> ${tooDeep}`,
+      `never closed -> ${tooDeep}`,
+      `after a comment that holds a quote -> ${tooDeep}`,
+      `with a ) in a comment at each level -> ${tooDeep}`,
+      "",
+    ]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("the limit fits on a Worker's stack, also under the deepest JS frame", async () => {
+    // The native stack that is left for on() is smallest in a Worker, under a JS
+    // frame whose next call overflows the JS stack. The limit must fit there too.
+    const fixture = /* js */ `
+      function probes() {
+        const nest = depth => Buffer.alloc(5 * depth, ":not(").toString() + "span" + Buffer.alloc(depth, ")").toString();
+        const selectors = [nest(4), nest(5), nest(8000)];
+        const handlers = { element() {} };
+        let results;
+        // The probe is inline and runs once before the recursion: JSC cannot
+        // compile a function for its first call under the deepest frame.
+        const probe = deepest => {
+          if (deepest) {
+            try {
+              probe(true);
+            } catch {}
+          }
+          if (results === undefined) {
+            results = [];
+            for (let i = 0; i < selectors.length; i++) {
+              try {
+                new HTMLRewriter().on(selectors[i], handlers);
+                results[i] = "accepted";
+              } catch (e) {
+                results[i] = e.name + ": " + e.message;
+              }
+            }
+          }
+        };
+        probe(false);
+        const top = results;
+        results = undefined;
+        probe(true);
+        return { top, deepest: results };
+      }
+      const worker = new Worker(
+        URL.createObjectURL(new Blob(["postMessage((" + probes + ")());"], { type: "text/javascript" })),
+      );
+      const { promise, resolve, reject } = Promise.withResolvers();
+      worker.onmessage = event => resolve(event.data);
+      worker.onerror = event => reject(new Error(event.message));
+      console.log(JSON.stringify(await promise));
+      worker.terminate();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const expected = ["accepted", tooDeep, tooDeep];
+    expect(JSON.parse(stdout.trim() || "{}")).toEqual({ top: expected, deepest: expected });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([" ", " > "])("transform() compiles a chain of 30000 %j combinators", async combinator => {
+    const fixture = /* js */ `
+      const compound = "p" + ${JSON.stringify(combinator)};
+      const selector = Buffer.alloc(compound.length * 30001, compound).toString().slice(0, -(compound.length - 1));
+      const rw = new HTMLRewriter().on(selector, { element: el => void el.setAttribute("hit", "") });
+      console.log(rw.transform("<i>x</i><p>y</p>"));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("<i>x</i><p>y</p>\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("a chain of 64 child combinators matches at its own depth", () => {
+    const html = depth =>
+      Buffer.alloc(5 * depth, "<div>").toString() + "x" + Buffer.alloc(6 * depth, "</div>").toString();
+    const rw = new HTMLRewriter().on(Array.from({ length: 65 }, () => "div").join(" > "), {
+      element: el => void el.setAttribute("hit", ""),
+    });
+    const hits = depth => rw.transform(html(depth)).split("<div hit").length - 1;
+    // Of N nested <div>, the ones with 64 <div> ancestors match.
+    expect({ 64: hits(64), 65: hits(65), 70: hits(70) }).toEqual({ 64: 0, 65: 1, 70: 6 });
+  });
+});
+
 // `on()` stores one (selector, handlers) record per call; `transform()` turns
 // the records collected so far into a fresh lol-html rewriter each time.
 describe("on() registrations", () => {

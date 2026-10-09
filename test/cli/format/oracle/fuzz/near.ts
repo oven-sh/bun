@@ -128,8 +128,8 @@ if (process.argv[2] == "--child") {
   // In JavaScript a string, a template and a comment are one token each.
   const TOKEN =
     language == "js"
-      ? /\s+|\/\/[^\n]*|\/\*[^]*?\*\/|[A-Za-z_$][\w$]*|\d[\w.]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\[^])*`|=>|\.\.\.|\?\.|[-+*/%&|^<>=!?]+|[^]/g
-      : /\n|[ \t]+|[A-Za-z_$][\w$-]*|\d[\w.]*|[^]/g;
+      ? /\s+|\/\/[^\n]*|\/\*[^]*?\*\/|[A-Za-z_$][\w$]*|\d[\w.]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\[^])*`|=>|\.\.\.|\?\.|[-+*/%&|^<>=!?]+|[^]/gu
+      : /\n|[ \t]+|[A-Za-z_$][\w$-]*|\d[\w.]*|[^]/gu;
   function changed(text: string, perFile: number) {
     const tokens = text.match(TOKEN) ?? [];
     // White space means nothing in JavaScript.

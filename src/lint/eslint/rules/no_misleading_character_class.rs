@@ -233,6 +233,16 @@ impl<'a> PatternNode<'a> {
     }
 }
 
+/// oxlint reads a pattern that is a string or a template without substitutions, not the value of `String.raw` or of a
+/// constant.
+fn oxlint_can_read(pattern: Expr) -> bool {
+    match pattern.skip_type_wrappers().kind() {
+        ExprKind::String(_) => true,
+        ExprKind::Template(template) => template.exprs().is_empty(),
+        _ => false,
+    }
+}
+
 impl NoMisleadingCharacterClass {
     /// One of the sequences of ESLint's `iterateCharacterSequence`.
     fn check_sequence<'r>(&self, unfiltered_chars: &[Character<'r>], node: &PatternNode, found: &mut Found<'r>) {
@@ -336,6 +346,7 @@ impl NoMisleadingCharacterClass {
                     checked_pattern_nodes.insert(pattern_node);
                     Cow::Borrowed(literal.pattern())
                 }
+                _ if file.language().is_oxlint && !oxlint_can_read(pattern_node) => continue,
                 _ => match get_static_value(pattern_node, scope) {
                     None | Some(StaticValue::Regex { .. }) => continue,
                     Some(value) => match value.to_js_string() {

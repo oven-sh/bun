@@ -381,7 +381,13 @@ fn report<'a>(
     };
     let mut report = cx.report(place, message).comments_apply_at(constituent_node.outer_span());
     if let Some((union_or_intersection, previous)) = previous {
-        report = report.data("type", union_or_intersection).data("previous", previous.text());
+        // tsgolint 7.0 says it with its parentheses and with what is before it, from the end of the token before.
+        let (file, outer) = (previous.file(), previous.outer_span());
+        let text = match file.language().is_oxlint {
+            true => file.slice(Span::new(file.end_of_token_before(outer.start), outer.end)),
+            false => previous.text(),
+        };
+        report = report.data("type", union_or_intersection).data("previous", text);
     }
     report.fix(|fixer| removed.iter().map(|&span| fixer.remove(span)).collect::<Vec<Fix>>());
 }

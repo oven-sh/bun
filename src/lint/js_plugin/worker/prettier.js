@@ -34,11 +34,14 @@ async function formatWithPrettier() {
   const text = decode(buffer, 4 + headLength, length);
   const prettier = prettierFrom(cwd);
   if (prettier === null) return NOT_INSTALLED;
-  const ofFiles = usesConfig ? await prettier.resolveConfig(path, { config: config ?? undefined, editorconfig }) : null;
+  // As Prettier's command line has them, which plugins see.
+  const filepath = nativePath(path, nodePath);
+  const configFile = config === null ? undefined : nativePath(config, nodePath);
+  const ofFiles = usesConfig ? await prettier.resolveConfig(filepath, { config: configFile, editorconfig }) : null;
   let options = { ...ofFiles, ...flags };
   if (precedence === "file-override") options = { ...flags, ...ofFiles };
   if (precedence === "prefer-file") options = ofFiles ?? flags;
-  return DONE + (await prettier.format(text, { ...options, filepath: path }));
+  return DONE + (await prettier.format(text, { ...options, filepath }));
 }
 
 // What `handle` does with the kinds of calls from `FORMAT_WITH_PRETTIER` on.

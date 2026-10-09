@@ -6,7 +6,7 @@ use bun_lint::types::utils::{get_constraint_info, is_string_like};
 use bun_lint::types::{SyntaxKind, Type};
 use bun_lint::utils::text::{is_blank, line_break_len, number_to_string};
 use bun_lint::utils::ts_utils::{
-    get_moved_node_code, get_operator_precedence_for_node, get_operator_precedence_of_ts_parent,
+    OperatorPrecedence, get_moved_node_code, get_operator_precedence_for_node, get_operator_precedence_of_ts_parent,
 };
 use smallvec::SmallVec;
 
@@ -197,19 +197,40 @@ fn is_trivial_interpolation<'a>(
         && !cx.file().comments_exist_between(template.span_of_quasi(0), template.span_of_quasi(1))
 }
 
+/// Whether tsgolint puts parentheses around `moved` where `template` was: unless it binds more tightly than what the
+/// template is in. For typescript-go a call binds like a member access, and an arrow function like an assignment.
+fn is_wrapped_by_tsgolint(template: Expr, moved: Expr) -> bool {
+    use OperatorPrecedence as P;
+    let like_member = |it: P| if it == P::LeftHandSide { P::Member } else { it };
+    let around = match template.parent() {
+        _ if template.is_parenthesized() => P::Primary,
+        Node::Func(func) if func.is_arrow() => P::Assignment,
+        // `a || b ?? c` is a syntax error.
+        Node::Expr(parent)
+            if parent.binary_op() == Some(BinOp::Nullish)
+                && matches!(moved.binary_op(), Some(BinOp::And | BinOp::Or)) =>
+        {
+            P::Primary
+        }
+        _ => like_member(get_operator_precedence_of_ts_parent(template)),
+    };
+    !moved.is_parenthesized() && like_member(get_operator_precedence_for_node(moved)) <= around
+}
+
 fn report_single_interpolation<'a>(node: Node<'a>, interpolation: Node<'a>, cx: &Context<'a>) {
+    // For tsgolint parentheses are a part of what is in them.
+    if let (Node::Expr(template), Node::Expr(moved), true) = (node, interpolation, cx.language().is_oxlint) {
+        let span = moved.outer_span();
+        cx.report(Span::new(span.start.saturating_sub(2), span.end + 1), NO_UNNECESSARY_TEMPLATE_EXPRESSION)
+            .fix(|fixer| match is_wrapped_by_tsgolint(template, moved) {
+                true => fixer.replace(node, [&b"("[..], moved.text(), b")"].concat()),
+                false => fixer.replace(node, cx.slice(span)),
+            });
+        return;
+    }
     let span = interpolation.span();
     cx.report(Span::new(span.start.saturating_sub(2), span.end + 1), NO_UNNECESSARY_TEMPLATE_EXPRESSION)
-        .fix(|fixer| {
-            // tsgolint adds parentheses unless what moves binds more tightly than what the template is in.
-            let (Node::Expr(template), Node::Expr(moved), true) = (node, interpolation, cx.language().is_oxlint) else {
-                return fixer.replace(node, get_moved_node_code(node, interpolation));
-            };
-            match get_operator_precedence_for_node(moved) <= get_operator_precedence_of_ts_parent(template) {
-                true => fixer.replace(node, [&b"("[..], moved.text(), b")"].concat()),
-                false => fixer.replace(node, moved.text()),
-            }
-        });
+        .fix(|fixer| fixer.replace(node, get_moved_node_code(node, interpolation)));
 }
 
 fn report_interpolations<'a>(

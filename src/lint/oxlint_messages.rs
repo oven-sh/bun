@@ -545,7 +545,7 @@ static MESSAGES: &[(&str, &str, &[Message])] = &[
         m("duplicateValue", "Duplicate enum value `{{value}}`"),
     ]),
     ("typescript", "no-duplicate-type-constituents", &[
-        m("duplicate", "{{type}} type constituent is duplicated with  {{previous}}."),
+        m("duplicate", "{{type}} type constituent is duplicated with {{previous}}."),
     ]),
     ("typescript", "no-empty-interface", &[
         m("noEmpty", "an empty interface is equivalent to `{}`"),

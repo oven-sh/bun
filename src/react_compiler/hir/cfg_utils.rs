@@ -36,7 +36,7 @@ pub fn get_reverse_postordered_blocks(
         Enter(BlockId, bool),
         Exit(BlockId),
     }
-    let mut stack = Vec::with_capacity(32);
+    let mut stack = super::AstAlloc::vec_with_capacity(32);
     stack.push(Step::Enter(hir.entry, true));
     while let Some(step) = stack.pop() {
         let (block_id, is_used) = match step {
@@ -236,7 +236,7 @@ pub fn mark_predecessors(hir: &mut HIR) {
 
     let mut visited: IndexSet<BlockId> = IndexSet::new();
 
-    let mut stack = Vec::with_capacity(32);
+    let mut stack = super::AstAlloc::vec_with_capacity(32);
     stack.push((hir.entry, None));
     while let Some((block_id, prev_block_id)) = stack.pop() {
         // Add predecessor

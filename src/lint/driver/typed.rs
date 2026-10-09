@@ -314,6 +314,12 @@ fn check_and_lint_in(
 /// text as the help, at TypeScript's place in the file that TypeScript names, or else in the configuration file without a place.
 fn note_invalid_tsconfig(context: &Context, refused: &Refused) {
     let mut noted = context.invalid_tsconfigs.lock();
+    // Each pass of `--fix` finds it again.
+    if noted.of.contains(&refused.config_path) {
+        return;
+    }
+    noted.of.push(refused.config_path.clone());
+    let noted = &mut noted.results;
     for diagnostic in &refused.diagnostics {
         let has_place = !diagnostic.path.is_empty();
         let path = to_native(match has_place {
@@ -355,21 +361,24 @@ fn note_invalid_tsconfig(context: &Context, refused: &Refused) {
             }
         };
         let result = &mut noted[at];
-        // Each pass of `--fix` finds it again.
+        // What two programs have from one base file is said once for each.
+        result.messages.push(message);
+        // `SortAndDeduplicateDiagnostics`: those without a place first, by their text.
         let help_of = |it: &LintMessage| it.details.as_ref().map(|it| it.help.clone());
-        let is_noted = (result.messages.iter()).any(|it| {
-            (it.line, it.column) == (message.line, message.column)
-                && help_of(it) == help_of(&message)
+        bun_lint::utils::sort::sort_by(&mut result.messages, |a, b| {
+            (a.line, a.column, help_of(a)).cmp(&(b.line, b.column, help_of(b)))
         });
-        if !is_noted {
-            result.messages.push(message);
-            // `SortAndDeduplicateDiagnostics`: those without a place first, by their text.
-            bun_lint::utils::sort::sort_by(&mut result.messages, |a, b| {
-                (a.line, a.column, help_of(a)).cmp(&(b.line, b.column, help_of(b)))
-            });
-            result.counts = Counts::of(&result.messages);
-        }
+        result.counts = Counts::of(&result.messages);
     }
+}
+
+/// `Context::invalid_tsconfigs`
+#[derive(Default)]
+pub(crate) struct InvalidTsconfigs {
+    /// By file.
+    pub(crate) results: Vec<FileResult>,
+    /// The configuration files of the programs that `results` is about.
+    of: Vec<Vec<u8>>,
 }
 
 /// What oxlint makes of an error of the type checker: `typescript(TS2322)`, with the first line of the text. No comment disables it.

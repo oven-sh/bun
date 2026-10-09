@@ -407,9 +407,9 @@ impl Start {
             if !self.is_for_few.load(core::sync::atomic::Ordering::Relaxed) {
                 jsc::expect_vm_per_thread();
             }
-            // It does not look at the limit of a container. Less than there is makes every heap collect more often: with under
-            // 16 GB it goes by what the process takes, which is all engines together.
-            jsc::expect_ram_size(self.memory());
+            // The memory that is for the engines, by which they are counted too. With under 16 GB it goes by what the process
+            // takes, which is all engines together: told all the memory of a container, six large engines went over it.
+            jsc::expect_ram_size(self.memory() / 4);
             // What a process has one of, like `FileSystem::instance()`, is made when its first VM starts, and not for
             // several threads at a time.
             first = Some(start_vm().and_then(|()| {

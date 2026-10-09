@@ -1356,18 +1356,14 @@ impl Unifier {
         false
     }
 
-    fn get(&self, ty: &Type) -> Type {
-        let has_parts = matches!(
-            ty,
-            Type::TypeVar { .. } | Type::Phi { .. } | Type::Function { .. }
-        );
-        if has_parts && !self.has_stack() {
-            return ty.clone();
+    fn get<'a>(&'a self, mut ty: &'a Type) -> Type {
+        while let Type::TypeVar { id } = ty
+            && let Some(sub) = self.substitutions.get(id)
+        {
+            ty = sub;
         }
-        if let Type::TypeVar { id } = ty {
-            if let Some(sub) = self.substitutions.get(id) {
-                return self.get(sub);
-            }
+        if matches!(ty, Type::Phi { .. } | Type::Function { .. }) && !self.has_stack() {
+            return ty.clone();
         }
 
         if let Type::Phi { operands } = ty {

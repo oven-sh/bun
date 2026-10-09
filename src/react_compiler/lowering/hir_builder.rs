@@ -441,14 +441,14 @@ impl<'h> HirBuilder<'h> {
         (self.host, self.env)
     }
 
-    pub(crate) fn bindings(&self) -> &IndexMap<Ref, IdentifierId> {
-        &self.bindings
+    /// For the builder of a nested function, which starts with the bindings of this one.
+    pub(crate) fn take_bindings(&mut self) -> IndexMap<Ref, IdentifierId> {
+        std::mem::take(&mut self.bindings)
     }
 
-    pub(crate) fn merge_bindings(&mut self, child_bindings: IndexMap<Ref, IdentifierId>) {
-        for (ref_, identifier_id) in child_bindings {
-            self.bindings.entry(ref_).or_insert(identifier_id);
-        }
+    /// What [`Self::take_bindings`] gave, and the bindings that the nested function added.
+    pub(crate) fn put_bindings(&mut self, child_bindings: IndexMap<Ref, IdentifierId>) {
+        self.bindings = child_bindings;
     }
 
     pub(crate) fn push(&mut self, instruction: Instruction) {

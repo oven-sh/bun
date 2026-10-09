@@ -54,7 +54,7 @@ fn lower_function(
     let parent_function_scope = builder.function_scope();
     let component_scope = builder.component_scope();
 
-    let parent_bindings = builder.bindings().clone();
+    let parent_bindings = builder.take_bindings();
     let context_ids = builder.context_identifiers().clone();
     let import_bindings = builder.import_bindings().clone();
 
@@ -90,7 +90,7 @@ fn lower_function(
         false, // nested function
     )?;
 
-    builder.merge_bindings(child_bindings);
+    builder.put_bindings(child_bindings);
 
     let func_id = builder.environment_mut().add_function(hir_func);
     Ok(LoweredFunction { func: func_id })
@@ -111,7 +111,7 @@ pub(super) fn lower_function_declaration(
     let parent_function_scope = builder.function_scope();
     let component_scope = builder.component_scope();
 
-    let parent_bindings = builder.bindings().clone();
+    let parent_bindings = builder.take_bindings();
     let context_ids = builder.context_identifiers().clone();
     let import_bindings = builder.import_bindings().clone();
 
@@ -146,7 +146,7 @@ pub(super) fn lower_function_declaration(
         false, // nested function
     )?;
 
-    builder.merge_bindings(child_bindings);
+    builder.put_bindings(child_bindings);
 
     let func_id = builder.environment_mut().add_function(hir_func);
     let lowered_func = LoweredFunction { func: func_id };
@@ -236,7 +236,7 @@ fn lower_function_for_object_method(
     let parent_function_scope = builder.function_scope();
     let component_scope = builder.component_scope();
 
-    let parent_bindings = builder.bindings().clone();
+    let parent_bindings = builder.take_bindings();
     let context_ids = builder.context_identifiers().clone();
     let import_bindings = builder.import_bindings().clone();
 
@@ -270,7 +270,7 @@ fn lower_function_for_object_method(
         false, // nested function
     )?;
 
-    builder.merge_bindings(child_bindings);
+    builder.put_bindings(child_bindings);
 
     let func_id = builder.environment_mut().add_function(hir_func);
     Ok(LoweredFunction { func: func_id })

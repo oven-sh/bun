@@ -15,19 +15,21 @@ function objectId(object) {
 const located = new Map();
 // The modules that have been looked at.
 const scanned = new Set();
-// The configuration file without links, which is what a module that is reached through one is called.
-let realPath;
+// What the module that is the configuration file can be called: its path as the system writes it, and that without links.
+let ownNames;
 // Looks at those that were loaded since the last time: a plugin can load its rules when it is asked for them.
 function scan() {
-  try {
-    realPath ??= fs.realpathSync(path);
-  } catch {
-    // It is no file: a name stands in its place.
-    realPath = path;
+  if (ownNames === undefined) {
+    ownNames = [path, resolve(path)];
+    try {
+      ownNames.push(fs.realpathSync(path));
+    } catch {
+      // It is no file: a name stands in its place.
+    }
   }
   for (const [module, { exports }] of Object.entries(require.cache)) {
     // What only the configuration file has is not to be had without running it.
-    if (scanned.has(module) || module === path || module === realPath) continue;
+    if (scanned.has(module) || ownNames.includes(module)) continue;
     scanned.add(module);
     const note = (value, path) => {
       if (value !== null && typeof value === "object" && !located.has(value))

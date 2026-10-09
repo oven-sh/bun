@@ -76,6 +76,7 @@ pub(crate) fn propagate_scope_dependencies_hir(func: &mut HirFunction, env: &mut
     );
 
     // Derive the minimal set of hoistable dependencies for each scope.
+    let mut trees: HashMap<&NodeSet, ReactiveScopeDependencyTreeHIR> = HashMap::default();
     for (scope_id, deps) in &scope_deps {
         if deps.is_empty() {
             continue;
@@ -86,8 +87,11 @@ pub(crate) fn propagate_scope_dependencies_hir(func: &mut HirFunction, env: &mut
             hoistables.expect("[PropagateScopeDependencies] Scope not found in tracked blocks");
 
         // Step 2: Calculate hoistable dependencies using the tree.
-        let hoistables = hoistables.iter().map(|idx| &registry.nodes[idx].full_path);
-        let mut tree = ReactiveScopeDependencyTreeHIR::new(hoistables, env);
+        let tree = trees.entry(*hoistables).or_insert_with(|| {
+            let hoistables = hoistables.iter().map(|idx| &registry.nodes[idx].full_path);
+            ReactiveScopeDependencyTreeHIR::new(hoistables, env)
+        });
+        tree.dep_roots = IndexMap::new();
         for dep in deps {
             tree.add_dependency(dep.clone(), env);
         }
@@ -876,7 +880,7 @@ impl PropertyPathRegistry {
 }
 
 /// Indices into `PropertyPathRegistry::nodes`, ascending. The last word is never 0: `==` compares sets.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 struct NodeSet {
     words: Vec<u64>,
 }
@@ -1452,35 +1456,48 @@ fn recursively_propagate_non_null(
     }
     traversal_state[node_id.0 as usize] = Some(TraversalState::Active);
 
-    let neighbors: Vec<BlockId> = match direction {
-        PropagationDirection::Backward => block_successors[node_id.0 as usize]
-            .iter()
-            .copied()
-            .collect(),
-        PropagationDirection::Forward => func
-            .body
-            .blocks
-            .get(&node_id)
-            .map(|b| b.preds.iter().copied().collect())
-            .unwrap_or_default(),
+    let neighbors_of = |node_id: BlockId| -> Vec<BlockId> {
+        match direction {
+            PropagationDirection::Backward => block_successors[node_id.0 as usize]
+                .iter()
+                .copied()
+                .collect(),
+            PropagationDirection::Forward => func
+                .body
+                .blocks
+                .get(&node_id)
+                .map(|b| b.preds.iter().copied().collect())
+                .unwrap_or_default(),
+        }
     };
 
+    // (node, its neighbors, how many of them were looked at)
+    let mut stack = AstAlloc::vec_with_capacity(8);
+    stack.push((node_id, neighbors_of(node_id), 0));
     let mut changed = false;
-    for &neighbor in &neighbors {
-        if traversal_state[neighbor.0 as usize].is_none() {
-            let neighbor_changed = recursively_propagate_non_null(
-                neighbor,
-                direction,
-                traversal_state,
-                working,
-                func,
-                block_successors,
-                registry,
-            );
-            changed |= neighbor_changed;
+    while let Some((node_id, neighbors, next)) = stack.last_mut() {
+        if let Some(&neighbor) = neighbors.get(*next) {
+            *next += 1;
+            if traversal_state[neighbor.0 as usize].is_none() {
+                traversal_state[neighbor.0 as usize] = Some(TraversalState::Active);
+                stack.push((neighbor, neighbors_of(neighbor), 0));
+            }
+            continue;
         }
+        changed |=
+            propagate_from_neighbors(*node_id, neighbors, traversal_state, working, registry);
+        stack.pop();
     }
+    changed
+}
 
+fn propagate_from_neighbors(
+    node_id: BlockId,
+    neighbors: &[BlockId],
+    traversal_state: &mut [Option<TraversalState>],
+    working: &mut [Option<NodeSet>],
+    registry: &mut PropertyPathRegistry,
+) -> bool {
     // Compute intersection of 'done' neighbors only (filter out 'active' = cycle nodes)
     let done_neighbor_sets: Vec<NodeSet> = neighbors
         .iter()
@@ -1505,7 +1522,7 @@ fn recursively_propagate_non_null(
     reduce_maybe_optional_chains(&mut merged, registry);
 
     // Compare with previous value — can't just check size due to reduce_maybe_optional_chains
-    changed |= prev_objects != merged;
+    let changed = prev_objects != merged;
     working[node_id.0 as usize] = Some(merged);
     traversal_state[node_id.0 as usize] = Some(TraversalState::Done);
 

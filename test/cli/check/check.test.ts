@@ -1086,6 +1086,34 @@ describe.concurrent("bun check", () => {
       expect({ parsed, stdout, exitCode }).toEqual({ parsed: loaded / 2 + 1, stdout: "", exitCode: 0 });
     });
 
+    test("the projects of a build parse the library once", async () => {
+      const config = (references: string[]) =>
+        JSON.stringify({
+          compilerOptions: { composite: true, strict: true, outDir: "dist", types: [], lib: ["es2022"] },
+          include: ["*.ts"],
+          references: references.map(path => ({ path })),
+        });
+      using dir = project({
+        "a/tsconfig.json": config(["../b"]),
+        "a/a.ts": `import { b } from "../b/b";\nexport const a: number = b;\n`,
+        "b/tsconfig.json": config(["../c"]),
+        "b/b.ts": `import { c } from "../c/c";\nexport const b: number = c;\n`,
+        "c/tsconfig.json": config([]),
+        "c/c.ts": `export const c: number = 1;\n`,
+      });
+      const count = (stderr: string, pattern: RegExp) => Number(pattern.exec(stderr)?.[1]);
+      const [all, last] = await Promise.all([check(dir, ["-b", "a", "--timing"]), check(dir, ["-b", "c", "--timing"])]);
+      // The last one loads the library and its own file.
+      const library = count(last.stderr, /(\d+) files loaded in/) - 1;
+      expect(library).toBeGreaterThan(10);
+      expect({
+        loaded: count(all.stderr, /(\d+) files loaded in/),
+        parsed: count(all.stderr, /(\d+) files parsed for all projects/),
+        stdout: all.stdout,
+        exitCode: all.exitCode,
+      }).toEqual({ loaded: 3 * library + 5, parsed: library, stdout: "", exitCode: 0 });
+    });
+
     test("two directories", async () => {
       using dir = project({
         "a/a.ts": `export const a: string = 1;\n`,

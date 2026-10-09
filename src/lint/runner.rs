@@ -9,7 +9,7 @@ use crate::code_path::{Event, Step, steps};
 use crate::context::{Cx, CxBase, Diagnostic, Severity};
 use crate::literal::Literal;
 use crate::options::Options;
-use crate::rule::{Entries, Entry, Listeners, Meta, NodeTags, Rule};
+use crate::rule::{Entries, Entry, Kept, Listeners, Meta, NodeTags, Rule};
 use crate::span::Span;
 use bun_sema::hir;
 use std::cell::OnceCell;
@@ -567,7 +567,8 @@ impl RuleEntry {
 
 // Lists, and not functions that are given a `&mut dyn FnMut`: in `run_unordered` that would be made of a closure that has
 // the type of the rule, with a table of its own for each rule. The linker of macOS folds code alone, so to it functions
-// that refer to tables with the same content are not the same.
+// that refer to tables with the same content are not the same. Neither are, on arm64, functions with a `match` of many arms:
+// that is made with a table of its own as well. So an entry has a function that runs it.
 
 #[inline(never)]
 fn number_literals<'a>(file: &'a File<'a>) -> Vec<Literal<'a>> {
@@ -622,99 +623,132 @@ struct Run<'r, 'a, R: Rule> {
     cx: Cx<'a, R>,
 }
 
-/// Not inlined: it looks neither into the rule nor into its state, so it is the same code for all rules, of which the linker then
-/// keeps one copy.
-#[inline(never)]
+/// It looks neither into the rule nor into its state, so it is the same code for all rules, of which the linker then keeps
+/// one copy.
 fn run_unordered<'a, R: Rule>(
     rule: &R,
-    entries: &[Entry<'a, R>],
+    entries: &[Kept<'a, R>],
     file: &'a File<'a>,
     cx: &mut Cx<'a, R>,
 ) {
-    for entry in entries {
-        match *entry {
-            Entry::Exprs(tag, listener) => {
-                for &id in file.exprs_of(tag) {
-                    listener(rule, Expr::from_raw(file, id), cx);
+    for kept in entries {
+        if let Some(runs) = kept.runs {
+            runs(&kept.entry, rule, file, cx);
+        }
+    }
+}
+
+// What [`Kept::runs`] is. Of each the linker keeps one copy, as of `run_unordered`.
+
+macro_rules! runs_by_kind {
+    ($($name:ident $variant:ident $list:ident $handle:ident;)*) => {
+        $(
+            #[inline(never)]
+            pub(crate) fn $name<'a, R: Rule>(
+                entry: &Entry<'a, R>,
+                rule: &R,
+                file: &'a File<'a>,
+                cx: &mut Cx<'a, R>,
+            ) {
+                if let Entry::$variant(kind, listener) = *entry {
+                    for &id in file.$list(kind) {
+                        listener(rule, $handle::from_raw(file, id), cx);
+                    }
                 }
             }
-            Entry::Stmts(tag, listener) => {
-                for &id in file.stmts_of(tag) {
-                    listener(rule, Stmt::from_raw(file, id), cx);
+        )*
+    };
+}
+
+runs_by_kind! {
+    run_exprs Exprs exprs_of Expr;
+    run_stmts Stmts stmts_of Stmt;
+    run_types Types types_of TypeNode;
+    run_pats Pats pats_of Pat;
+    run_chained Chained chained_exprs_of Expr;
+    run_binaries Binaries binaries_of Expr;
+    run_unaries Unaries unaries_of Expr;
+}
+
+macro_rules! runs_every {
+    ($($name:ident $variant:ident $every:ident;)*) => {
+        $(
+            #[inline(never)]
+            pub(crate) fn $name<'a, R: Rule>(
+                entry: &Entry<'a, R>,
+                rule: &R,
+                file: &'a File<'a>,
+                cx: &mut Cx<'a, R>,
+            ) {
+                if let Entry::$variant(listener) = *entry {
+                    file.$every(|it| listener(rule, it, cx));
                 }
             }
-            Entry::Types(tag, listener) => {
-                for &id in file.types_of(tag) {
-                    listener(rule, TypeNode::from_raw(file, id), cx);
-                }
-            }
-            Entry::Pats(tag, listener) => {
-                for &id in file.pats_of(tag) {
-                    listener(rule, Pat::from_raw(file, id), cx);
-                }
-            }
-            Entry::Chained(tag, listener) => {
-                for &id in file.chained_exprs_of(tag) {
-                    listener(rule, Expr::from_raw(file, id), cx);
-                }
-            }
-            Entry::Binaries(op, listener) => {
-                for &id in file.binaries_of(op) {
-                    listener(rule, Expr::from_raw(file, id), cx);
-                }
-            }
-            Entry::Unaries(op, listener) => {
-                for &id in file.unaries_of(op) {
-                    listener(rule, Expr::from_raw(file, id), cx);
-                }
-            }
-            Entry::Funcs(listener) => file.every_func(|it| listener(rule, it, cx)),
-            Entry::Classes(listener) => file.every_class(|it| listener(rule, it, cx)),
-            Entry::Members(listener) => file.every_member(|it| listener(rule, it, cx)),
-            Entry::Props(listener) => file.every_prop(|it| listener(rule, it, cx)),
-            Entry::Params(listener) => file.every_param(|it| listener(rule, it, cx)),
-            Entry::TypeParams(listener) => file.every_type_param(|it| listener(rule, it, cx)),
-            Entry::VarDecls(listener) => file.every_var_decl(|it| listener(rule, it, cx)),
-            Entry::Cases(listener) => file.every_case(|it| listener(rule, it, cx)),
-            Entry::EnumMembers(listener) => file.every_enum_member(|it| listener(rule, it, cx)),
-            Entry::ImportSpecs(listener) => file.every_import_spec(|it| listener(rule, it, cx)),
-            Entry::ExportSpecs(listener) => file.every_export_spec(|it| listener(rule, it, cx)),
-            Entry::StringLiterals(listener) => {
-                file.every_string_literal(|it| listener(rule, it, cx))
-            }
-            Entry::NumberLiterals(listener) => {
-                for it in number_literals(file) {
-                    listener(rule, it, cx);
-                }
-            }
-            Entry::Symbols(listener) => {
-                for symbol in file.symbols() {
-                    listener(rule, symbol, cx);
-                }
-            }
-            Entry::Nodes(tags, listener) => {
-                for node in nodes_of(file, tags) {
-                    listener(rule, node, cx);
-                }
-            }
-            Entry::Enter(..)
-            | Entry::Exit(..)
-            | Entry::CodePathStart(_)
-            | Entry::CodePathEnd(_)
-            | Entry::SegmentStart(_)
-            | Entry::SegmentEnd(_)
-            | Entry::UnreachableSegmentStart(_)
-            | Entry::UnreachableSegmentEnd(_)
-            | Entry::SegmentLoop(_)
-            | Entry::Finish(_) => {}
+        )*
+    };
+}
+
+runs_every! {
+    run_funcs Funcs every_func;
+    run_classes Classes every_class;
+    run_members Members every_member;
+    run_props Props every_prop;
+    run_params Params every_param;
+    run_type_params TypeParams every_type_param;
+    run_var_decls VarDecls every_var_decl;
+    run_cases Cases every_case;
+    run_enum_members EnumMembers every_enum_member;
+    run_import_specs ImportSpecs every_import_spec;
+    run_export_specs ExportSpecs every_export_spec;
+    run_string_literals StringLiterals every_string_literal;
+}
+
+#[inline(never)]
+pub(crate) fn run_number_literals<'a, R: Rule>(
+    entry: &Entry<'a, R>,
+    rule: &R,
+    file: &'a File<'a>,
+    cx: &mut Cx<'a, R>,
+) {
+    if let Entry::NumberLiterals(listener) = *entry {
+        for it in number_literals(file) {
+            listener(rule, it, cx);
+        }
+    }
+}
+
+#[inline(never)]
+pub(crate) fn run_symbols<'a, R: Rule>(
+    entry: &Entry<'a, R>,
+    rule: &R,
+    file: &'a File<'a>,
+    cx: &mut Cx<'a, R>,
+) {
+    if let Entry::Symbols(listener) = *entry {
+        for symbol in file.symbols() {
+            listener(rule, symbol, cx);
+        }
+    }
+}
+
+#[inline(never)]
+pub(crate) fn run_nodes<'a, R: Rule>(
+    entry: &Entry<'a, R>,
+    rule: &R,
+    file: &'a File<'a>,
+    cx: &mut Cx<'a, R>,
+) {
+    if let Entry::Nodes(tags, listener) = *entry {
+        for node in nodes_of(file, tags) {
+            listener(rule, node, cx);
         }
     }
 }
 
 impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
     fn listeners_of_walk(&self, add: &mut dyn FnMut(WalkListener)) {
-        for (i, entry) in self.entries.iter().enumerate() {
-            match entry {
+        for (i, kept) in self.entries.iter().enumerate() {
+            match &kept.entry {
                 Entry::Enter(tags, _) => add(WalkListener::Enter(*tags, i as u16)),
                 Entry::Exit(tags, _) => add(WalkListener::Exit(*tags, i as u16)),
                 Entry::CodePathStart(_) => add(WalkListener::CodePath(0, i as u16)),
@@ -732,7 +766,7 @@ impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
     #[inline]
     fn call(&mut self, entry: u16, node: Node<'a>) {
         if let Some(&(Entry::Enter(_, listener) | Entry::Exit(_, listener))) =
-            self.entries.get(entry as usize)
+            self.entries.get(entry as usize).map(|it| &it.entry)
         {
             listener(self.rule, node, &mut self.cx);
         }
@@ -740,7 +774,7 @@ impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
 
     fn code_path_event(&mut self, entry: u16, event: Event<'a>) {
         let (rule, cx) = (self.rule, &mut self.cx);
-        match (self.entries.get(entry as usize), event) {
+        match (self.entries.get(entry as usize).map(|it| &it.entry), event) {
             (Some(Entry::CodePathStart(on)), Event::CodePathStart(path, node))
             | (Some(Entry::CodePathEnd(on)), Event::CodePathEnd(path, node)) => {
                 on(rule, path, node, cx)
@@ -763,8 +797,8 @@ impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
     }
 
     fn finish(&mut self) {
-        for entry in &self.entries {
-            if let Entry::Finish(listener) = *entry {
+        for kept in &self.entries {
+            if let Entry::Finish(listener) = kept.entry {
                 listener(self.rule, &mut self.cx);
             }
         }

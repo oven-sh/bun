@@ -705,7 +705,11 @@ fn overriding_options(request: &Request, is_build: bool) -> Vec<(Vec<u8>, Json)>
             };
             (name.clone(), value)
         })
-        .chain((!is_build && !request.build).then(|| (b"noEmit".to_vec(), Json::Bool(true))))
+        // Who refuses a broken configuration asks what `tsc -p` says about it, output paths too (5011, 5055).
+        .chain(
+            (!is_build && !request.build && !request.plan_options.refuses_broken_configurations)
+                .then(|| (b"noEmit".to_vec(), Json::Bool(true))),
+        )
         .collect()
 }
 
@@ -978,6 +982,7 @@ impl Report {
         self.tasks.extend(other.tasks);
         self.has_bun_types_installed |= other.has_bun_types_installed;
         self.files_loaded += other.files_loaded;
+        self.files_parsed_for_all += other.files_parsed_for_all;
         self.files_checked += other.files_checked;
         self.files_not_checked += other.files_not_checked;
         self.steps.extend(other.steps);
@@ -1856,7 +1861,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         report.merge(checked);
     }
     report.load_time = started.elapsed().saturating_sub(report.check_time);
-    report.files_parsed_for_all = run.as_ref().map_or(0, Run::parses);
+    report.files_parsed_for_all += run.as_ref().map_or(0, Run::parses);
     if !is_one {
         sort_as_one_project(&mut report);
     }
@@ -2429,7 +2434,9 @@ fn check_with_references(
     let reads_sources = request.plan_options.reads_sources_of_references && !request.build;
     // Then there is one program, that of `root`, and it reads what is on the disk. Otherwise what one program emits
     // another reads, and several run at the same time.
-    let run = run.filter(|_| reads_sources && !reports_references);
+    let is_one_program = reads_sources && !reports_references;
+    let of_build = Session::new();
+    let of_build = (!is_one_program).then(|| Run::of_build(&of_build));
     // Nothing waits for what is not emitted.
     let up_stream: Vec<Vec<usize>> = (projects.iter())
         .map(|p| match reads_sources {
@@ -2638,17 +2645,23 @@ fn check_with_references(
             }
             _ => None,
         };
-        let mut checked = check_named_files(
-            &host,
-            project,
-            request,
-            Report::default(),
-            Instant::now(),
-            named,
-            Some(&owned_elsewhere),
-            Some(&|| !host.awaited.lock().is_empty()),
-            run,
-        );
+        let check = |run: Option<&Run<'_>>| {
+            check_named_files(
+                &host,
+                project,
+                request,
+                Report::default(),
+                Instant::now(),
+                named,
+                Some(&owned_elsewhere),
+                Some(&|| !host.awaited.lock().is_empty()),
+                run,
+            )
+        };
+        let mut checked = match is_one_program {
+            true => check(run),
+            false => check(of_build.as_ref()),
+        };
         let mut awaited = std::mem::take(&mut *host.awaited.lock());
         if !awaited.is_empty() {
             awaited.shared_sort_unstable();
@@ -2769,6 +2782,7 @@ fn check_with_references(
     }
     report.follows_references = follows_references && named.is_none();
     report.load_time = started.elapsed().saturating_sub(report.check_time);
+    report.files_parsed_for_all += of_build.as_ref().map_or(0, Run::parses);
     report
 }
 

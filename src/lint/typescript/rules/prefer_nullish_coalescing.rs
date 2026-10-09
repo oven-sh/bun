@@ -436,6 +436,7 @@ impl PreferNullishCoalescing {
                         } if !is_logical_or_operator(left_of_left) && !(is_oxlint && left.is_parenthesized()) => {
                             fixer.insert_before(right_of_left, "(")
                         }
+                        _ if is_oxlint => fixer.insert_before(left.outer_span(), "("),
                         _ => fixer.insert_before(left, "("),
                     });
                     fixes.push(fixer.insert_after(right, ")"));

@@ -579,6 +579,34 @@ impl<'s> Interner<'s> {
         this
     }
 
+    /// An interner that has the atoms of this one, with the same numbers, and shares nothing with it. For a program that
+    /// is checked while others, which have this one in common with it, are loaded: the check takes it that nobody else adds
+    /// an atom (`Atoms::find_published`, `TypeStore::link`).
+    pub fn copy_in<'t>(&self, session: &'t Session) -> Interner<'t> {
+        let Tables { shards, texts, .. } = self.tables;
+        // A text is pushed under the lock of its shard: then none below the length is half written.
+        let len = GrowingPlaces::while_none_grows(&shards[..], || texts.len());
+        let copy = Tables {
+            shards: Box::new(std::array::from_fn(|_| GrowingPlaces::default())),
+            texts: AppendVec::new(),
+            number: NEXT_NUMBER.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        };
+        let mut of_shards: Vec<Vec<(u64, u32)>> = vec![Vec::new(); SHARDS];
+        for atom in 0..len {
+            let text: &[u8] = texts.get(atom);
+            let spread = hash_of(text);
+            of_shards[shard_of(spread)].push((spread, atom));
+            copy.texts.push(text.into());
+        }
+        for (shard, places) in copy.shards.iter().zip(of_shards) {
+            shard.extend(places.len(), places.into_iter());
+        }
+        Interner {
+            session,
+            tables: session.keep(copy),
+        }
+    }
+
     /// For the merge at the barrier.
     pub(crate) fn halves(&self) -> (&[GrowingPlaces], &Texts) {
         (&self.tables.shards[..], &self.tables.texts)

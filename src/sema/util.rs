@@ -398,6 +398,13 @@ impl<A: Allocator + Clone> GrowingPlaces<A> {
         self.places.find(spread, Ordering::Acquire, is_it)
     }
 
+    /// Calls `read` while no thread inserts into any of `shards`. The locks are taken in the order of the list, and who
+    /// holds one of them otherwise waits for no other.
+    pub(crate) fn while_none_grows<R>(shards: &[Self], read: impl FnOnce() -> R) -> R {
+        let _held: Vec<_> = shards.iter().map(|shard| shard.len.lock()).collect();
+        read()
+    }
+
     /// `find`, during a step: no thread inserts, and the barrier before the step has ordered the
     /// earlier inserts. Plain loads.
     #[inline]

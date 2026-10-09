@@ -100,14 +100,19 @@ fn new_return_stmt_text(return_value: Expr, after: &str) -> Vec<u8> {
 /// What tsgolint makes of the `return` statement: all that is after the keyword, after a `;` if it begins with a `(` or
 /// a `[`, and `after`.
 fn tsgolint_return_stmt_text(statement: Stmt, return_value: Expr, after: &str) -> Vec<u8> {
-    let (file, whole) = (statement.file(), statement.span());
-    let mut text = Vec::new();
-    if matches!(file.text().get(return_value.outer_span().start as usize), Some(b'(' | b'[')) {
-        text.push(b';');
-    }
-    text.extend_from_slice(file.slice(Span::new(whole.start + "return".len() as u32, whole.end)));
-    text.extend_from_slice(after.as_bytes());
-    text
+    let rest = statement.file().slice(Span::after(keyword_of(statement), statement.span().end));
+    [prefix_of_tsgolint(return_value).as_bytes(), rest, after.as_bytes()].concat()
+}
+
+/// The `return`.
+fn keyword_of(statement: Stmt) -> Span {
+    let start = statement.span().start;
+    Span::new(start, start + "return".len() as u32)
+}
+
+fn prefix_of_tsgolint(return_value: Expr) -> &'static str {
+    let first = return_value.file().text().get(return_value.outer_span().start as usize);
+    if matches!(first, Some(b'(' | b'[')) { ";" } else { "" }
 }
 
 fn function_declaration_allows_empty_return(function_node: Func) -> bool {
@@ -269,11 +274,13 @@ impl NoConfusingVoidExpression {
         if is_final_return(statement) {
             // Remove the `return` keyword.
             cx.report(node, INVALID_VOID_EXPR_RETURN_LAST).fix(|fixer| {
-                let text = || match fixer.file().language().is_oxlint {
-                    true => tsgolint_return_stmt_text(statement, return_value, ""),
-                    false => new_return_stmt_text(return_value, ";"),
-                };
-                can_fix(return_value, get_parent_function_node(statement)).then(|| fixer.replace(statement, text()))
+                can_fix(return_value, get_parent_function_node(statement)).then(|| {
+                    match fixer.file().language().is_oxlint {
+                        // tsgolint touches the keyword alone, so that what another rule does to the rest is kept.
+                        true => fixer.replace(keyword_of(statement), prefix_of_tsgolint(return_value)),
+                        false => fixer.replace(statement, new_return_stmt_text(return_value, ";")),
+                    }
+                })
             });
             return;
         }

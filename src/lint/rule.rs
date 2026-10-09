@@ -45,6 +45,7 @@ use crate::code_path::{CodePath, Segment};
 use crate::context::Cx;
 use crate::literal::Literal;
 use crate::options::Options;
+use crate::runner;
 use crate::semantic::Symbol;
 use smallvec::SmallVec;
 
@@ -341,14 +342,25 @@ pub struct Listeners<'a, R: Rule> {
     file: &'a File<'a>,
 }
 
-pub(crate) type Entries<'a, R> = SmallVec<[Entry<'a, R>; 4]>;
+pub(crate) type Entries<'a, R> = SmallVec<[Kept<'a, R>; 4]>;
+
+/// Calls the listener of an entry with all that it is for.
+pub(crate) type Runs<'a, R> = fn(&Entry<'a, R>, &R, &'a File<'a>, &mut Cx<'a, R>);
+
+/// A listener, and what calls it with the nodes in no particular order. `None`: it is called later.
+///
+/// That is a function for each kind of entry, and not one function with a `match`: see `number_literals` in `runner.rs`.
+pub(crate) struct Kept<'a, R: Rule> {
+    pub(crate) entry: Entry<'a, R>,
+    pub(crate) runs: Option<Runs<'a, R>>,
+}
 
 type OnCodePath<'a, R> = fn(&R, CodePath<'a>, Node<'a>, &mut Cx<'a, R>);
 type OnSegment<'a, R> = fn(&R, Segment<'a>, Node<'a>, &mut Cx<'a, R>);
 type OnSegmentLoop<'a, R> = fn(&R, Segment<'a>, Segment<'a>, Node<'a>, &mut Cx<'a, R>);
 
 macro_rules! sorts {
-    ($($(#[$doc:meta])* $method:ident $variant:ident $handle:ident $has_any:expr;)*) => {
+    ($($(#[$doc:meta])* $method:ident $variant:ident $handle:ident $runs:ident $has_any:expr;)*) => {
         pub(crate) enum Entry<'a, R: Rule> {
             Exprs(ExprTag, Listener<'a, R, Expr<'a>>),
             Stmts(StmtTag, Listener<'a, R, Stmt<'a>>),
@@ -379,7 +391,7 @@ macro_rules! sorts {
                 pub fn $method(&mut self, listener: Listener<'a, R, $handle<'a>>) {
                     let has_any: fn(&File) -> bool = $has_any;
                     if has_any(self.file) {
-                        self.unordered(Entry::$variant(listener));
+                        self.unordered(Entry::$variant(listener), runner::$runs);
                     }
                 }
             )*
@@ -390,35 +402,35 @@ macro_rules! sorts {
 sorts! {
     /// Every function-like: declarations, expressions, arrow functions, methods, accessors,
     /// constructors, static blocks, signatures, function types.
-    funcs Funcs Func |file| !file.hir.fns.is_empty();
+    funcs Funcs Func run_funcs |file| !file.hir.fns.is_empty();
     /// Every class declaration and expression.
-    classes Classes Class |file| !file.hir.classes.is_empty();
+    classes Classes Class run_classes |file| !file.hir.classes.is_empty();
     /// Every member of a class, an interface or a type literal.
-    members Members Member |file| !file.hir.members.is_empty();
+    members Members Member run_members |file| !file.hir.members.is_empty();
     /// Every property of an object literal and every attribute of a JSX element.
-    props Props Prop |file| !file.hir.props.is_empty();
+    props Props Prop run_props |file| !file.hir.props.is_empty();
     /// Every parameter.
-    params Params Param |file| !file.hir.params.is_empty();
+    params Params Param run_params |file| !file.hir.params.is_empty();
     /// Every type parameter.
-    type_params TypeParams TypeParam |file| !file.hir.type_params.is_empty();
+    type_params TypeParams TypeParam run_type_params |file| !file.hir.type_params.is_empty();
     /// Every `pat: ty = init` of a variable statement, and every `catch` parameter.
-    var_decls VarDecls VarDecl |file| !file.hir.var_decls.is_empty();
+    var_decls VarDecls VarDecl run_var_decls |file| !file.hir.var_decls.is_empty();
     /// Every `case` and `default` clause.
-    cases Cases Case |file| !file.hir.cases.is_empty();
+    cases Cases Case run_cases |file| !file.hir.cases.is_empty();
     /// Every member of an enum.
-    enum_members EnumMembers EnumMember |file| !file.hir.enum_members.is_empty();
+    enum_members EnumMembers EnumMember run_enum_members |file| !file.hir.enum_members.is_empty();
     /// Every `a as b` in the braces of an import.
-    import_specs ImportSpecs ImportSpec |file| !file.hir.import_specs.is_empty();
+    import_specs ImportSpecs ImportSpec run_import_specs |file| !file.hir.import_specs.is_empty();
     /// Every `a as b` in the braces of an export.
-    export_specs ExportSpecs ExportSpec |file| !file.hir.export_specs.is_empty();
+    export_specs ExportSpecs ExportSpec run_export_specs |file| !file.hir.export_specs.is_empty();
     /// Everything that the file declares in a scope: variables, functions, classes, parameters,
     /// imports, types, namespaces, enums.
-    symbols Symbols Symbol |_| true;
+    symbols Symbols Symbol run_symbols |_| true;
     /// Every string in quotes, which is a `Literal` for ESLint: not only the expressions, also the keys of properties and
     /// members, literal types, module specifiers, the names in quotes of imports and exports. Not the text in JSX.
-    string_literals StringLiterals Literal |_| true;
+    string_literals StringLiterals Literal run_string_literals |_| true;
     /// The same for numbers, including `1n`.
-    number_literals NumberLiterals Literal |_| true;
+    number_literals NumberLiterals Literal run_number_literals |_| true;
 }
 
 impl<'a, R: Rule> Listeners<'a, R> {
@@ -436,60 +448,63 @@ impl<'a, R: Rule> Listeners<'a, R> {
     #[inline(never)]
     fn later(&mut self, entry: Entry<'a, R>) {
         self.has_later = true;
-        self.entries.push(entry);
+        self.entries.push(Kept { entry, runs: None });
     }
 
     #[inline(never)]
-    fn unordered(&mut self, entry: Entry<'a, R>) {
-        self.entries.push(entry);
+    fn unordered(&mut self, entry: Entry<'a, R>, runs: Runs<'a, R>) {
+        self.entries.push(Kept {
+            entry,
+            runs: Some(runs),
+        });
     }
 
     #[inline(never)]
     fn one_of_exprs(&mut self, tag: ExprTag, listener: Listener<'a, R, Expr<'a>>) {
         if self.file.has_exprs([tag]) {
-            self.entries.push(Entry::Exprs(tag, listener));
+            self.unordered(Entry::Exprs(tag, listener), runner::run_exprs);
         }
     }
 
     #[inline(never)]
     fn one_of_optional_chains(&mut self, tag: ExprTag, listener: Listener<'a, R, Expr<'a>>) {
         if !self.file.chained_exprs_of(tag).is_empty() {
-            self.entries.push(Entry::Chained(tag, listener));
+            self.unordered(Entry::Chained(tag, listener), runner::run_chained);
         }
     }
 
     #[inline(never)]
     fn one_of_binaries(&mut self, tag: BinOp, listener: Listener<'a, R, Expr<'a>>) {
         if !self.file.binaries_of(tag).is_empty() {
-            self.entries.push(Entry::Binaries(tag, listener));
+            self.unordered(Entry::Binaries(tag, listener), runner::run_binaries);
         }
     }
 
     #[inline(never)]
     fn one_of_unaries(&mut self, tag: UnOp, listener: Listener<'a, R, Expr<'a>>) {
         if !self.file.unaries_of(tag).is_empty() {
-            self.entries.push(Entry::Unaries(tag, listener));
+            self.unordered(Entry::Unaries(tag, listener), runner::run_unaries);
         }
     }
 
     #[inline(never)]
     fn one_of_stmts(&mut self, tag: StmtTag, listener: Listener<'a, R, Stmt<'a>>) {
         if self.file.has_stmts([tag]) {
-            self.entries.push(Entry::Stmts(tag, listener));
+            self.unordered(Entry::Stmts(tag, listener), runner::run_stmts);
         }
     }
 
     #[inline(never)]
     fn one_of_types(&mut self, tag: TypeTag, listener: Listener<'a, R, TypeNode<'a>>) {
         if !self.file.types_of(tag).is_empty() {
-            self.entries.push(Entry::Types(tag, listener));
+            self.unordered(Entry::Types(tag, listener), runner::run_types);
         }
     }
 
     #[inline(never)]
     fn one_of_pats(&mut self, tag: PatTag, listener: Listener<'a, R, Pat<'a>>) {
         if !self.file.pats_of(tag).is_empty() {
-            self.entries.push(Entry::Pats(tag, listener));
+            self.unordered(Entry::Pats(tag, listener), runner::run_pats);
         }
     }
 
@@ -570,7 +585,7 @@ impl<'a, R: Rule> Listeners<'a, R> {
 
     /// Every node of one of these kinds, in no particular order: for a rule that learns from its options which kinds it is about.
     pub fn nodes(&mut self, tags: impl Into<NodeTags>, listener: Listener<'a, R, Node<'a>>) {
-        self.unordered(Entry::Nodes(tags.into(), listener));
+        self.unordered(Entry::Nodes(tags.into(), listener), runner::run_nodes);
     }
 
     /// Every node of one of these kinds, in source order, before its children.

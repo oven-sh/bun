@@ -802,6 +802,10 @@ pub struct Run<'u> {
     parsed: ShardedMap<Vec<u8>, Guarded<Vec<(ParseKey, &'u Parse<'u>)>>>,
     /// The paths (`tspath.Path`) whose text is not what is on the disk. They are parsed for each program.
     provided: FxHashSet<Vec<u8>>,
+    /// Only the files of the default library are the same for all programs: what one of them emits another reads.
+    has_only_libraries: bool,
+    /// Programs run at the same time.
+    overlaps: bool,
     parses: AtomicUsize,
 }
 
@@ -812,7 +816,18 @@ impl<'u> Run<'u> {
             atoms: Interner::new_in(session),
             parsed: ShardedMap::default(),
             provided,
+            has_only_libraries: false,
+            overlaps: false,
             parses: AtomicUsize::new(0),
+        }
+    }
+
+    /// For the projects of a build.
+    pub fn of_build(session: &'u Session) -> Run<'u> {
+        Run {
+            has_only_libraries: true,
+            overlaps: true,
+            ..Run::new(session, FxHashSet::default())
         }
     }
 
@@ -821,9 +836,11 @@ impl<'u> Run<'u> {
         self.parses.load(Ordering::Relaxed)
     }
 
-    fn is_provided(&self, host: &dyn Host, path: &[u8]) -> bool {
-        !self.provided.is_empty()
-            && (self.provided).contains(&*to_path(path, host.is_case_sensitive()))
+    /// Whether the file at `path` is the same for all programs.
+    fn has_file(&self, host: &dyn Host, path: &[u8], is_lib: bool) -> bool {
+        (is_lib || !self.has_only_libraries)
+            && (self.provided.is_empty()
+                || !(self.provided).contains(&*to_path(path, host.is_case_sensitive())))
     }
 
     /// Whether `parse` may answer for `path` without its text.
@@ -5219,6 +5236,11 @@ impl<'s> Files<'s> {
         });
         let symbols = Bases::new_in(modules.iter().map(|m| m.bound.symbols.len()), &session);
         let memo = Memo::new_in(&Bases::new_in(modules.iter().map(|_| 0), &session), session);
+        // Every atom in the files is in it: no file gets into a program from here on.
+        let atoms = match run {
+            Some(run) if run.overlaps => atoms.copy_in(session),
+            _ => atoms,
+        };
         let mut files = Files {
             session,
             arena,
@@ -5482,7 +5504,7 @@ impl<'s> Files<'s> {
                         }
                         (Some(_), None) => {
                             let text = text.unwrap_or_default();
-                            let parse = match run.filter(|run| !run.is_provided(host, path)) {
+                            let parse = match run.filter(|run| run.has_file(host, path, is_lib)) {
                                 Some(run) => {
                                     let key = ParseKey {
                                         options: options.for_parsing(),
@@ -5712,7 +5734,7 @@ impl<'s> Files<'s> {
         text: Option<Cow<'static, [u8]>>,
     ) -> Loaded<'s, 'r> {
         let specifies_esm = Self::specifies_esm(resolver, options, path, is_lib);
-        let (hir, bound) = match run.filter(|run| !run.is_provided(host, path)) {
+        let (hir, bound) = match run.filter(|run| run.has_file(host, path, is_lib)) {
             Some(run) => {
                 let key = ParseKey {
                     options: options.for_parsing(),

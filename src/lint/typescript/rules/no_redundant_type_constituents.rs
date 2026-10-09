@@ -240,7 +240,8 @@ fn get_type_node_type_part_flags<'a>(
         | TypeKind::Array(_)
         | TypeKind::Tuple(_)
         | TypeKind::Mapped(_) => TypeFlags::empty(),
-        TypeKind::Union(types) => {
+        // For tsgolint `(A | B)` is a `ParenthesizedType`, which it asks the type of.
+        TypeKind::Union(types) if !(type_node.is_parenthesized() && type_node.file().language().is_oxlint) => {
             for type_node in types {
                 get_type_node_type_part_flags(type_node, parts);
             }

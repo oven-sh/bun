@@ -16,7 +16,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { availableParallelism } from "node:os";
-import { join, sep } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { endChildren, spawn } from "../children";
 import { inputs as lineEndingInputs } from "./line-endings.cases.ts";
 
@@ -856,7 +856,10 @@ describe.concurrent("bun format", () => {
     const packages = {
       "node_modules/prettier/package.json": '{ "name": "prettier", "version": "3.0.0", "main": "index.cjs" }',
       "node_modules/prettier/index.cjs": `const fs = require("node:fs");
-exports.resolveConfig = async (file, { config }) => (config ? JSON.parse(fs.readFileSync(config, "utf8")) : null);
+exports.resolveConfig = async (file, { config }) => {
+  fs.appendFileSync(__dirname + "/paths.txt", file + "\\n" + config + "\\n");
+  return config ? JSON.parse(fs.readFileSync(config, "utf8")) : null;
+};
 exports.format = async (text, options) => {
   fs.appendFileSync(__dirname + "/calls.txt", JSON.stringify(options) + "\\n");
   if (text.includes("broken")) throw Object.assign(new SyntaxError("Unexpected token (1:2)"), { loc: {} });
@@ -872,7 +875,7 @@ exports.format = async (text, options) => {
       "a.svelte": "<p   >a</p>\n",
       "b.js": "b  ;\n",
     };
-    const reads = ["a.svelte", "b.js", "node_modules/prettier/calls.txt"];
+    const reads = ["a.svelte", "b.js", "node_modules/prettier/calls.txt", "node_modules/prettier/paths.txt"];
 
     test(
       "goes to the project's own Prettier, with its configuration file and the flags",
@@ -884,11 +887,56 @@ exports.format = async (text, options) => {
         expect(calls.map(it => JSON.parse(it))).toEqual([
           { ...config, tabWidth: 8, filepath: expect.stringMatching(/[\\/]a\.svelte$/) },
         ]);
+        // A plugin sees paths as the system writes them.
+        const paths = [JSON.parse(calls[0]).filepath, ...result.files[reads[3]]!.trim().split("\n")];
+        expect(paths.map(it => basename(it))).toEqual(["a.svelte", "a.svelte", ".prettierrc"]);
+        expect(paths).toEqual(paths.map(it => resolve(it)));
         expect(result.stderr).toContain("1 file was handed to the Prettier of the project");
         expect(result.exitCode).toBe(0);
       },
       timeout,
     );
+
+    test("a path reaches Prettier and its plugins as the system writes it, also on Windows", async () => {
+      const worker = join(import.meta.dir, "../../../src/lint/js_plugin/worker");
+      const head = { usesConfig: true, editorconfig: true, flags: {}, precedence: "cli-override" };
+      // What the file takes from the rest of the worker, with the paths of another system.
+      const run = (system: string, path: string, config: string | null) => `(() => {
+        const nodePath = require("node:path").${system};
+        const [MESSAGE, DONE, FAILED, NOT_INSTALLED, cwd, seen] = [0, "0", "1", "5", "/", []];
+        let loadingTime = 0;
+        const prettier = {
+          resolveConfig: async (file, { config }) => void seen.push(file, config ?? null),
+          format: async (text, { filepath }) => (seen.push(filepath), text),
+        };
+        const createRequire = () => Object.assign(() => prettier, { resolve() {} });
+        const json = Buffer.from(${JSON.stringify(JSON.stringify({ ...head, path, config }))});
+        const message = new Uint8Array([...new Uint8Array(new Uint32Array([json.length]).buffer), ...json, 120]);
+        const [buffers, ask] = [[message.buffer], () => message.length];
+        const decode = (buffer, from, to) => Buffer.from(buffer, from, to - from).toString();
+        ${readFileSync(join(worker, "paths.js"), "utf8")}
+        ${readFileSync(join(worker, "prettier.js"), "utf8")}
+        return formatWithPrettier().then(result => [result, ...seen]);
+      })()`;
+      const runs = [
+        run("win32", "C:/proj/src/a.svelte", "C:/proj/.prettierrc"),
+        run("win32", "//server/share/a.svelte", null),
+        run("posix", "/proj/a\\b.svelte", "/proj/.prettierrc"),
+      ];
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", `Promise.all([${runs}]).then(all => console.log(JSON.stringify(all)));`],
+        env,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(JSON.parse(stdout)).toEqual([
+        ["0x", String.raw`C:\proj\src\a.svelte`, String.raw`C:\proj\.prettierrc`, String.raw`C:\proj\src\a.svelte`],
+        ["0x", String.raw`\\server\share\a.svelte`, null, String.raw`\\server\share\a.svelte`],
+        ["0x", "/proj/a\\b.svelte", "/proj/.prettierrc", "/proj/a\\b.svelte"],
+      ]);
+      expect(exitCode).toBe(0);
+    });
 
     test(
       "is checked, and listed",
@@ -2705,6 +2753,33 @@ describe.concurrent("how a path is written", () => {
       ["src/a.js", "src/c.ts"],
       ["../src/a.js", "../src/deep/b.js"],
     ]);
+  });
+
+  // The answer is looked up by them, and they have `/` on every system. `path.win32` makes `\\` of what it is asked about.
+  test("what the program that asks Tailwind answers has the paths of the question, also on Windows", async () => {
+    const root = "C:/p/node_modules/tailwindcss";
+    const groups = [
+      { root, config: "C:/p/tailwind.config.js", classes: ["a"] },
+      { root, stylesheet: "C:/p/app.css", classes: ["b"] },
+    ];
+    using dir = tempDir("bun-format", { "question.json": JSON.stringify({ groups }) });
+    const source = ["evaluate-track.js", "fmt/tailwind.js"]
+      .map(it => readFileSync(join(import.meta.dir, "../../../src/lint/driver", it), "utf8"))
+      .join("")
+      .replaceAll('require("node:path")', 'require("node:path").win32');
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", source, "<marker>", join(String(dir), "question.json")],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const stdout = await proc.stdout.text();
+    const { config } = JSON.parse(stdout.slice(stdout.lastIndexOf("<marker>") + "<marker>".length));
+    // Nothing is installed there, so each is answered with an error.
+    expect(config.groups.map(({ error, ...which }: { error: string }) => [typeof error, which])).toEqual(
+      groups.map(({ classes, ...which }) => ["string", which]),
+    );
   });
 
   // Nothing in it is replaced: `normalizeBunSnapshot` makes `/` of every `\\`.

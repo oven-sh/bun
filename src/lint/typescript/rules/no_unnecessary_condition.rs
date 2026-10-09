@@ -624,8 +624,10 @@ fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
     };
     // The type of an element of an array does not tell that the index may be out of bounds.
     if !cx.state.is_no_unchecked_indexed_access
-        && (cx.language().is_oxlint && tsgolint_has_unguarded_element_access(node_to_check)
-            || option_chain_contains_option_array_index(node, &mut cx.state.chains_with_option_array_index))
+        && match cx.language().is_oxlint {
+            true => tsgolint_has_unguarded_element_access(node_to_check),
+            false => option_chain_contains_option_array_index(node, &mut cx.state.chains_with_option_array_index),
+        }
     {
         return;
     }

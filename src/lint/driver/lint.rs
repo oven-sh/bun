@@ -52,7 +52,7 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) broken_fixes: &'c Guarded<Vec<(Vec<u8>, Vec<RuleId>)>>,
     /// What oxlint says about the configuration files of TypeScript for which there is no program, so that no rule that
     /// needs types ran on their files: `typescript(tsconfig-error)`.
-    pub(crate) invalid_tsconfigs: &'c Guarded<Vec<FileResult>>,
+    pub(crate) invalid_tsconfigs: &'c Guarded<crate::typed::InvalidTsconfigs>,
     /// Which file imports which, for the rules that are about several files.
     pub(crate) modules: &'c Graph<'m>,
     pub(crate) timing: &'c Timing,

@@ -16,7 +16,7 @@ use bun_ptr::RefPtr;
 
 use super::bun_test::{self};
 use super::diff_format::DiffFormatter;
-use self::expect_deferred::{Asked, ExpectDeferred, Pass};
+use self::expect_deferred::{Asked, ExpectDeferred, Pass, Question};
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
 use super::pretty_format::JestPrettyFormat;
@@ -667,7 +667,7 @@ impl Expect {
         let v = unsafe { *value };
         let promise = match flags.promise() {
             Promise::None => None,
-            _ => match Pass::settled(global_this, Asked::Promise, &mut || {
+            _ => match Pass::settled(global_this, Question { asked: Asked::Promise, who: JSValue::UNDEFINED, what: v }, &mut || {
                 Ok(Self::promise_to_await(global_this, v)?.map_or(JSValue::UNDEFINED, bun_jsc::AnyPromise::as_value))
             }) {
                 Ok(promise) => promise,
@@ -938,7 +938,8 @@ impl Expect {
         }
 
         let mut captured_rejection: JSValue = JSValue::ZERO;
-        let return_value_from_function = Pass::once(global_this, Asked::Call, &mut || {
+        let question = Question { asked: Asked::Call, who: JSValue::UNDEFINED, what: value };
+        let return_value_from_function = Pass::once(global_this, question, &mut || {
             // Drain existing unhandled rejections
             let _ = vm.global().handle_rejected_promises();
 
@@ -956,7 +957,7 @@ impl Expect {
             scope.apply(vm);
             Ok(returned)
         })?;
-        let return_value = Pass::once(global_this, Asked::Call, &mut || {
+        let return_value = Pass::once(global_this, question, &mut || {
             Ok(if captured_rejection.is_empty() { return_value_from_function } else { captured_rejection })
         })?;
 
@@ -1009,9 +1010,10 @@ impl Expect {
             return Ok(message);
         };
         let mut text = message.to_bun_string(global_this)?.to_owned_slice();
-        // Only compared: Jest goes round a cycle until the message is too long for a string.
-        let mut seen = vec![thrown];
-        while !seen.contains(&cause) && seen.len() <= MAX_CAUSES {
+        // Jest goes round a cycle until the message is too long for a string.
+        let mut seen = [thrown; MAX_CAUSES + 1];
+        let mut count = 1;
+        while !seen[..count].contains(&cause) && count <= MAX_CAUSES {
             let line = if cause.is_any_error() {
                 cause.get(global_this, "message")?.unwrap_or(JSValue::UNDEFINED)
             } else if cause.is_string() {
@@ -1021,7 +1023,8 @@ impl Expect {
             };
             text.extend_from_slice(b"\nCause: ");
             text.extend_from_slice(&line.to_bun_string(global_this)?.to_owned_slice());
-            seen.push(cause);
+            seen[count] = cause;
+            count += 1;
             match if cause.is_object() { cause.get(global_this, "cause")? } else { None } {
                 Some(next) => cause = next,
                 None => break,
@@ -1599,18 +1602,21 @@ impl Expect {
     /// Execute the custom matcher for the given args (the left value + the args passed to the matcher call).
     /// This function is called both for symmetric and asymmetric matching.
     /// If silent=false, throws an exception in JS if the matcher result didn't result in a pass (or if the matcher result is invalid).
+    /// `who`: `Question::who`.
     pub(crate) fn execute_custom_matcher(
         global_this: &JSGlobalObject,
         custom_label: &bun_core::String,
         matcher_name: &bun_core::String,
         matcher_fn: JSValue,
+        who: JSValue,
         args: &[JSValue],
         flags: Flags,
         parent: Option<&RefPtr<bun_test::RefData>>,
         silent: bool,
     ) -> JsResult<bool> {
         // call the custom matcher implementation
-        let mut result = Pass::once_inline(global_this, Asked::Matcher, || {
+        let what = args.first().copied().unwrap_or(JSValue::UNDEFINED);
+        let mut result = Pass::once_inline(global_this, Question { asked: Asked::Matcher, who, what }, || {
             matcher_fn.call(global_this, ExpectMatcherContext { flags, parent: parent.cloned() }.to_js(global_this), args)
         })?;
         // support for async matcher results
@@ -1763,7 +1769,7 @@ impl Expect {
             matcher_args.push(*arg);
         }
 
-        let _ = Self::execute_custom_matcher(global_this, &expect.custom_label, &matcher_name, matcher_fn, &matcher_args, expect.flags.get(), expect.parent.as_ref(), false)?;
+        let _ = Self::execute_custom_matcher(global_this, &expect.custom_label, &matcher_name, matcher_fn, matcher_fn, &matcher_args, expect.flags.get(), expect.parent.as_ref(), false)?;
 
         Ok(this_value)
     }
@@ -2770,7 +2776,7 @@ impl ExpectCustomAsymmetricMatcher {
             matcher_args.push(captured_args.get_index(global_this, i as u32)?);
         }
 
-        Expect::execute_custom_matcher(global_this, &bun_core::String::EMPTY, &matcher_name, matcher_fn, &matcher_args, this.flags, None, true)
+        Expect::execute_custom_matcher(global_this, &bun_core::String::EMPTY, &matcher_name, matcher_fn, this_value, &matcher_args, this.flags, None, true)
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue

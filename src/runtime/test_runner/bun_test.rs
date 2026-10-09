@@ -1251,6 +1251,13 @@ impl BunTest {
             };
         }
 
+        // Left pending by what ran before: not of this callback, which cannot be called while it is.
+        if global_this.has_exception() {
+            global_this.clear_termination_exception();
+            // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point.
+            unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, &RefDataValue::Start) };
+        }
+
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };

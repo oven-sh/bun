@@ -1096,11 +1096,6 @@ describe.concurrent("matchers that meet a pending promise", () => {
           await later();
           return { pass: received?.message === message, message: () => "toHaveMessage" };
         },
-        async toBeAnObject(received) {
-          count("toBeAnObject");
-          await 0;
-          return { pass: typeof received === "object", message: () => "toBeAnObject" };
-        },
         toBeCalledFirst() {
           return { pass: count("toBeCalledFirst") === 1, message: () => "toBeCalledFirst" };
         },
@@ -1128,10 +1123,6 @@ describe.concurrent("matchers that meet a pending promise", () => {
             count("function");
             throw Object.assign(new Error("x"), { code: 1 });
           }).toThrow(expect.objectContaining({ code: expect.toBeOdd() })),
-        "a getter that returns another object each time": () =>
-          expect({ get a() { return {}; }, get b() { return {}; } }).toEqual({ a: expect.toBeAnObject(), b: expect.toBeAnObject() }),
-        "a getter that returns another promise each time": () =>
-          expect({ get a() { return later(1); } }).toEqual({ a: expect.resolvesTo.any(Number) }),
         "toHaveProperty, getter": () => expect({ get p() { return { v: 1 }; } }).toHaveProperty("p", { v: expect.toBeOdd() }),
         "a synchronous matcher before an asynchronous one": () =>
           expect({ a: 1, b: 1, c: 3 }).toEqual({ a: expect.toBeCalledFirst(), b: expect.toBeOdd(), c: expect.toBeOdd() }),
@@ -1157,11 +1148,140 @@ describe.concurrent("matchers that meet a pending promise", () => {
       'toContainEqual, Set: passes {"toBeOdd":2}',
       'toThrow, asymmetric: passes {"function":1,"toHaveMessage":1}',
       'toThrow, objectContaining: passes {"function":1,"toBeOdd":1}',
-      'a getter that returns another object each time: passes {"toBeAnObject":2}',
-      "a getter that returns another promise each time: passes {}",
       'toHaveProperty, getter: passes {"toBeOdd":1}',
       'a synchronous matcher before an asynchronous one: passes {"toBeCalledFirst":1,"toBeOdd":2}',
       'the same matcher twice: fails {"toBeOdd":2}',
+    ]);
+    expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  });
+
+  test("an answer is only given back to who asked, about what it was asked", async () => {
+    const { stdout, exitCode, signalCode } = await runTests(`
+      const calls = [];
+      expect.extend({
+        toBeAnything(received) {
+          calls.push("toBeAnything");
+          return { pass: true, message: () => "toBeAnything" };
+        },
+        async toBeOdd(received) {
+          calls.push("toBeOdd " + String(received));
+          await later();
+          return { pass: received % 2 === 1, message: () => "toBeOdd" };
+        },
+        async toBeDivisibleBy(received, divisor) {
+          calls.push("toBeDivisibleBy " + divisor);
+          await later();
+          return { pass: received % divisor === 0, message: () => "toBeDivisibleBy" };
+        },
+        async toBeThis(received, expected) {
+          calls.push("toBeThis");
+          await later();
+          return { pass: Object.is(received, expected), message: () => "toBeThis" };
+        },
+      });
+      const shrinking = object => {
+        let reads = 0;
+        return new Proxy(object, { ownKeys: target => Reflect.ownKeys(target).slice(reads++ ? 1 : 0) });
+      };
+      const cases = {
+        // Fails before the change, fails after it.
+        "both arrays lose their first item": () => {
+          const received = [1, 2], expected = [expect.toBeAnything(), expect.toBeOdd()];
+          const matcher = expect(received).toEqual(expected);
+          received.shift();
+          expected.shift();
+          return matcher;
+        },
+        "the same with expect.resolvesTo": () => {
+          const received = [later("string"), later(1)], expected = [expect.resolvesTo.any(String), expect.resolvesTo.any(String)];
+          const matcher = expect(received).toEqual(expected);
+          received.shift();
+          expected.shift();
+          return matcher;
+        },
+        "the same function with other arguments": () => {
+          const received = [4, 4], expected = [expect.toBeDivisibleBy(2), expect.toBeDivisibleBy(3)];
+          const matcher = expect(received).toEqual(expected);
+          received.shift();
+          expected.shift();
+          return matcher;
+        },
+        "toContainEqual() of an array that is consumed": () => {
+          const queue = [{ key: 1, n: 1 }, { key: 2, n: 2 }];
+          const matcher = expect(queue).toContainEqual({ key: expect.toBeOdd(), n: 2 });
+          queue.shift();
+          return matcher;
+        },
+        "keys that are gone when they are read again": () =>
+          expect(shrinking({ a: 1, b: 2 })).toEqual(shrinking({ a: expect.toBeAnything(), b: expect.toBeOdd() })),
+        "a getter that returns another number": () => {
+          let reads = 0;
+          return expect({ get a() { return reads++ ? 2 : 1; }, b: 1 }).toEqual({ a: expect.toBeOdd(), b: expect.toBeOdd() });
+        },
+        "a getter that returns another object each time": () =>
+          expect({ get a() { return {}; } }).toEqual({ a: expect.toBeThis(1) }),
+        "a getter that returns another promise each time": () =>
+          expect({ get a() { return later(1); } }).toEqual({ a: expect.resolvesTo.any(Number) }),
+        "another call of a mock": () => {
+          const fn = jest.fn();
+          fn(1);
+          const matcher = expect(fn).toHaveBeenLastCalledWith(expect.toBeOdd());
+          fn(2);
+          return matcher;
+        },
+        "-0 that becomes 0": () => {
+          const received = [-0];
+          const matcher = expect(received).toEqual([expect.toBeThis(-0)]);
+          received[0] = 0;
+          return matcher;
+        },
+        "what differs before the matcher comes to where it waited": () => {
+          const received = { a: 1, b: 1, c: 1 };
+          const matcher = expect(received).not.toEqual({ a: 1, b: expect.toBeAnything(), c: expect.toBeOdd() });
+          received.a = 2;
+          return matcher;
+        },
+        // The same question, though not the same bits.
+        "NaN": () => expect([NaN, 1]).toEqual([expect.toBeThis(NaN), expect.toBeOdd()]),
+        "-0": () => expect([-0, 1]).toEqual([expect.toBeThis(-0), expect.toBeOdd()]),
+        "a getter that returns another string with the same text": () => {
+          let reads = 0;
+          return expect({ get a() { return ["te", "xt"].join(reads++ ? "" : ""); }, b: 1 }).toEqual({ a: expect.toBeThis("text"), b: expect.toBeOdd() });
+        },
+        "what changes after where the matcher waited": () => {
+          const received = [1, 2];
+          const matcher = expect(received).toEqual([expect.toBeOdd(), 3]);
+          received[1] = 3;
+          return matcher;
+        },
+      };
+      for (const [name, matcher] of Object.entries(cases)) {
+        test(name, async () => {
+          calls.length = 0;
+          const outcome = await matcher().then(
+            () => "passes",
+            error => (error.message.includes("took another path") ? "took another path" : "fails"),
+          );
+          console.log(name + ": " + outcome + " | " + calls.join());
+        });
+      }
+    `);
+    expect(stdout).toEqual([
+      "both arrays lose their first item: took another path | toBeAnything,toBeOdd 2",
+      "the same with expect.resolvesTo: took another path | ",
+      "the same function with other arguments: took another path | toBeDivisibleBy 2",
+      "toContainEqual() of an array that is consumed: took another path | toBeOdd 1",
+      "keys that are gone when they are read again: took another path | toBeAnything,toBeOdd 2",
+      "a getter that returns another number: took another path | toBeOdd 1",
+      "a getter that returns another object each time: took another path | toBeThis",
+      "a getter that returns another promise each time: took another path | ",
+      "another call of a mock: took another path | toBeOdd 1",
+      "-0 that becomes 0: took another path | toBeThis",
+      "what differs before the matcher comes to where it waited: took another path | toBeAnything,toBeOdd 1",
+      "NaN: passes | toBeThis,toBeOdd 1",
+      "-0: passes | toBeThis,toBeOdd 1",
+      "a getter that returns another string with the same text: passes | toBeThis,toBeOdd 1",
+      "what changes after where the matcher waited: passes | toBeOdd 1",
     ]);
     expect({ exitCode, signalCode }).toEqual({ exitCode: 0, signalCode: null });
   });
@@ -1243,11 +1363,17 @@ describe.concurrent("matchers that meet a pending promise", () => {
 
   test("the time limit of its test ends a matcher that never stops meeting promises", async () => {
     const { report, exitCode, signalCode } = await runTests(`
-      expect.extend({ async toBeAnything() { await 0; return { pass: true, message: () => "" }; } });
+      const received = [0], expected = [];
+      expect.extend({
+        async toAddAnother() {
+          received.push(0);
+          expected.push(expect.toAddAnother());
+          await 0;
+          return { pass: true, message: () => "" };
+        },
+      });
       test("endless", async () => {
-        let length = 0;
-        const received = { get a() { return Array(++length).fill(0); } };
-        const expected = { get a() { return Array.from({ length }, () => expect.toBeAnything()); } };
+        expected.push(expect.toAddAnother());
         await expect(received).toEqual(expected);
       }, 100);
       test("next", () => {});

@@ -1315,7 +1315,8 @@ impl EventLoop {
         after_call: impl FnOnce(),
     ) -> JsResult<JSValue> {
         let EnterJs::Entered(_context) = Self::enter_js(context, global_object) else {
-            return Ok(JSValue::UNDEFINED);
+            // Not called is not "returned undefined".
+            return Err(crate::JsError::Thrown);
         };
         let result = callback.call(global_object, this_value, arguments);
         after_call();

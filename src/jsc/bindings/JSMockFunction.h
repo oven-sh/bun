@@ -49,12 +49,12 @@ public:
 
     static JSMockModule create(JSC::JSGlobalObject*);
 
-    // Weak sets, created by what enters them first and dropped once they have been walked.
+    // Weak sets, each made by the first mock that enters it. A mock leaves one only as it is brought back to the state that the set is there to find.
     // The spies that have not been restored
     JSC::WriteBarrier<JSC::Unknown> activeSpies;
     // The mocks that were called, or whose `mock` was read, since they were last cleared
     JSC::WriteBarrier<JSC::Unknown> calledMocks;
-    // The mocks whose implementation or mock name is not the one that resetting gives them
+    // The mocks whose implementations or mock name may not be the ones that resetting gives them
     JSC::WriteBarrier<JSC::Unknown> configuredMocks;
 
     // What `vi.stubEnv` / `vi.stubGlobal` replaced: a JSMap from name to original, created by the first stub
@@ -66,6 +66,9 @@ public:
 
     // A JSMap whose keys are what `didStartDynamicImport` was given, less the settled ones that were swept
     JSC::WriteBarrier<JSC::Unknown> dynamicImports;
+
+    // No test has started yet. Only until then does a preload load, or a beforeAll() of it run.
+    bool preloadMayBeRunning { true };
 
     // Called by GlobalObject::visitChildren
     template<typename Visitor>

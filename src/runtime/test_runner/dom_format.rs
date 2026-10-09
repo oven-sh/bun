@@ -249,7 +249,7 @@ fn compare_code_units(a: &String, b: &String) -> Ordering {
         .unwrap_or_else(|| a.len.cmp(&b.len))
 }
 
-pub(super) fn length_of(global: &JSGlobalObject, list: JSValue) -> JsResult<u32> {
+fn length_of(global: &JSGlobalObject, list: JSValue) -> JsResult<u32> {
     Ok(match list.get(global, "length")? {
         Some(length) if length.is_number() => length.as_number() as u32,
         _ => 0,
@@ -257,7 +257,7 @@ pub(super) fn length_of(global: &JSGlobalObject, list: JSValue) -> JsResult<u32>
 }
 
 /// The items `Array.from(list)` has: what its iterator yields, or its indexes when it has none.
-pub(super) fn for_each_item(
+fn for_each_item(
     global: &JSGlobalObject,
     list: JSValue,
     each: &mut dyn FnMut(JSValue) -> JsResult<()>,

@@ -1387,6 +1387,12 @@ describe.concurrent("test environment with the real", () => {
     // for all the files, each still gets the answer it gets alone.
     const files: [code: string, isReported: boolean][] = [
       [``, true],
+      [`window.addEventListener("error", event => event.stopPropagation(), true);`, false],
+      [`window.addEventListener("error", event => event.stopImmediatePropagation(), true);`, false],
+      [`window.addEventListener("error", event => event.stopImmediatePropagation());`, false],
+      [``, true],
+      [`jsdom.window.addEventListener("error", () => {});`, false],
+      [`window.dispatchEvent = EventTarget.prototype.dispatchEvent = () => true;`, true],
       [`window.addEventListener("error", () => {});`, false],
       [`addEventListener("error", () => {});`, false],
       [`window.addEventListener("error", event => event.preventDefault());`, false],
@@ -1409,7 +1415,24 @@ describe.concurrent("test environment with the real", () => {
       [``, true],
     ];
 
-    test("as in vitest", async () => {
+    // The count alone decides. vitest reports none of these: its listener is not the first to be called, or throws.
+    const notCounted: typeof files = [
+      [
+        `const stop = event => event.stopPropagation(); window.addEventListener("error", stop, true); window.removeEventListener("error", stop, false);`,
+        true,
+      ],
+      [
+        `EventTarget.prototype.addEventListener.call(jsdom.window, "error", event => event.stopImmediatePropagation(), true);`,
+        true,
+      ],
+      [`Event.prototype.preventDefault = () => { throw new Error("patched"); };`, true],
+      [``, true],
+    ];
+
+    test.each([
+      ["as in vitest", files],
+      ["whatever a listener that is not counted does to the event", notCounted],
+    ])("%s", async (_, files) => {
       using dir = project(
         Object.fromEntries(
           files.map(([code, isReported], i) => [
@@ -1428,6 +1451,36 @@ describe.concurrent("test environment with the real", () => {
       const { stderr, exitCode } = await bunTest(String(dir));
       expect(stderr).not.toContain("(fail)");
       expect(summary(stderr)).toEqual([`${files.length} pass`, "0 fail"]);
+      expect(exitCode).toBe(0);
+    });
+
+    test("an error event of an element only if it bubbles up to the window, as in vitest", async () => {
+      const events: [code: string, isReported: boolean][] = [
+        [`element.dispatchEvent(new Event("error"));`, false],
+        [`element.dispatchEvent(new ErrorEvent("error", { error }));`, false],
+        [`element.dispatchEvent(new ErrorEvent("error", { error, bubbles: true }));`, true],
+        [
+          `element.addEventListener("error", event => event.stopPropagation()); element.dispatchEvent(new ErrorEvent("error", { error, bubbles: true }));`,
+          false,
+        ],
+        [`document.dispatchEvent(new ErrorEvent("error", { error, bubbles: true }));`, true],
+      ];
+      using dir = project({
+        "a.test.js": `// ${VITEST} jsdom
+          import { test } from "bun:test";
+          ${events
+            .map(
+              ([code, isReported], i) => `test${isReported ? ".failing" : ""}("event ${i}", () => {
+                const error = new Error("of an element");
+                const element = document.body.appendChild(document.createElement("div"));
+                ${code}
+              });`,
+            )
+            .join("\n")}`,
+      });
+      const { stderr, exitCode } = await bunTest(String(dir));
+      expect(stderr).not.toContain("(fail)");
+      expect(summary(stderr)).toEqual([`${events.length} pass`, "0 fail"]);
       expect(exitCode).toBe(0);
     });
 

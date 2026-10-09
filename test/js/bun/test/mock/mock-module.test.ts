@@ -3256,6 +3256,56 @@ describe.concurrent("a module that is being loaded when it is to be evicted", ()
     );
   });
 
+  test("as a mock that is removed before import() calls its factory", async () => {
+    await expectFixturesToPass(
+      {
+        "k.js": `export const x = "real";`,
+        "slow.js": `export const s = "slow";`,
+        "user.js": `import { x } from "./k.js"; import { s } from "./slow.js"; export const seen = x + "/" + s;`,
+        "requires.cjs": `exports.x = require("./k.js").x;`,
+        "both.js": `import { x } from "./k.js"; import required from "./requires.cjs"; export const seen = x + "/" + required.x;`,
+        "removed.test.js": `
+          import { expect, test, vi } from "bun:test";
+          test.each([
+            ["vi.doUnmock()", () => vi.doUnmock("./k.js"), "real"],
+            ["another mock", () => vi.doMock("./k.js", () => ({ x: "second" })), "second"],
+            ["Bun.plugin.clearAll()", () => Bun.plugin.clearAll(), "real"],
+          ])("by %s, while another module is being fetched", async (_, remove, x) => {
+            vi.resetModules();
+            const asked = Promise.withResolvers(), gate = Promise.withResolvers();
+            Bun.plugin({
+              name: "slow",
+              setup(build) {
+                build.onLoad({ filter: /slow\\.js$/ }, async () => {
+                  asked.resolve();
+                  await gate.promise;
+                });
+              },
+            });
+            let calls = 0;
+            vi.doMock("./k.js", () => (calls++, { x: "first" }));
+            const user = import("./user.js");
+            await asked.promise;
+            remove();
+            gate.resolve();
+            expect((await user).seen).toBe(x + "/slow");
+            expect([(await import("./user.js")).seen, (await import("./k.js")).x, calls]).toEqual([x + "/slow", x, 0]);
+            Bun.plugin.clearAll();
+          });
+
+          test("by its factory, which a require() has called meanwhile", async () => {
+            vi.resetModules();
+            let calls = 0;
+            vi.doMock("./k.js", () => (calls++, vi.doUnmock("./k.js"), { x: "mock" }));
+            expect((await import("./both.js")).seen).toBe("mock/mock");
+            expect([(await import("./k.js")).x, calls]).toEqual(["real", 1]);
+          });
+        `,
+      },
+      4,
+    );
+  });
+
   test("a file that never finishes loading", async () => {
     using dir = tempDir("mock-module-evict", {
       ...graph,
@@ -3389,6 +3439,51 @@ describe.concurrent("the module mocks of a test file are undone when it ends: lo
       2,
       ["--preload", "./preload.js", "./a.test.js", "./b.test.js"],
     );
+  });
+
+  test("mocks whose factories have not been called when the file fails to load", async () => {
+    using dir = tempDir("mock-module-undo", {
+      ...modules,
+      "k2.js": `export const y = "real2";`,
+      "unrelated.js": `export const u = "real";`,
+      "broken.js": `import "./k.js"; import "./k2.js"; import "./slow.js"; import "./does-not-exist.js";`,
+      "preload.js": `
+        Bun.plugin({
+          name: "slow",
+          setup(build) {
+            build.onLoad({ filter: /slow\\.js$/ }, async () => {
+              await new Promise(resolve => setImmediate(resolve));
+            });
+          },
+        });
+      `,
+      "a.test.js": `
+        import { test, vi } from "bun:test";
+        import "./broken.js";
+        vi.mock("./k.js", () => ({ x: "mock" }));
+        vi.mock("./k2.js", () => ({ y: "mock" }));
+        test("never runs", () => {});
+      `,
+      "b.test.js": `
+        import { expect, mock, test } from "bun:test";
+        import { seen } from "./user.js";
+        test("the next file gets the originals, and its own mocks", async () => {
+          mock.module("./unrelated.js", () => ({ u: "mock" }));
+          expect([seen, (await import("./k2.js")).y, (await import("./unrelated.js")).u]).toEqual(["real/slow", "real2", "mock"]);
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--preload", "./preload.js", "./a.test.js", "./b.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 60_000,
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 1 pass\n 1 fail\n 1 error\n");
+    expect(exitCode).toBe(1);
   });
 });
 test.concurrent.each(["vi.mock", "vi.doMock", "mock.module"])(

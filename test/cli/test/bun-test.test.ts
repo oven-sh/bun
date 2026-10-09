@@ -2973,3 +2973,127 @@ describe.concurrent("an error that arrives while a test file loads", () => {
     });
   });
 });
+
+describe.concurrent("a test file that fails to load", () => {
+  const turn = `await new Promise(resolve => setTimeout(resolve));`;
+  const files = {
+    "preload.ts": `
+      import { afterAll, beforeAll } from "bun:test";
+      beforeAll(async () => {
+        ${turn}
+        console.log("beforeAll");
+        globalThis.isReady = true;
+      });
+      afterAll(async () => {
+        ${turn}
+        console.log("afterAll");
+      });
+    `,
+    "missing.test.ts": `
+      import { test } from "bun:test";
+      import "./missing.ts";
+      test("never registered", () => {});
+    `,
+    "throws.test.ts": `
+      import { afterAll, beforeAll, describe, test } from "bun:test";
+      beforeAll(() => console.log("unreachable"));
+      afterAll(() => console.log("unreachable"));
+      test("registered", () => console.log("unreachable"));
+      describe("registered", () => {
+        console.log("unreachable");
+      });
+      throw new Error("thrown by the file");
+    `,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      test("one", () => console.log("one:", globalThis.isReady));
+    `,
+    "two.test.ts": `
+      import { test } from "bun:test";
+      test("two", () => console.log("two:", globalThis.isReady));
+    `,
+  };
+  const both = ["beforeAll", "one: true", "two: true", "afterAll"];
+
+  test.each([
+    [["missing", "one", "two"], both],
+    [["one", "missing", "two"], both],
+    [["one", "two", "missing"], both],
+    [["throws", "one", "two"], both],
+    [["one", "two", "throws"], both],
+    [["missing"], ["beforeAll", "afterAll"]],
+    [
+      ["missing", "throws"],
+      ["beforeAll", "afterAll"],
+    ],
+    [
+      ["--isolate", "missing", "one"],
+      ["beforeAll", "afterAll", "beforeAll", "one: true", "afterAll"],
+    ],
+    [
+      ["--parallel=1", "missing", "one"],
+      ["beforeAll", "afterAll", "beforeAll", "one: true", "afterAll"],
+    ],
+    [
+      ["--rerun-each=2", "missing", "one"],
+      ["beforeAll", "one: true", "afterAll", "one: true", "afterAll"],
+    ],
+    [["--bail=1", "missing", "one"], ["beforeAll"]],
+    [
+      ["--bail=1", "one", "missing"],
+      ["beforeAll", "one: true", "afterAll"],
+    ],
+  ])("runs none of its tests, and the hooks of a preload that are due with it: %j", async (args, expected) => {
+    const { stdout, exitCode } = await runFiles(
+      files,
+      "--preload=./preload.ts",
+      ...args.map(arg => (arg.startsWith("-") ? arg : `./${arg}.test.ts`)),
+    );
+    expect({ stdout: stdout.split(/\r?\n/).filter(line => line && !line.startsWith("bun test ")), exitCode }).toEqual({
+      stdout: expected,
+      exitCode: 1,
+    });
+  });
+});
+
+describe.concurrent("an error whose message cannot be read", () => {
+  test.each(
+    Object.entries({
+      "an own getter": `Object.defineProperty(new Error("unreadable"), "message", { get() { throw new Error("thrown by the getter"); } })`,
+      "a getter of its class": `new (class extends Error { get message() { return this.details.join(); } })()`,
+    }),
+  )("%s: the tests after it are run, not reported unrun", async (_, error) => {
+    const { stdout, stderr, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { afterEach, test } from "bun:test";
+        const ran: string[] = [];
+        let attempts = 0;
+        afterEach(() => void ran.push("afterEach"));
+        test("throws it from a timer", async () => {
+          ran.push("attempt " + ++attempts);
+          if (attempts > 1) throw new Error("of attempt 2");
+          await new Promise(resolve => {
+            setTimeout(() => {
+              setTimeout(resolve);
+              throw ${error};
+            });
+          });
+        }, { retry: 1 });
+        test("fails", () => {
+          ran.push("fails");
+          throw new Error("of the test");
+        });
+        test("passes", () => console.log([...ran, "passes"].join()));
+      `,
+    });
+    expect({
+      stdout: stdout.split(/\r?\n/).filter(line => line && !line.startsWith("bun test ")),
+      results: stderr.match(/^\((pass|fail)\) [\w ]+/gm)?.map(line => line.trimEnd()),
+      exitCode,
+    }).toEqual({
+      stdout: ["attempt 1,afterEach,attempt 2,afterEach,fails,afterEach,passes"],
+      results: ["(fail) throws it from a timer", "(fail) fails", "(pass) passes"],
+      exitCode: 1,
+    });
+  });
+});

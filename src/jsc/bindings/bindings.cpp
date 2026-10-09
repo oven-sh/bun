@@ -5890,7 +5890,11 @@ static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlob
     JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     {
 
-        JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, withNonEnumerable ? DontEnumPropertiesMode::Include : DontEnumPropertiesMode::Exclude);
+        // withNonEnumerable is what older versions printed: `Module {}` for a module namespace, whose names only its class knows.
+        if (withNonEnumerable)
+            JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
+        else
+            object->methodTable()->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, );
     }
 

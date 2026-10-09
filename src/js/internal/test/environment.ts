@@ -132,13 +132,22 @@ function catchWindowErrors(win: any, properties: Properties) {
   let listenersOfFile = 0;
   const addEventListener = win.addEventListener.bind(win);
   const removeEventListener = win.removeEventListener.bind(win);
-  addEventListener("error", (event: ErrorEvent) => {
+  function report(event: ErrorEvent) {
     const { error } = event;
     if (listenersOfPreloads + listenersOfFile === 0 && error != null) {
-      event.preventDefault();
       reportUncaughtException(error);
+      event.preventDefault();
     }
-  });
+  }
+  // jsdom dispatches an uncaught error at the window. The first capturing listener there is called before any other,
+  // so no listener that an earlier file left on the window can stop the event first.
+  addEventListener(
+    "error",
+    (event: ErrorEvent) => void (event.eventPhase === 2 /* AT_TARGET */ && report(event)),
+    true,
+  );
+  // A capturing listener also sees the events of elements, bubbling or not: those stay with this one, as in vitest.
+  addEventListener("error", (event: ErrorEvent) => void (event.eventPhase === 3 /* BUBBLING_PHASE */ && report(event)));
   properties.$get("addEventListener")!.set!(function (this: unknown, ...args: unknown[]) {
     if (args[0] === "error") {
       if (isInPreload()) listenersOfPreloads++;

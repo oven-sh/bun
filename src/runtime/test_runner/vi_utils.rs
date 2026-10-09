@@ -13,6 +13,7 @@ unsafe extern "C" {
     safe fn JSMock__resetAllMocks(global: &JSGlobalObject);
     safe fn JSMock__clearAllMocks(global: &JSGlobalObject);
     safe fn JSMock__didFinishTestFile(global: &JSGlobalObject);
+    safe fn JSMock__willRunTest(global: &JSGlobalObject);
 }
 
 type Reset = extern "C" fn(&JSGlobalObject);
@@ -47,6 +48,7 @@ fn run(global: &JSGlobalObject, reset: Reset) {
 
 /// Before the `beforeEach` hooks of a test, each time it is tried.
 pub(crate) fn before_each_attempt(global: &JSGlobalObject, is_vitest: bool) {
+    JSMock__willRunTest(global);
     let Some(runner) = Jest::runner() else { return };
     let set = runner.vi_config.resets;
     let configured = runner.test_options.resets_before_each_test;

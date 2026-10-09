@@ -244,6 +244,81 @@ describe("import.meta.env in a test file", () => {
         Bun.inspect([whole], { compact: true }).replace("{", "ImportMetaEnv {"),
       );
       expect(require("node:util").inspect(env)).toBe(require("node:util").inspect(whole));
+      expect(Bun.inspect(env, { sorted: true })).toBe("ImportMetaEnv " + Bun.inspect(whole, { sorted: true }));
+    });
+
+    test("a snapshot has the variables of process.env", () => {
+      expect(env).toMatchInlineSnapshot(`
+        ImportMetaEnv {
+          "BASE_URL": "/",
+          "DEV": false,
+          "GREETING": "hello",
+          "MODE": "test",
+          "PROD": false,
+          "SSR": true,
+        }
+      `);
+      expect({ nested: env }).toMatchInlineSnapshot(`
+        {
+          "nested": ImportMetaEnv {
+            "BASE_URL": "/",
+            "DEV": false,
+            "GREETING": "hello",
+            "MODE": "test",
+            "PROD": false,
+            "SSR": true,
+          },
+        }
+      `);
+    });
+
+    function messageOf(fails: () => void) {
+      try {
+        fails();
+      } catch (error) {
+        return Bun.stripANSI((error as Error).message);
+      }
+      return "it passes";
+    }
+
+    test("a snapshot does not match once a variable has changed", () => {
+      process.env.GREETING = "goodbye";
+      expect(
+        messageOf(() =>
+          expect(env).toMatchInlineSnapshot(`
+            ImportMetaEnv {
+              "BASE_URL": "/",
+              "DEV": false,
+              "GREETING": "hello",
+              "MODE": "test",
+              "PROD": false,
+              "SSR": true,
+            }
+          `),
+        ),
+      ).toContain('"GREETING": "goodbye"');
+    });
+
+    test("a snapshot of Vite's variables alone does not match once there is another", () => {
+      process.env = { ADDED: "1" };
+      expect(
+        messageOf(() =>
+          expect(env).toMatchInlineSnapshot(`
+            ImportMetaEnv {
+              "BASE_URL": "/",
+              "DEV": true,
+              "MODE": "test",
+              "PROD": false,
+              "SSR": true,
+            }
+          `),
+        ),
+      ).toContain('"ADDED": "1"');
+    });
+
+    test("the message of a failed matcher has the variables of process.env", () => {
+      expect(messageOf(() => expect(env).toEqual({}))).toContain('"GREETING": "hello"');
+      expect(messageOf(() => expect({ nested: env }).toStrictEqual({}))).toContain('"GREETING": "hello"');
     });
 
     test("structuredClone refuses it", () => {

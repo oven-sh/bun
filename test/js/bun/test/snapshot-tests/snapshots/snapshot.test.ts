@@ -2296,6 +2296,92 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
   );
 
   test(
+    "has the properties that only the class of the object can list, and an older Bun's, which had none of them, passes",
+    async () => {
+      const { log, stderr, exitCode } = await logOf({
+        "exports.js": `export const a = 1; export const b = "two";`,
+        "a.test.js": `
+          import { test, expect } from "bun:test";
+          import vm from "node:vm";
+          import * as namespace from "./exports.js";
+          ${firstLine}
+          const sandbox = () => vm.runInContext("this", vm.createContext({ b: 2, a: 1 }));
+          test("now", () => {
+            expect({ namespace }).toMatchInlineSnapshot(\`
+              {
+                "namespace": Module Module {
+                  "a": 1,
+                  "b": "two",
+                },
+              }
+            \`);
+            expect({ sandbox: sandbox() }).toMatchInlineSnapshot(\`
+              {
+                "sandbox": JSGlobalProxy {
+                  "a": 1,
+                  "b": 2,
+                },
+              }
+            \`);
+          });
+          test("an older Bun", () => {
+            expect({ namespace }).toMatchInlineSnapshot(\`
+              {
+                "namespace": Module {},
+              }
+            \`);
+            expect({ sandbox: sandbox() }).toMatchInlineSnapshot(\`
+              {
+                "sandbox": JSGlobalProxy {},
+              }
+            \`);
+          });
+          test("another value", () => {
+            console.log(firstLine(() => expect({ namespace }).toMatchInlineSnapshot(\`
+              {
+                "namespace": Module Module {
+                  "a": 1,
+                  "b": "three",
+                },
+              }
+            \`)));
+          });
+        `,
+      });
+      expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({
+        log: ["expect(received).toMatchInlineSnapshot(expected)"],
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    timeout,
+  );
+
+  test(
+    "of import.meta.env fails when a variable has another value",
+    async () => {
+      using dir = tempDir("snapshot-import-meta-env", {
+        "a.test.js": `
+          test("the variables", () => {
+            process.env = { API_URL: process.env.API_URL };
+            expect(import.meta.env).toMatchSnapshot();
+            expect({ nested: import.meta.env }).toMatchSnapshot();
+          });
+        `,
+      });
+      const written = await runTests(String(dir), { CI: "false", API_URL: "first" });
+      expect(
+        readFileSync(join(String(dir), "__snapshots__", "a.test.js.snap"), "utf8").match(/"API_URL": .*/g),
+      ).toEqual(['"API_URL": "first",', '"API_URL": "first",']);
+      const same = await runTests(String(dir), { CI: "true", API_URL: "first" });
+      const other = await runTests(String(dir), { CI: "true", API_URL: "second" });
+      expect(other.stderr).toContain('"API_URL": "second"');
+      expect([written.exitCode, same.exitCode, other.exitCode]).toEqual([0, 0, 1]);
+    },
+    timeout,
+  );
+
+  test(
     "keeps its message whatever runs when the value is printed as an older Bun did",
     async () => {
       const { log, stderr, exitCode } = await logOf({
@@ -2406,6 +2492,122 @@ describe.concurrent("a snapshot that does not match what the value prints as", (
       const message = "expect(received).toThrowErrorMatchingInlineSnapshot(expected)";
       expect(log).toEqual([`${message} 1`, `${message} 101`]);
       expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    },
+    timeout,
+  );
+});
+
+describe.concurrent("what script hands to the printer of snapshots", () => {
+  const timeout = isDebug ? 60_000 : 5_000;
+  async function logOf(files: Record<string, string>, env: Record<string, string> = {}) {
+    using dir = tempDir("snapshot-hostile", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: { ...bunEnv, CI: "true", ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { log: stdout.split("\n").filter(line => line && !line.startsWith("bun test ")), stderr, exitCode };
+  }
+
+  test(
+    "the sample of an asymmetric matcher of another library is taken as pretty-format takes it",
+    async () => {
+      const file = (module: string) => `
+        import { test, expect } from ${JSON.stringify(module)};
+        const samples = { undefined: undefined, null: null, number: 5, string: "ab", symbol: Symbol("x"), bigint: 10n };
+        test("t", () => {
+          for (const name of ["ObjectContaining", "ObjectNotContaining", "ArrayContaining", "ArrayNotContaining"]) {
+            for (const [kind, sample] of Object.entries(samples)) {
+              try {
+                expect({ $$typeof: Symbol.for("jest.asymmetricMatcher"), toString: () => name, sample }).toMatchInlineSnapshot(\`other\`);
+              } catch (error) {
+                console.log(JSON.stringify([name, kind, error.name, error.message.replace("expect(received).toMatchInlineSnapshot(expected)\\n\\n", "")]));
+              }
+            }
+          }
+        });
+      `;
+      const [vitest, bun] = await Promise.all(
+        ["vitest", "bun:test"].map(module => logOf({ "a.test.js": file(module) })),
+      );
+      const mismatch = (received: string) =>
+        received.includes("\n")
+          ? `- other\n${received.replaceAll(/^/gm, "+ ")}\n\n- Expected  - 1\n+ Received  + ${received.split("\n").length}\n`
+          : `Expected: other\nReceived: ${received}\n`;
+      expect(vitest.log.map(line => JSON.parse(line))).toEqual(
+        ["ObjectContaining", "ObjectNotContaining"]
+          .flatMap(name => [
+            [name, "undefined", "TypeError", "Cannot convert undefined or null to object"],
+            [name, "null", "TypeError", "Cannot convert undefined or null to object"],
+            [name, "number", "Error", mismatch(`${name} {}`)],
+            [name, "string", "Error", mismatch(`\n${name} {\n  "0": "a",\n  "1": "b",\n}\n`)],
+            [name, "symbol", "Error", mismatch(`${name} {}`)],
+            [name, "bigint", "Error", mismatch(`${name} {}`)],
+          ])
+          .concat(
+            ["ArrayContaining", "ArrayNotContaining"].flatMap(name => [
+              [name, "undefined", "TypeError", "Cannot read properties of undefined (reading 'length')"],
+              [name, "null", "TypeError", "Cannot read properties of null (reading 'length')"],
+              [name, "number", "Error", mismatch(`${name} []`)],
+              [name, "string", "TypeError", "Cannot use the 'in' operator on a value that is not an object"],
+              [name, "symbol", "Error", mismatch(`${name} []`)],
+              [name, "bigint", "Error", mismatch(`${name} []`)],
+            ]),
+          ),
+      );
+      expect(bun.log.map(line => JSON.parse(line).slice(0, 3))).toEqual(
+        vitest.log.map(line => [...JSON.parse(line).slice(0, 2), "Error"]),
+      );
+      expect([vitest.exitCode, bun.exitCode]).toEqual([0, 0]);
+    },
+    timeout,
+  );
+
+  test.each([{}, { REALLOCATE: "1" }])(
+    "the `refs` that a serializer gives to `printer` are kept, whatever becomes of its array %j",
+    async env => {
+      const { log, stderr, exitCode } = await logOf(
+        {
+          "a.test.js": `
+            let given;
+            expect.addSnapshotSerializer({
+              test: value => value?.outer === true,
+              serialize(value, config, indentation, depth, refs, printer) {
+                given = Array.from({ length: 2000 }, (_, i) => ({ index: i, more: [i, i, i] }));
+                return printer(value.inner, config, indentation, depth, given);
+              },
+            });
+            expect.addSnapshotSerializer({
+              test: value => value?.leaf === true,
+              serialize(value, config, indentation, depth, refs) {
+                const kept = refs.filter((ref, i) => ref?.index === i && String(ref.more) === [i, i, i].join()).length;
+                return kept + " of " + refs.length + " at depth " + depth;
+              },
+            });
+            test("t", () => {
+              const inner = {
+                get a() {
+                  given.length = 0;
+                  given = null;
+                  Bun.gc(true);
+                  if (process.env.REALLOCATE) globalThis.others = Array.from({ length: 20000 }, (_, i) => ({ other: "x" + i, more: 1 }));
+                  return { leaf: true };
+                },
+              };
+              expect({ outer: true, inner }).toMatchInlineSnapshot(\`
+                {
+                  "a": 2000 of 2001 at depth 2001,
+                }
+              \`);
+            });
+          `,
+        },
+        env,
+      );
+      expect({ log, stderr: exitCode ? stderr : "", exitCode }).toEqual({ log: [], stderr: "", exitCode: 0 });
     },
     timeout,
   );

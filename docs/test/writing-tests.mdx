@@ -518,7 +518,7 @@ test("promises", async () => {
 
 A test does not end before the matchers it did not `await` have run, and their failures fail that test. Outside of a test, the file waits for them, and a failure is reported as an error between tests. The rest of the test does not wait for them, though: `await` the matcher when the code after it closes something the promise needs.
 
-`toThrow()` on a function that returns a pending promise, a custom matcher that returns a promise, and a matcher that compares a pending promise with `expect.resolvesTo` or `expect.rejectsTo` return a promise in the same way.
+`toThrow()` on a function that returns a pending promise, a custom matcher that returns a promise, and a matcher that compares a pending promise with `expect.resolvesTo` or `expect.rejectsTo` return a promise in the same way. What such a matcher compares must stay the same while it waits: if it has changed, the matcher fails.
 
 ## Soft Assertions
 

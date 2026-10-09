@@ -3036,53 +3036,15 @@ impl TestCommand {
             }
 
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-            match jsc::JSInternalPromise::opaque_mut(promise).status() {
-                jsc::js_promise::Status::Rejected => {
-                    // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
-                    // `unhandled_rejection(&mut self, ...)` can reborrow.
-                    let global = vm.global();
-                    let p = jsc::JSInternalPromise::opaque_mut(promise);
-                    let (result, promise_js) = (p.result(global.vm()), p.to_js());
-                    vm.unhandled_rejection(global, result, promise_js);
-                    reporter.summary().fail += 1;
-
-                    if reporter.jest.bail == reporter.summary().fail {
-                        reporter.print_summary();
-                        pretty_error!(
-                            "\nBailed out after {} failure{}<r>\n",
-                            reporter.jest.bail,
-                            if reporter.jest.bail == 1 { "" } else { "s" }
-                        );
-                        reporter.write_junit_report_if_needed();
-                        reporter.write_timings_if_needed();
-
-                        vm.exit_handler.exit_code = 1;
-                        vm.is_shutting_down = true;
-                        // `global_exit()` diverges, so the `exit_file()` defer
-                        // above never fires. Release the active file's
-                        // `Strong`s and the preload-hook scope here so
-                        // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim them,
-                        // then clear `RUNNER` so finalizers can't observe a
-                        // partially-torn-down `TestRunner`.
-                        // SAFETY: single-threaded; raw-ptr reborrow mirrors the
-                        // defer's escape.
-                        unsafe {
-                            (*bun_test_root_ptr).deinit_for_exit();
-                            jest::Jest::RUNNER.write(None);
-                        }
-                        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
-                        // SAFETY: global_exit diverges; `vm_ptr` is a fresh
-                        // raw-ptr reborrow of the exclusive `vm` borrow.
-                        unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
-                    }
-
-                    crate::test_runner::vi_utils::on_test_file_end(vm.global());
-                    crate::test_runner::timers::fake_timers::on_test_file_end(vm.global());
-                    Self::undo_module_mocks(vm, global, next_load_shares_global);
-                    environment.teardown(vm);
-                    return Ok(());
-                }
-                _ => {}
+            let failed_to_load = jsc::JSInternalPromise::opaque_mut(promise).status()
+                == jsc::js_promise::Status::Rejected;
+            if failed_to_load {
+                // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
+                // `unhandled_rejection(&mut self, ...)` can reborrow.
+                let global = vm.global();
+                let p = jsc::JSInternalPromise::opaque_mut(promise);
+                let (result, promise_js) = (p.result(global.vm()), p.to_js());
+                vm.unhandled_rejection(global, result, promise_js);
             }
 
             'blk: {
@@ -3093,6 +3055,8 @@ impl TestCommand {
                 };
                 let buntest = buntest_strong.get();
                 buntest.is_loading = false;
+                // None of its tests run. The hooks of a preload that are due with this file do.
+                buntest.collection.root_scope.failed |= failed_to_load;
 
                 // Automatically execute bun_test tests
                 if buntest.result_queue.readable_length() == 0 {
@@ -3165,6 +3129,40 @@ impl TestCommand {
                 drop(buntest_strong);
             }
 
+            if failed_to_load {
+                reporter.summary().fail += 1;
+
+                if reporter.jest.bail == reporter.summary().fail {
+                    reporter.print_summary();
+                    pretty_error!(
+                        "\nBailed out after {} failure{}<r>\n",
+                        reporter.jest.bail,
+                        if reporter.jest.bail == 1 { "" } else { "s" }
+                    );
+                    reporter.write_junit_report_if_needed();
+                    reporter.write_timings_if_needed();
+
+                    vm.exit_handler.exit_code = 1;
+                    vm.is_shutting_down = true;
+                    // `global_exit()` diverges, so the `exit_file()` defer
+                    // above never fires. Release the active file's
+                    // `Strong`s and the preload-hook scope here so
+                    // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim them,
+                    // then clear `RUNNER` so finalizers can't observe a
+                    // partially-torn-down `TestRunner`.
+                    // SAFETY: single-threaded; raw-ptr reborrow mirrors the
+                    // defer's escape.
+                    unsafe {
+                        (*bun_test_root_ptr).deinit_for_exit();
+                        jest::Jest::RUNNER.write(None);
+                    }
+                    let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
+                    // SAFETY: global_exit diverges; `vm_ptr` is a fresh
+                    // raw-ptr reborrow of the exclusive `vm` borrow.
+                    unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
+                }
+            }
+
             if next_load_shares_global {
                 crate::test_runner::vi_utils::on_test_file_end(vm.global());
                 crate::test_runner::timers::fake_timers::on_test_file_end(vm.global());
@@ -3186,7 +3184,11 @@ impl TestCommand {
                 vm.auto_killer.disable();
             }
 
-            repeat_index += 1;
+            repeat_index = if failed_to_load {
+                repeat_count
+            } else {
+                repeat_index + 1
+            };
             // Here, an error it throws is still this file's.
             if repeat_index == repeat_count {
                 environment.teardown(vm);

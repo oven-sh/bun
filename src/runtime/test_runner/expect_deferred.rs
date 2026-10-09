@@ -243,6 +243,15 @@ impl RunningEntry {
 }
 
 /// What the body of a matcher asks user code for.
+#[derive(Copy, Clone)]
+pub(crate) struct Question {
+    pub(crate) asked: Asked,
+    /// Who is asked, where a matcher may ask several: a function, or an `ExpectCustomAsymmetricMatcher`. Else undefined.
+    pub(crate) who: JSValue,
+    /// What about.
+    pub(crate) what: JSValue,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Asked {
     /// What a custom matcher returns.
@@ -271,15 +280,16 @@ enum Role {
 pub(crate) struct Pass {
     outer: Cell<*const Pass>,
     role: Role,
-    /// How many answers the body has come by.
+    /// How many answers the body has come by. `Role::Replaying`: how many of those in the journal.
     cursor: Cell<u32>,
     /// Four bits for each of `recent`: `Asked`, and whether it was thrown.
     recent_kinds: Cell<u32>,
-    /// `Role::Matcher`: an array of the answers so far, two elements each: as in `recent_kinds`, and the value. Empty
-    /// until the matcher has to wait or `recent` is full: most matchers never wait. `Role::Replaying`: the `ExpectDeferred`.
+    /// `Role::Matcher`: an array of the answers so far, `STRIDE` elements each: as in `recent_kinds`, `Question::who`,
+    /// `Question::what`, and the answer. Empty until the matcher has to wait or `recent` is full: most matchers never
+    /// wait. `Role::Replaying`: the `ExpectDeferred`.
     journal: Cell<JSValue>,
-    /// The answers so far, while there is no `journal`.
-    recent: [Cell<JSValue>; Pass::RECENT],
+    /// `Question::who`, `Question::what` and the answer, so far, while there is no `journal`.
+    recent: [[Cell<JSValue>; 3]; Pass::RECENT],
 }
 
 /// Until it is dropped, its `Pass` is the one that [`Pass::once`] records for.
@@ -294,6 +304,7 @@ impl Drop for EnteredPass<'_> {
 
 impl Pass {
     const RECENT: usize = 4;
+    const STRIDE: u32 = 4;
 
     #[inline]
     fn new(role: Role, journal: JSValue) -> Pass {
@@ -303,7 +314,7 @@ impl Pass {
             cursor: Cell::new(0),
             recent_kinds: Cell::new(0),
             journal: Cell::new(journal),
-            recent: [const { Cell::new(JSValue::ZERO) }; Self::RECENT],
+            recent: [const { [const { Cell::new(JSValue::ZERO) }; 3] }; Self::RECENT],
         }
     }
 
@@ -353,17 +364,17 @@ impl Pass {
     #[inline(never)]
     pub(crate) fn once(
         global: &JSGlobalObject,
-        asked: Asked,
+        question: Question,
         ask: &mut dyn FnMut() -> JsResult<JSValue>,
     ) -> JsResult<JSValue> {
-        Self::once_inline(global, asked, ask)
+        Self::once_inline(global, question, ask)
     }
 
     /// `once()`, for where it counts: a custom matcher.
     #[inline(always)]
     pub(crate) fn once_inline(
         global: &JSGlobalObject,
-        asked: Asked,
+        question: Question,
         mut ask: impl FnMut() -> JsResult<JSValue>,
     ) -> JsResult<JSValue> {
         let Some(pass) = Self::current() else {
@@ -376,15 +387,19 @@ impl Pass {
         {
             pass.journal.set(journal);
         }
-        let Some(recent) = pass.recent.get(at as usize).filter(|_| pass.journal.get().is_empty())
+        let Some([who, what, answered]) =
+            pass.recent.get(at as usize).filter(|_| pass.journal.get().is_empty())
         else {
-            return pass.once_in_journal(global, at, asked, &mut ask);
+            return pass.once_in_journal(global, at, question, &mut ask);
         };
         let answer = ask();
         let (threw, value) = Self::returned_or_thrown(global, answer)?;
-        recent.set(value);
-        pass.recent_kinds
-            .set(pass.recent_kinds.get() | ((asked as u32) << 1 | u32::from(threw)) << (at * 4));
+        who.set(question.who);
+        what.set(question.what);
+        answered.set(value);
+        pass.recent_kinds.set(
+            pass.recent_kinds.get() | ((question.asked as u32) << 1 | u32::from(threw)) << (at * 4),
+        );
         Self::return_or_throw(global, threw, value)
     }
 
@@ -415,15 +430,30 @@ impl Pass {
     #[cold]
     fn journal(&self, global: &JSGlobalObject, recorded: u32) -> JsResult<JSValue> {
         if self.journal.get().is_empty() {
-            let journal = JSValue::create_empty_array(global, 0)?;
-            for (index, recent) in (0..recorded).zip(&self.recent) {
+            let mut elements = [JSValue::UNDEFINED; Self::RECENT * Self::STRIDE as usize];
+            let recorded = (recorded as usize).min(Self::RECENT);
+            for (index, [who, what, answered]) in self.recent[..recorded].iter().enumerate() {
                 let kind = (self.recent_kinds.get() >> (index * 4)) & 0xF;
-                journal.put_index(global, index * 2, JSValue::js_number_from_int32(kind as i32))?;
-                journal.put_index(global, index * 2 + 1, recent.get())?;
+                elements[index * Self::STRIDE as usize..][..Self::STRIDE as usize].copy_from_slice(&[
+                    JSValue::js_number_from_int32(kind as i32),
+                    who.get(),
+                    what.get(),
+                    answered.get(),
+                ]);
             }
-            self.journal.set(journal);
+            self.journal.set(bun_jsc::JSArray::create(
+                global,
+                &elements[..recorded * Self::STRIDE as usize],
+            )?);
         }
         Ok(self.journal.get())
+    }
+
+    #[cold]
+    fn took_another_path(global: &JSGlobalObject) -> JsError {
+        global.throw(format_args!(
+            "A matcher that waited for a promise took another path when it went on: what it compares has changed in the meantime, or is another value each time it is read. `await` the matcher before you change what it compares, and compare values that stay the same"
+        ))
     }
 
     /// `once()` of a matcher that runs again, or that has asked for more than `recent` holds.
@@ -433,35 +463,42 @@ impl Pass {
         &self,
         global: &JSGlobalObject,
         at: u32,
-        asked: Asked,
+        question: Question,
         ask: &mut dyn FnMut() -> JsResult<JSValue>,
     ) -> JsResult<JSValue> {
         let journal = self.journal(global, at)?;
-        if u64::from(at * 2) < journal.get_length(global)? {
-            let kind = journal.get_index(global, at * 2)?.to_int32();
-            let value = journal.get_index(global, at * 2 + 1)?;
-            if kind >> 1 != asked as i32 {
-                return Err(global.throw(format_args!(
-                    "A matcher ran again once the promise it waited for had settled, and took another path: what it compares has changed in the meantime"
-                )));
+        let index = at * Self::STRIDE;
+        if u64::from(index) < journal.get_length(global)? {
+            let kind = journal.get_index(global, index)?.to_int32();
+            // An answer is for who was asked about what, not for whoever asks at the same point.
+            if kind >> 1 != question.asked as i32
+                || journal.get_index(global, index + 1)? != question.who
+                || !journal.get_index(global, index + 2)?.is_same_value(question.what, global)?
+            {
+                return Err(Self::took_another_path(global));
             }
-            return Self::return_or_throw(global, kind & 1 != 0, value);
+            // SAFETY: as in `current`.
+            if let Some(replaying) = unsafe { self.outer.get().as_ref() } {
+                replaying.cursor.set(at + 1);
+            }
+            return Self::return_or_throw(global, kind & 1 != 0, journal.get_index(global, index + 3)?);
         }
         let answer = ask();
         let (threw, value) = Self::returned_or_thrown(global, answer)?;
-        let kind = (asked as i32) << 1 | i32::from(threw);
-        journal.put_index(global, at * 2, JSValue::js_number_from_int32(kind))?;
-        journal.put_index(global, at * 2 + 1, value)?;
+        let kind = (question.asked as i32) << 1 | i32::from(threw);
+        for element in [JSValue::js_number_from_int32(kind), question.who, question.what, value] {
+            journal.push(global, element)?;
+        }
         Self::return_or_throw(global, threw, value)
     }
 
     /// `once()`, of a promise: it has settled when it is returned. `None`: `ask()` returned something else.
     pub(crate) fn settled(
         global: &JSGlobalObject,
-        asked: Asked,
+        question: Question,
         ask: &mut dyn FnMut() -> JsResult<JSValue>,
     ) -> JsResult<Option<AnyPromise>> {
-        let Some(promise) = Self::once(global, asked, ask)?.as_any_promise() else {
+        let Some(promise) = Self::once(global, question, ask)?.as_any_promise() else {
             return Ok(None);
         };
         if promise.status() == Status::Pending {
@@ -612,9 +649,24 @@ impl ExpectDeferred {
                 Self::MAX_REPLAYS,
             )))
         } else {
+            let recorded = match js::journal_get_cached(deferred) {
+                Some(journal) => journal.get_length(global)? / u64::from(Pass::STRIDE),
+                None => 0,
+            };
             let pass = Pass::replaying(deferred);
             let _entered = pass.enter();
-            call.call(global, JSValue::UNDEFINED, &[])
+            let result = call.call(global, JSValue::UNDEFINED, &[]);
+            if u64::from(pass.cursor.get()) >= recorded
+                || matches!(result, Ok(returned) if returned == promise)
+                || matches!(result, Err(JsError::Terminated))
+                || global.has_pending_termination_exception()
+            {
+                result
+            } else {
+                // It ended before it came to where it had waited.
+                global.clear_exception();
+                Err(Pass::took_another_path(global))
+            }
         };
 
         let Some(promise_ptr) = promise.as_promise() else {
@@ -906,7 +958,12 @@ impl Expect {
     /// `expect.poll()`: the matcher in `frame` is called on what the function returns, time and again, until it passes.
     fn poll_matcher(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         self.increment_expect_call_counter();
-        let polling = Pass::once(global, Asked::Poll, &mut || self.start_polling(global, frame))?;
+        let question = Question {
+            asked: Asked::Poll,
+            who: JSValue::UNDEFINED,
+            what: JSValue::UNDEFINED,
+        };
+        let polling = Pass::once(global, question, &mut || self.start_polling(global, frame))?;
         let Some(polling) = polling.as_any_promise() else {
             return Ok(JSValue::UNDEFINED);
         };

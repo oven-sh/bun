@@ -3,7 +3,7 @@ use core::ffi::c_void;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
 
-use super::expect_deferred::{Asked, Pass};
+use super::expect_deferred::{Asked, Pass, Question};
 use super::{get_signature, throw, Expect};
 
 struct Items {
@@ -71,7 +71,8 @@ pub(crate) fn to_contain_equal(
             };
         }
     } else if value.is_iterable(global)? {
-        let items = Pass::once(global, Asked::Items, &mut || {
+        let question = Question { asked: Asked::Items, who: JSValue::UNDEFINED, what: value };
+        let items = Pass::once(global, question, &mut || {
             let mut items = Items { array: JSValue::create_empty_array(global, 0)?, len: 0 };
             value.for_each(global, (&raw mut items).cast::<c_void>(), collect_item)?;
             Ok(items.array)

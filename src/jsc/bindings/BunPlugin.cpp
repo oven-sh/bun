@@ -1340,9 +1340,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunModuleMockLater, (JSC::JSGlobalObject * le
     auto [mock, settled] = toModuleMockWith<JSC::JSPromise>(globalObject, scope, context);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // Once all that is being fetched has been, it is known which modules wait for the mock (isWaitingForModule).
+    bool isInUse = Bun::isModuleMockInUse(globalObject, mock);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    // Before a factory is called, all that is being fetched has to have been: then it is known which modules wait for the mock
+    // (isWaitingForModule). Only fetches that settle without a factory are waited for, and only by a mock whose factory is about to be called:
+    // one that was removed lets go of its module at once, so that no two wait for each other.
+    bool callsFactory = isInUse && mock->state == JSModuleMock::State::NotCalled;
+    auto& moduleMocksBeingLoaded = globalObject->onLoadPlugins.moduleMocksBeingLoaded;
     for (auto& entry : globalObject->moduleLoader()->moduleMap().values()) {
-        if (entry->record() || entry->status() != JSC::ModuleRegistryEntry::Status::Fetching || registeredModuleMock(globalObject, entry->key().string()))
+        String key = entry->key().string();
+        if (!callsFactory || entry->record() || entry->status() != JSC::ModuleRegistryEntry::Status::Fetching || registeredModuleMock(globalObject, key) || moduleMocksBeingLoaded.contains(key))
             continue;
         JSC::JSPromise* fetching = entry->ensureModulePromise(globalObject);
         if (fetching->status() != JSC::JSPromise::Status::Pending)
@@ -1352,8 +1360,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunModuleMockLater, (JSC::JSGlobalObject * le
         return JSValue::encode(jsUndefined());
     }
 
-    bool isInUse = Bun::isModuleMockInUse(globalObject, mock);
-    RETURN_IF_EXCEPTION(scope, {});
     JSC::JSPromise* pending = isInUse ? mock->run(globalObject, false) : nullptr;
     if (scope.exception()) [[unlikely]]
         settled->rejectWithCaughtException(vm, scope);

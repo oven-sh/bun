@@ -379,13 +379,8 @@ public:
     bool hasLazyPrototype { true };
     bool isInCalledMocks { false };
     bool isInConfiguredMocks { false };
-    // Who first called, configured or installed it. The end of a test file leaves alone what a preload did.
-    enum class FirstUse : uint8_t {
-        None,
-        InTestFile,
-        InPreload,
-    };
-    FirstUse firstUse { FirstUse::None };
+    // While it loaded, or in a beforeAll() of it, which run once for all the test files: the end of a test file leaves it alone.
+    bool isMadeByPreload { false };
     // what mockName() gave a mock of `jest` or `vi`, until it is reset
     mutable JSC::WriteBarrier<JSC::JSString> mockName;
 
@@ -852,8 +847,6 @@ static NEVER_INLINE void addToMockSet(JSMockFunction* mock, JSC::WriteBarrier<JS
     if (!set)
         set.set(vm, globalObject, ActiveSpySet::create(vm, globalObject->mockModule.activeSpySetStructure.getInitializedOnMainThread(globalObject)));
     uncheckedDowncast<ActiveSpySet>(set.get())->add(vm, mock, mock);
-    if (mock->firstUse == JSMockFunction::FirstUse::None)
-        mock->firstUse = JSMock__isInPreload(globalObject) ? JSMockFunction::FirstUse::InPreload : JSMockFunction::FirstUse::InTestFile;
 }
 
 static void setFallbackImplementation(JSMockFunction* fn, JSGlobalObject* jsGlobalObject, JSMockImplementation::Kind kind, JSValue value)
@@ -1055,20 +1048,19 @@ static void takeMocksOfTestFile(Zig::GlobalObject* globalObject, JSC::WriteBarri
     MarkedArgumentBuffer mocks;
     takeMocks(set, mocks);
     forEachMock(globalObject, mocks, [&](JSMockFunction* mock) {
-        if (mock->firstUse == JSMockFunction::FirstUse::InPreload)
+        if (mock->isMadeByPreload)
             addToMockSet(mock, set);
         else
             apply(mock);
     });
 }
 
-// The next test file shares the global object: it gets neither the spies nor the calls of this one, and does not walk its mocks.
+// The next test file shares the global object: it gets neither the spies nor the calls of this one.
+// It may share a module with it, though: what that has configured stays for resetAllMocks() to find.
 extern "C" void JSMock__didFinishTestFile(Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     takeMocksOfTestFile(globalObject, globalObject->mockModule.calledMocks, clearCalledMock);
-    RETURN_IF_EXCEPTION(scope, );
-    takeMocksOfTestFile(globalObject, globalObject->mockModule.configuredMocks, [](JSMockFunction* mock) { mock->isInConfiguredMocks = false; });
     RETURN_IF_EXCEPTION(scope, );
     scope.release();
     takeMocksOfTestFile(globalObject, globalObject->mockModule.activeSpies, [globalObject](JSMockFunction* spy) { restoreSpy(globalObject, spy); });
@@ -1278,7 +1270,14 @@ static JSMockFunction* createMockFunction(JSC::VM& vm, Zig::GlobalObject* global
 {
     auto* mock = JSMockFunction::create(vm, globalObject);
     mock->isVitest = isVitest;
+    if (globalObject->mockModule.preloadMayBeRunning) [[unlikely]]
+        mock->isMadeByPreload = JSMock__isInPreload(globalObject);
     return mock;
+}
+
+extern "C" void JSMock__willRunTest(Zig::GlobalObject* globalObject)
+{
+    globalObject->mockModule.preloadMayBeRunning = false;
 }
 
 static ALWAYS_INLINE JSC::JSArray* createArgumentsArray(JSC::VM& vm, Zig::GlobalObject* globalObject, const JSC::ArgList& args)
@@ -2169,6 +2168,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementationCleanup, (JSC::JSGlobal
     }
 
     auto fn = dynamicDowncast<JSMockFunction>(ctx->internalField(0).get());
+    fn->didConfigure();
     fn->implementation.set(vm, fn, ctx->internalField(1).get());
     fn->tail.set(vm, fn, ctx->internalField(2).get());
     fn->fallbackImplmentation.set(vm, fn, ctx->internalField(3).get());
@@ -2243,6 +2243,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionWithImplementation, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(promise);
     }
 
+    thisObject->didConfigure();
     thisObject->implementation.set(vm, thisObject, lastImpl);
     thisObject->tail.set(vm, thisObject, lastTail);
     thisObject->fallbackImplmentation.set(vm, thisObject, lastFallback);

@@ -4066,6 +4066,63 @@ if (isBun) {
       },
     );
 
+    describe.each(flavors)("%s: resetAllMocks() finds what withImplementation() has put back", (_, isVitest, fn) => {
+      const initial = isVitest ? "initial" : undefined;
+      const configured = () =>
+        fn(() => "initial")
+          .mockImplementation(() => "configured")
+          .mockImplementationOnce(() => "once");
+
+      test("after a callback that reset all mocks", () => {
+        const mocked = configured();
+        mocked.withImplementation(
+          () => "temporary",
+          () => {
+            jest.resetAllMocks();
+            expect(mocked()).toBe(initial);
+          },
+        );
+        expect([mocked(), mocked()]).toEqual(["once", "configured"]);
+        jest.resetAllMocks();
+        expect(mocked()).toBe(initial);
+      });
+
+      test("after a callback that reset the mock", () => {
+        const mocked = configured();
+        jest.resetAllMocks();
+        mocked.mockImplementation(() => "configured");
+        mocked.withImplementation(
+          () => "temporary",
+          () => {
+            mocked.mockReset();
+            jest.resetAllMocks();
+          },
+        );
+        expect(mocked()).toBe("configured");
+        jest.resetAllMocks();
+        expect(mocked()).toBe(initial);
+      });
+
+      test("once the promise of the callback has settled, when all mocks were reset before", async () => {
+        for (const settle of ["resolve", "reject"]) {
+          const mocked = configured();
+          const callback = Promise.withResolvers();
+          const done = mocked.withImplementation(
+            () => "temporary",
+            () => callback.promise,
+          );
+          expect(mocked()).toBe("temporary");
+          jest.resetAllMocks();
+          expect(mocked()).toBe(initial);
+          callback[settle]("settled");
+          await done.catch(() => {});
+          expect([mocked(), mocked()]).toEqual(["once", "configured"]);
+          jest.resetAllMocks();
+          expect(mocked()).toBe(initial);
+        }
+      });
+    });
+
     test("mock.instances of calls that were made before it was first read", () => {
       for (const [, , fn] of flavors) {
         const mocked = fn();

@@ -496,15 +496,12 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
     if (except.type == SYNTAX_ERROR_CODE) {
         except.message = Bun::toStringRef(err->sanitizedMessageString(global));
 
-    } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
-        RETURN_IF_EXCEPTION(scope, );
-        except.message = Bun::toStringRef(global, message);
+    } else {
+        JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message);
+        // A getter that throws is no message.
         if (!scope.clearExceptionExceptTermination()) [[unlikely]]
             return;
-    } else {
-        RETURN_IF_EXCEPTION(scope, );
-
-        except.message = Bun::toStringRef(err->sanitizedMessageString(global));
+        except.message = message ? Bun::toStringRef(global, message) : Bun::toStringRef(err->sanitizedMessageString(global));
     }
 
     if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
@@ -826,9 +823,8 @@ extern "C" void JSC__Exception__getStackTrace(JSC::Exception* arg0, JSC::JSGloba
     populateStackTrace(arg0->vm(), arg0->stack(), *trace, PopulateStackTraceFlags::OnlyPosition);
 }
 
-extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
+static void toZigException(JSC::JSValue value, JSC::JSGlobalObject* global, ZigException* exception)
 {
-    JSC::JSValue value = JSC::JSValue::decode(jsException);
     if (value == JSC::JSValue {}) {
         exception->type = JSErrorCodeError;
         exception->name = Bun::toStringRef("Error"_s);
@@ -859,6 +855,14 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::Enc
     }
 
     exceptionFromString(*exception, value, global);
+}
+
+extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
+{
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(global));
+    toZigException(JSC::JSValue::decode(jsException), global, exception);
+    // The caller prints what could be read. What could not be is nobody's to catch.
+    (void)scope.clearExceptionExceptTermination();
 }
 
 extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)

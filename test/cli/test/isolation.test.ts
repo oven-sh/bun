@@ -2278,48 +2278,22 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
     expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
   });
 
-  test("the next file does not see the calls, and its *AllMocks() do not visit the mocks", async () => {
-    using dir = tempDir("mocks-of-a-file", {
+  test("a check in the afterAll() of a preload sees the calls of every file", async () => {
+    using dir = tempDir("mocks-of-a-preload", {
       "preload.ts": `
-        import { jest, vi } from "bun:test";
-        globalThis.ofPreload = { jest: jest.fn(() => "initial"), vi: vi.fn(() => "initial").mockReturnValue("configured") };
+        import { afterAll, expect, jest } from "bun:test";
+        globalThis.reportProblem = jest.fn();
+        afterAll(() => {
+          expect(reportProblem).not.toHaveBeenCalled();
+        });
       `,
       "a.test.ts": `
-        import { expect, jest, test, vi } from "bun:test";
-        test("a", () => {
-          globalThis.prototypeReads = 0;
-          const implementation = new Proxy(function () {}, {
-            get(target, key, receiver) {
-              if (key === "prototype") prototypeReads++;
-              return Reflect.get(target, key, receiver);
-            },
-          });
-          globalThis.ofFile = { jest: jest.fn(() => "initial"), vi: vi.fn(implementation).mockReturnValue("configured") };
-          ofFile.vi.prototype;
-          for (const mocks of [ofFile, ofPreload]) for (const mocked of Object.values(mocks)) mocked("a");
-          expect(ofFile.jest).toHaveBeenCalledTimes(1);
-        });
+        import { test } from "bun:test";
+        test("a", () => reportProblem("something is wrong"));
       `,
       "b.test.ts": `
-        import { expect, jest, test, vi } from "bun:test";
-        test("b", () => {
-          expect([ofFile.jest.mock.calls, ofFile.vi.mock.calls]).toEqual([[], []]);
-          expect([ofPreload.jest.mock.calls, ofPreload.vi.mock.calls]).toEqual([[["a"]], [["a"]]]);
-          vi.clearAllMocks();
-          expect([ofPreload.jest.mock.calls, ofPreload.vi.mock.calls]).toEqual([[], []]);
-
-          prototypeReads = 0;
-          vi.resetAllMocks();
-          expect(prototypeReads).toBe(0);
-          expect([ofFile.jest(), ofFile.vi()]).toEqual(["initial", "configured"]);
-          expect([ofPreload.jest(), ofPreload.vi()]).toEqual([undefined, "initial"]);
-
-          vi.clearAllMocks();
-          expect([ofFile.jest.mock.calls, ofFile.vi.mock.calls]).toEqual([[], []]);
-          ofFile.vi.mockReturnValue("configured in b");
-          vi.resetAllMocks();
-          expect(prototypeReads).toBe(1);
-        });
+        import { test } from "bun:test";
+        test("b", () => {});
       `,
     });
     const { stderr, exitCode } = await runTests(
@@ -2327,6 +2301,302 @@ describe.concurrent("mocks and spies do not outlive their test file", () => {
       ["--preload", "./preload.ts"],
       ["./a.test.ts", "./b.test.ts"],
     );
+    expect(stderr).toContain("Expected number of calls: 0\nReceived number of calls: 1\n");
+    expect({ results: results(stderr), exitCode }).toEqual({
+      results: ["(pass) a", "(pass) b", "(fail) (unnamed)"],
+      exitCode: 1,
+    });
+  });
+
+  describe.each([
+    ["while it loads", (make: string) => make],
+    ["in its beforeAll()", (make: string) => `beforeAll(() => { ${make} });`],
+    ["in its beforeAll(), after an await", (make: string) => `beforeAll(async () => { await Bun.sleep(0); ${make} });`],
+  ])("what a preload makes %s", (_, where) => {
+    const preload = `
+      import { beforeAll, jest, mock, spyOn, vi } from "bun:test";
+      ${where(`
+        const target = { jest: () => "original", vi: () => "original", bun: () => "original" };
+        globalThis.ofPreload = {
+          "jest.fn()": jest.fn(),
+          "jest.fn(implementation)": jest.fn(() => "initial"),
+          "jest.fn().mockReturnValue()": jest.fn().mockReturnValue("configured"),
+          "vi.fn()": vi.fn(),
+          "vi.fn(implementation)": vi.fn(() => "initial"),
+          "vi.fn().mockReturnValue()": vi.fn().mockReturnValue("configured"),
+          "mock()": mock(),
+          "mock(implementation)": mock(() => "initial"),
+          "jest.spyOn()": jest.spyOn(target, "jest"),
+          "vi.spyOn()": vi.spyOn(target, "vi"),
+          "spyOn()": spyOn(target, "bun"),
+          ...AUTOMOCKS,
+        };
+      `)}
+    `;
+    const automocks = `{
+      "vi.mockObject()": vi.mockObject({ method() {} }).method,
+      "a method of an instance of vi.mockObject(class)": new (vi.mockObject({ Class: class { method() {} } }).Class)().method,
+    }`;
+    const kinds = [
+      "jest.fn()",
+      "jest.fn(implementation)",
+      "jest.fn().mockReturnValue()",
+      "vi.fn()",
+      "vi.fn(implementation)",
+      "vi.fn().mockReturnValue()",
+      "mock()",
+      "mock(implementation)",
+      "jest.spyOn()",
+      "vi.spyOn()",
+      "spyOn()",
+    ];
+    const calls = `Object.fromEntries(Object.entries(ofPreload).map(([kind, mocked]) => [kind, mocked.mock.calls.join()]))`;
+
+    test.each([
+      ["mocks and spies", "{}", kinds],
+      ["automocks", automocks, [...kinds, "vi.mockObject()", "a method of an instance of vi.mockObject(class)"]],
+    ])("keeps its calls from file to file: %s", async (_, automocks, kinds) => {
+      const all = (value: string) => JSON.stringify(Object.fromEntries(kinds.map(kind => [kind, value])));
+      using dir = tempDir("mocks-of-a-preload", {
+        "preload.ts": preload.replace("AUTOMOCKS", automocks),
+        "a.test.ts": `
+          import { expect, test } from "bun:test";
+          test("a", () => {
+            for (const mocked of Object.values(ofPreload)) mocked("a");
+            expect(${calls}).toEqual(${all("a")});
+          });
+        `,
+        "b.test.ts": `
+          import { expect, test } from "bun:test";
+          test("b", () => {
+            expect(${calls}).toEqual(${all("a")});
+            for (const mocked of Object.values(ofPreload)) mocked("b");
+          });
+        `,
+        "c.test.ts": `
+          import { expect, jest, test } from "bun:test";
+          test("c", () => {
+            expect(${calls}).toEqual(${all("a,b")});
+            jest.clearAllMocks();
+            expect(${calls}).toEqual(${all("")});
+          });
+        `,
+      });
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        ["--preload", "./preload.ts"],
+        ["./a.test.ts", "./b.test.ts", "./c.test.ts"],
+      );
+      expect({ results: results(stderr), exitCode }).toEqual({
+        results: ["(pass) a", "(pass) b", "(pass) c"],
+        exitCode: 0,
+      });
+    });
+  });
+
+  test("what a beforeEach() of a preload makes is the file's, as what the file makes before its first test", async () => {
+    using dir = tempDir("mocks-of-a-file", {
+      "preload.ts": `
+        import { beforeAll, beforeEach, jest } from "bun:test";
+        globalThis.made = {};
+        beforeAll(() => {});
+        beforeEach(() => {
+          made.beforeEachOfPreload ??= jest.fn();
+        });
+      `,
+      "a.test.ts": `
+        import { beforeAll, describe, expect, jest, test } from "bun:test";
+        made.whileFileLoads = jest.fn();
+        describe("describe", () => {
+          made.inDescribe = jest.fn();
+          beforeAll(() => {
+            made.beforeAllOfFile = jest.fn();
+          });
+          test("a", () => {
+            made.inTest = jest.fn();
+            for (const mocked of Object.values(made)) mocked("a");
+            expect(Object.keys(made)).toEqual(["whileFileLoads", "inDescribe", "beforeAllOfFile", "beforeEachOfPreload", "inTest"]);
+          });
+        });
+      `,
+      "b.test.ts": `
+        import { expect, test } from "bun:test";
+        test("b", () => expect(Object.values(made).map(mocked => mocked.mock.calls)).toEqual([[], [], [], [], []]));
+      `,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--preload", "./preload.ts"],
+      ["./a.test.ts", "./b.test.ts"],
+    );
+    expect({ results: results(stderr), exitCode }).toEqual({
+      results: ["(pass) describe > a", "(pass) b"],
+      exitCode: 0,
+    });
+  });
+
+  test("the next file does not see the calls, and its clearAllMocks() does not visit the mocks", async () => {
+    using dir = tempDir("mocks-of-a-file", {
+      "a.test.ts": `
+        import { expect, jest, test, vi } from "bun:test";
+        test("a", () => {
+          globalThis.ofFile = { jest: jest.fn(), vi: vi.fn() };
+          globalThis.stateOfFile = ofFile.vi.mock;
+          for (const mocked of Object.values(ofFile)) mocked("a");
+          expect(ofFile.jest).toHaveBeenCalledTimes(1);
+        });
+      `,
+      "b.test.ts": `
+        import { expect, jest, test, vi } from "bun:test";
+        test("b", () => {
+          const { calls } = stateOfFile;
+          expect(calls).toEqual([]);
+          vi.clearAllMocks();
+          expect(stateOfFile.calls).toBe(calls);
+          expect([ofFile.jest.mock.calls, ofFile.vi.mock.calls]).toEqual([[], []]);
+
+          for (const mocked of Object.values(ofFile)) mocked("b");
+          vi.clearAllMocks();
+          expect([ofFile.jest.mock.calls, ofFile.vi.mock.calls]).toEqual([[], []]);
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts"]);
     expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+  });
+
+  describe("resetAllMocks() finds what an earlier file has configured", () => {
+    const configure = `
+      for (const mocked of Object.values(mocks)) mocked.mockReturnValue("configured").mockReturnValueOnce("once");
+    `;
+    const seen = `Object.values(mocks).map(mocked => [mocked(), mocked()])`;
+    const configured = `[["once", "configured"], ["once", "configured"]]`;
+    const a = (mocks: string) => `
+      import { expect, jest, test, vi } from "bun:test";
+      ${mocks}
+      test("a", () => {
+        ${configure}
+      });
+    `;
+    const resetsInATest = (mocks: string, reset: string) => `
+      import { expect, jest, test, vi } from "bun:test";
+      ${mocks}
+      test("it is still configured", () => expect(${seen}).toEqual(${configured}));
+      test("b", () => {
+        jest.resetAllMocks();
+        expect(${seen}).toEqual(${reset});
+      });
+    `;
+    const resetsBeforeEach = (mocks: string, reset: string) => `
+      import { beforeEach, expect, jest, test, vi } from "bun:test";
+      ${mocks}
+      beforeEach(() => {
+        jest.resetAllMocks();
+      });
+      test("b", () => expect(${seen}).toEqual(${reset}));
+    `;
+
+    describe.each([
+      [
+        "jest.fn()",
+        `{ plain: jest.fn(), initial: jest.fn(() => "initial") }`,
+        `[[undefined, undefined], [undefined, undefined]]`,
+      ],
+      [
+        "vi.fn()",
+        `{ plain: vi.fn(), initial: vi.fn(() => "initial") }`,
+        `[[undefined, undefined], ["initial", "initial"]]`,
+      ],
+    ])("%s", (_, make, reset) => {
+      test.each([
+        ["in a module that both import", `import { mocks } from "./shared.ts";`, []],
+        ["on an object that both reach", `const mocks = (globalThis.mocks ??= ${make});`, []],
+        ["that a preload has made", `const { mocks } = globalThis;`, ["--preload", "./preload.ts"]],
+      ])("%s", async (_, mocks, args) => {
+        for (const b of [resetsInATest, resetsBeforeEach]) {
+          using dir = tempDir("mocks-of-a-file", {
+            "shared.ts": `import { jest, vi } from "bun:test"; export const mocks = ${make};`,
+            "preload.ts": `import { jest, vi } from "bun:test"; globalThis.mocks = ${make};`,
+            "a.test.ts": a(mocks),
+            "b.test.ts": b(mocks, reset),
+          });
+          const { stderr, exitCode } = await runTests(String(dir), args, ["./a.test.ts", "./b.test.ts"]);
+          expect({ results: results(stderr).filter(result => !result.includes("still")), exitCode }).toEqual({
+            results: ["(pass) a", "(pass) b"],
+            exitCode: 0,
+          });
+        }
+      });
+
+      test("between the repeats of --rerun-each", async () => {
+        using dir = tempDir("mocks-of-a-file", {
+          "a.test.ts": `
+            import { expect, jest, test, vi } from "bun:test";
+            const mocks = (globalThis.mocks ??= ${make});
+            test("a", () => {
+              jest.resetAllMocks();
+              expect(${seen}).toEqual(${reset});
+              ${configure}
+            });
+          `,
+        });
+        const { stderr, exitCode } = await runTests(String(dir), ["--rerun-each=3"], ["./a.test.ts"]);
+        expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) a"], exitCode: 0 });
+      });
+    });
+
+    test("a mock name", async () => {
+      using dir = tempDir("mocks-of-a-file", {
+        "shared.ts": `import { jest, vi } from "bun:test"; export const mocks = [jest.fn(), vi.fn()];`,
+        "a.test.ts": `
+          import { test } from "bun:test";
+          import { mocks } from "./shared.ts";
+          test("a", () => mocks.forEach(mocked => mocked.mockName("named")));
+        `,
+        "b.test.ts": `
+          import { expect, jest, test } from "bun:test";
+          import { mocks } from "./shared.ts";
+          test("b", () => {
+            expect(mocks.map(mocked => mocked.getMockName())).toEqual(["named", "named"]);
+            jest.resetAllMocks();
+            expect(mocks.map(mocked => mocked.getMockName())).toEqual(["jest.fn()", "vi.fn()"]);
+          });
+        `,
+      });
+      const { stderr, exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts"]);
+      expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+    });
+
+    test("once", async () => {
+      using dir = tempDir("mocks-of-a-file", {
+        "a.test.ts": `
+          import { test, vi } from "bun:test";
+          test("a", () => {
+            globalThis.prototypeReads = 0;
+            const implementation = new Proxy(function () {}, {
+              get(target, key, receiver) {
+                if (key === "prototype") prototypeReads++;
+                return Reflect.get(target, key, receiver);
+              },
+            });
+            globalThis.mocked = vi.fn(implementation).mockReturnValue("configured");
+            mocked.prototype;
+          });
+        `,
+        "b.test.ts": `
+          import { expect, test, vi } from "bun:test";
+          test("b", () => {
+            prototypeReads = 0;
+            vi.resetAllMocks();
+            expect([prototypeReads, mocked()]).toEqual([1, undefined]);
+            vi.resetAllMocks();
+            vi.resetAllMocks();
+            expect(prototypeReads).toBe(1);
+          });
+        `,
+      });
+      const { stderr, exitCode } = await runTests(String(dir), [], ["./a.test.ts", "./b.test.ts"]);
+      expect({ results: results(stderr), exitCode }).toEqual({ results: ["(pass) a", "(pass) b"], exitCode: 0 });
+    });
   });
 });

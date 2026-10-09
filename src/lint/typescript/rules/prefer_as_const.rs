@@ -16,8 +16,20 @@ const VARIABLE_SUGGEST: Message = Message::new(
     "You should use `as const` instead of type annotation.",
 );
 
+/// oxlint compares the values of strings and of numbers, and knows no other literals.
+fn oxlint_is_same_literal<'a>(value: Expr<'a>, ty: TypeNode<'a>) -> bool {
+    match (value.kind(), ty.kind()) {
+        (ExprKind::String(value), TypeKind::StringLit(ty_value)) => value == ty_value && !ty.text().starts_with(b"`"),
+        (ExprKind::Number(value), TypeKind::NumberLit(ty_value)) => (value - ty_value).abs() < f64::EPSILON,
+        _ => false,
+    }
+}
+
 /// Whether `value` is a literal and `ty` is the type of that literal, written the same way.
-fn is_same_literal(value: Expr, ty: TypeNode) -> bool {
+fn is_same_literal<'a>(value: Expr<'a>, ty: TypeNode<'a>) -> bool {
+    if value.file().language().is_oxlint {
+        return oxlint_is_same_literal(value, ty);
+    }
     matches!(
         ty.tag(),
         TypeTag::StringLit | TypeTag::NumberLit | TypeTag::BigIntLit | TypeTag::BoolLit
@@ -57,6 +69,8 @@ impl Rule for PreferAsConst {
         on.exprs([ExprTag::As], |_, e, cx| {
             if let ExprKind::As { expr, ty } = e.kind()
                 && is_same_literal(expr, ty)
+                // oxlint does not look at `<"a">"a"`.
+                && !(cx.language().is_oxlint && e.is_angle_bracket_assertion())
             {
                 cx.report(ty, PREFER_CONST_ASSERTION).fix(|fixer| fixer.replace(ty, "const"));
             }

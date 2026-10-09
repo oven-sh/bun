@@ -1377,7 +1377,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
   test(
     "a plugin that waits for what never comes is an error",
     async () => {
-      const { stderr, exitCode } = await lint(
+      const { stdout, stderr, exitCode } = await lint(
         {
           ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "waits/for": "error" } }),
           "plugin.mjs": `await new Promise(() => {});\nexport default { meta: { name: "waits" }, rules: { for: { create: () => ({}) } } };`,
@@ -1385,16 +1385,18 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         },
         ["a.js"],
       );
-      expect(stderr).toContain("plugin.mjs");
-      expect(exitCode).not.toBe(0);
+      expect(stdout + stderr).toContain("./plugin.mjs\n  A promise is not settled, and nothing is left to wait for.");
+      expect(exitCode).toBe(1);
     },
     timeout,
   );
 
-  // ESLint in Node.js gives up at 740: "Not enough stack space to parse input".
+  // ESLint in Node.js gives up at 740: "Not enough stack space to parse input". So does the parser here between 500 and 1,000 in a
+  // debug build, whose frames are larger.
   test(
     "a rule goes through a tree that is 2,000 deep",
     async () => {
+      const depth = isDebug || isASAN ? 500 : 2000;
       const { stdout, exitCode } = await lint(
         {
           "eslint.config.mjs": `
@@ -1405,11 +1407,11 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
             },
           };
           export default [{ files: ["a.js"], plugins: { own: { rules: { deep } } }, rules: { "own/deep": "error" } }];`,
-          "a.js": `x = ${Buffer.alloc(2000, "[")}${Buffer.alloc(2000, "]")};\n`,
+          "a.js": `x = ${Buffer.alloc(depth, "[")}${Buffer.alloc(depth, "]")};\n`,
         },
         ["-f", "unix", "a.js"],
       );
-      expect(stdout).toContain("<dir>/a.js:1:1: arrays 2000 [Error/own/deep]");
+      expect(stdout).toContain(`<dir>/a.js:1:1: arrays ${depth} [Error/own/deep]`);
       expect(exitCode).toBe(1);
     },
     timeout,
@@ -1648,6 +1650,39 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       ]);
       // 6 MB of the others.
       for (const it of [one, many, typed]) expect(it.light).toBeGreaterThan(1);
+    },
+    timeout,
+  );
+
+  // The engines are told how much of the memory is for a heap. A heap that has half of that grows by a quarter and not to twice its size.
+  test(
+    "BUN_JSC_forceRAMSize of the user wins",
+    async () => {
+      const files = {
+        ".oxlintrc.json": oxlintrc({ jsPlugins: ["./plugin.mjs"], rules: { "ram/most": "error" } }),
+        "plugin.mjs": `
+          import { heapSize } from "bun:jsc";
+          const most = {
+            create: context => ({
+              Program(node) {
+                const kept = [];
+                for (let i = 0; i < 400_000; i++) kept.push({ a: i, b: [i] });
+                let most = 0;
+                for (let i = 0; i < 4_000_000; i++) {
+                  kept[i % kept.length] = { a: i, b: [i] };
+                  if ((i & 4095) === 0) most = Math.max(most, heapSize());
+                }
+                context.report({ node, message: String(most) });
+              },
+            }),
+          };
+          export default { meta: { name: "ram" }, rules: { most } };`,
+        "a.js": "1;\n",
+      };
+      const largest = async (variables: Record<string, string>) =>
+        Number(JSON.parse((await lint(files, ["-f", "json", "a.js"], [], variables)).raw).diagnostics[0].message);
+      const [free, forced] = await Promise.all([largest({}), largest({ BUN_JSC_forceRAMSize: String(64 << 20) })]);
+      expect(forced).toBeLessThan(0.8 * free);
     },
     timeout,
   );

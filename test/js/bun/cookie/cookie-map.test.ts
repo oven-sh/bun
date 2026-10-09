@@ -229,6 +229,13 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     }
   });
 
+  test("takes the enumerable properties of an object only", () => {
+    const object = Object.defineProperty({ name: "value" }, "hidden", { value: "x", enumerable: false });
+    expect([...new Bun.CookieMap(object)]).toEqual([["name", "value"]]);
+    expect([...new Bun.CookieMap(new Proxy(object, {}))]).toEqual([["name", "value"]]);
+    expect([...new Bun.CookieMap(new Proxy([], {}))]).toEqual([]);
+  });
+
   test("can create CookieMap from array pairs", () => {
     const map = new Bun.CookieMap([
       ["name", "value"],

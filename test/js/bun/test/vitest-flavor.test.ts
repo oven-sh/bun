@@ -1,11 +1,12 @@
 // What `test`, `describe` and the hooks do depends on the module they are imported from: those of "vitest" behave as
 // vitest's, those of "bun:test" and "@jest/globals" as Jest's. Expected outputs were taken from vitest 5.0.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 
 // A run that never ends is killed, and what it printed is compared: a test that times out leaves it running.
-const beforeTheTestTimesOut = 4000;
+// An ASAN build looks for leaks as it exits, and CI gives it minutes for a test.
+const beforeTheTestTimesOut = isASAN && isCI ? 60_000 : 4000;
 
 async function runTests(
   files: Record<string, string>,

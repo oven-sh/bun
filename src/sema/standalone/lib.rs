@@ -1,6 +1,8 @@
 //! `bun_sema` with Bun's parser as its front end, backed by the file system: the basis of its tests
 //! and of the `bun-sema` command line tool. The bundler does not use this crate.
 
+#![feature(linkage)]
+
 pub mod hir_dump;
 pub mod host;
 pub mod native;

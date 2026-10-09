@@ -308,12 +308,15 @@ fn first(text: &[u8], f: impl Fn(u8) -> bool) -> usize {
         .unwrap_or(text.len() - at)
 }
 
+// Weak: where the kernels themselves are linked, they count.
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_index_of_char(p: *const u8, len: usize, needle: u8) -> usize {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     first(unsafe { bytes(p, len) }, |c| c == needle)
 }
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_last_index_of_char(p: *const u8, len: usize, needle: u8) -> usize {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     unsafe { bytes(p, len) }
@@ -322,6 +325,7 @@ unsafe extern "C" fn highway_last_index_of_char(p: *const u8, len: usize, needle
         .unwrap_or(len)
 }
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_count_char(p: *const u8, len: usize, needle: u8) -> usize {
     // SAFETY: the caller passes a slice, as a pointer and a length.
     let text = unsafe { bytes(p, len) };
@@ -331,6 +335,7 @@ unsafe extern "C" fn highway_count_char(p: *const u8, len: usize, needle: u8) ->
         .sum()
 }
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_index_of_any_char(
     p: *const u8,
     len: usize,
@@ -372,6 +377,7 @@ unsafe extern "C" fn highway_index_of_any_char(
     }
 }
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_last_index_of_any_char(
     p: *const u8,
     len: usize,
@@ -387,6 +393,7 @@ unsafe extern "C" fn highway_last_index_of_any_char(
         .unwrap_or(len)
 }
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_memmem(
     h: *const u8,
     h_len: usize,
@@ -437,6 +444,7 @@ unsafe extern "C" fn highway_memmem(
     core::ptr::null()
 }
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_memrmem(
     h: *const u8,
     h_len: usize,
@@ -457,6 +465,7 @@ unsafe extern "C" fn highway_memrmem(
         .unwrap_or(usize::MAX)
 }
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_memrmem16(
     h: *const u16,
     h_len: usize,
@@ -482,6 +491,7 @@ unsafe extern "C" fn highway_memrmem16(
         .unwrap_or(usize::MAX)
 }
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_index_of_interesting_character_in_string_literal(
     p: *const u8,
     len: usize,
@@ -493,6 +503,7 @@ unsafe extern "C" fn highway_index_of_interesting_character_in_string_literal(
     })
 }
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_index_of_interesting_character_in_multiline_comment(
     p: *const u8,
     len: usize,
@@ -503,6 +514,7 @@ unsafe extern "C" fn highway_index_of_interesting_character_in_multiline_comment
     })
 }
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_index_of_newline_or_non_ascii_or_hash_or_at(
     p: *const u8,
     len: usize,
@@ -513,6 +525,7 @@ unsafe extern "C" fn highway_index_of_newline_or_non_ascii_or_hash_or_at(
     })
 }
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_index_of_space_or_newline_or_non_ascii(
     p: *const u8,
     len: usize,
@@ -521,6 +534,7 @@ unsafe extern "C" fn highway_index_of_space_or_newline_or_non_ascii(
     first(unsafe { bytes(p, len) }, |c| c <= b' ' || c > 127)
 }
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_contains_newline_or_non_ascii_or_quote(
     p: *const u8,
     len: usize,
@@ -531,6 +545,7 @@ unsafe extern "C" fn highway_contains_newline_or_non_ascii_or_quote(
         .any(|&c| !(0x20..=127).contains(&c) || c == b'"')
 }
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_index_of_needs_escape_for_javascript_string(
     p: *const u8,
     len: usize,
@@ -543,6 +558,7 @@ unsafe extern "C" fn highway_index_of_needs_escape_for_javascript_string(
 }
 /// `BUN_JSON_IDX_ODDITY`: `StructuralIndex` goes on with its scalar indexer.
 #[unsafe(no_mangle)]
+#[linkage = "weak"]
 unsafe extern "C" fn highway_json_index_chunk(
     _input: *const u8,
     _len: usize,

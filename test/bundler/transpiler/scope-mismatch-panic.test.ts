@@ -2,9 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
+// The tests that use the two helpers below are not concurrent. Concurrent tests that follow
+// each other run as one batch, across `describe` blocks too, and debug builds that start at
+// the same time take seconds each.
+
 // Runs `script` in one process, once. For each row it prints a line: "row " and a JSON pair
-// of the name of the row and its result. The tests that use it are not concurrent: debug
-// builds that start at the same time take seconds each.
+// of the name of the row and its result.
 function inOneProcess(script: string) {
   let ran: Promise<{ results: Map<string, unknown>; stderr: string; exitCode: number }> | undefined;
   return () =>

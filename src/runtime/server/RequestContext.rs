@@ -2365,6 +2365,21 @@ where
         matches!(self.upgrade_context.get(), UpgradeState::Upgraded)
     }
 
+    /// A response owns the connection: its status is written, or a native body
+    /// pipe is attached (an `HTMLRewriter` body defers its status to the first
+    /// chunk). The base ref now belongs to the code that ends that response.
+    fn has_started_response(&self) -> bool {
+        self.flags.has_written_status() || self.byte_stream.get().is_some()
+    }
+
+    /// `server.upgrade(req)` can take the connection: the request is live, it is
+    /// a WebSocket handshake that is not upgraded yet, and no response has started.
+    pub(crate) fn can_upgrade(&self) -> bool {
+        !self.is_aborted_or_ended()
+            && matches!(self.upgrade_context.get(), UpgradeState::Pending(_))
+            && !self.has_started_response()
+    }
+
     fn to_async_without_abort_handler(
         &self,
         req: *mut Req<SSL_ENABLED, MUX>,

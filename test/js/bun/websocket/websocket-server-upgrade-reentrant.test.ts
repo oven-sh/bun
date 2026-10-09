@@ -1,5 +1,7 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { mkfifo } from "mkfifo";
+import { join } from "node:path";
 
 // server.upgrade(req, opts) reads opts.data / opts.headers via property
 // access, which can invoke user getters. A getter that calls
@@ -171,3 +173,88 @@ for (const via of ["data", "headers"] as const) {
     expect(exitCode).toBe(0);
   });
 }
+
+// The handler calls server.upgrade(req) after a response to `req` has started.
+// That response owns the connection, so the upgrade returns false and leaves the
+// response alone. It used to go ahead: the handshake went out under the
+// response's `200 OK`, and with a Bun.file() body the request's context was
+// released while the file stream still used it. Each scenario runs in a child
+// process, because the old behaviour can crash it.
+describe("server.upgrade(req) after the response has started", () => {
+  const fixture = join(import.meta.dir, "websocket-server-upgrade-after-response-fixture.ts");
+
+  async function run(...scenario: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), fixture, ...scenario],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let result: unknown = stdout;
+    try {
+      result = JSON.parse(stdout);
+    } catch {}
+    return { stderr, result, exitCode };
+  }
+
+  // What the client reads when the upgrade is refused: the response, and no handshake.
+  const refused = { upgraded: false, opened: 0, statusLine: "HTTP/1.1 200 OK", handshake: false, pendingRequests: 0 };
+  const twoChunks = "7\r\nchunk-a\r\n7\r\nchunk-b\r\n0\r\n\r\n";
+
+  test("returns false while a streaming response is in flight", async () => {
+    expect(await run("stream", "13")).toEqual({
+      stderr: "",
+      result: { ...refused, body: twoChunks },
+      exitCode: 0,
+    });
+  });
+
+  // An unsupported Sec-WebSocket-Version is answered with a 426. That answer
+  // used to go into the response in flight as well.
+  test("returns false for an unsupported Sec-WebSocket-Version too", async () => {
+    expect(await run("stream", "12")).toEqual({
+      stderr: "",
+      result: { ...refused, body: twoChunks },
+      exitCode: 0,
+    });
+  });
+
+  // server.upgrade() checks the request, then reads its options. A getter can
+  // start the response between the two.
+  for (const via of ["data", "headers"] as const) {
+    test(`returns false when the options.${via} getter starts the response`, async () => {
+      expect(await run("getter", via)).toEqual({
+        stderr: "",
+        result: { ...refused, startedInGetter: true, body: twoChunks },
+        exitCode: 0,
+      });
+    });
+  }
+
+  // An HTMLRewriter body writes its status line with its first chunk. Before
+  // that chunk the upgrade used to succeed, and the body was then written to
+  // nobody.
+  test("returns false while an HTMLRewriter body waits for its first chunk", async () => {
+    expect(await run("rewriter")).toEqual({
+      stderr: "",
+      result: { ...refused, body: "b\r\n<p>late</p>\r\n0\r\n\r\n" },
+      exitCode: 0,
+    });
+  });
+
+  // A FIFO body waits for its writer, so the response stays in flight. After
+  // the upgrade the file stream used to run on a released request context:
+  // `panic: infallible: server bound`, or a later request in that slot lost its
+  // response.
+  test.skipIf(isWindows)("returns false while a Bun.file() response is in flight", async () => {
+    using dir = tempDir("ws-upgrade-file-in-flight", {});
+    const fifo = join(String(dir), "body.fifo");
+    mkfifo(fifo);
+    expect(await run("file", fifo)).toEqual({
+      stderr: "",
+      result: { ...refused, fileBodyArrived: true, other: "other-answer" },
+      exitCode: 0,
+    });
+  });
+});

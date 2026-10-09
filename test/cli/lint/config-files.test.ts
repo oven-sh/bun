@@ -301,6 +301,38 @@ describe.concurrent("an eslint.config.js", () => {
     expect(exitCode).toBe(1);
   });
 
+  // What it answers is looked up by the paths that it was given, which have `/` on every system. `path.win32` makes `\\` of them.
+  test("what the program for ESLint 8 answers has the paths that it was given as keys, also on Windows", async () => {
+    using dir = tempDir("bun-lint-config-files", {});
+    const parts = ["track", "describe", "eslintrc"];
+    const source = parts
+      .map(it => readFileSync(join(import.meta.dir, `../../../src/lint/driver/evaluate-${it}.js`), "utf8"))
+      .join("")
+      .replaceAll('require("node:path")', 'require("node:path").win32');
+    const content = { extends: "./base.json", parser: "nowhere", plugins: ["nowhere"] };
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        source,
+        JSON.stringify({ pluginsFrom: "C:/t", content }),
+        "<marker>",
+        "C:/t/.eslintrc.json",
+      ],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const stdout = await proc.stdout.text();
+    const { config } = JSON.parse(stdout.slice(stdout.lastIndexOf("<marker>") + "<marker>".length));
+    expect({
+      configs: Object.keys(config.configs),
+      parsers: Object.keys(config.parsers),
+      plugins: Object.keys(config.plugins),
+    }).toEqual({ configs: ["C:/t/.eslintrc.json"], parsers: ["C:/t/.eslintrc.json"], plugins: ["C:/t"] });
+  });
+
   test("the program that runs the file knows it, however its path is spelled", async () => {
     using dir = tempDir("bun-lint-config-files", {
       "real/eslint.config.mjs": `export const local = { rules: { r: { create: () => ({}) } } };
